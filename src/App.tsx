@@ -11,6 +11,7 @@ import ChatPage from './pages/ChatPage';
 import DieselPage from './pages/DieselPage';
 import HorometroPage from './pages/HorometroPage';
 import ViajePage from './pages/ViajePage';
+import ViajesPenaPage from './pages/ViajesPenaPage';
 import AlertsPage from './pages/AlertsPage';
 import PerfilPage from './pages/PerfilPage';
 import MyReportsPage from './pages/MyReportsPage';
@@ -76,6 +77,8 @@ export default function App() {
         <Route path="/diesel" element={<DieselPage />} />
         <Route path="/horometro" element={<HorometroPage />} />
         <Route path="/viaje" element={<ViajePage />} />
+        <Route path="/flete" element={<ViajePage />} />
+        <Route path="/viajes-pena" element={<ViajesPenaPage />} />
         <Route path="/perfil" element={<PerfilPage />} />
         <Route path="/my-reports" element={<MyReportsPage />} />
       </Route>

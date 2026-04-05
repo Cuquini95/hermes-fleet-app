@@ -24,6 +24,7 @@ export const NAV_CONFIG: Record<AppRole, { visible: NavItem[]; overflow: NavItem
     ],
     overflow: [
       { id: 'horometro', label: 'Horómetro', icon: 'Gauge', path: '/horometro' },
+      { id: 'fletes', label: 'Fletes', icon: 'MapPin', path: '/flete' },
       { id: 'perfil', label: 'Perfil', icon: 'User', path: '/perfil' },
     ],
   },
@@ -74,7 +75,7 @@ export const NAV_CONFIG: Record<AppRole, { visible: NavItem[]; overflow: NavItem
     visible: [
       { id: 'inicio', label: 'Inicio', icon: 'Home', path: '/supervisor' },
       { id: 'equipos', label: 'Equipos', icon: 'Truck', path: '/fleet' },
-      { id: 'fletes', label: 'Fletes', icon: 'MapPin', path: '/viaje' },
+      { id: 'viajes', label: 'Viajes', icon: 'MapPin', path: '/viajes-pena' },
       { id: 'dvir', label: 'DVIR', icon: 'ClipboardCheck', path: '/dvir-compliance' },
       { id: 'mas', label: 'Más', icon: 'MoreHorizontal', path: '' },
     ],
