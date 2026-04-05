@@ -224,8 +224,26 @@ export default function HermesChat() {
             if (results.length > 0) {
               responseText = formatSearchParts(results, pn);
               if (wantsDiagram) {
+                // Determine equipment from search results or part number format
+                let diagEquip = equipUnit;
+                if (diagEquip === 'General') {
+                  // Try to detect from first result's compatible_units or location
+                  const r = results[0];
+                  if (r.compatible_units?.length > 0) {
+                    diagEquip = r.compatible_units[0];
+                  } else if (r.location) {
+                    diagEquip = r.location;
+                  }
+                }
+                // Also detect brand from part number prefix
+                if (diagEquip === 'General') {
+                  if (/^6\d{3}-/.test(pn) || /^0\d{4}-/.test(pn)) diagEquip = 'Komatsu HM400-3';
+                  else if (/^\d{3}-\d{4}$/.test(pn)) diagEquip = 'CAT 740B';
+                  else if (/^[A-Z]\d{4,}/.test(pn) || /^6[5]\.\d/.test(pn)) diagEquip = 'Doosan DX340LC';
+                  else if (/^\d{8}$/.test(pn)) diagEquip = 'Mack GR84B';
+                }
                 try {
-                  const diag = await findDiagram(equipUnit, pn);
+                  const diag = await findDiagram(diagEquip, pn);
                   if (diag.found && diag.image_url) {
                     responseText += `\n\n📐 **Diagrama — ${diag.section ?? ''}**\n![Diagrama](/hermes-api${diag.image_url})`;
                   } else {
