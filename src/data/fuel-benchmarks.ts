@@ -10,8 +10,9 @@ export const FUEL_BENCHMARKS: Record<string, { min: number; max: number; unit: s
   'Doosan DX360LCA': { min: 0.85, max: 1.0, unit: 'L/hr' },
 };
 
-export function isAnomalous(model: string, consumption: number): boolean {
-  const benchmark = FUEL_BENCHMARKS[model];
-  if (!benchmark) return false;
-  return consumption > benchmark.max * 1.3;
+export function isAnomalous(_model: string, _consumption: number): boolean {
+  // Anomaly detection requires horómetro delta to compute L/hr rate.
+  // A single fueling event (total liters) cannot be compared against rate benchmarks.
+  // TODO: implement when sheet provides previous horómetro reading for delta calculation.
+  return false;
 }

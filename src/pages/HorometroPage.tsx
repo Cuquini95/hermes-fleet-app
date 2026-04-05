@@ -59,12 +59,15 @@ export default function HorometroPage() {
 
     try {
       await appendRow(SHEET_TABS.HOROMETROS, [
-        new Date().toLocaleDateString(),
-        new Date().toLocaleTimeString(),
-        unidad,
-        userName,
-        turno,
-        String(horometro),
+        new Date().toLocaleDateString(),          // FECHA
+        new Date().toLocaleTimeString(),          // HORA
+        unidad,                                   // UNIDAD
+        selectedEquipment?.model || '',           // MODELO
+        userName,                                 // OPERADOR
+        turno,                                    // TURNO (inicio/final)
+        String(horometro),                        // HORÓMETRO
+        pmInfo ? pmInfo.level : '',               // PRÓXIMO PM
+        pmInfo ? String(pmInfo.hours_remaining) : '', // FALTAN
       ]);
     } catch (err) {
       console.error('Sheets append failed (Horometros):', err);

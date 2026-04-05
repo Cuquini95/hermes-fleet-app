@@ -100,18 +100,32 @@ export default function DVIRPage() {
       otId = generateOTId();
     }
 
+    const now = new Date();
+    const date = now.toLocaleDateString();
+    const time = now.toLocaleTimeString();
+    const inspId = `INS-${now.toISOString().slice(0, 10).replace(/-/g, '')}-${now.toTimeString().slice(0, 5).replace(':', '')}`;
+    const selectedEquipment = EQUIPMENT_CATALOG.find((eq) => eq.unit_id === unit_id);
+    const modelo = selectedEquipment?.model ?? '';
+
     try {
       await appendRow(SHEET_TABS.INSPECCIONES, [
-        new Date().toLocaleDateString(),
-        new Date().toLocaleTimeString(),
-        unit_id,
-        type,
-        userName,
-        String(horometro),
-        ...checks.map((c) => c.status || 'N/A'),
-        result,
-        String(okCount),
-        observations,
+        '',                                    // # (auto-number)
+        inspId,                                // INSP_ID
+        date,                                  // FECHA
+        time,                                  // HORA
+        unit_id,                               // CÓDIGO UNIDAD
+        modelo,                                // MODELO
+        userName,                              // OPERADOR
+        type,                                  // TIPO
+        String(horometro),                     // HORÓMETRO
+        ...checks.map((c) => c.status || 'N/A'), // MOTOR through TREN RODAJE (12 cols)
+        `${okCount}/12`,                       // SCORE TOTAL
+        result,                                // RESULTADO
+        observations,                          // DEFECTOS ENCONTRADOS
+        '',                                    // FOTO_URL
+        otId || '',                            // ACCIÓN REQUERIDA
+        otId ? 'Pendiente' : '',               // ESTADO ACCIÓN
+        userName,                              // FIRMA_OPERADOR
       ]);
     } catch (err) {
       console.error('Sheets append failed (DVIR):', err);

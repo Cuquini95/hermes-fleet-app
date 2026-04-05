@@ -15,11 +15,8 @@ async function hermesPost<T>(endpoint: string, body: Record<string, unknown>): P
 }
 
 async function hermesGet<T>(endpoint: string, params?: Record<string, string>): Promise<T> {
-  const url = new URL(`${HERMES_BASE}${endpoint}`);
-  if (params) {
-    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
-  }
-  const response = await fetch(url.toString());
+  const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+  const response = await fetch(`${HERMES_BASE}${endpoint}${qs}`);
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`Hermes API error ${response.status}: ${text}`);

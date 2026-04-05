@@ -53,7 +53,8 @@ export default function DieselPage() {
     const costoNum = parseFloat(costo) || 0;
     const horometroNum = parseFloat(horometro) || 0;
     const kmNum = parseFloat(kmActual) || 0;
-    const rendimiento = litrosNum > 0 && kmNum > 0 ? kmNum / litrosNum : 0;
+    // Rendimiento requires horómetro delta which is calculated in the sheet
+    const rendimiento = '';
 
     try {
       await appendRow(SHEET_TABS.COMBUSTIBLE, [

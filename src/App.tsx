@@ -16,7 +16,9 @@ import PerfilPage from './pages/PerfilPage';
 import MyReportsPage from './pages/MyReportsPage';
 import InventoryPage from './pages/InventoryPage';
 import PMSchedulePage from './pages/PMSchedulePage';
+import PMWorkOrderPage from './pages/PMWorkOrderPage';
 import AppShell from './components/layout/AppShell';
+import FleetPage from './pages/FleetPage';
 import PartsSearch from './components/mechanic/PartsSearch';
 import ManualSearch from './components/mechanic/ManualSearch';
 import DiagramViewer from './components/mechanic/DiagramViewer';
@@ -68,6 +70,8 @@ export default function App() {
         <Route path="/supervisor" element={<Placeholder label="Supervisor Home" />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/dvir" element={<DVIRPage />} />
+        <Route path="/dvir-compliance" element={<DVIRPage />} />
+        <Route path="/fleet" element={<FleetPage />} />
         <Route path="/falla" element={<FallaPage />} />
         <Route path="/workorders" element={<WorkOrdersPage />} />
         <Route path="/parts" element={<PartsSearch />} />
@@ -75,6 +79,7 @@ export default function App() {
         <Route path="/diagrams" element={<DiagramViewer />} />
         <Route path="/alerts" element={<AlertsPage />} />
         <Route path="/pm" element={<PMSchedulePage />} />
+        <Route path="/pm-order" element={<PMWorkOrderPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
         <Route path="/pedidos" element={<Placeholder label="Pedidos" />} />
         <Route path="/briefing" element={<BriefingCard />} />

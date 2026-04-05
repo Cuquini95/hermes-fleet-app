@@ -1,5 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Trophy } from 'lucide-react';
+import { useAuthStore } from '../stores/auth-store';
+import { ROLE_LABELS } from '../types/roles';
 
 interface ScoreCategory {
   label: string;
@@ -43,6 +45,14 @@ function ScoreBar({ score, max }: { score: number; max: number }) {
 export default function PerfilPage() {
   const navigate = useNavigate();
 
+  const userName = useAuthStore((s) => s.userName);
+  const role = useAuthStore((s) => s.role);
+  const assignedUnits = useAuthStore((s) => s.assignedUnits);
+
+  const roleLabel = role ? ROLE_LABELS[role] : 'Sin rol';
+  const initials = userName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+  const unitLabel = assignedUnits.length > 0 ? assignedUnits[0] : '';
+
   const overallPct = Math.round((totalScore / totalMax) * 100);
   const arcColor = overallPct >= 80 ? '#16A34A' : overallPct >= 50 ? '#E8961A' : '#DC2626';
 
@@ -67,12 +77,14 @@ export default function PerfilPage() {
           className="w-20 h-20 rounded-full flex items-center justify-center text-white text-2xl font-bold shadow-md"
           style={{ backgroundColor: '#E8961A' }}
         >
-          CM
+          {initials}
         </div>
         <div className="text-center">
-          <h2 className="text-2xl font-bold text-text">Carlos Mendoza</h2>
-          <p className="text-text-secondary mt-0.5">Operador de Equipo</p>
-          <p className="text-sm text-amber font-medium mt-1">EPAK-09 — Komatsu HM400-3</p>
+          <h2 className="text-2xl font-bold text-text">{userName}</h2>
+          <p className="text-text-secondary mt-0.5">{roleLabel}</p>
+          {unitLabel && (
+            <p className="text-sm text-amber font-medium mt-1">{unitLabel}</p>
+          )}
         </div>
       </div>
 

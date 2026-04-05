@@ -29,7 +29,7 @@ export const SHEET_TABS = {
   ORDENES_TRABAJO: 'ORDENES_TRABAJO',
   COMBUSTIBLE: 'Combustible',
   VIAJES: 'Reporte_Viajes_Peña',
-  HOROMETROS: '04 Horómetros Diarios',
+  HOROMETROS: '04B Registro Horómetros',
   HISTORIAL_PM: '05 Historial PM',
   INVENTARIO: '12 Inventario Rep.',
   FLETES: 'Reporte_Fletes_Transporte',

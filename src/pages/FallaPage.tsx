@@ -84,21 +84,20 @@ export default function FallaPage() {
 
     try {
       await appendRow(SHEET_TABS.AVERIAS, [
-        new Date().toLocaleDateString(),
-        new Date().toLocaleTimeString(),
-        unidad,
-        userName,
-        ubicacion,
-        tipoFalla,
-        descripcion,
-        puedeMoverse ? 'Sí' : 'No',
-        clienteAfectado,
-        downtime,
-        'Nuevo',
-        '',
-        '',
-        '',
-        '',
+        new Date().toLocaleDateString(),                                                                          // FECHA
+        new Date().toLocaleTimeString(),                                                                          // HORA
+        unidad,                                                                                                   // UNIDAD
+        tipoFalla,                                                                                                // TIPO AVERÍA
+        descripcion,                                                                                              // DESCRIPCIÓN
+        priorityValue,                                                                                            // SEVERIDAD
+        userName,                                                                                                 // TÉCNICO
+        downtime,                                                                                                 // TIEMPO PARO (hrs)
+        '',                                                                                                       // COSTO ESTIMADO
+        'Nuevo',                                                                                                  // ESTADO
+        '',                                                                                                       // SOLUCIÓN
+        `Ubicación: ${ubicacion}. Cliente: ${clienteAfectado}. Puede moverse: ${puedeMoverse ? 'Sí' : 'No'}`,   // OBSERVACIONES
+        '',                                                                                                       // PROVEEDOR PIEZA
+        '',                                                                                                       // Foto_URL
       ]);
     } catch (err) {
       console.error('Sheets append failed (Averias):', err);

@@ -11,6 +11,20 @@ interface DiagramEntry {
 
 const EQUIPMENT_FILTERS = ['Todos', 'Komatsu', 'CAT', 'Doosan', 'Mack'];
 
+const BRAND_MAP: Record<string, string[]> = {
+  'Komatsu': ['D155', 'HM400', 'PC', 'WA', 'HD'],
+  'CAT': ['CAT', '740B', '336', '320', '980', '966', '140M', 'D8', 'D9', '3412'],
+  'Doosan': ['DX', 'DL'],
+  'Mack': ['MACK', 'Pinnacle', 'Granite', 'Anthem'],
+};
+
+function matchesBrand(diagramName: string, brand: string): boolean {
+  const prefixes = BRAND_MAP[brand];
+  if (!prefixes) return false;
+  const name = diagramName.toUpperCase();
+  return prefixes.some(p => name.includes(p.toUpperCase()));
+}
+
 export default function DiagramViewer() {
   const [query, setQuery] = useState('');
   const [selectedEquipo, setSelectedEquipo] = useState('Todos');
@@ -44,7 +58,7 @@ export default function DiagramViewer() {
   const filtered = diagrams.filter((d) => {
     const matchesQuery = !query.trim() || d.name.toLowerCase().includes(query.toLowerCase());
     const matchesEquipo =
-      selectedEquipo === 'Todos' || d.name.toLowerCase().includes(selectedEquipo.toLowerCase());
+      selectedEquipo === 'Todos' || matchesBrand(d.name, selectedEquipo);
     return matchesQuery && matchesEquipo;
   });
 

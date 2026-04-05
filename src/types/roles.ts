@@ -50,6 +50,7 @@ export const NAV_CONFIG: Record<AppRole, { visible: NavItem[]; overflow: NavItem
       { id: 'mas', label: 'Más', icon: 'MoreHorizontal', path: '' },
     ],
     overflow: [
+      { id: 'pm-order', label: 'Orden PM', icon: 'CalendarCheck', path: '/pm-order' },
       { id: 'manuales', label: 'Manuales', icon: 'BookOpen', path: '/manuals' },
       { id: 'diagramas', label: 'Diagramas', icon: 'FileImage', path: '/diagrams' },
       { id: 'pedidos', label: 'Pedidos', icon: 'ShoppingCart', path: '/pedidos' },
@@ -60,11 +61,12 @@ export const NAV_CONFIG: Record<AppRole, { visible: NavItem[]; overflow: NavItem
     visible: [
       { id: 'inicio', label: 'Inicio', icon: 'Home', path: '/coordinator' },
       { id: 'ordenes', label: 'Órdenes', icon: 'Wrench', path: '/workorders' },
-      { id: 'pm', label: 'PM', icon: 'Clock', path: '/pm' },
+      { id: 'pm-order', label: 'Orden PM', icon: 'CalendarCheck', path: '/pm-order' },
       { id: 'inventario', label: 'Inventario', icon: 'Package', path: '/inventory' },
       { id: 'mas', label: 'Más', icon: 'MoreHorizontal', path: '' },
     ],
     overflow: [
+      { id: 'pm', label: 'Programa PM', icon: 'Clock', path: '/pm' },
       { id: 'pedidos', label: 'Pedidos', icon: 'ShoppingCart', path: '/pedidos' },
       { id: 'alertas', label: 'Alertas', icon: 'AlertTriangle', path: '/alerts' },
     ],
