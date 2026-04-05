@@ -10,13 +10,10 @@ import SuccessToast from '../components/ui/SuccessToast';
 
 const MATERIAL_OPTIONS = ['Tierra', 'Roca', 'Grava', 'Mineral', 'Caliza', 'Otro'];
 
-type TripType = 'pena' | 'flete';
-
 export default function ViajePage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
 
-  const [tripType, setTripType] = useState<TripType>('pena');
   const [unidad, setUnidad] = useState('');
   const [rutaOrigen, setRutaOrigen] = useState('');
   const [rutaDestino, setRutaDestino] = useState('');
@@ -52,10 +49,8 @@ export default function ViajePage() {
     const kmCargadoNum = parseFloat(kmCargado) || 0;
     const kmVacioNum = parseFloat(kmVacio) || 0;
 
-    const targetTab = tripType === 'pena' ? SHEET_TABS.VIAJES : SHEET_TABS.FLETES;
-
     try {
-      await appendRow(targetTab, [
+      await appendRow(SHEET_TABS.FLETES, [
         String(Date.now()),
         mexicoDate(),
         mexicoTime(),
@@ -74,8 +69,7 @@ export default function ViajePage() {
       console.error('Sheets append failed (Viajes):', err);
     }
 
-    const label = tripType === 'pena' ? 'Viaje Peña' : 'Flete Transporte';
-    setToastMessage(`${label} registrado ✓`);
+    setToastMessage('Flete registrado ✓');
     setToastVisible(true);
   }
 
@@ -94,8 +88,8 @@ export default function ViajePage() {
 
       <ConfirmModal
         open={showConfirm}
-        title="Confirmar registro de viaje"
-        message={`¿Registrar viaje de ${rutaOrigen} → ${rutaDestino} para ${unidad || 'la unidad'}?`}
+        title="Confirmar registro de flete"
+        message={`¿Registrar flete de ${rutaOrigen} → ${rutaDestino} para ${unidad || 'la unidad'}?`}
         onConfirm={handleConfirm}
         onCancel={() => setShowConfirm(false)}
       />
@@ -109,38 +103,7 @@ export default function ViajePage() {
         >
           <ArrowLeft size={20} className="text-text" />
         </button>
-        <h1 className="text-xl font-bold text-text">Registro de Viaje</h1>
-      </div>
-
-      {/* Trip type toggle */}
-      <div className="bg-white rounded-xl p-3 shadow-sm border border-border mb-4">
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => setTripType('pena')}
-            className={`flex-1 rounded-xl py-3 text-sm font-semibold transition-colors ${
-              tripType === 'pena'
-                ? 'bg-amber text-white'
-                : 'bg-gray-100 text-text-secondary'
-            }`}
-          >
-            Viaje Peña
-          </button>
-          <button
-            type="button"
-            onClick={() => setTripType('flete')}
-            className={`flex-1 rounded-xl py-3 text-sm font-semibold transition-colors ${
-              tripType === 'flete'
-                ? 'bg-amber text-white'
-                : 'bg-gray-100 text-text-secondary'
-            }`}
-          >
-            Flete Transporte
-          </button>
-        </div>
-        <p className="text-xs text-text-secondary text-center mt-2">
-          {tripType === 'pena' ? 'Reporte_Viajes_Peña' : 'Reporte_Fletes_Transporte'}
-        </p>
+        <h1 className="text-xl font-bold text-text">Registro de Flete</h1>
       </div>
 
       {/* Form card */}
@@ -270,7 +233,7 @@ export default function ViajePage() {
         className="mt-4 w-full bg-amber text-white rounded-xl py-4 font-semibold text-lg disabled:opacity-40 disabled:cursor-not-allowed transition-opacity btn-press"
         style={{ minHeight: 52 }}
       >
-        Registrar Viaje
+        Registrar Flete
       </button>
     </div>
   );

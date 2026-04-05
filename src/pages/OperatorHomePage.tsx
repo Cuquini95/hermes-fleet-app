@@ -5,7 +5,6 @@ import {
   Camera,
   Fuel,
   Gauge,
-  MapPin,
   FileText,
   CheckCircle,
 } from 'lucide-react';
@@ -26,7 +25,6 @@ const ACTION_CARDS: ActionCard[] = [
   { label: 'Reportar Falla', icon: <Camera size={32} className="text-amber" />, path: '/falla' },
   { label: 'Diesel', icon: <Fuel size={32} className="text-amber" />, path: '/diesel' },
   { label: 'Horómetro', icon: <Gauge size={32} className="text-amber" />, path: '/horometro' },
-  { label: 'Viaje', icon: <MapPin size={32} className="text-amber" />, path: '/viaje' },
   { label: 'Mis Reportes', icon: <FileText size={32} className="text-amber" />, path: '/my-reports' },
 ];
 
