@@ -32,13 +32,6 @@ import WorkshopHomePage from './pages/WorkshopHomePage';
 import NeumaticosPage from './pages/NeumaticosPage';
 import PedidosPage from './pages/PedidosPage';
 
-function Placeholder({ label }: { label: string }) {
-  return (
-    <div className="text-center py-12" style={{ color: '#6B7280' }}>
-      {label} — Coming soon
-    </div>
-  );
-}
 
 function RootRedirect() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);

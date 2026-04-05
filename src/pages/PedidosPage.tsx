@@ -424,7 +424,7 @@ export default function PedidosPage() {
           )}
 
           {historial.map((row) => (
-            <PedidoRowCard key={row.id} row={row} isGerencia={isGerencia} />
+            <PedidoRowCard key={row.id} row={row} />
           ))}
 
           {!loadingHistorial && historial.length > 0 && (
@@ -684,7 +684,7 @@ function ManualPartForm({
 }
 
 // ── PedidoRowCard (Historial / Gerencia view) ────────────────────────────────
-function PedidoRowCard({ row, isGerencia }: { row: PedidoRow; isGerencia: boolean }) {
+function PedidoRowCard({ row }: { row: PedidoRow }) {
   const urgCfg = (URGENCIA_CONFIG as Record<string, { color: string; bg: string }>)[row.urgencia] ?? URGENCIA_CONFIG.Normal;
 
   const estadoStyle: Record<string, { color: string; bg: string }> = {

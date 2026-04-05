@@ -9,7 +9,6 @@ import {
   Ruler,
   Loader2,
 } from 'lucide-react';
-import { useAuthStore } from '../stores/auth-store';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
 import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
 import { mexicoDate } from '../lib/date-utils';
@@ -142,7 +141,6 @@ function nextSeq() { return String(_seq++); }
 // ════════════════════════════════════════════════════════════════════════════
 export default function NeumaticosPage() {
   const navigate = useNavigate();
-  const userName = useAuthStore((s) => s.userName);
 
   const [step, setStep]             = useState<Step>('equipo');
   const [selectedUnit, setSelected] = useState('');
