@@ -23,6 +23,30 @@ export async function readRange(tab: string): Promise<string[][]> {
   return data.data || [];
 }
 
+export async function updateCell(
+  tab: string,
+  searchColumn: number,
+  searchValue: string,
+  updateColumn: number,
+  updateValue: string
+): Promise<void> {
+  const response = await fetch(`${HERMES_API}/api/sheets/update`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      tab,
+      search_column: searchColumn,
+      search_value: searchValue,
+      update_column: updateColumn,
+      update_value: updateValue,
+    }),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Sheets update error ${response.status}: ${text}`);
+  }
+}
+
 export const SHEET_TABS = {
   INSPECCIONES: '14 Inspecciones',
   AVERIAS: 'Averías',

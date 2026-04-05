@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { readRange, appendRow, SHEET_TABS } from '../lib/sheets-api';
+import { readRange, appendRow, updateCell, SHEET_TABS } from '../lib/sheets-api';
 import { MOCK_WORKORDERS } from '../data/mock-workorders';
 import type { WorkOrder, StatusLogEntry, OTStatusField, OTEstado, OTPriority } from '../types/workorder';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
@@ -194,6 +194,7 @@ export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
     });
 
     try {
+      // 1. Write to status log (audit trail)
       await appendRow(SHEET_TABS.OT_STATUS_LOG, [
         timestamp,
         otId,
@@ -203,8 +204,24 @@ export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
         changedBy,
         role,
       ]);
+
+      // 2. Also update the ORDENES_TRABAJO sheet directly
+      // Column mapping: OT_ID=1, ESTADO=9, MECANICO=8, PRIORIDAD=7
+      const FIELD_TO_COLUMN: Record<string, number> = {
+        estado: 9,
+        mecanico_asignado: 8,
+        prioridad: 7,
+        observaciones: 15,
+      };
+      const col = FIELD_TO_COLUMN[field];
+      if (col !== undefined) {
+        try {
+          await updateCell(SHEET_TABS.ORDENES_TRABAJO, 1, otId, col, newValue);
+        } catch {
+          // Non-critical — the log is the source of truth
+        }
+      }
     } catch (err: unknown) {
-      // Revert on failure - refetch
       const message = err instanceof Error ? err.message : 'Error al guardar';
       set({ error: message });
     }
