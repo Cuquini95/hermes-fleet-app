@@ -118,30 +118,10 @@ export function printPMOrder(data: PrintPMOrderData): void {
 </body>
 </html>`;
 
-  // Use iframe to avoid popup blocker
-  const iframe = document.createElement('iframe');
-  iframe.style.position = 'fixed';
-  iframe.style.right = '0';
-  iframe.style.bottom = '0';
-  iframe.style.width = '0';
-  iframe.style.height = '0';
-  iframe.style.border = 'none';
-  document.body.appendChild(iframe);
-
-  const doc = iframe.contentDocument || iframe.contentWindow?.document;
-  if (doc) {
-    doc.open();
-    doc.write(html);
-    doc.close();
-
-    // Wait for content to render then print
-    setTimeout(() => {
-      iframe.contentWindow?.focus();
-      iframe.contentWindow?.print();
-      // Clean up after printing
-      setTimeout(() => {
-        document.body.removeChild(iframe);
-      }, 1000);
-    }, 500);
+  // Open print window — must be triggered by direct user click to avoid popup blocker
+  const printWindow = window.open('', '_blank');
+  if (printWindow) {
+    printWindow.document.write(html);
+    printWindow.document.close();
   }
 }

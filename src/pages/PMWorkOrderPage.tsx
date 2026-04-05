@@ -43,6 +43,7 @@ export default function PMWorkOrderPage() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [toastVisible, setToastVisible] = useState(false);
+  const [printData, setPrintData] = useState<Parameters<typeof printPMOrder>[0] | null>(null);
 
   const selectedEquipment = EQUIPMENT_CATALOG.find((eq) => eq.unit_id === unidad);
   const model = selectedEquipment?.model ?? '';
@@ -143,9 +144,9 @@ export default function PMWorkOrderPage() {
       console.error('Sheets append failed (PM History):', err);
     }
 
-    // Generate printable PDF
+    // Save print data so user can trigger PDF on click
     if (partsKit) {
-      printPMOrder({
+      setPrintData({
         otId,
         date,
         unidad,
@@ -391,16 +392,29 @@ export default function PMWorkOrderPage() {
       )}
 
       {/* Submit */}
-      <button
-        type="button"
-        onClick={handleSubmitIntent}
-        disabled={!canSubmit}
-        className="w-full bg-amber text-white rounded-xl py-4 font-semibold text-lg disabled:opacity-40 disabled:cursor-not-allowed transition-opacity flex items-center justify-center gap-2 btn-press"
-        style={{ minHeight: 52 }}
-      >
-        <Wrench size={20} />
-        Activar Orden de PM
-      </button>
+      {/* Submit or Print */}
+      {printData ? (
+        <button
+          type="button"
+          onClick={() => printPMOrder(printData)}
+          className="w-full bg-amber text-white rounded-xl py-4 font-semibold text-lg transition-opacity flex items-center justify-center gap-2 btn-press"
+          style={{ minHeight: 52 }}
+        >
+          <Wrench size={20} />
+          Imprimir Orden de PM
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={handleSubmitIntent}
+          disabled={!canSubmit}
+          className="w-full bg-amber text-white rounded-xl py-4 font-semibold text-lg disabled:opacity-40 disabled:cursor-not-allowed transition-opacity flex items-center justify-center gap-2 btn-press"
+          style={{ minHeight: 52 }}
+        >
+          <Wrench size={20} />
+          Activar Orden de PM
+        </button>
+      )}
     </div>
   );
 }

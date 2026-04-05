@@ -58,8 +58,7 @@ function getBorderColor(hrs: number): string {
 
 function getStatusPill(hrs: number): { label: string; cls: string } {
   if (hrs <= 0) return { label: 'Vencido', cls: 'bg-red-100 text-critical' };
-  if (hrs <= 50) return { label: 'Próximo', cls: 'bg-amber-100 text-amber' };
-  return { label: 'Pendiente', cls: 'bg-blue-100 text-blue-600' };
+  return { label: 'Próximo', cls: 'bg-amber-100 text-amber' };
 }
 
 function getBarColor(hrs: number): string {
@@ -112,8 +111,8 @@ export default function PMSchedulePage() {
           source: hasSheetData ? 'sheets' : 'catalog',
         };
       })
-        // Only show units within 50 hours of a PM (or overdue)
-        .filter((entry) => entry.hoursRemaining <= 50)
+        // Only show units within less than 50 hours of a PM (or overdue)
+        .filter((entry) => entry.hoursRemaining < 50)
         .sort((a, b) => a.hoursRemaining - b.hoursRemaining);
 
       setEntries(pmEntries);
