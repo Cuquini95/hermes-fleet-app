@@ -27,6 +27,7 @@ export const SHEET_TABS = {
   INSPECCIONES: '14 Inspecciones',
   AVERIAS: 'Averías',
   ORDENES_TRABAJO: 'ORDENES_TRABAJO',
+  OT_STATUS_LOG: 'OT_STATUS_LOG',
   COMBUSTIBLE: 'Combustible',
   VIAJES: 'Reporte_Viajes_Peña',
   HOROMETROS: '04B Registro Horómetros',

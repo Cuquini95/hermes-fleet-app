@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle } from 'lucide-react';
 import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
 import { isAnomalous } from '../data/fuel-benchmarks';
+import { mexicoDate, mexicoTime } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
 import { useAuthStore } from '../stores/auth-store';
 import ConfirmModal from '../components/ui/ConfirmModal';
@@ -59,8 +60,8 @@ export default function DieselPage() {
     try {
       await appendRow(SHEET_TABS.COMBUSTIBLE, [
         String(Date.now()),
-        new Date().toLocaleDateString(),
-        new Date().toLocaleTimeString(),
+        mexicoDate(),
+        mexicoTime(),
         unidad,
         userName,
         fuelType,

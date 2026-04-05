@@ -23,24 +23,13 @@ import PartsSearch from './components/mechanic/PartsSearch';
 import ManualSearch from './components/mechanic/ManualSearch';
 import DiagramViewer from './components/mechanic/DiagramViewer';
 import BriefingCard from './components/dashboard/BriefingCard';
-import { MOCK_WORKORDERS } from './data/mock-workorders';
-import OTCard from './components/ui/OTCard';
+import WorkOrdersPage from './pages/WorkOrdersPage';
+import WorkOrderDetailPage from './pages/WorkOrderDetailPage';
 
 function Placeholder({ label }: { label: string }) {
   return (
     <div className="text-center py-12" style={{ color: '#6B7280' }}>
       {label} — Coming soon
-    </div>
-  );
-}
-
-function WorkOrdersPage() {
-  return (
-    <div className="py-4">
-      <h2 className="font-semibold text-lg text-text mb-3">Órdenes de Trabajo</h2>
-      {MOCK_WORKORDERS.map((ot) => (
-        <OTCard key={ot.ot_id} workorder={ot} />
-      ))}
     </div>
   );
 }
@@ -73,6 +62,7 @@ export default function App() {
         <Route path="/dvir-compliance" element={<DVIRPage />} />
         <Route path="/fleet" element={<FleetPage />} />
         <Route path="/falla" element={<FallaPage />} />
+        <Route path="/workorders/:otId" element={<WorkOrderDetailPage />} />
         <Route path="/workorders" element={<WorkOrdersPage />} />
         <Route path="/parts" element={<PartsSearch />} />
         <Route path="/manuals" element={<ManualSearch />} />

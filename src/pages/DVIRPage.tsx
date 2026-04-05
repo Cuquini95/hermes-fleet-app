@@ -5,7 +5,9 @@ import type { DVIRCheck, CheckStatus } from '../types/dvir';
 import { DVIR_SYSTEMS } from '../data/dvir-systems';
 import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
 import { generateOTId } from '../lib/ot-generator';
+import { mexicoDate, mexicoTime, mexicoDateCompact, mexicoTimeCompact } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
+import { tryUploadPhotos } from '../lib/photo-upload-safe';
 import { useAuthStore } from '../stores/auth-store';
 import SystemCheckRow from '../components/dvir/SystemCheckRow';
 import DVIRResultBanner from '../components/dvir/DVIRResultBanner';
@@ -101,11 +103,15 @@ export default function DVIRPage() {
     }
 
     const now = new Date();
-    const date = now.toLocaleDateString();
-    const time = now.toLocaleTimeString();
-    const inspId = `INS-${now.toISOString().slice(0, 10).replace(/-/g, '')}-${now.toTimeString().slice(0, 5).replace(':', '')}`;
+    const date = mexicoDate(now);
+    const time = mexicoTime(now);
+    const inspId = `INS-${mexicoDateCompact(now)}-${mexicoTimeCompact(now)}`;
     const selectedEquipment = EQUIPMENT_CATALOG.find((eq) => eq.unit_id === unit_id);
     const modelo = selectedEquipment?.model ?? '';
+
+    const allPhotos = checks.flatMap((c) => c.photos.map((p) => p.file));
+    const photoUrls = await tryUploadPhotos(allPhotos, 'dvir-photos');
+    const photoUrlStr = photoUrls.join(', ');
 
     try {
       await appendRow(SHEET_TABS.INSPECCIONES, [
@@ -122,7 +128,7 @@ export default function DVIRPage() {
         `${okCount}/12`,                       // SCORE TOTAL
         result,                                // RESULTADO
         observations,                          // DEFECTOS ENCONTRADOS
-        '',                                    // FOTO_URL
+        photoUrlStr,                           // FOTO_URL
         otId || '',                            // ACCIÓN REQUERIDA
         otId ? 'Pendiente' : '',               // ESTADO ACCIÓN
         userName,                              // FIRMA_OPERADOR

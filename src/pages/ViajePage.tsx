@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
+import { mexicoDate, mexicoTime } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
 import { useAuthStore } from '../stores/auth-store';
 import ConfirmModal from '../components/ui/ConfirmModal';
@@ -51,8 +52,8 @@ export default function ViajePage() {
     try {
       await appendRow(SHEET_TABS.VIAJES, [
         String(Date.now()),
-        new Date().toLocaleDateString(),
-        new Date().toLocaleTimeString(),
+        mexicoDate(),
+        mexicoTime(),
         unidad,
         userName,
         rutaOrigen,

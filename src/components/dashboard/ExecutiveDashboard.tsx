@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Activity, AlertTriangle, Fuel, Bell } from 'lucide-react';
+import { Activity, AlertTriangle, Fuel, Bell, RefreshCw } from 'lucide-react';
 import { EQUIPMENT_CATALOG } from '../../data/equipment-catalog';
-import { MOCK_WORKORDERS } from '../../data/mock-workorders';
+import { useDashboardData } from '../../hooks/useDashboardData';
 import KPICard from '../ui/KPICard';
 import FleetGrid from './FleetGrid';
 import AvailabilityChart from './AvailabilityChart';
@@ -16,15 +16,14 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'pedidos', label: 'Pedidos' },
 ];
 
-const criticasCount = MOCK_WORKORDERS.filter((ot) => ot.prioridad === 'CRITICA').length;
-
 export default function ExecutiveDashboard() {
   const [activeTab, setActiveTab] = useState<Tab>('general');
+  const data = useDashboardData();
 
   return (
-    <div className="flex flex-col py-4">
+    <div className={`flex flex-col py-4 transition-opacity ${data.loading ? 'opacity-60' : 'opacity-100'}`}>
       {/* Tab pills */}
-      <div className="flex gap-2 mb-5">
+      <div className="flex items-center gap-2 mb-5">
         {TABS.map((tab) => (
           <button
             key={tab.id}
@@ -39,6 +38,14 @@ export default function ExecutiveDashboard() {
             {tab.label}
           </button>
         ))}
+        <button
+          onClick={data.refresh}
+          disabled={data.loading}
+          className="ml-auto p-1.5 rounded-full text-text-secondary hover:text-text hover:bg-card border border-transparent hover:border-border transition-colors disabled:opacity-40"
+          aria-label="Actualizar datos"
+        >
+          <RefreshCw size={16} className={data.loading ? 'animate-spin' : ''} />
+        </button>
       </div>
 
       {/* General tab */}
@@ -48,25 +55,25 @@ export default function ExecutiveDashboard() {
           <div className="grid grid-cols-2 gap-3">
             <KPICard
               icon={<Activity size={20} />}
-              value="88%"
+              value={data.loading ? '--' : `${data.availability}%`}
               label="Disponibilidad"
               color="#16A34A"
             />
             <KPICard
               icon={<AlertTriangle size={20} />}
-              value={criticasCount}
+              value={data.loading ? '--' : data.criticalOTs}
               label="OTs Críticas"
               color="#DC2626"
             />
             <KPICard
               icon={<Fuel size={20} />}
-              value="1.02 L/hr"
+              value={data.loading ? '--' : data.avgConsumption}
               label="Consumo Promedio"
               color="#E8961A"
             />
             <KPICard
               icon={<Bell size={20} />}
-              value="4"
+              value={data.loading ? '--' : String(data.alertsToday)}
               label="Alertas Hoy"
               color="#F59E0B"
             />

@@ -5,6 +5,7 @@ import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
 import { getNextPM } from '../data/pm-rules';
 import { getCumulativePMParts, getAvailablePMLevels, type PMPart } from '../data/pm-parts-catalog';
 import { generateOTId } from '../lib/ot-generator';
+import { mexicoDate } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
 import { useAuthStore } from '../stores/auth-store';
 import ConfirmModal from '../components/ui/ConfirmModal';
@@ -92,8 +93,7 @@ export default function PMWorkOrderPage() {
     setShowConfirm(false);
 
     const otId = generateOTId();
-    const now = new Date();
-    const date = now.toLocaleDateString();
+    const date = mexicoDate();
     const partsListStr = partsKit
       ? partsKit.parts.map((p) => `${p.partNumber} x${p.quantity}`).join(', ')
       : '';

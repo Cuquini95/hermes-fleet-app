@@ -1,4 +1,4 @@
-import { Wrench, Clock } from 'lucide-react';
+import { Wrench, Clock, ChevronRight } from 'lucide-react';
 import type { WorkOrder } from '../../types/workorder';
 import { PRIORITY_CONFIG, ESTADO_CONFIG } from '../../types/workorder';
 import { getEquipmentById } from '../../data/equipment-catalog';
@@ -67,7 +67,7 @@ export default function OTCard({ workorder, onClick }: OTCardProps) {
         {/* Row 3: descripcion truncated */}
         <p className="text-sm text-text-secondary truncate mb-2">{workorder.descripcion}</p>
 
-        {/* Row 4: mechanic + time */}
+        {/* Row 4: mechanic + time + chevron */}
         <div className="flex items-center justify-between text-xs text-text-secondary">
           <div className="flex items-center gap-1">
             <Wrench size={12} />
@@ -80,6 +80,7 @@ export default function OTCard({ workorder, onClick }: OTCardProps) {
           <div className="flex items-center gap-1">
             <Clock size={12} />
             <span>{timeSince(workorder.fecha)}</span>
+            {onClick && <ChevronRight size={14} className="text-text-secondary ml-1" />}
           </div>
         </div>
       </div>

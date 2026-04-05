@@ -8,7 +8,12 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 
-const data = [
+interface ChartPoint {
+  day: string;
+  pct: number;
+}
+
+const DEFAULT_DATA: ChartPoint[] = [
   { day: 'Lun', pct: 88 },
   { day: 'Mar', pct: 91 },
   { day: 'Mié', pct: 88 },
@@ -18,7 +23,11 @@ const data = [
   { day: 'Dom', pct: 88 },
 ];
 
-export default function AvailabilityChart() {
+interface AvailabilityChartProps {
+  data?: ChartPoint[];
+}
+
+export default function AvailabilityChart({ data = DEFAULT_DATA }: AvailabilityChartProps) {
   return (
     <div className="bg-card rounded-xl shadow-sm p-4 border border-border">
       <h3 className="font-semibold text-text mb-4">

@@ -1,6 +1,26 @@
 export type OTPriority = 'CRITICA' | 'ALTA' | 'MEDIA' | 'BAJA';
 export type OTEstado = 'Nuevo' | 'Asignado' | 'En Proceso' | 'Esperando Pieza' | 'Completado' | 'Cerrado';
 
+export const OT_STATUS_FLOW: OTEstado[] = ['Nuevo', 'Asignado', 'En Proceso', 'Esperando Pieza', 'Completado', 'Cerrado'];
+
+export type OTStatusField = 'estado' | 'mecanico_asignado' | 'progreso' | 'observaciones' | 'costo_estimado' | 'prioridad';
+
+export interface StatusLogEntry {
+  timestamp: string;
+  ot_id: string;
+  field: OTStatusField;
+  old_value: string;
+  new_value: string;
+  changed_by: string;
+  role: string;
+}
+
+export function getNextStatuses(current: OTEstado): OTEstado[] {
+  const idx = OT_STATUS_FLOW.indexOf(current);
+  if (idx < 0) return OT_STATUS_FLOW;
+  return OT_STATUS_FLOW.slice(idx);
+}
+
 export interface WorkOrder {
   ot_id: string;
   fecha: string;
@@ -17,6 +37,7 @@ export interface WorkOrder {
   costo_estimado: number;
   fecha_cierre: string;
   observaciones: string;
+  progreso: number;
 }
 
 export const PRIORITY_CONFIG: Record<OTPriority, { color: string; bg: string; label: string; time: string }> = {

@@ -17,6 +17,7 @@ export const MOCK_WORKORDERS: WorkOrder[] = [
     costo_estimado: 850,
     fecha_cierre: '',
     observaciones: 'Unidad detenida en taller. Se requiere reemplazo de sello principal.',
+    progreso: 0,
   },
   {
     ot_id: 'OT-20260404-0915',
@@ -34,6 +35,7 @@ export const MOCK_WORKORDERS: WorkOrder[] = [
     costo_estimado: 1200,
     fecha_cierre: '',
     observaciones: 'Pendiente de asignación a mecánico disponible.',
+    progreso: 0,
   },
   {
     ot_id: 'OT-20260403-1645',
@@ -51,6 +53,7 @@ export const MOCK_WORKORDERS: WorkOrder[] = [
     costo_estimado: 320,
     fecha_cierre: '',
     observaciones: 'Arnés eléctrico solicitado a proveedor. ETA: 2-3 días.',
+    progreso: 0,
   },
   {
     ot_id: 'OT-20260403-1030',
@@ -68,6 +71,7 @@ export const MOCK_WORKORDERS: WorkOrder[] = [
     costo_estimado: 2400,
     fecha_cierre: '',
     observaciones: 'Se programa inspección para el 2026-04-05 por la mañana.',
+    progreso: 0,
   },
   {
     ot_id: 'OT-20260402-0800',
@@ -85,5 +89,6 @@ export const MOCK_WORKORDERS: WorkOrder[] = [
     costo_estimado: 180,
     fecha_cierre: '2026-04-03',
     observaciones: 'Reparación completada. Soldadura inspeccionada y aprobada. Unidad lista para retorno a operaciones pendiente revisión final.',
+    progreso: 100,
   },
 ];

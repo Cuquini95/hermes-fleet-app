@@ -1,5 +1,10 @@
 import { supabase } from './supabase';
 
+export function isSupabaseConfigured(): boolean {
+  const url = import.meta.env.VITE_SUPABASE_URL;
+  return !!url && url !== 'https://placeholder.supabase.co' && url !== '';
+}
+
 export async function compressImage(file: File, maxWidth = 1200): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const canvas = document.createElement('canvas');
@@ -22,9 +27,9 @@ export async function compressImage(file: File, maxWidth = 1200): Promise<Blob> 
   });
 }
 
-export async function uploadPhoto(file: File, bucket: string): Promise<string> {
+export async function uploadPhoto(file: File, bucket: string, path?: string): Promise<string> {
   const compressed = await compressImage(file);
-  const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`;
+  const fileName = path ? `${path}.jpg` : `${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`;
   const { data, error } = await supabase.storage.from(bucket).upload(fileName, compressed, {
     contentType: 'image/jpeg',
   });
