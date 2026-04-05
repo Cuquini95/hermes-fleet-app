@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
-import { Bell, LogOut } from 'lucide-react';
+import { Bell, LogOut, ShoppingCart } from 'lucide-react';
 import { useAuthStore } from '../../stores/auth-store';
+import { useCartStore } from '../../stores/cart-store';
 import { ROLE_LABELS } from '../../types/roles';
 
 export default function Header() {
@@ -8,14 +9,13 @@ export default function Header() {
   const userName = useAuthStore((s) => s.userName);
   const role = useAuthStore((s) => s.role);
   const logout = useAuthStore((s) => s.logout);
+  const cartCount = useCartStore((s) => s.items.length);
+
+  const canSeeCart = role === 'jefe_taller' || role === 'gerencia';
 
   const handleLogout = () => {
     logout();
     navigate('/login');
-  };
-
-  const handleBell = () => {
-    navigate('/alerts');
   };
 
   return (
@@ -39,10 +39,28 @@ export default function Header() {
         </div>
       </div>
 
-      {/* Right: bell + logout */}
+      {/* Right: cart (JT only) + bell + logout */}
       <div className="flex items-center gap-4">
+        {canSeeCart && (
+          <button
+            onClick={() => navigate('/pedidos')}
+            className="relative text-white/80 hover:text-white transition-colors"
+            aria-label="Pedidos"
+          >
+            <ShoppingCart size={22} />
+            {cartCount > 0 && (
+              <span
+                className="absolute -top-1 -right-1 flex items-center justify-center rounded-full text-white font-bold"
+                style={{ width: 16, height: 16, fontSize: 9, backgroundColor: '#F59E0B' }}
+              >
+                {cartCount > 9 ? '9+' : cartCount}
+              </span>
+            )}
+          </button>
+        )}
+
         <button
-          onClick={handleBell}
+          onClick={() => navigate('/alerts')}
           className="relative text-white/80 hover:text-white transition-colors"
           aria-label="Alertas"
         >

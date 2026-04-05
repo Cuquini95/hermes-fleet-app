@@ -30,6 +30,7 @@ import SupervisorHomePage from './pages/SupervisorHomePage';
 import CoordinatorHomePage from './pages/CoordinatorHomePage';
 import WorkshopHomePage from './pages/WorkshopHomePage';
 import NeumaticosPage from './pages/NeumaticosPage';
+import PedidosPage from './pages/PedidosPage';
 
 function Placeholder({ label }: { label: string }) {
   return (
@@ -76,7 +77,7 @@ export default function App() {
         <Route path="/pm" element={<PMSchedulePage />} />
         <Route path="/pm-order" element={<PMWorkOrderPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
-        <Route path="/pedidos" element={<Placeholder label="Pedidos" />} />
+        <Route path="/pedidos" element={<PedidosPage />} />
         <Route path="/briefing" element={<BriefingCard />} />
         <Route path="/diesel" element={<DieselPage />} />
         <Route path="/horometro" element={<HorometroPage />} />
