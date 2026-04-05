@@ -1,0 +1,5 @@
+{
+  "rewrites": [
+    { "source": "/hermes-api/:path*", "destination": "http://5.78.204.80:8000/:path*" }
+  ]
+}

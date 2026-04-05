@@ -1,4 +1,8 @@
-const HERMES_BASE = import.meta.env.VITE_HERMES_API_URL || 'http://5.78.204.80:8000';
+// In production (Vercel), use the proxy path to avoid mixed-content HTTPS→HTTP block.
+// In dev, call VPS directly.
+const HERMES_BASE = import.meta.env.DEV
+  ? 'http://5.78.204.80:8000'
+  : '/hermes-api';
 
 async function hermesPost<T>(endpoint: string, body: Record<string, unknown>): Promise<T> {
   const response = await fetch(`${HERMES_BASE}${endpoint}`, {
