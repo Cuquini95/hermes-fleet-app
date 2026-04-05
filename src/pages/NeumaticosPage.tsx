@@ -37,24 +37,24 @@ import { mexicoDate } from '../lib/date-utils';
 
 // ── Positions by equipment type ──────────────────────────────────────────────
 // Camión Articulado (CAT 740B, HM400-3): 6 llantas
-//   FL FR  RL1(dual) RL2(dual)  RR1(dual) RR2(dual) — single front, dual rear
+//   I1 D2 — Delanteras
+//   I3 D4 — Trasera eje 2
+//   I5 D6 — Trasera eje 3
 // Camión Pesado Mack GR84B 8x4: 12 llantas
-//   FL FR  RL1 RL2  RL-INT RL-EXT  RR1 RR2  RR-INT RR-EXT  + 2 extras medianos
+//   I1 D2 — Delanteras
+//   I3 D4 — Eje 2 simples
+//   DE5 DI6 — Eje 3 duales derecha (Exterior / Interior)
+//   LI7 LE8 — Eje 3 duales izquierda (Interior / Exterior)
+//   DE9 DI10 — Eje 4 duales derecha
+//   LI11 LE12 — Eje 4 duales izquierda
+// Cargador DL420A: 4 llantas
+//   I1 D2 — Delanteras
+//   I3 D4 — Traseras
 const POSITIONS_BY_TYPE: Record<string, string[]> = {
-  'Camión Articulado': [
-    'FL', 'FR',                     // Delanteras (2)
-    'RL-EXT', 'RL-INT',             // Trasera Izq (2 duales)
-    'RR-EXT', 'RR-INT',             // Trasera Der (2 duales)
-  ],                                 // Total: 6
-  Cargador: ['FL', 'FR', 'RL', 'RR'],
-  'Camión Pesado': [
-    'FL', 'FR',                     // Eje Delantero (2)
-    'RL1', 'RL2',                   // Eje Medio Izq (2 duales)
-    'RR1', 'RR2',                   // Eje Medio Der (2 duales)
-    'RL-INT', 'RL-EXT',             // Eje Trasero Izq (2 duales)
-    'RR-INT', 'RR-EXT',             // Eje Trasero Der (2 duales)
-  ],                                 // Total: 12
-  default: ['FL', 'FR', 'RL', 'RR'],
+  'Camión Articulado': ['I1', 'D2', 'I3', 'D4', 'I5', 'D6'],
+  Cargador:            ['I1', 'D2', 'I3', 'D4'],
+  'Camión Pesado':     ['I1', 'D2', 'I3', 'D4', 'DE5', 'DI6', 'LI7', 'LE8', 'DE9', 'DI10', 'LI11', 'LE12'],
+  default:             ['I1', 'D2', 'I3', 'D4'],
 };
 
 // ── Recommended PSI by type + position ──────────────────────────────────────
