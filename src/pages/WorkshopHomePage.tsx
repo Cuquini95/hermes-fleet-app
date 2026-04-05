@@ -10,6 +10,7 @@ import {
   ClipboardList,
   Users,
   PackageSearch,
+  Disc3,
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
@@ -31,6 +32,7 @@ const ACTION_CARDS: ActionCard[] = [
   { label: 'Orden PM', icon: <CalendarCheck size={32} className="text-amber" />, path: '/pm-order' },
   { label: 'Manuales', icon: <BookOpen size={32} className="text-amber" />, path: '/manuals' },
   { label: 'Diagramas', icon: <FileImage size={32} className="text-amber" />, path: '/diagrams' },
+  { label: 'Neumáticos', icon: <Disc3 size={32} className="text-amber" />, path: '/neumaticos' },
 ];
 
 export default function WorkshopHomePage() {

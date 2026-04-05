@@ -29,6 +29,7 @@ import WorkOrderDetailPage from './pages/WorkOrderDetailPage';
 import SupervisorHomePage from './pages/SupervisorHomePage';
 import CoordinatorHomePage from './pages/CoordinatorHomePage';
 import WorkshopHomePage from './pages/WorkshopHomePage';
+import NeumaticosPage from './pages/NeumaticosPage';
 
 function Placeholder({ label }: { label: string }) {
   return (
@@ -84,6 +85,7 @@ export default function App() {
         <Route path="/viajes-pena" element={<ViajesPenaPage />} />
         <Route path="/perfil" element={<PerfilPage />} />
         <Route path="/my-reports" element={<MyReportsPage />} />
+        <Route path="/neumaticos" element={<NeumaticosPage />} />
       </Route>
 
       <Route path="*" element={<RootRedirect />} />

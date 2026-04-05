@@ -62,4 +62,5 @@ export const SHEET_TABS = {
   INCIDENTES: 'Incidentes',
   TURNOS: 'Turnos',
   COTIZACIONES: 'Cotizaciones_Pendientes',
+  NEUMATICOS: '13 Neumáticos',
 } as const;

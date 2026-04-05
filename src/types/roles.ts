@@ -54,7 +54,7 @@ export const NAV_CONFIG: Record<AppRole, { visible: NavItem[]; overflow: NavItem
       { id: 'manuales', label: 'Manuales', icon: 'BookOpen', path: '/manuals' },
       { id: 'diagramas', label: 'Diagramas', icon: 'FileImage', path: '/diagrams' },
       { id: 'pedidos', label: 'Pedidos', icon: 'ShoppingCart', path: '/pedidos' },
-      { id: 'alertas', label: 'Alertas', icon: 'AlertTriangle', path: '/alerts' },
+      { id: 'neumaticos', label: 'Neumáticos', icon: 'Disc3', path: '/neumaticos' },
     ],
   },
   coordinador: {
