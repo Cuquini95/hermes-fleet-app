@@ -161,24 +161,24 @@ export default function HermesChat() {
             responseText = formatPhotoAnalysis(MOCK_PHOTO_ANALYSIS);
           }
         } else if (isPartNumber(text)) {
-          // Route parts through AI — it has all workshop manuals and catalogs
+          // Fast JSON catalog search first, then AI for deeper analysis
           try {
-            const result = await diagnose({
-              equipo: selectedUnit !== 'General' ? selectedUnit : 'todos',
-              sintoma: `BÚSQUEDA DE PARTE: ${text}. Busca en los catálogos de partes. Devuelve: número de parte, descripción, equipo compatible, sección del catálogo, y alternativas si existen.`,
-            });
-            responseText = formatDiagnose(result, selectedUnit);
-          } catch {
-            // Fallback to direct parts search
-            try {
-              const results = await searchParts(
-                text,
-                selectedUnit !== 'General' ? selectedUnit : undefined
-              );
+            const results = await searchParts(
+              text,
+              selectedUnit !== 'General' ? selectedUnit : undefined
+            );
+            if (results.length > 0) {
               responseText = formatSearchParts(results, text);
-            } catch {
-              responseText = formatSearchParts([], text);
+            } else {
+              // No catalog match — ask AI for help
+              const result = await diagnose({
+                equipo: selectedUnit !== 'General' ? selectedUnit : 'todos',
+                sintoma: `BÚSQUEDA DE PARTE: ${text}. No se encontró en el catálogo JSON. Busca en tu conocimiento de manuales técnicos. Devuelve: número de parte, descripción, equipo compatible, y alternativas.`,
+              });
+              responseText = formatDiagnose(result, selectedUnit);
             }
+          } catch {
+            responseText = `📦 **Búsqueda: '${text}'**\n\nNo pude conectar con el servidor. Verifica tu conexión e intenta de nuevo.`;
           }
         } else if (isManualQuery(text)) {
           try {

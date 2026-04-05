@@ -1,57 +1,73 @@
-import { useState } from 'react';
-import { Search, X } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Search, FileText, ExternalLink } from 'lucide-react';
+
+const HERMES_API = import.meta.env.DEV
+  ? 'http://5.78.204.80:8000'
+  : '/hermes-api';
 
 interface DiagramEntry {
-  id: string;
-  title: string;
-  pages: number;
+  filename: string;
+  name: string;
+  url: string;
 }
-
-const MOCK_DIAGRAMS: DiagramEntry[] = [
-  { id: 'd1', title: 'D155AX-6 — Sistema Hidráulico', pages: 48 },
-  { id: 'd2', title: 'HM400-3 — Motor SAA6D140E', pages: 62 },
-  { id: 'd3', title: 'CAT 740B — Transmisión y Diferencial', pages: 35 },
-  { id: 'd4', title: 'Doosan DX340LC — Sistema Eléctrico', pages: 54 },
-  { id: 'd5', title: 'Mack GR84B — Circuito de Frenos', pages: 29 },
-  { id: 'd6', title: 'D65EX-16 — Tren de Rodaje', pages: 41 },
-  { id: 'd7', title: 'Doosan DL420A — Sistema de Enfriamiento', pages: 33 },
-];
 
 const EQUIPMENT_FILTERS = ['Todos', 'Komatsu', 'CAT', 'Doosan', 'Mack'];
 
 export default function DiagramViewer() {
   const [query, setQuery] = useState('');
   const [selectedEquipo, setSelectedEquipo] = useState('Todos');
-  const [modalOpen, setModalOpen] = useState(false);
-  const [selectedDiagram, setSelectedDiagram] = useState<DiagramEntry | null>(null);
+  const [diagrams, setDiagrams] = useState<DiagramEntry[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const filtered = MOCK_DIAGRAMS.filter((d) => {
-    const matchesQuery = !query.trim() || d.title.toLowerCase().includes(query.toLowerCase());
+  useEffect(() => {
+    async function loadDiagrams() {
+      try {
+        const res = await fetch(`${HERMES_API}/diagrams/list`);
+        if (res.ok) {
+          const data = await res.json();
+          setDiagrams(data);
+        }
+      } catch {
+        // Fallback mock data if VPS unreachable
+        setDiagrams([
+          { filename: 'D155AX6_Diagramas.pdf', name: 'D155AX6', url: '/diagrams/file/D155AX6_Diagramas.pdf' },
+          { filename: 'HM400-3_Diagramas.pdf', name: 'HM400-3', url: '/diagrams/file/HM400-3_Diagramas.pdf' },
+          { filename: 'DX340LC_Diagramas.pdf', name: 'DX340LC', url: '/diagrams/file/DX340LC_Diagramas.pdf' },
+          { filename: 'DX225LCA_Diagramas.pdf', name: 'DX225LCA', url: '/diagrams/file/DX225LCA_Diagramas.pdf' },
+          { filename: 'DL420A_Diagramas.pdf', name: 'DL420A', url: '/diagrams/file/DL420A_Diagramas.pdf' },
+          { filename: 'MACK_GR84B_Diagramas.pdf', name: 'MACK GR84B', url: '/diagrams/file/MACK_GR84B_Diagramas.pdf' },
+        ]);
+      }
+      setLoading(false);
+    }
+    loadDiagrams();
+  }, []);
+
+  const filtered = diagrams.filter((d) => {
+    const matchesQuery = !query.trim() || d.name.toLowerCase().includes(query.toLowerCase());
     const matchesEquipo =
-      selectedEquipo === 'Todos' || d.title.toLowerCase().includes(selectedEquipo.toLowerCase());
+      selectedEquipo === 'Todos' || d.name.toLowerCase().includes(selectedEquipo.toLowerCase());
     return matchesQuery && matchesEquipo;
   });
 
-  function openDiagram(diagram: DiagramEntry) {
-    setSelectedDiagram(diagram);
-    setModalOpen(true);
+  function openPDF(diagram: DiagramEntry) {
+    const pdfUrl = `${HERMES_API}${diagram.url}`;
+    window.open(pdfUrl, '_blank');
   }
 
   return (
     <div className="flex flex-col py-4">
-      {/* Search bar */}
       <div className="relative mb-3">
         <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-secondary" />
         <input
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Buscar diagrama por equipo o sistema..."
+          placeholder="Buscar diagrama por equipo..."
           className="w-full bg-white rounded-xl border-2 border-border focus:border-amber outline-none pl-11 pr-4 py-4 text-sm text-text placeholder:text-text-secondary"
         />
       </div>
 
-      {/* Equipment filter pills */}
       <div className="flex gap-2 overflow-x-auto pb-2 mb-4 scrollbar-none">
         {EQUIPMENT_FILTERS.map((filter) => (
           <button
@@ -68,73 +84,38 @@ export default function DiagramViewer() {
         ))}
       </div>
 
-      {/* Results */}
+      {loading && (
+        <p className="text-center text-text-secondary text-sm py-8">Cargando diagramas...</p>
+      )}
+
       {filtered.map((diagram) => (
         <div
-          key={diagram.id}
+          key={diagram.filename}
           className="bg-card rounded-xl shadow-sm border border-border p-4 mb-3 flex items-center justify-between gap-3"
         >
-          <div>
-            <p className="font-semibold text-text text-sm">{diagram.title}</p>
-            <p className="text-xs text-text-secondary mt-0.5">{diagram.pages} páginas</p>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#FEF3C7' }}>
+              <FileText size={20} style={{ color: '#E8961A' }} />
+            </div>
+            <div>
+              <p className="font-semibold text-text text-sm">{diagram.name} — Diagramas</p>
+              <p className="text-xs text-text-secondary mt-0.5">PDF técnico</p>
+            </div>
           </div>
           <button
-            onClick={() => openDiagram(diagram)}
-            className="flex-shrink-0 bg-amber text-white rounded-lg px-3 py-2 text-xs font-medium whitespace-nowrap hover:opacity-90 transition-opacity"
+            onClick={() => openPDF(diagram)}
+            className="flex-shrink-0 bg-amber text-white rounded-lg px-3 py-2 text-xs font-medium whitespace-nowrap hover:opacity-90 transition-opacity flex items-center gap-1"
           >
-            Ver Diagrama →
+            <ExternalLink size={14} />
+            Abrir PDF
           </button>
         </div>
       ))}
 
-      {filtered.length === 0 && (
+      {!loading && filtered.length === 0 && (
         <p className="text-center text-text-secondary text-sm py-8">
           No se encontraron diagramas
         </p>
-      )}
-
-      {/* Modal */}
-      {modalOpen && selectedDiagram && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
-          onClick={() => setModalOpen(false)}
-        >
-          <div
-            className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start justify-between mb-4">
-              <h3 className="font-semibold text-text text-base leading-tight pr-2">
-                Diagrama PDF
-              </h3>
-              <button
-                onClick={() => setModalOpen(false)}
-                className="text-text-secondary hover:text-text transition-colors flex-shrink-0"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <p className="text-sm text-text-secondary mb-2">{selectedDiagram.title}</p>
-            <div
-              className="bg-cream rounded-xl p-4 text-center"
-              style={{ backgroundColor: '#F5F0E8' }}
-            >
-              <p className="text-sm font-medium text-text-secondary">
-                En fase de integración con VPS
-              </p>
-              <p className="text-xs text-text-secondary mt-1">
-                Los PDFs estarán disponibles cuando el servidor Hermes esté conectado
-              </p>
-            </div>
-            <button
-              onClick={() => setModalOpen(false)}
-              className="mt-4 w-full border-2 border-border text-text-secondary rounded-xl py-2.5 text-sm font-medium hover:border-amber hover:text-amber transition-colors"
-            >
-              Cerrar
-            </button>
-          </div>
-        </div>
       )}
     </div>
   );
