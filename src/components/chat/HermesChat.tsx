@@ -161,14 +161,24 @@ export default function HermesChat() {
             responseText = formatPhotoAnalysis(MOCK_PHOTO_ANALYSIS);
           }
         } else if (isPartNumber(text)) {
+          // Route parts through AI — it has all workshop manuals and catalogs
           try {
-            const results = await searchParts(
-              text,
-              selectedUnit !== 'General' ? selectedUnit : undefined
-            );
-            responseText = formatSearchParts(results, text);
+            const result = await diagnose({
+              equipo: selectedUnit !== 'General' ? selectedUnit : 'todos',
+              sintoma: `BÚSQUEDA DE PARTE: ${text}. Busca en los catálogos de partes. Devuelve: número de parte, descripción, equipo compatible, sección del catálogo, y alternativas si existen.`,
+            });
+            responseText = formatDiagnose(result, selectedUnit);
           } catch {
-            responseText = formatSearchParts([], text);
+            // Fallback to direct parts search
+            try {
+              const results = await searchParts(
+                text,
+                selectedUnit !== 'General' ? selectedUnit : undefined
+              );
+              responseText = formatSearchParts(results, text);
+            } catch {
+              responseText = formatSearchParts([], text);
+            }
           }
         } else if (isManualQuery(text)) {
           try {
