@@ -17,7 +17,7 @@ const FIELD_LABELS: Record<OTStatusField, string> = {
 };
 
 function canEditField(role: string | null, field: OTStatusField): boolean {
-  if (role === 'jefe_taller' || role === 'coordinador') {
+  if (role === 'jefe_taller' || role === 'coordinador' || role === 'gerencia' || role === 'supervisor') {
     return ['estado', 'mecanico_asignado', 'costo_estimado', 'progreso', 'observaciones', 'prioridad'].includes(field);
   }
   if (role === 'mecanico') {
@@ -143,7 +143,7 @@ export default function WorkOrderDetailPage() {
   }
 
   const priorityConfig = PRIORITY_CONFIG[wo.prioridad];
-  const canEdit = role === 'jefe_taller' || role === 'coordinador' || role === 'mecanico';
+  const canEdit = role === 'jefe_taller' || role === 'coordinador' || role === 'mecanico' || role === 'gerencia' || role === 'supervisor';
   const nextStatuses = getNextStatuses(wo.estado);
 
   return (
