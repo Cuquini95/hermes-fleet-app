@@ -8,6 +8,7 @@ import { generateOTId } from '../lib/ot-generator';
 import { mexicoDate } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
 import { useAuthStore } from '../stores/auth-store';
+import { printPMOrder } from '../lib/print-pm-order';
 import ConfirmModal from '../components/ui/ConfirmModal';
 import SuccessToast from '../components/ui/SuccessToast';
 
@@ -142,6 +143,24 @@ export default function PMWorkOrderPage() {
       ]);
     } catch (err) {
       console.error('Sheets append failed (PM History):', err);
+    }
+
+    // Generate printable PDF
+    if (partsKit) {
+      printPMOrder({
+        otId,
+        date,
+        unidad,
+        model,
+        pmLevel,
+        levelsIncluded: partsKit.levelsIncluded,
+        horometro: selectedEquipment?.current_horometro ?? 0,
+        estimatedHours: partsKit.totalEstimatedHours,
+        mecanico,
+        autorizadoPor: userName,
+        observaciones,
+        parts: partsKit.parts,
+      });
     }
 
     setToastMessage(`${otId} — PM ${pmLevel} programado para ${unidad}`);

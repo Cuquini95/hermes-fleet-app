@@ -100,10 +100,13 @@ export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
     if (get().loading) return;
     set({ loading: true, error: null });
     try {
-      const [otRows, logRows] = await Promise.all([
+      const [otResult, logResult] = await Promise.allSettled([
         readRange(SHEET_TABS.ORDENES_TRABAJO),
         readRange(SHEET_TABS.OT_STATUS_LOG),
       ]);
+
+      const otRows = otResult.status === 'fulfilled' ? otResult.value : [];
+      const logRows = logResult.status === 'fulfilled' ? logResult.value : [];
 
       const baseWorkorders: WorkOrder[] = [];
       for (const row of otRows) {
