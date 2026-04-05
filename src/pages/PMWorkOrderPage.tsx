@@ -100,28 +100,26 @@ export default function PMWorkOrderPage() {
       : '';
     const levelsStr = partsKit ? partsKit.levelsIncluded.join('+') : pmLevel;
 
-    // Write to ORDENES_TRABAJO
+    // Write to Ordenes Mantenimiento tab
     try {
-      await appendRow(SHEET_TABS.ORDENES_TRABAJO, [
-        String(Date.now()),               // #
+      await appendRow(SHEET_TABS.ORDENES_MANTENIMIENTO, [
         otId,                              // OT_ID
         date,                              // FECHA
         unidad,                            // UNIDAD
-        `PM - ${levelsStr}`,               // TIPO_AVERÍA
-        `Mantenimiento Preventivo ${pmLevel} para ${model}. Hrs: ${selectedEquipment?.current_horometro ?? ''}. Incluye: ${levelsStr}`, // DESCRIPCIÓN
-        'Preventivo',                      // SEVERIDAD
-        'Programada',                      // PRIORIDAD
-        mecanico,                          // MECÁNICO_ASIGNADO
+        model,                             // MODELO
+        pmLevel,                           // NIVEL PM
+        levelsStr,                         // NIVELES INCLUIDOS
+        String(selectedEquipment?.current_horometro ?? ''), // HORÓMETRO
+        `Mantenimiento Preventivo ${pmLevel}. Incluye: ${levelsStr}`, // DESCRIPCIÓN
+        String(partsKit?.totalEstimatedHours ?? ''),  // HORAS ESTIMADAS
+        mecanico || 'Por asignar',         // MECÁNICO
+        userName,                          // AUTORIZADO POR
         'Programada',                      // ESTADO
-        '',                                // FOTO_URL
-        '',                                // AVERÍA_REF
-        partsListStr,                      // PARTES_NECESARIAS
-        '',                                // COSTO_ESTIMADO
-        '',                                // FECHA_CIERRE
+        partsListStr,                      // PARTES NECESARIAS
         observaciones,                     // OBSERVACIONES
       ]);
     } catch (err) {
-      console.error('Sheets append failed (PM OT):', err);
+      console.error('Sheets append failed (Ordenes Mantenimiento):', err);
     }
 
     // Write to Historial PM

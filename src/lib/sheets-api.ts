@@ -32,6 +32,7 @@ export const SHEET_TABS = {
   VIAJES: 'Reporte_Viajes_Peña',
   HOROMETROS: '04B Registro Horómetros',
   HISTORIAL_PM: '05 Historial PM',
+  ORDENES_MANTENIMIENTO: 'Ordenes Mantenimiento',
   INVENTARIO: '12 Inventario Rep.',
   FLETES: 'Reporte_Fletes_Transporte',
   INCIDENTES: 'Incidentes',
