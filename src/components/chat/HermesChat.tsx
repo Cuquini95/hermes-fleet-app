@@ -97,7 +97,13 @@ function formatManualLookup(result: ManualLookupResult): string {
 // ─── Intent detection ────────────────────────────────────────────────────────
 
 function isPartNumber(text: string): boolean {
-  return /[A-Z0-9]{3,}-?[0-9]{2,}/.test(text.toUpperCase()) && /\d/.test(text);
+  // Match common OEM formats:
+  // Komatsu: 600-XXX-XXXX, 6261-11-3200, 01010-81020
+  // CAT: 223-1335, 1R-0749, 253-0616
+  // Doosan: K9003166, 65.26201-7076B, 300516-00020
+  // Mack: 22398223, 21870635
+  const t = text.toUpperCase().trim();
+  return /\d{2,}-\d{2,}/.test(t) || /^[A-Z]?\d{7,}$/.test(t) || /^\d{2,}\.\d{4,}/.test(t) || /^[A-Z]\d{3,}-\d{3,}/.test(t);
 }
 
 function isManualQuery(text: string): boolean {
@@ -106,6 +112,12 @@ function isManualQuery(text: string): boolean {
 
 function isDiagramQuery(text: string): boolean {
   return /diagrama|diagram|esquema|plano|dibujo/i.test(text);
+}
+
+function extractPartNumber(text: string): string | null {
+  // Extract the part number from mixed text like "223-1335 diagrama"
+  const match = text.match(/([A-Z]?\d{2,}-\d{2,}[-\d]*|\d{7,}|[A-Z]\d{3,}-\d{3,}[\w]*|\d{2,}\.\d{4,}[-\w]*)/i);
+  return match ? match[1] : null;
 }
 
 /** Detect equipment model from user message text when selector is "General" */
@@ -198,28 +210,34 @@ export default function HermesChat() {
           } catch {
             responseText = formatPhotoAnalysis(MOCK_PHOTO_ANALYSIS);
           }
-        } else if (isPartNumber(text)) {
-          // Fast JSON catalog search first, then AI for deeper analysis
+        } else if (isPartNumber(text) || extractPartNumber(text)) {
+          // Part number detected — search catalog first
+          const pn = extractPartNumber(text) ?? text.trim();
+          const wantsDiagram = isDiagramQuery(text);
+          const equipUnit = selectedUnit !== 'General' ? selectedUnit : detectEquipmentFromText(text);
           try {
             const results = await searchParts(
-              text,
-              selectedUnit !== 'General' ? selectedUnit : undefined
+              pn,
+              equipUnit !== 'General' ? equipUnit : undefined
             );
             if (results.length > 0) {
-              responseText = formatSearchParts(results, text);
+              responseText = formatSearchParts(results, pn);
+              if (wantsDiagram) {
+                responseText += `\n\n📐 **Diagrama**\nPara ver el diagrama de esta parte, ve a **Más → Diagramas** y busca el modelo del equipo.`;
+              }
             } else {
-              // No catalog match — ask AI for help
+              // No catalog match — ask AI
+              const effectiveUnit = equipUnit !== 'General' ? equipUnit : 'todos';
               const result = await diagnose({
-                equipo: selectedUnit !== 'General' ? selectedUnit : 'todos',
-                sintoma: `BÚSQUEDA DE PARTE: ${text}. No se encontró en el catálogo JSON. Busca en tu conocimiento de manuales técnicos. Devuelve: número de parte, descripción, equipo compatible, y alternativas.`,
+                equipo: effectiveUnit,
+                sintoma: `BÚSQUEDA DE PARTE: ${pn}. Busca en el catálogo.`,
               });
-              responseText = formatDiagnose(result, selectedUnit);
+              responseText = formatDiagnose(result, effectiveUnit);
             }
           } catch {
-            responseText = `📦 **Búsqueda: '${text}'**\n\nNo pude conectar con el servidor. Verifica tu conexión e intenta de nuevo.`;
+            responseText = `📦 **Búsqueda: '${pn}'**\n\nNo pude conectar con el servidor. Verifica tu conexión e intenta de nuevo.`;
           }
         } else if (isDiagramQuery(text)) {
-          // Direct user to the diagram viewer
           const unitInfo = selectedUnit !== 'General' ? ` para ${selectedUnit}` : '';
           responseText = `📐 **Diagramas${unitInfo}**\n\nLos diagramas técnicos están disponibles en la sección de **Diagramas** del menú.\n\n👉 Ve a **Más → Diagramas** o usa la pestaña Diagramas en el Workbench del Mecánico.\n\nDisponibles:\n• D155AX-6 (Komatsu)\n• HM400-3 (Komatsu)\n• DX340LC (Doosan)\n• DX225LCA (Doosan)\n• DL420A (Doosan)\n• MACK GR84B`;
         } else if (isManualQuery(text)) {
