@@ -4,7 +4,7 @@ import { ArrowLeft, Clock, Wrench, ChevronRight } from 'lucide-react';
 import { useWorkOrderStore } from '../stores/workorder-store';
 import { useAuthStore } from '../stores/auth-store';
 import { getEquipmentById } from '../data/equipment-catalog';
-import { PRIORITY_CONFIG, ESTADO_CONFIG, getNextStatuses } from '../types/workorder';
+import { PRIORITY_CONFIG, ESTADO_CONFIG, OT_STATUS_FLOW, getNextStatuses } from '../types/workorder';
 import type { OTEstado, OTStatusField, StatusLogEntry } from '../types/workorder';
 
 const FIELD_LABELS: Record<OTStatusField, string> = {
@@ -16,14 +16,9 @@ const FIELD_LABELS: Record<OTStatusField, string> = {
   prioridad: 'Prioridad',
 };
 
-function canEditField(role: string | null, field: OTStatusField): boolean {
-  if (role === 'jefe_taller' || role === 'coordinador' || role === 'gerencia' || role === 'supervisor') {
-    return ['estado', 'mecanico_asignado', 'costo_estimado', 'progreso', 'observaciones', 'prioridad'].includes(field);
-  }
-  if (role === 'mecanico') {
-    return field === 'progreso' || field === 'observaciones';
-  }
-  return false;
+function canEditField(_role: string | null, _field: OTStatusField): boolean {
+  // All roles can edit all fields
+  return true;
 }
 
 function StatusPillRow({ current }: { current: OTEstado }) {
@@ -142,9 +137,10 @@ export default function WorkOrderDetailPage() {
     );
   }
 
-  const priorityConfig = PRIORITY_CONFIG[wo.prioridad];
-  const canEdit = role === 'jefe_taller' || role === 'coordinador' || role === 'mecanico' || role === 'gerencia' || role === 'supervisor';
-  const nextStatuses = getNextStatuses(wo.estado);
+  const prioKey = wo.prioridad?.toUpperCase() as keyof typeof PRIORITY_CONFIG;
+  const priorityConfig = PRIORITY_CONFIG[prioKey] ?? { color: '#6B7280', bg: '#F3F4F6', label: wo.prioridad, time: '' };
+  const canEdit = true; // All roles can edit
+  const nextStatuses = getNextStatuses(OT_STATUS_FLOW.includes(wo.estado as OTEstado) ? wo.estado as OTEstado : 'Nuevo');
 
   return (
     <div className="flex flex-col gap-4 pb-6 animate-fade-up">
