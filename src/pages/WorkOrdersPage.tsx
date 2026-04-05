@@ -2,6 +2,10 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWorkOrderStore } from '../stores/workorder-store';
 import OTCard from '../components/ui/OTCard';
+import EmptyState from '../components/ui/EmptyState';
+import { SkeletonList } from '../components/ui/Skeleton';
+import { usePullToRefresh } from '../hooks/usePullToRefresh';
+import PullIndicator from '../components/ui/PullIndicator';
 
 type FilterKey = 'Todas' | 'CRITICA' | 'ALTA' | 'MEDIA' | 'Nuevo' | 'En Proceso';
 
@@ -21,6 +25,9 @@ export default function WorkOrdersPage() {
   const { workorders, loading, error, fetched, fetchWorkOrders } = useWorkOrderStore();
   const [filter, setFilter] = useState<FilterKey>('Todas');
 
+  const { scrollRef, onTouchStart, onTouchMove, onTouchEnd, pullDistance, refreshing, pullIndicatorStyle, isReady } =
+    usePullToRefresh({ onRefresh: fetchWorkOrders });
+
   useEffect(() => {
     if (!fetched) {
       fetchWorkOrders();
@@ -36,10 +43,8 @@ export default function WorkOrdersPage() {
   if (loading && !fetched) {
     return (
       <div className="py-4">
-        <h2 className="font-semibold text-lg text-text mb-3">Ordenes de Trabajo</h2>
-        <div className="flex items-center justify-center py-16">
-          <div className="animate-spin rounded-full h-8 w-8 border-2 border-amber border-t-transparent" />
-        </div>
+        <h2 className="font-semibold text-lg text-text mb-3">Órdenes de Trabajo</h2>
+        <SkeletonList count={4} />
       </div>
     );
   }
@@ -64,8 +69,21 @@ export default function WorkOrdersPage() {
   }
 
   return (
-    <div className="py-4">
-      <h2 className="font-semibold text-lg text-text mb-3">Ordenes de Trabajo</h2>
+    <div
+      ref={scrollRef}
+      className="py-4 animate-fade-up overflow-y-auto"
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+    >
+      <PullIndicator
+        pullDistance={pullDistance}
+        refreshing={refreshing}
+        isReady={isReady}
+        style={pullIndicatorStyle}
+      />
+
+      <h2 className="font-semibold text-lg text-text mb-3">Órdenes de Trabajo</h2>
 
       {/* Filter pills */}
       <div className="flex gap-2 overflow-x-auto pb-3 -mx-1 px-1 mb-2">
@@ -87,9 +105,11 @@ export default function WorkOrdersPage() {
 
       {/* List */}
       {filtered.length === 0 ? (
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-border text-center">
-          <p className="text-text-secondary text-sm">No hay ordenes con este filtro</p>
-        </div>
+        <EmptyState
+          type="workorders"
+          title="Sin órdenes"
+          description="No hay órdenes de trabajo con este filtro"
+        />
       ) : (
         filtered.map((ot) => (
           <OTCard

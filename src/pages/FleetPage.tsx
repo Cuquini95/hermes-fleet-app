@@ -10,7 +10,7 @@ export default function FleetPage() {
   const total = EQUIPMENT_CATALOG.length;
 
   return (
-    <div className="flex flex-col pb-4">
+    <div className="flex flex-col pb-4 animate-fade-up">
       <div className="flex items-center gap-3 mb-4">
         <button
           type="button"

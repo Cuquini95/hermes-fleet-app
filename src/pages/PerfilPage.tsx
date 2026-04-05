@@ -57,7 +57,7 @@ export default function PerfilPage() {
   const arcColor = overallPct >= 80 ? '#16A34A' : overallPct >= 50 ? '#E8961A' : '#DC2626';
 
   return (
-    <div className="flex flex-col pb-4 gap-4">
+    <div className="flex flex-col pb-4 gap-4 animate-fade-up">
       {/* Header */}
       <div className="flex items-center gap-3">
         <button

@@ -36,7 +36,7 @@ export default function OperatorHomePage() {
     .filter((e) => e !== undefined);
 
   return (
-    <div className="flex flex-col py-4">
+    <div className="flex flex-col py-4 animate-fade-up">
       {/* Greeting */}
       <div className="mb-4">
         <h1 className="text-2xl font-bold text-text">Buenos días, {userName}</h1>

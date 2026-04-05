@@ -147,7 +147,7 @@ export default function WorkOrderDetailPage() {
   const nextStatuses = getNextStatuses(wo.estado);
 
   return (
-    <div className="flex flex-col gap-4 pb-6">
+    <div className="flex flex-col gap-4 pb-6 animate-fade-up">
       {/* Header */}
       <div className="flex items-center gap-3">
         <button type="button" onClick={() => navigate(-1)} className="p-2 rounded-xl bg-white border border-border shadow-sm">

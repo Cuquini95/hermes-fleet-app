@@ -34,7 +34,7 @@ export default function OTCard({ workorder, onClick }: OTCardProps) {
 
   return (
     <div
-      className={`bg-card rounded-xl shadow-sm border border-border mb-3 overflow-hidden${onClick ? ' cursor-pointer hover:bg-gray-50 transition-colors' : ''}`}
+      className={`bg-card rounded-xl shadow-sm border border-border mb-3 overflow-hidden${onClick ? ' cursor-pointer hover:bg-gray-50 transition-colors card-lift' : ''}`}
       style={{ borderLeft: `4px solid ${borderColor}` }}
       onClick={onClick}
     >

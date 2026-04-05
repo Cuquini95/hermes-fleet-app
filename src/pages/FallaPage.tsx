@@ -141,7 +141,7 @@ export default function FallaPage() {
   }
 
   return (
-    <div className="flex flex-col pb-4">
+    <div className="flex flex-col pb-4 animate-fade-up">
       <SuccessToast
         message={toastMessage}
         visible={toastVisible}
@@ -307,7 +307,7 @@ export default function FallaPage() {
         type="button"
         onClick={handleSubmitIntent}
         disabled={!canSubmit}
-        className="mt-4 w-full bg-amber text-white rounded-xl py-4 font-semibold text-lg disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+        className="mt-4 w-full bg-amber text-white rounded-xl py-4 font-semibold text-lg disabled:opacity-40 disabled:cursor-not-allowed transition-opacity btn-press"
         style={{ minHeight: 52 }}
       >
         Enviar Reporte

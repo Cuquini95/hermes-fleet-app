@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ClipboardList, Fuel, Clock, FileText } from 'lucide-react';
+import EmptyState from '../components/ui/EmptyState';
 
 interface Report {
   id: string;
@@ -59,7 +60,7 @@ export default function MyReportsPage() {
   const navigate = useNavigate();
 
   return (
-    <div className="flex flex-col pb-4">
+    <div className="flex flex-col pb-4 animate-fade-up">
       {/* Header */}
       <div className="flex items-center gap-3 mb-4">
         <button
@@ -73,10 +74,11 @@ export default function MyReportsPage() {
       </div>
 
       {MOCK_REPORTS.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 gap-3">
-          <FileText size={48} className="text-border" />
-          <p className="text-text-secondary font-medium">No hay reportes hoy</p>
-        </div>
+        <EmptyState
+          type="reports"
+          title="Sin reportes hoy"
+          description="No has enviado reportes de operación por hoy"
+        />
       ) : (
         <div className="flex flex-col gap-3">
           {MOCK_REPORTS.map((report) => (

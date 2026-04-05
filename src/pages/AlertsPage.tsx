@@ -114,7 +114,7 @@ export default function AlertsPage() {
   }
 
   return (
-    <div className="flex flex-col pb-4">
+    <div className="flex flex-col pb-4 animate-fade-up">
       {/* Header */}
       <div className="flex items-center gap-3 mb-4">
         <button
