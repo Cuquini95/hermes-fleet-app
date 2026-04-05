@@ -13,10 +13,11 @@ import {
   ChevronDown,
   ChevronUp,
   Search,
+  ArrowRight,
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { useCartStore, type CartItem } from '../stores/cart-store';
-import { appendRow, readRange, SHEET_TABS } from '../lib/sheets-api';
+import { appendRow, readRange, updateCell, SHEET_TABS } from '../lib/sheets-api';
 import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
 
@@ -140,6 +141,13 @@ export default function PedidosPage() {
   function handleTabChange(t: Tab) {
     setTab(t);
     if (t === 'historial' && !historialLoaded) loadHistorial();
+  }
+
+  // ── Status change (Gerencia only) ─────────────────────────────────────────
+  function handleStatusChange(rowId: string, newStatus: string) {
+    setHistorial((prev) =>
+      prev.map((r) => (r.id === rowId ? { ...r, estado: newStatus } : r))
+    );
   }
 
   // ── Manual part validation ────────────────────────────────────────────────
@@ -424,7 +432,12 @@ export default function PedidosPage() {
           )}
 
           {historial.map((row) => (
-            <PedidoRowCard key={row.id} row={row} />
+            <PedidoRowCard
+              key={row.id}
+              row={row}
+              isGerencia={isGerencia}
+              onStatusChange={handleStatusChange}
+            />
           ))}
 
           {!loadingHistorial && historial.length > 0 && (
@@ -683,45 +696,121 @@ function ManualPartForm({
   );
 }
 
-// ── PedidoRowCard (Historial / Gerencia view) ────────────────────────────────
-function PedidoRowCard({ row }: { row: PedidoRow }) {
-  const urgCfg = (URGENCIA_CONFIG as Record<string, { color: string; bg: string }>)[row.urgencia] ?? URGENCIA_CONFIG.Normal;
+// ── Status flow config ────────────────────────────────────────────────────────
+const STATUS_NEXT: Record<string, string | null> = {
+  Pendiente:  'Pedido',
+  Pedido:     'Completado',
+  Completado: null,
+};
 
-  const estadoStyle: Record<string, { color: string; bg: string }> = {
-    Pendiente: { color: '#D97706', bg: '#FFFBEB' },
-    Aprobado:  { color: '#16A34A', bg: '#F0FDF4' },
-    Rechazado: { color: '#DC2626', bg: '#FEF2F2' },
-    Ordenado:  { color: '#2563EB', bg: '#EFF6FF' },
-    Recibido:  { color: '#6B7280', bg: '#F9FAFB' },
-  };
-  const eCfg = estadoStyle[row.estado] ?? estadoStyle.Pendiente;
+const STATUS_STYLE: Record<string, { color: string; bg: string; border: string }> = {
+  Pendiente:  { color: '#D97706', bg: '#FFFBEB', border: '#FDE68A' },
+  Pedido:     { color: '#2563EB', bg: '#EFF6FF', border: '#BFDBFE' },
+  Completado: { color: '#16A34A', bg: '#F0FDF4', border: '#BBF7D0' },
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  Pendiente:  'Marcar como Pedido',
+  Pedido:     'Marcar Completado',
+  Completado: '',
+};
+
+// ── PedidoRowCard (Historial / Gerencia view) ────────────────────────────────
+function PedidoRowCard({
+  row,
+  isGerencia,
+  onStatusChange,
+}: {
+  row: PedidoRow;
+  isGerencia: boolean;
+  onStatusChange: (id: string, newStatus: string) => void;
+}) {
+  const [updating, setUpdating] = useState(false);
+  const urgCfg = (URGENCIA_CONFIG as Record<string, { color: string; bg: string }>)[row.urgencia] ?? URGENCIA_CONFIG.Normal;
+  const sCfg = STATUS_STYLE[row.estado] ?? STATUS_STYLE.Pendiente;
+  const nextStatus = STATUS_NEXT[row.estado] ?? null;
+
+  async function handleAdvance() {
+    if (!nextStatus || updating) return;
+    setUpdating(true);
+    try {
+      // Column B (index 1) = PEDIDO_ID, Column O (index 14) = ESTADO
+      await updateCell(SHEET_TABS.COTIZACIONES, 1, row.pedidoId, 14, nextStatus);
+      onStatusChange(row.id, nextStatus);
+    } catch {
+      // silently fail — state not updated
+    } finally {
+      setUpdating(false);
+    }
+  }
 
   return (
-    <div className="bg-white rounded-xl border border-border shadow-sm p-4">
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <div>
+    <div
+      className="bg-white rounded-xl shadow-sm overflow-hidden"
+      style={{ border: `1.5px solid ${sCfg.border}` }}
+    >
+      {/* Status bar */}
+      <div
+        className="flex items-center justify-between px-3 py-1.5"
+        style={{ backgroundColor: sCfg.bg }}
+      >
+        <span className="text-xs font-bold" style={{ color: sCfg.color }}>
+          {row.estado}
+        </span>
+        <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ color: urgCfg.color, backgroundColor: urgCfg.bg }}>
+          {row.urgencia}
+        </span>
+      </div>
+
+      {/* Body */}
+      <div className="p-4">
+        <div className="mb-2">
           <p className="font-mono text-sm font-semibold text-amber">{row.partNum}</p>
           <p className="text-sm text-text font-medium">{row.descripcion}</p>
           <p className="text-xs text-text-secondary mt-0.5">
             {row.pedidoId} · {row.fecha} · {row.solicitante}
           </p>
         </div>
-        <div className="flex flex-col items-end gap-1">
-          <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ color: eCfg.color, backgroundColor: eCfg.bg }}>
-            {row.estado}
-          </span>
-          <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ color: urgCfg.color, backgroundColor: urgCfg.bg }}>
-            {row.urgencia}
-          </span>
+        <div className="flex gap-4 text-xs text-text-secondary mb-3">
+          {row.equipo && <span>📍 {row.equipo}</span>}
+          <span>×{row.cantidad}</span>
+          {row.total && <span className="font-semibold text-text">${row.total}</span>}
+          {row.fuente && <span>{row.fuente}</span>}
         </div>
+        {row.notas && <p className="text-xs text-text-secondary mb-3 italic">{row.notas}</p>}
+
+        {/* Gerencia status action */}
+        {isGerencia && nextStatus && (
+          <button
+            onClick={handleAdvance}
+            disabled={updating}
+            className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition-opacity"
+            style={{
+              backgroundColor: STATUS_STYLE[nextStatus]?.bg ?? '#F1F5F9',
+              color: STATUS_STYLE[nextStatus]?.color ?? '#162252',
+              border: `1.5px solid ${STATUS_STYLE[nextStatus]?.border ?? '#E5E7EB'}`,
+              opacity: updating ? 0.6 : 1,
+            }}
+          >
+            {updating ? (
+              <Loader2 size={15} className="animate-spin" />
+            ) : (
+              <>
+                <ArrowRight size={15} />
+                {STATUS_LABEL[row.estado]}
+              </>
+            )}
+          </button>
+        )}
+
+        {/* Completado — no further action */}
+        {isGerencia && row.estado === 'Completado' && (
+          <div className="flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold" style={{ color: '#16A34A' }}>
+            <CheckCircle2 size={14} />
+            Pedido completado
+          </div>
+        )}
       </div>
-      <div className="flex gap-4 text-xs text-text-secondary">
-        {row.equipo && <span>📍 {row.equipo}</span>}
-        <span>×{row.cantidad}</span>
-        {row.total && <span className="font-semibold text-text">${row.total}</span>}
-        {row.fuente && <span>{row.fuente}</span>}
-      </div>
-      {row.notas && <p className="text-xs text-text-secondary mt-1 italic">{row.notas}</p>}
     </div>
   );
 }
