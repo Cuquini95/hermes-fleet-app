@@ -56,7 +56,16 @@ function formatDiagnose(result: DiagnoseResult, equipo: string): string {
   const checklist = result.checklist_diagnostico
     .map((c, i) => `${i + 1}. ${c}`)
     .join('\n');
-  const partes = result.partes_probables.map((p) => `• ${p}`).join('\n');
+  const partes = result.partes_probables.map((p) => {
+    if (typeof p === 'object' && p !== null) {
+      const obj = p as Record<string, unknown>;
+      const oem = obj.oem || obj.part_number || '';
+      const desc = obj.descripcion || obj.description || '';
+      const precio = obj.precio_estimado || '';
+      return `• ${oem} — ${desc}${precio ? ` | ${precio}` : ''}`;
+    }
+    return `• ${p}`;
+  }).join('\n');
 
   return `🔍 **Diagnóstico para ${equipo}**\n\n**Causas probables:**\n${causas}\n\n**Checklist:**\n${checklist}\n\n**Partes sugeridas:**\n${partes}\n\n**Prioridad:** ${result.prioridad}`;
 }

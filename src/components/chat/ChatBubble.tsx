@@ -8,6 +8,21 @@ function formatTimestamp(date: Date): string {
   return date.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
 }
 
+/** Renders text with **bold** markdown as <strong> tags */
+function RichText({ text, className }: { text: string; className?: string }) {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return (
+    <p className={`text-sm whitespace-pre-wrap ${className ?? ''}`}>
+      {parts.map((part, i) => {
+        if (part.startsWith('**') && part.endsWith('**')) {
+          return <strong key={i} className="font-semibold">{part.slice(2, -2)}</strong>;
+        }
+        return <span key={i}>{part}</span>;
+      })}
+    </p>
+  );
+}
+
 function LoadingDots() {
   return (
     <div className="flex items-center gap-1 py-1">
@@ -47,7 +62,7 @@ export default function ChatBubble({ message }: ChatBubbleProps) {
           {message.loading ? (
             <LoadingDots />
           ) : (
-            <p className="text-white text-sm whitespace-pre-wrap">{message.content}</p>
+            <RichText text={message.content} className="text-white" />
           )}
         </div>
         <span className="text-xs mt-1" style={{ color: 'rgba(107, 114, 128, 0.6)' }}>
@@ -77,7 +92,7 @@ export default function ChatBubble({ message }: ChatBubbleProps) {
           {message.loading ? (
             <LoadingDots />
           ) : (
-            <p className="text-text text-sm whitespace-pre-wrap">{message.content}</p>
+            <RichText text={message.content} className="text-text" />
           )}
         </div>
         <span className="text-xs mt-1" style={{ color: 'rgba(107, 114, 128, 0.6)' }}>
