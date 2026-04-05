@@ -35,10 +35,12 @@ export default function WorkOrdersPage() {
     }
   }, [fetched, fetchWorkOrders]);
 
+  // Hide completed OTs by default — only show them if specifically filtered
+  const active = workorders.filter((ot) => ot.estado !== 'Completado');
   const filtered = filter === 'Todas'
-    ? workorders
+    ? active
     : workorders.filter((ot) =>
-        ot.prioridad === filter || ot.estado === filter
+        ot.prioridad === filter || ot.prioridad?.toUpperCase() === filter || ot.estado === filter
       );
 
   if (loading && !fetched) {
