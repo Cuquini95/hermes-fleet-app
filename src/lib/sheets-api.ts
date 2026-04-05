@@ -25,11 +25,15 @@ export async function readRange(tab: string): Promise<string[][]> {
 
 export const SHEET_TABS = {
   INSPECCIONES: '14 Inspecciones',
-  AVERIAS: 'Averias',
+  AVERIAS: 'Averías',
   ORDENES_TRABAJO: 'ORDENES_TRABAJO',
   COMBUSTIBLE: 'Combustible',
-  VIAJES: 'Reporte_Viajes_Pena',
-  HOROMETROS: '03 Horómetros',
+  VIAJES: 'Reporte_Viajes_Peña',
+  HOROMETROS: '04 Horómetros Diarios',
   HISTORIAL_PM: '05 Historial PM',
-  INVENTARIO: '12 Inventario Rep',
+  INVENTARIO: '12 Inventario Rep.',
+  FLETES: 'Reporte_Fletes_Transporte',
+  INCIDENTES: 'Incidentes',
+  TURNOS: 'Turnos',
+  COTIZACIONES: 'Cotizaciones_Pendientes',
 } as const;
