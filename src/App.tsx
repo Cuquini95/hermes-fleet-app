@@ -8,6 +8,14 @@ import DVIRPage from './pages/DVIRPage';
 import FallaPage from './pages/FallaPage';
 import DashboardPage from './pages/DashboardPage';
 import ChatPage from './pages/ChatPage';
+import DieselPage from './pages/DieselPage';
+import HorometroPage from './pages/HorometroPage';
+import ViajePage from './pages/ViajePage';
+import AlertsPage from './pages/AlertsPage';
+import PerfilPage from './pages/PerfilPage';
+import MyReportsPage from './pages/MyReportsPage';
+import InventoryPage from './pages/InventoryPage';
+import PMSchedulePage from './pages/PMSchedulePage';
 import AppShell from './components/layout/AppShell';
 import PartsSearch from './components/mechanic/PartsSearch';
 import ManualSearch from './components/mechanic/ManualSearch';
@@ -65,16 +73,16 @@ export default function App() {
         <Route path="/parts" element={<PartsSearch />} />
         <Route path="/manuals" element={<ManualSearch />} />
         <Route path="/diagrams" element={<DiagramViewer />} />
-        <Route path="/alerts" element={<Placeholder label="Alerts" />} />
-        <Route path="/pm" element={<Placeholder label="PM Schedule" />} />
-        <Route path="/inventory" element={<Placeholder label="Inventory" />} />
+        <Route path="/alerts" element={<AlertsPage />} />
+        <Route path="/pm" element={<PMSchedulePage />} />
+        <Route path="/inventory" element={<InventoryPage />} />
         <Route path="/pedidos" element={<Placeholder label="Pedidos" />} />
         <Route path="/briefing" element={<BriefingCard />} />
-        <Route path="/diesel" element={<Placeholder label="Diesel Log" />} />
-        <Route path="/horometro" element={<Placeholder label="Horómetro" />} />
-        <Route path="/viaje" element={<Placeholder label="Trip Log" />} />
-        <Route path="/perfil" element={<Placeholder label="Profile" />} />
-        <Route path="/my-reports" element={<Placeholder label="My Reports" />} />
+        <Route path="/diesel" element={<DieselPage />} />
+        <Route path="/horometro" element={<HorometroPage />} />
+        <Route path="/viaje" element={<ViajePage />} />
+        <Route path="/perfil" element={<PerfilPage />} />
+        <Route path="/my-reports" element={<MyReportsPage />} />
       </Route>
 
       <Route path="*" element={<RootRedirect />} />

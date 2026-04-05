@@ -1,17 +1,10 @@
-const SHEET_ID = '14rWfjrJbXTZG_Mth1Gzk3RzVYd5mohbJR3BsXEItFgU';
-
-function getApiKey(): string {
-  return import.meta.env.VITE_GOOGLE_SHEETS_API_KEY || '';
-}
+const HERMES_API = import.meta.env.VITE_HERMES_API_URL || 'http://5.78.204.80:8000';
 
 export async function appendRow(tab: string, values: string[]): Promise<void> {
-  const apiKey = getApiKey();
-  const range = encodeURIComponent(`${tab}!A:Z`);
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${range}:append?valueInputOption=USER_ENTERED&key=${apiKey}`;
-  const response = await fetch(url, {
+  const response = await fetch(`${HERMES_API}/api/sheets/append`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ values: [values] }),
+    body: JSON.stringify({ tab, values }),
   });
   if (!response.ok) {
     const text = await response.text();
@@ -19,17 +12,15 @@ export async function appendRow(tab: string, values: string[]): Promise<void> {
   }
 }
 
-export async function readRange(tab: string, range: string): Promise<string[][]> {
-  const apiKey = getApiKey();
-  const fullRange = encodeURIComponent(`${tab}!${range}`);
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${fullRange}?key=${apiKey}`;
-  const response = await fetch(url);
+export async function readRange(tab: string): Promise<string[][]> {
+  const params = new URLSearchParams({ tab });
+  const response = await fetch(`${HERMES_API}/api/sheets/read?${params}`);
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`Sheets API error ${response.status}: ${text}`);
   }
   const data = await response.json();
-  return data.values || [];
+  return data.data || [];
 }
 
 export const SHEET_TABS = {
