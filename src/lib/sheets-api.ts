@@ -1,6 +1,4 @@
-const HERMES_API = import.meta.env.DEV
-  ? 'http://5.78.204.80:8000'
-  : '/hermes-api';
+const HERMES_API = '/hermes-api';
 
 export async function appendRow(tab: string, values: string[]): Promise<void> {
   const response = await fetch(`${HERMES_API}/api/sheets/append`, {

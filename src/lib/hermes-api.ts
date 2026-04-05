@@ -1,8 +1,5 @@
-// In production (Vercel), use the proxy path to avoid mixed-content HTTPS→HTTP block.
-// In dev, call VPS directly.
-const HERMES_BASE = import.meta.env.DEV
-  ? 'http://5.78.204.80:8000'
-  : '/hermes-api';
+// Always proxy through /hermes-api — Vite dev server and Vercel both rewrite to VPS
+const HERMES_BASE = '/hermes-api';
 
 async function hermesPost<T>(endpoint: string, body: Record<string, unknown>): Promise<T> {
   const response = await fetch(`${HERMES_BASE}${endpoint}`, {

@@ -1,9 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Search, FileText, ExternalLink } from 'lucide-react';
 
-const HERMES_API = import.meta.env.DEV
-  ? 'http://5.78.204.80:8000'
-  : '/hermes-api';
+const HERMES_API = '/hermes-api';
 
 interface DiagramEntry {
   filename: string;

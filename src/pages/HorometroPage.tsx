@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Clock } from 'lucide-react';
 import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
 import { getNextPM } from '../data/pm-rules';
+import { appendRow, SHEET_TABS } from '../lib/sheets-api';
+import { useAuthStore } from '../stores/auth-store';
 import ConfirmModal from '../components/ui/ConfirmModal';
 import SuccessToast from '../components/ui/SuccessToast';
 
@@ -10,6 +12,7 @@ type TurnoType = 'inicio' | 'final';
 
 export default function HorometroPage() {
   const navigate = useNavigate();
+  const userName = useAuthStore((s) => s.userName);
 
   const [turno, setTurno] = useState<TurnoType>('inicio');
   const [unidad, setUnidad] = useState('');
@@ -51,8 +54,22 @@ export default function HorometroPage() {
     setShowConfirm(true);
   }
 
-  function handleConfirm() {
+  async function handleConfirm() {
     setShowConfirm(false);
+
+    try {
+      await appendRow(SHEET_TABS.HOROMETROS, [
+        new Date().toLocaleDateString(),
+        new Date().toLocaleTimeString(),
+        unidad,
+        userName,
+        turno,
+        String(horometro),
+      ]);
+    } catch (err) {
+      console.error('Sheets append failed (Horometros):', err);
+    }
+
     const label = turno === 'inicio' ? 'Inicio' : 'Final';
     setToastMessage(`Horómetro ${label} de Turno registrado ✓`);
     setToastVisible(true);

@@ -5,6 +5,8 @@ import type { DVIRCheck, CheckStatus } from '../types/dvir';
 import { DVIR_SYSTEMS } from '../data/dvir-systems';
 import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
 import { generateOTId } from '../lib/ot-generator';
+import { appendRow, SHEET_TABS } from '../lib/sheets-api';
+import { useAuthStore } from '../stores/auth-store';
 import SystemCheckRow from '../components/dvir/SystemCheckRow';
 import DVIRResultBanner from '../components/dvir/DVIRResultBanner';
 import ConfirmModal from '../components/ui/ConfirmModal';
@@ -30,6 +32,7 @@ function buildInitialChecks(): CheckState[] {
 
 export default function DVIRPage() {
   const navigate = useNavigate();
+  const userName = useAuthStore((s) => s.userName);
   const [unit_id, setUnitId] = useState('');
   const [type, setType] = useState<'pre-operacion' | 'post-operacion'>('pre-operacion');
   const [horometro, setHorometro] = useState('');
@@ -80,14 +83,41 @@ export default function DVIRPage() {
     setShowConfirm(true);
   }
 
-  function handleConfirm() {
+  async function handleConfirm() {
     setShowConfirm(false);
 
     const fallaCount = checks.filter((c) => c.status === 'falla').length;
+    const alertaCount = checks.filter((c) => c.status === 'alerta').length;
     const okCount = checks.filter((c) => c.status === 'ok').length;
 
+    let result: string;
+    if (fallaCount > 0) result = 'reprobado';
+    else if (alertaCount > 0) result = 'condicional';
+    else result = 'aprobado';
+
+    let otId: string | null = null;
     if (fallaCount > 0) {
-      const otId = generateOTId();
+      otId = generateOTId();
+    }
+
+    try {
+      await appendRow(SHEET_TABS.INSPECCIONES, [
+        new Date().toLocaleDateString(),
+        new Date().toLocaleTimeString(),
+        unit_id,
+        type,
+        userName,
+        String(horometro),
+        ...checks.map((c) => c.status || 'N/A'),
+        result,
+        String(okCount),
+        observations,
+      ]);
+    } catch (err) {
+      console.error('Sheets append failed (DVIR):', err);
+    }
+
+    if (otId) {
       setToastMessage(`Inspección registrada — OT ${otId} generada`);
     } else {
       setToastMessage(`Inspección registrada — Score: ${okCount}/12`);

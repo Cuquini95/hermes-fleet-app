@@ -4,6 +4,8 @@ import { ArrowLeft } from 'lucide-react';
 import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
 import { generateOTId } from '../lib/ot-generator';
 import { calculatePriority } from '../lib/priority-calculator';
+import { appendRow, SHEET_TABS } from '../lib/sheets-api';
+import { useAuthStore } from '../stores/auth-store';
 import AutoPriorityIndicator from '../components/falla/AutoPriorityIndicator';
 import PhotoCapture from '../components/ui/PhotoCapture';
 import ConfirmModal from '../components/ui/ConfirmModal';
@@ -29,6 +31,7 @@ interface PhotoItem {
 
 export default function FallaPage() {
   const navigate = useNavigate();
+  const userName = useAuthStore((s) => s.userName);
 
   const [unidad, setUnidad] = useState('');
   const [tipoFalla, setTipoFalla] = useState('');
@@ -74,9 +77,56 @@ export default function FallaPage() {
     setShowConfirm(true);
   }
 
-  function handleConfirm() {
+  async function handleConfirm() {
     setShowConfirm(false);
     const otId = generateOTId();
+    const priorityValue = priority ?? 'media';
+
+    try {
+      await appendRow(SHEET_TABS.AVERIAS, [
+        new Date().toLocaleDateString(),
+        new Date().toLocaleTimeString(),
+        unidad,
+        userName,
+        ubicacion,
+        tipoFalla,
+        descripcion,
+        puedeMoverse ? 'Sí' : 'No',
+        clienteAfectado,
+        downtime,
+        'Nuevo',
+        '',
+        '',
+        '',
+        '',
+      ]);
+    } catch (err) {
+      console.error('Sheets append failed (Averias):', err);
+    }
+
+    try {
+      await appendRow(SHEET_TABS.ORDENES_TRABAJO, [
+        String(Date.now()),
+        otId,
+        new Date().toLocaleDateString(),
+        unidad,
+        tipoFalla,
+        descripcion,
+        priorityValue,
+        priorityValue,
+        '',
+        'Nuevo',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+      ]);
+    } catch (err) {
+      console.error('Sheets append failed (OT):', err);
+    }
+
     setToastMessage(`${otId} creada — Jefe de Taller notificado`);
     setToastVisible(true);
   }

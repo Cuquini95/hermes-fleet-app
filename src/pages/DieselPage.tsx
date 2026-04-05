@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle } from 'lucide-react';
 import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
 import { isAnomalous } from '../data/fuel-benchmarks';
+import { appendRow, SHEET_TABS } from '../lib/sheets-api';
+import { useAuthStore } from '../stores/auth-store';
 import ConfirmModal from '../components/ui/ConfirmModal';
 import SuccessToast from '../components/ui/SuccessToast';
 
@@ -12,6 +14,7 @@ const FUEL_TYPES: FuelType[] = ['ULSD', 'Diesel', 'Gasolina'];
 
 export default function DieselPage() {
   const navigate = useNavigate();
+  const userName = useAuthStore((s) => s.userName);
 
   const [unidad, setUnidad] = useState('');
   const [fuelType, setFuelType] = useState<FuelType>('ULSD');
@@ -43,8 +46,35 @@ export default function DieselPage() {
     setShowConfirm(true);
   }
 
-  function handleConfirm() {
+  async function handleConfirm() {
     setShowConfirm(false);
+
+    const litrosNum = parseFloat(litros) || 0;
+    const costoNum = parseFloat(costo) || 0;
+    const horometroNum = parseFloat(horometro) || 0;
+    const kmNum = parseFloat(kmActual) || 0;
+    const rendimiento = litrosNum > 0 && kmNum > 0 ? kmNum / litrosNum : 0;
+
+    try {
+      await appendRow(SHEET_TABS.COMBUSTIBLE, [
+        String(Date.now()),
+        new Date().toLocaleDateString(),
+        new Date().toLocaleTimeString(),
+        unidad,
+        userName,
+        fuelType,
+        String(litrosNum),
+        String(costoNum),
+        String(horometroNum),
+        String(kmNum),
+        String(rendimiento),
+        estacion,
+        observaciones,
+      ]);
+    } catch (err) {
+      console.error('Sheets append failed (Combustible):', err);
+    }
+
     setToastMessage('Combustible registrado ✓');
     setToastVisible(true);
   }

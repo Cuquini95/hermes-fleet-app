@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
+import { appendRow, SHEET_TABS } from '../lib/sheets-api';
+import { useAuthStore } from '../stores/auth-store';
 import ConfirmModal from '../components/ui/ConfirmModal';
 import SuccessToast from '../components/ui/SuccessToast';
 
@@ -9,6 +11,7 @@ const MATERIAL_OPTIONS = ['Tierra', 'Roca', 'Grava', 'Mineral', 'Caliza', 'Otro'
 
 export default function ViajePage() {
   const navigate = useNavigate();
+  const userName = useAuthStore((s) => s.userName);
 
   const [unidad, setUnidad] = useState('');
   const [rutaOrigen, setRutaOrigen] = useState('');
@@ -39,8 +42,32 @@ export default function ViajePage() {
     setShowConfirm(true);
   }
 
-  function handleConfirm() {
+  async function handleConfirm() {
     setShowConfirm(false);
+
+    const kmCargadoNum = parseFloat(kmCargado) || 0;
+    const kmVacioNum = parseFloat(kmVacio) || 0;
+
+    try {
+      await appendRow(SHEET_TABS.VIAJES, [
+        String(Date.now()),
+        new Date().toLocaleDateString(),
+        new Date().toLocaleTimeString(),
+        unidad,
+        userName,
+        rutaOrigen,
+        rutaDestino,
+        String(kmCargadoNum),
+        String(kmVacioNum),
+        String(kmCargadoNum + kmVacioNum),
+        material,
+        String(parseFloat(tonelaje) || 0),
+        observaciones,
+      ]);
+    } catch (err) {
+      console.error('Sheets append failed (Viajes):', err);
+    }
+
     setToastMessage('Viaje registrado ✓');
     setToastVisible(true);
   }
