@@ -20,12 +20,12 @@ interface RoleCard {
 }
 
 const ROLE_CARDS: RoleCard[] = [
-  { role: 'operador', label: 'Operador', icon: <Truck size={28} className="text-amber" /> },
-  { role: 'mecanico', label: 'Mecánico', icon: <Wrench size={28} className="text-amber" /> },
-  { role: 'supervisor', label: 'Supervisor', icon: <Eye size={28} className="text-amber" /> },
-  { role: 'coordinador', label: 'Coordinador Mtto.', icon: <Settings size={28} className="text-amber" /> },
-  { role: 'jefe_taller', label: 'Jefe de Taller', icon: <Wrench size={28} className="text-amber" /> },
-  { role: 'gerencia', label: 'Gerencia', icon: <BarChart3 size={28} className="text-amber" /> },
+  { role: 'operador', label: 'Operador', icon: <Truck size={28} className="text-white/80" /> },
+  { role: 'mecanico', label: 'Mecánico', icon: <Wrench size={28} className="text-white/80" /> },
+  { role: 'supervisor', label: 'Supervisor', icon: <Eye size={28} className="text-white/80" /> },
+  { role: 'coordinador', label: 'Coordinador Mtto.', icon: <Settings size={28} className="text-white/80" /> },
+  { role: 'jefe_taller', label: 'Jefe de Taller', icon: <Wrench size={28} className="text-white/80" /> },
+  { role: 'gerencia', label: 'Gerencia', icon: <BarChart3 size={28} className="text-white/80" /> },
 ];
 
 const PIN_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'del'];
@@ -68,7 +68,7 @@ export default function LoginPage() {
   return (
     <div
       className="min-h-screen flex flex-col items-center justify-between py-10 px-4"
-      style={{ background: 'linear-gradient(180deg, #162252 0%, #0D1535 100%)' }}
+      style={{ background: '#FFFFFF' }}
     >
       {selectedRole === null ? (
         /* Phase 1 - Role Selection */
@@ -80,11 +80,11 @@ export default function LoginPage() {
               alt="Trans Plus"
               className="w-24 h-24"
             />
-            <span className="text-white font-bold text-2xl tracking-widest">HERMES</span>
-            <span className="text-white/60 text-sm">Grupo Trans Plus • Operaciones</span>
+            <span className="font-bold text-2xl tracking-widest" style={{ color: '#162252' }}>HERMES</span>
+            <span className="text-sm" style={{ color: '#6B7280' }}>Grupo Trans Plus • Operaciones</span>
           </div>
 
-          <p className="text-white text-base text-center">
+          <p className="text-base text-center" style={{ color: '#162252' }}>
             Selecciona tu rol para ingresar
           </p>
 
@@ -105,7 +105,7 @@ export default function LoginPage() {
             ))}
           </div>
 
-          <p className="text-white/30 text-xs mt-4">v1.0.0 MVP • GTP Hermes Fleet</p>
+          <p className="text-xs mt-4" style={{ color: '#9CA3AF' }}>v1.0.0 MVP • GTP Hermes Fleet</p>
         </div>
       ) : (
         /* Phase 2 - PIN Entry */
@@ -114,11 +114,12 @@ export default function LoginPage() {
           <div className="flex items-center w-full gap-3">
             <button
               onClick={handleBack}
-              className="text-white/70 hover:text-white transition-colors"
+              className="transition-colors"
+              style={{ color: '#162252' }}
             >
               <ArrowLeft size={22} />
             </button>
-            <span className="text-white font-semibold text-lg">
+            <span className="font-semibold text-lg" style={{ color: '#162252' }}>
               {ROLE_LABELS[selectedRole]}
             </span>
           </div>
@@ -130,7 +131,7 @@ export default function LoginPage() {
                 key={i}
                 className="w-4 h-4 rounded-full transition-colors duration-150"
                 style={{
-                  backgroundColor: i < pin.length ? '#2563EB' : 'rgba(255,255,255,0.25)',
+                  backgroundColor: i < pin.length ? '#2563EB' : '#D1D5DB',
                 }}
               />
             ))}
@@ -149,7 +150,7 @@ export default function LoginPage() {
                 ].join(' ')}
                 style={{
                   minHeight: 64,
-                  backgroundColor: key === '' ? 'transparent' : '#1E3A8A',
+                  backgroundColor: key === '' ? 'transparent' : '#162252',
                 }}
               >
                 {key === 'del' ? (
@@ -161,7 +162,7 @@ export default function LoginPage() {
             ))}
           </div>
 
-          <p className="text-white/30 text-xs mt-4">v1.0.0 MVP • GTP Hermes Fleet</p>
+          <p className="text-xs mt-4" style={{ color: '#9CA3AF' }}>v1.0.0 MVP • GTP Hermes Fleet</p>
         </div>
       )}
     </div>
