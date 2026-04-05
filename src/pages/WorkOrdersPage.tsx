@@ -7,9 +7,9 @@ import { SkeletonList } from '../components/ui/Skeleton';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import PullIndicator from '../components/ui/PullIndicator';
 
-type FilterKey = 'Todas' | 'CRITICA' | 'ALTA' | 'MEDIA' | 'Nuevo' | 'En Proceso';
+type FilterKey = 'Todas' | 'CRITICA' | 'ALTA' | 'MEDIA' | 'Nuevo' | 'En Proceso' | 'Esperando Pieza';
 
-const FILTER_OPTIONS: FilterKey[] = ['Todas', 'CRITICA', 'ALTA', 'MEDIA', 'Nuevo', 'En Proceso'];
+const FILTER_OPTIONS: FilterKey[] = ['Todas', 'CRITICA', 'ALTA', 'MEDIA', 'Nuevo', 'En Proceso', 'Esperando Pieza'];
 
 const FILTER_LABELS: Record<FilterKey, string> = {
   Todas: 'Todas',
@@ -18,6 +18,7 @@ const FILTER_LABELS: Record<FilterKey, string> = {
   MEDIA: 'Media',
   Nuevo: 'Nuevo',
   'En Proceso': 'En Proceso',
+  'Esperando Pieza': 'Esperando Pieza',
 };
 
 export default function WorkOrdersPage() {
