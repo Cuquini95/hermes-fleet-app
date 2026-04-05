@@ -76,13 +76,10 @@ export const NAV_CONFIG: Record<AppRole, { visible: NavItem[]; overflow: NavItem
       { id: 'inicio', label: 'Inicio', icon: 'Home', path: '/supervisor' },
       { id: 'equipos', label: 'Equipos', icon: 'Truck', path: '/fleet' },
       { id: 'viajes', label: 'Viajes', icon: 'MapPin', path: '/viajes-pena' },
-      { id: 'dvir', label: 'DVIR', icon: 'ClipboardCheck', path: '/dvir-compliance' },
-      { id: 'mas', label: 'Más', icon: 'MoreHorizontal', path: '' },
-    ],
-    overflow: [
       { id: 'alertas', label: 'Alertas', icon: 'AlertTriangle', path: '/alerts' },
       { id: 'perfil', label: 'Perfil', icon: 'User', path: '/perfil' },
     ],
+    overflow: [],
   },
   gerencia: {
     visible: [
