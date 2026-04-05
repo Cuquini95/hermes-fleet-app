@@ -27,7 +27,7 @@ function canEditField(role: string | null, field: OTStatusField): boolean {
 }
 
 function StatusPillRow({ current }: { current: OTEstado }) {
-  const allStatuses: OTEstado[] = ['Nuevo', 'Asignado', 'En Proceso', 'Esperando Pieza', 'Completado', 'Cerrado'];
+  const allStatuses: OTEstado[] = ['Nuevo', 'Asignado', 'En Proceso', 'Esperando Pieza', 'Completado'];
   const currentIdx = allStatuses.indexOf(current);
 
   return (

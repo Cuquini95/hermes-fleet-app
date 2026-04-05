@@ -29,8 +29,7 @@ async function fetchCriticalOTs(): Promise<number> {
     const status = (row[9] ?? '').toLowerCase();
     if (
       priority === 'critica' &&
-      status !== 'completado' &&
-      status !== 'cerrado'
+      status !== 'completado'
     ) {
       count++;
     }

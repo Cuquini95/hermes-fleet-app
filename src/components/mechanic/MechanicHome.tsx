@@ -9,7 +9,7 @@ export default function MechanicHome() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
 
-  const activeStatuses = ['Completado', 'Cerrado'] as const;
+  const activeStatuses = ['Completado'] as const;
   const myOTs = MOCK_WORKORDERS.filter(
     (ot) => ot.mecanico_asignado === userName && !activeStatuses.includes(ot.estado as typeof activeStatuses[number])
   );

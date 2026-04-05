@@ -38,7 +38,7 @@ export default function CoordinatorHomePage() {
   const userName = useAuthStore((s) => s.userName);
 
   const openOTs = MOCK_WORKORDERS.filter(
-    (ot) => ot.estado !== 'Completado' && ot.estado !== 'Cerrado'
+    (ot) => ot.estado !== 'Completado'
   );
   const criticalOTs = MOCK_WORKORDERS.filter((ot) => ot.prioridad === 'CRITICA');
 

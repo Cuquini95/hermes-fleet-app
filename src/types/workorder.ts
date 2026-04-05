@@ -1,7 +1,7 @@
 export type OTPriority = 'CRITICA' | 'ALTA' | 'MEDIA' | 'BAJA';
-export type OTEstado = 'Nuevo' | 'Asignado' | 'En Proceso' | 'Esperando Pieza' | 'Completado' | 'Cerrado';
+export type OTEstado = 'Nuevo' | 'Asignado' | 'En Proceso' | 'Esperando Pieza' | 'Completado';
 
-export const OT_STATUS_FLOW: OTEstado[] = ['Nuevo', 'Asignado', 'En Proceso', 'Esperando Pieza', 'Completado', 'Cerrado'];
+export const OT_STATUS_FLOW: OTEstado[] = ['Nuevo', 'Asignado', 'En Proceso', 'Esperando Pieza', 'Completado'];
 
 export type OTStatusField = 'estado' | 'mecanico_asignado' | 'progreso' | 'observaciones' | 'costo_estimado' | 'prioridad';
 
@@ -53,5 +53,4 @@ export const ESTADO_CONFIG: Record<OTEstado, { color: string; bg: string }> = {
   'En Proceso': { color: '#2563EB', bg: '#FEF3C7' },
   'Esperando Pieza': { color: '#EA580C', bg: '#FFEDD5' },
   'Completado': { color: '#16A34A', bg: '#DCFCE7' },
-  'Cerrado': { color: '#6B7280', bg: '#F3F4F6' },
 };
