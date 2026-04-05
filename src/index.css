@@ -1,0 +1,49 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@theme {
+  --color-teal: #1B4A4A;
+  --color-teal-light: #2A5A5A;
+  --color-cream: #F5F0E8;
+  --color-amber: #E8961A;
+  --color-amber-light: #F5A623;
+  --color-critical: #DC2626;
+  --color-alta: #EA580C;
+  --color-warning: #F59E0B;
+  --color-success: #16A34A;
+  --color-text: #1A2B2B;
+  --color-text-secondary: #6B7280;
+  --color-border: #E5E7EB;
+  --color-card: #FFFFFF;
+  --font-sans: 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-cream);
+  color: var(--color-text);
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@keyframes bounce-dot {
+  0%, 80%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-8px); }
+}

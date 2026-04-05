@@ -1,0 +1,48 @@
+import { create } from 'zustand';
+import type { AppRole } from '../types/roles';
+
+interface AuthState {
+  role: AppRole | null;
+  userName: string;
+  assignedUnits: string[];
+  isAuthenticated: boolean;
+  login: (role: AppRole, pin: string) => boolean;
+  logout: () => void;
+}
+
+const MOCK_USERS: Record<AppRole, { userName: string; assignedUnits: string[] }> = {
+  operador: { userName: 'Carlos Mendoza', assignedUnits: ['EPAK-09'] },
+  mecanico: { userName: 'Jorge Ramírez', assignedUnits: [] },
+  jefe_taller: { userName: 'Juan Martínez', assignedUnits: [] },
+  coordinador: { userName: 'Roberto Sánchez', assignedUnits: [] },
+  supervisor: { userName: 'Miguel Ángel Torres', assignedUnits: ['EPAK-09', 'EPTK-08', 'EPCF-08'] },
+  gerencia: { userName: 'Daniel García', assignedUnits: [] },
+};
+
+export const useAuthStore = create<AuthState>((set) => ({
+  role: null,
+  userName: '',
+  assignedUnits: [],
+  isAuthenticated: false,
+
+  login: (role: AppRole, pin: string): boolean => {
+    if (pin.length !== 4) return false;
+    const user = MOCK_USERS[role];
+    set({
+      role,
+      userName: user.userName,
+      assignedUnits: user.assignedUnits,
+      isAuthenticated: true,
+    });
+    return true;
+  },
+
+  logout: () => {
+    set({
+      role: null,
+      userName: '',
+      assignedUnits: [],
+      isAuthenticated: false,
+    });
+  },
+}));
