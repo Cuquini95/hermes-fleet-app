@@ -104,6 +104,10 @@ function isManualQuery(text: string): boolean {
   return /manual|procedimiento|cómo|como|pasos/i.test(text);
 }
 
+function isDiagramQuery(text: string): boolean {
+  return /diagrama|diagram|esquema|plano|dibujo/i.test(text);
+}
+
 // ─── Greeting ────────────────────────────────────────────────────────────────
 
 function buildGreeting(userName: string): ChatMessage {
@@ -189,6 +193,10 @@ export default function HermesChat() {
           } catch {
             responseText = `📦 **Búsqueda: '${text}'**\n\nNo pude conectar con el servidor. Verifica tu conexión e intenta de nuevo.`;
           }
+        } else if (isDiagramQuery(text)) {
+          // Direct user to the diagram viewer
+          const unitInfo = selectedUnit !== 'General' ? ` para ${selectedUnit}` : '';
+          responseText = `📐 **Diagramas${unitInfo}**\n\nLos diagramas técnicos están disponibles en la sección de **Diagramas** del menú.\n\n👉 Ve a **Más → Diagramas** o usa la pestaña Diagramas en el Workbench del Mecánico.\n\nDisponibles:\n• D155AX-6 (Komatsu)\n• HM400-3 (Komatsu)\n• DX340LC (Doosan)\n• DX225LCA (Doosan)\n• DL420A (Doosan)\n• MACK GR84B`;
         } else if (isManualQuery(text)) {
           try {
             const result = await manualLookup({
