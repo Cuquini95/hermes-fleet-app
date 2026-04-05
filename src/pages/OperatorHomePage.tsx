@@ -1,3 +1,4 @@
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ClipboardCheck,
@@ -6,9 +7,12 @@ import {
   Gauge,
   MapPin,
   FileText,
+  CheckCircle,
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { getEquipmentById } from '../data/equipment-catalog';
+import { readRange, SHEET_TABS } from '../lib/sheets-api';
+import { mexicoDate } from '../lib/date-utils';
 import EquipmentCard from '../components/ui/EquipmentCard';
 
 interface ActionCard {
@@ -31,32 +35,77 @@ export default function OperatorHomePage() {
   const userName = useAuthStore((s) => s.userName);
   const assignedUnits = useAuthStore((s) => s.assignedUnits);
 
+  const [dvirDone, setDvirDone] = useState<boolean | null>(null); // null = loading
+  const [reportCount, setReportCount] = useState(0);
+
+  const checkDVIRStatus = useCallback(async () => {
+    try {
+      const rows = await readRange(SHEET_TABS.INSPECCIONES);
+      const today = mexicoDate();
+      let todayCount = 0;
+      let foundDVIR = false;
+
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        const rowDate = (row[2] ?? '').trim();  // FECHA column (index 2)
+        const rowOperator = (row[6] ?? '').trim(); // OPERADOR column (index 6)
+
+        if (rowDate === today && rowOperator === userName) {
+          foundDVIR = true;
+          todayCount++;
+        }
+      }
+
+      setDvirDone(foundDVIR);
+      setReportCount(todayCount);
+    } catch {
+      // If fetch fails, hide the banner rather than show false alarm
+      setDvirDone(null);
+    }
+  }, [userName]);
+
+  useEffect(() => {
+    checkDVIRStatus();
+  }, [checkDVIRStatus]);
+
   const assignedEquipment = assignedUnits
     .map((id) => getEquipmentById(id))
     .filter((e) => e !== undefined);
+
+  const greeting = new Date().getHours() < 12 ? 'Buenos días' : new Date().getHours() < 18 ? 'Buenas tardes' : 'Buenas noches';
 
   return (
     <div className="flex flex-col py-4 animate-fade-up">
       {/* Greeting */}
       <div className="mb-4">
-        <h1 className="text-2xl font-bold text-text">Buenos días, {userName}</h1>
+        <h1 className="text-2xl font-bold text-text">{greeting}, {userName}</h1>
         <p className="text-text-secondary text-sm mt-0.5">Operador</p>
       </div>
 
-      {/* Alert strip — DVIR not completed today (mock: always shown) */}
-      <div className="bg-red-50 border-l-4 border-critical rounded-lg p-3 mb-4">
-        <p className="text-sm font-medium text-critical">
-          ⚠️ Tu DVIR de hoy no ha sido completado
-        </p>
-      </div>
+      {/* DVIR status — dynamic from Google Sheets */}
+      {dvirDone === false && (
+        <div className="bg-red-50 border-l-4 border-critical rounded-lg p-3 mb-4">
+          <p className="text-sm font-medium text-critical">
+            ⚠️ Tu DVIR de hoy no ha sido completado
+          </p>
+        </div>
+      )}
+      {dvirDone === true && (
+        <div className="bg-green-50 border-l-4 border-success rounded-lg p-3 mb-4 flex items-center gap-2">
+          <CheckCircle size={16} className="text-success shrink-0" />
+          <p className="text-sm font-medium text-success">
+            DVIR completado hoy ✓
+          </p>
+        </div>
+      )}
 
-      {/* Action grid 3x2 */}
+      {/* Action grid 2x3 */}
       <div className="grid grid-cols-2 gap-3">
         {ACTION_CARDS.map(({ label, icon, path }) => (
           <button
             key={path}
             onClick={() => navigate(path)}
-            className="flex flex-col items-center justify-center gap-2 bg-white rounded-xl p-4 shadow-sm border border-border transition-opacity active:opacity-70"
+            className="flex flex-col items-center justify-center gap-2 bg-white rounded-xl p-4 shadow-sm border border-border btn-press"
             style={{ minHeight: 100 }}
           >
             {icon}
@@ -77,8 +126,12 @@ export default function OperatorHomePage() {
         )}
       </div>
 
-      {/* Footer counter */}
-      <p className="text-sm text-text-secondary text-center mt-4">Reportes hoy: 3 ✓</p>
+      {/* Footer counter — dynamic */}
+      {reportCount > 0 && (
+        <p className="text-sm text-success text-center mt-4 font-medium">
+          Reportes hoy: {reportCount} ✓
+        </p>
+      )}
     </div>
   );
 }
