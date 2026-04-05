@@ -33,6 +33,7 @@ const PIN_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'del'];
 export default function LoginPage() {
   const [selectedRole, setSelectedRole] = useState<AppRole | null>(null);
   const [pin, setPin] = useState('');
+  const [pinError, setPinError] = useState(false);
   const navigate = useNavigate();
   const login = useAuthStore((s) => s.login);
 
@@ -61,6 +62,12 @@ export default function LoginPage() {
       const success = login(selectedRole, newPin);
       if (success) {
         navigate(ROLE_HOME[selectedRole]);
+      } else {
+        setPinError(true);
+        setTimeout(() => {
+          setPin('');
+          setPinError(false);
+        }, 800);
       }
     }
   };
@@ -125,17 +132,20 @@ export default function LoginPage() {
           </div>
 
           {/* PIN dots */}
-          <div className="flex gap-4 my-4">
+          <div className={`flex gap-4 my-4 ${pinError ? 'animate-[shake_0.3s_ease]' : ''}`}>
             {[0, 1, 2, 3].map((i) => (
               <div
                 key={i}
                 className="w-4 h-4 rounded-full transition-colors duration-150"
                 style={{
-                  backgroundColor: i < pin.length ? '#2563EB' : '#D1D5DB',
+                  backgroundColor: pinError ? '#DC2626' : i < pin.length ? '#2563EB' : '#D1D5DB',
                 }}
               />
             ))}
           </div>
+          {pinError && (
+            <p className="text-sm font-medium" style={{ color: '#DC2626' }}>PIN incorrecto</p>
+          )}
 
           {/* Numeric keypad */}
           <div className="grid grid-cols-3 gap-3 w-full">

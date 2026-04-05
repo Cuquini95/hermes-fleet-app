@@ -10,13 +10,13 @@ interface AuthState {
   logout: () => void;
 }
 
-const MOCK_USERS: Record<AppRole, { userName: string; assignedUnits: string[] }> = {
-  operador: { userName: 'Carlos Mendoza', assignedUnits: ['EPAK-09'] },
-  mecanico: { userName: 'Jorge Ramírez', assignedUnits: [] },
-  jefe_taller: { userName: 'Juan Martínez', assignedUnits: [] },
-  coordinador: { userName: 'Roberto Sánchez', assignedUnits: [] },
-  supervisor: { userName: 'Miguel Ángel Torres', assignedUnits: ['EPAK-09', 'EPTK-08', 'EPCF-08'] },
-  gerencia: { userName: 'Daniel García', assignedUnits: [] },
+const MOCK_USERS: Record<AppRole, { userName: string; assignedUnits: string[]; pin: string }> = {
+  operador: { userName: 'Carlos Mendoza', assignedUnits: ['EPAK-09'], pin: '2026' },
+  mecanico: { userName: 'Jorge Ramírez', assignedUnits: [], pin: '2015' },
+  jefe_taller: { userName: 'Juan Martínez', assignedUnits: [], pin: '1995' },
+  coordinador: { userName: 'Roberto Sánchez', assignedUnits: [], pin: '2001' },
+  supervisor: { userName: 'Miguel Ángel Torres', assignedUnits: ['EPAK-09', 'EPTK-08', 'EPCF-08'], pin: '2008' },
+  gerencia: { userName: 'Daniel García', assignedUnits: [], pin: '1963' },
 };
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -28,6 +28,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   login: (role: AppRole, pin: string): boolean => {
     if (pin.length !== 4) return false;
     const user = MOCK_USERS[role];
+    if (pin !== user.pin) return false;
     set({
       role,
       userName: user.userName,
