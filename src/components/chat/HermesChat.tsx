@@ -244,8 +244,11 @@ export default function HermesChat() {
                 }
                 try {
                   const diag = await findDiagram(diagEquip, pn);
-                  if (diag.found && diag.image_url) {
-                    responseText += `\n\n📐 **Diagrama — ${diag.section ?? ''}**\n![Diagrama](/hermes-api${diag.image_url})`;
+                  if (diag.found && diag.image_url && diag.page !== undefined) {
+                    const nextPage = diag.page + 1;
+                    responseText += `\n\n📐 **Diagrama — ${diag.section ?? ''}**\n![Diagrama](/hermes-api${diag.image_url})\n\n📋 **Lista de Partes**\n![Partes](/hermes-api/diagrams/page/${diag.pdf}/${nextPage})`;
+                  } else if (diag.found && diag.image_url) {
+                    responseText += `\n\n📐 **Diagrama**\n![Diagrama](/hermes-api${diag.image_url})`;
                   } else {
                     responseText += `\n\n📐 **Diagrama**\nVe a **Más → Diagramas** y busca el modelo del equipo.`;
                   }
