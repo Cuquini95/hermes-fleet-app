@@ -8,18 +8,40 @@ function formatTimestamp(date: Date): string {
   return date.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
 }
 
-/** Renders text with **bold** markdown as <strong> tags */
+/** Renders text with **bold** and ![img](url) markdown */
 function RichText({ text, className }: { text: string; className?: string }) {
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  // Split by images first, then bold
+  const segments = text.split(/(!\[[^\]]*\]\([^)]+\))/g);
   return (
-    <p className={`text-sm whitespace-pre-wrap ${className ?? ''}`}>
-      {parts.map((part, i) => {
-        if (part.startsWith('**') && part.endsWith('**')) {
-          return <strong key={i} className="font-semibold">{part.slice(2, -2)}</strong>;
+    <div className={`text-sm whitespace-pre-wrap ${className ?? ''}`}>
+      {segments.map((segment, i) => {
+        // Check for image: ![alt](url)
+        const imgMatch = segment.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+        if (imgMatch) {
+          return (
+            <img
+              key={i}
+              src={imgMatch[2]}
+              alt={imgMatch[1] || 'Diagrama'}
+              className="rounded-lg max-w-full mt-2 mb-1 border border-border shadow-sm"
+              loading="lazy"
+            />
+          );
         }
-        return <span key={i}>{part}</span>;
+        // Handle bold within text segments
+        const boldParts = segment.split(/(\*\*[^*]+\*\*)/g);
+        return (
+          <span key={i}>
+            {boldParts.map((part, j) => {
+              if (part.startsWith('**') && part.endsWith('**')) {
+                return <strong key={j} className="font-semibold">{part.slice(2, -2)}</strong>;
+              }
+              return <span key={j}>{part}</span>;
+            })}
+          </span>
+        );
       })}
-    </p>
+    </div>
   );
 }
 

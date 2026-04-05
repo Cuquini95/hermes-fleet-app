@@ -94,3 +94,16 @@ export async function searchParts(query: string, equipo?: string): Promise<PartR
   if (equipo) params.equipo = equipo;
   return hermesGet('/parts', params);
 }
+
+export interface DiagramResult {
+  found: boolean;
+  pdf?: string;
+  page?: number;
+  section?: string;
+  image_url?: string;
+  message?: string;
+}
+
+export async function findDiagram(equipo: string, search: string): Promise<DiagramResult> {
+  return hermesGet('/diagrams/find', { equipo, search });
+}

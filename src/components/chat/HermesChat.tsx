@@ -6,6 +6,7 @@ import {
   photoToFailure,
   manualLookup,
   searchParts,
+  findDiagram,
   type DiagnoseResult,
   type PhotoAnalysisResult,
   type ManualLookupResult,
@@ -223,7 +224,16 @@ export default function HermesChat() {
             if (results.length > 0) {
               responseText = formatSearchParts(results, pn);
               if (wantsDiagram) {
-                responseText += `\n\n📐 **Diagrama**\nPara ver el diagrama de esta parte, ve a **Más → Diagramas** y busca el modelo del equipo.`;
+                try {
+                  const diag = await findDiagram(equipUnit, pn);
+                  if (diag.found && diag.image_url) {
+                    responseText += `\n\n📐 **Diagrama — ${diag.section ?? ''}**\n![Diagrama](/hermes-api${diag.image_url})`;
+                  } else {
+                    responseText += `\n\n📐 **Diagrama**\nVe a **Más → Diagramas** y busca el modelo del equipo.`;
+                  }
+                } catch {
+                  responseText += `\n\n📐 **Diagrama**\nVe a **Más → Diagramas** y busca el modelo del equipo.`;
+                }
               }
             } else {
               // No catalog match — ask AI
