@@ -75,12 +75,11 @@ export default function LoginPage() {
         <div className="flex flex-col items-center w-full max-w-sm gap-6">
           {/* Logo */}
           <div className="flex flex-col items-center gap-3 mb-2">
-            <div
-              className="flex items-center justify-center rounded-xl"
-              style={{ width: 64, height: 64, backgroundColor: '#2563EB' }}
-            >
-              <span className="text-white font-bold text-3xl">H</span>
-            </div>
+            <img
+              src="/logo-transplus.svg"
+              alt="Trans Plus"
+              className="w-24 h-24"
+            />
             <span className="text-white font-bold text-2xl tracking-widest">HERMES</span>
             <span className="text-white/60 text-sm">Grupo Trans Plus • Operaciones</span>
           </div>

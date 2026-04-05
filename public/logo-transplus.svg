@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 290" fill="none">
+  <!-- Trans Plus Cross + Gear Logo — matched to brand image -->
+
+  <!-- Vertical bar (top segment - medium blue) -->
+  <rect x="90" y="10" width="60" height="70" fill="#4BA3E3"/>
+  <!-- Vertical bar (bottom segment - medium blue) -->
+  <rect x="90" y="160" width="60" height="70" fill="#4BA3E3"/>
+
+  <!-- Horizontal bar (left segment - medium blue) -->
+  <rect x="10" y="90" width="70" height="60" fill="#4BA3E3"/>
+  <!-- Horizontal bar (right segment - medium blue) -->
+  <rect x="160" y="90" width="70" height="60" fill="#4BA3E3"/>
+
+  <!-- Dark navy cap - top -->
+  <rect x="90" y="10" width="60" height="22" fill="#162252"/>
+  <!-- Dark navy cap - bottom -->
+  <rect x="90" y="208" width="60" height="22" fill="#162252"/>
+  <!-- Dark navy cap - left -->
+  <rect x="10" y="90" width="22" height="60" fill="#162252"/>
+  <!-- Dark navy cap - right -->
+  <rect x="208" y="90" width="22" height="60" fill="#162252"/>
+
+  <!-- Center cross intersection (lighter blue) -->
+  <rect x="80" y="80" width="80" height="80" fill="#7CC8F2"/>
+
+  <!-- Gear body circle -->
+  <circle cx="120" cy="120" r="46" fill="#7CC8F2" stroke="#162252" stroke-width="5"/>
+
+  <!-- Gear teeth (16 teeth) -->
+  <g fill="#162252">
+    <rect x="115" y="69" width="10" height="12" rx="2" transform="rotate(0,120,120)"/>
+    <rect x="115" y="69" width="10" height="12" rx="2" transform="rotate(22.5,120,120)"/>
+    <rect x="115" y="69" width="10" height="12" rx="2" transform="rotate(45,120,120)"/>
+    <rect x="115" y="69" width="10" height="12" rx="2" transform="rotate(67.5,120,120)"/>
+    <rect x="115" y="69" width="10" height="12" rx="2" transform="rotate(90,120,120)"/>
+    <rect x="115" y="69" width="10" height="12" rx="2" transform="rotate(112.5,120,120)"/>
+    <rect x="115" y="69" width="10" height="12" rx="2" transform="rotate(135,120,120)"/>
+    <rect x="115" y="69" width="10" height="12" rx="2" transform="rotate(157.5,120,120)"/>
+    <rect x="115" y="69" width="10" height="12" rx="2" transform="rotate(180,120,120)"/>
+    <rect x="115" y="69" width="10" height="12" rx="2" transform="rotate(202.5,120,120)"/>
+    <rect x="115" y="69" width="10" height="12" rx="2" transform="rotate(225,120,120)"/>
+    <rect x="115" y="69" width="10" height="12" rx="2" transform="rotate(247.5,120,120)"/>
+    <rect x="115" y="69" width="10" height="12" rx="2" transform="rotate(270,120,120)"/>
+    <rect x="115" y="69" width="10" height="12" rx="2" transform="rotate(292.5,120,120)"/>
+    <rect x="115" y="69" width="10" height="12" rx="2" transform="rotate(315,120,120)"/>
+    <rect x="115" y="69" width="10" height="12" rx="2" transform="rotate(337.5,120,120)"/>
+  </g>
+
+  <!-- Inner gear ring -->
+  <circle cx="120" cy="120" r="30" fill="#A8DEF5" stroke="#162252" stroke-width="4"/>
+
+  <!-- Center blue dot -->
+  <circle cx="120" cy="120" r="14" fill="#2563EB"/>
+  <!-- White hole -->
+  <circle cx="120" cy="120" r="6" fill="white"/>
+</svg>

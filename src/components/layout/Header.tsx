@@ -25,12 +25,12 @@ export default function Header() {
     >
       {/* Left: avatar + user info */}
       <div className="flex items-center gap-3">
-        <div
-          className="flex items-center justify-center rounded-full shrink-0"
-          style={{ width: 36, height: 36, backgroundColor: '#2563EB' }}
-        >
-          <span className="text-white font-bold text-base">GTP</span>
-        </div>
+        <img
+          src="/logo-transplus.svg"
+          alt="Trans Plus"
+          className="shrink-0 rounded"
+          style={{ width: 36, height: 36 }}
+        />
         <div className="flex flex-col leading-tight">
           <span className="text-white font-semibold text-sm">{userName}</span>
           {role && (
