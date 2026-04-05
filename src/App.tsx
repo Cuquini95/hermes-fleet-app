@@ -26,6 +26,9 @@ import DiagramViewer from './components/mechanic/DiagramViewer';
 import BriefingCard from './components/dashboard/BriefingCard';
 import WorkOrdersPage from './pages/WorkOrdersPage';
 import WorkOrderDetailPage from './pages/WorkOrderDetailPage';
+import SupervisorHomePage from './pages/SupervisorHomePage';
+import CoordinatorHomePage from './pages/CoordinatorHomePage';
+import WorkshopHomePage from './pages/WorkshopHomePage';
 
 function Placeholder({ label }: { label: string }) {
   return (
@@ -55,9 +58,9 @@ export default function App() {
       <Route element={<AppShell />}>
         <Route path="/operator" element={<OperatorHomePage />} />
         <Route path="/mechanic" element={<MechanicPage />} />
-        <Route path="/workshop" element={<Placeholder label="Workshop Home" />} />
-        <Route path="/coordinator" element={<Placeholder label="Coordinator Home" />} />
-        <Route path="/supervisor" element={<Placeholder label="Supervisor Home" />} />
+        <Route path="/workshop" element={<WorkshopHomePage />} />
+        <Route path="/coordinator" element={<CoordinatorHomePage />} />
+        <Route path="/supervisor" element={<SupervisorHomePage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/dvir" element={<DVIRPage />} />
         <Route path="/dvir-compliance" element={<DVIRPage />} />
