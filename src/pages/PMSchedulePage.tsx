@@ -108,7 +108,7 @@ export default function PMSchedulePage() {
           pmLevel: pm.level,
           dueAt: pm.due_at,
           hoursRemaining: pm.hours_remaining,
-          source: hasSheetData ? 'sheets' : 'catalog',
+          source: (hasSheetData ? 'sheets' : 'catalog') as 'sheets' | 'catalog',
         };
       })
         // Only show units within less than 50 hours of a PM (or overdue)
