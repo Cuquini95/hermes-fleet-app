@@ -108,6 +108,31 @@ function isDiagramQuery(text: string): boolean {
   return /diagrama|diagram|esquema|plano|dibujo/i.test(text);
 }
 
+/** Detect equipment model from user message text when selector is "General" */
+function detectEquipmentFromText(text: string): string {
+  const models: [RegExp, string][] = [
+    [/D155/i, 'Komatsu D155AX-6'],
+    [/D65/i, 'Komatsu D65EX-16'],
+    [/HM400/i, 'Komatsu HM400-3'],
+    [/HM\s?400/i, 'Komatsu HM400-3'],
+    [/CAT\s?740|740B/i, 'CAT 740B'],
+    [/DX\s?360/i, 'Doosan DX360LCA'],
+    [/DX\s?340/i, 'Doosan DX340LC'],
+    [/DX\s?225/i, 'Doosan DX225LC'],
+    [/DL\s?420/i, 'Doosan DL420A'],
+    [/Mack|GR84|GR64/i, 'Mack GR84B 8x4'],
+    [/EPAK/i, 'CAT 740B'],
+    [/EPTK/i, 'Komatsu D155AX-6'],
+    [/EPCF/i, 'Doosan DL420A'],
+    [/EPEX/i, 'Doosan DX340LC'],
+    [/ULTRATK/i, 'Mack GR84B 8x4'],
+  ];
+  for (const [pattern, model] of models) {
+    if (pattern.test(text)) return model;
+  }
+  return 'General';
+}
+
 // ─── Greeting ────────────────────────────────────────────────────────────────
 
 function buildGreeting(userName: string): ChatMessage {
@@ -208,9 +233,13 @@ export default function HermesChat() {
             responseText = `📖 **Procedimiento**\n\nNo pude acceder al manual en este momento. Consulta el manual físico o intenta de nuevo con conexión al servidor.`;
           }
         } else {
+          // Auto-detect equipment from message if selector is "General"
+          const effectiveUnit = selectedUnit !== 'General'
+            ? selectedUnit
+            : detectEquipmentFromText(text);
           try {
             const result = await diagnose({
-              equipo: selectedUnit,
+              equipo: effectiveUnit,
               sintoma: text,
             });
             responseText = formatDiagnose(result, selectedUnit);
