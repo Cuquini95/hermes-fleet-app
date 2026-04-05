@@ -28,9 +28,14 @@ function timeSince(dateStr: string): string {
 
 export default function OTCard({ workorder, onClick }: OTCardProps) {
   const equipment = getEquipmentById(workorder.unidad);
-  const priorityConfig = PRIORITY_CONFIG[workorder.prioridad];
-  const estadoConfig = ESTADO_CONFIG[workorder.estado];
-  const borderColor = PRIORITY_BORDER[workorder.prioridad];
+  const DEFAULT_PRIORITY = { color: '#6B7280', bg: '#F3F4F6', label: workorder.prioridad, time: '' };
+  const DEFAULT_ESTADO = { color: '#6B7280', bg: '#F3F4F6' };
+
+  // Normalize priority lookup (sheet may have 'Alta' vs 'ALTA')
+  const prioKey = workorder.prioridad?.toUpperCase() as keyof typeof PRIORITY_CONFIG;
+  const priorityConfig = PRIORITY_CONFIG[prioKey] ?? DEFAULT_PRIORITY;
+  const estadoConfig = ESTADO_CONFIG[workorder.estado as keyof typeof ESTADO_CONFIG] ?? DEFAULT_ESTADO;
+  const borderColor = PRIORITY_BORDER[prioKey] ?? '#9CA3AF';
 
   return (
     <div
