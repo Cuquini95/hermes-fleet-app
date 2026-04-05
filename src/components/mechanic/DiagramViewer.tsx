@@ -107,7 +107,7 @@ export default function DiagramViewer() {
         >
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#FEF3C7' }}>
-              <FileText size={20} style={{ color: '#E8961A' }} />
+              <FileText size={20} style={{ color: '#2563EB' }} />
             </div>
             <div>
               <p className="font-semibold text-text text-sm">{diagram.name} — Diagramas</p>

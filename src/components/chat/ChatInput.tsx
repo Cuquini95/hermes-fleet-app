@@ -79,7 +79,7 @@ export default function ChatInput({ onSend, disabled }: ChatInputProps) {
           onClick={() => fileInputRef.current?.click()}
           disabled={disabled}
           className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 disabled:opacity-40"
-          style={{ backgroundColor: '#E8961A' }}
+          style={{ backgroundColor: '#2563EB' }}
         >
           <Camera size={18} color="white" />
         </button>
@@ -115,7 +115,7 @@ export default function ChatInput({ onSend, disabled }: ChatInputProps) {
           onClick={handleSend}
           disabled={!canSend}
           className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 transition-opacity disabled:opacity-40"
-          style={{ backgroundColor: '#E8961A' }}
+          style={{ backgroundColor: '#2563EB' }}
         >
           <Send size={18} color="white" />
         </button>

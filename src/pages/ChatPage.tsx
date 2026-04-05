@@ -8,12 +8,12 @@ export default function ChatPage() {
   return (
     <div
       className="flex flex-col"
-      style={{ height: '100dvh', backgroundColor: '#F5F0E8' }}
+      style={{ height: '100dvh', backgroundColor: '#F1F5F9' }}
     >
       {/* Header */}
       <div
         className="flex items-center gap-3 px-4 py-3 flex-shrink-0"
-        style={{ backgroundColor: '#1B4A4A' }}
+        style={{ backgroundColor: '#162252' }}
       >
         <button
           type="button"
@@ -35,7 +35,7 @@ export default function ChatPage() {
 
         <div
           className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-lg"
-          style={{ backgroundColor: '#E8961A', color: 'white' }}
+          style={{ backgroundColor: '#2563EB', color: 'white' }}
         >
           H
         </div>

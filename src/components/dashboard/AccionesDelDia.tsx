@@ -12,7 +12,7 @@ const acciones: Accion[] = [
   { icon: FileText, text: 'Briefing enviado a CEO y Gerencia', color: '#16A34A' },
   { icon: Clock, text: 'PM programado para EPAK-05 y EPAK-08', color: '#F59E0B' },
   { icon: AlertTriangle, text: 'OT crítica abierta para EPAK-09', color: '#DC2626' },
-  { icon: Package, text: 'Reorden sugerido: filtros D155', color: '#E8961A' },
+  { icon: Package, text: 'Reorden sugerido: filtros D155', color: '#2563EB' },
   { icon: Shield, text: 'Certificación STPS vence en 26 días', color: '#F59E0B' },
   { icon: FileText, text: 'Reporte semanal disponible en PDF', color: '#3B82F6' },
 ];

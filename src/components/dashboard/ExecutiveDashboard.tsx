@@ -55,7 +55,7 @@ export default function ExecutiveDashboard() {
                 ? 'text-white'
                 : 'bg-card border border-border text-text-secondary hover:text-text'
             }`}
-            style={activeTab === tab.id ? { backgroundColor: '#1B4A4A' } : undefined}
+            style={activeTab === tab.id ? { backgroundColor: '#162252' } : undefined}
           >
             {tab.label}
           </button>
@@ -99,7 +99,7 @@ export default function ExecutiveDashboard() {
                 icon={<Fuel size={20} />}
                 value={data.avgConsumption}
                 label="Consumo Promedio"
-                color="#E8961A"
+                color="#2563EB"
               />
               <KPICard
                 icon={<Bell size={20} />}

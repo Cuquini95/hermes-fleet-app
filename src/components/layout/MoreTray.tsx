@@ -48,7 +48,7 @@ export default function MoreTray({ open, onClose, items }: MoreTrayProps) {
             className="flex items-center gap-4 py-3 px-3 rounded-xl active:opacity-70 transition-opacity"
             style={{ backgroundColor: 'transparent' }}
           >
-            <LucideIcon name={item.icon} size={22} color="#1B4A4A" />
+            <LucideIcon name={item.icon} size={22} color="#162252" />
             <span className="text-text text-base font-medium">{item.label}</span>
           </button>
         ))}

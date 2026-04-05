@@ -222,7 +222,7 @@ export default function HermesChat() {
   return (
     <div className="flex flex-col h-full">
       {/* Unit selector */}
-      <div className="px-4 py-2 flex items-center gap-2 border-b" style={{ borderColor: '#E5E7EB', backgroundColor: '#F5F0E8' }}>
+      <div className="px-4 py-2 flex items-center gap-2 border-b" style={{ borderColor: '#E5E7EB', backgroundColor: '#F1F5F9' }}>
         <span className="text-xs font-medium" style={{ color: '#6B7280' }}>
           Equipo:
         </span>
@@ -231,7 +231,7 @@ export default function HermesChat() {
           onChange={(e) => setSelectedUnit(e.target.value)}
           className="text-sm font-medium rounded-full px-4 py-1 outline-none appearance-none cursor-pointer"
           style={{
-            backgroundColor: '#2A5A5A',
+            backgroundColor: '#1E3A8A',
             color: 'white',
           }}
         >
@@ -247,7 +247,7 @@ export default function HermesChat() {
       {/* Messages area */}
       <div
         className="flex-1 overflow-y-auto px-4 py-3 space-y-3"
-        style={{ backgroundColor: '#F5F0E8' }}
+        style={{ backgroundColor: '#F1F5F9' }}
       >
         {messages.map((m) => (
           <ChatBubble key={m.id} message={m} />

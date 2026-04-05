@@ -21,15 +21,15 @@ export default function Header() {
   return (
     <header
       className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4"
-      style={{ height: 64, backgroundColor: '#1B4A4A' }}
+      style={{ height: 64, backgroundColor: '#162252' }}
     >
       {/* Left: avatar + user info */}
       <div className="flex items-center gap-3">
         <div
           className="flex items-center justify-center rounded-full shrink-0"
-          style={{ width: 36, height: 36, backgroundColor: '#E8961A' }}
+          style={{ width: 36, height: 36, backgroundColor: '#2563EB' }}
         >
-          <span className="text-white font-bold text-base">H</span>
+          <span className="text-white font-bold text-base">GTP</span>
         </div>
         <div className="flex flex-col leading-tight">
           <span className="text-white font-semibold text-sm">{userName}</span>

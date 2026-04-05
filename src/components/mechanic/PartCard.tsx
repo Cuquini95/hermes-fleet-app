@@ -9,7 +9,7 @@ export default function PartCard({ part }: PartCardProps) {
     part.stock_quantity === 0
       ? { label: 'Agotado', color: '#DC2626', bg: '#FEE2E2' }
       : part.stock_quantity <= part.stock_minimum
-      ? { label: `Bajo: ${part.stock_quantity}`, color: '#E8961A', bg: '#FEF3C7' }
+      ? { label: `Bajo: ${part.stock_quantity}`, color: '#2563EB', bg: '#FEF3C7' }
       : { label: `En stock: ${part.stock_quantity}`, color: '#16A34A', bg: '#DCFCE7' };
 
   return (

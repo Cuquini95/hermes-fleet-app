@@ -23,7 +23,7 @@ export default function MechanicHome() {
           icon={<Wrench size={20} />}
           value={myOTs.length}
           label="OTs Asignadas"
-          color="#E8961A"
+          color="#2563EB"
         />
         <KPICard
           icon={<Package size={20} />}

@@ -11,7 +11,7 @@ export default function AppShell() {
         style={{
           paddingTop: 80,
           paddingBottom: 80,
-          backgroundColor: '#F5F0E8',
+          backgroundColor: '#F1F5F9',
         }}
       >
         <Outlet />

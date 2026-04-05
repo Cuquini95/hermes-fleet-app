@@ -54,7 +54,7 @@ export default function PerfilPage() {
   const unitLabel = assignedUnits.length > 0 ? assignedUnits[0] : '';
 
   const overallPct = Math.round((totalScore / totalMax) * 100);
-  const arcColor = overallPct >= 80 ? '#16A34A' : overallPct >= 50 ? '#E8961A' : '#DC2626';
+  const arcColor = overallPct >= 80 ? '#16A34A' : overallPct >= 50 ? '#2563EB' : '#DC2626';
 
   return (
     <div className="flex flex-col pb-4 gap-4 animate-fade-up">
@@ -75,7 +75,7 @@ export default function PerfilPage() {
         {/* Avatar */}
         <div
           className="w-20 h-20 rounded-full flex items-center justify-center text-white text-2xl font-bold shadow-md"
-          style={{ backgroundColor: '#E8961A' }}
+          style={{ backgroundColor: '#2563EB' }}
         >
           {initials}
         </div>

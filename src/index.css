@@ -2,11 +2,11 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 @theme {
-  --color-teal: #1B4A4A;
-  --color-teal-light: #2A5A5A;
-  --color-cream: #F5F0E8;
-  --color-amber: #E8961A;
-  --color-amber-light: #F5A623;
+  --color-teal: #162252;
+  --color-teal-light: #1E3A8A;
+  --color-cream: #F1F5F9;
+  --color-amber: #2563EB;
+  --color-amber-light: #3B82F6;
   --color-critical: #DC2626;
   --color-alta: #EA580C;
   --color-warning: #F59E0B;

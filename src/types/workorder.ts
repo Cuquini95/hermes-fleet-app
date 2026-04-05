@@ -50,7 +50,7 @@ export const PRIORITY_CONFIG: Record<OTPriority, { color: string; bg: string; la
 export const ESTADO_CONFIG: Record<OTEstado, { color: string; bg: string }> = {
   'Nuevo': { color: '#3B82F6', bg: '#DBEAFE' },
   'Asignado': { color: '#8B5CF6', bg: '#EDE9FE' },
-  'En Proceso': { color: '#E8961A', bg: '#FEF3C7' },
+  'En Proceso': { color: '#2563EB', bg: '#FEF3C7' },
   'Esperando Pieza': { color: '#EA580C', bg: '#FFEDD5' },
   'Completado': { color: '#16A34A', bg: '#DCFCE7' },
   'Cerrado': { color: '#6B7280', bg: '#F3F4F6' },

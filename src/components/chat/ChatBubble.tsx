@@ -35,7 +35,7 @@ export default function ChatBubble({ message }: ChatBubbleProps) {
       <div className="flex flex-col items-end max-w-[80%] ml-auto">
         <div
           className="rounded-2xl rounded-br-md p-3"
-          style={{ backgroundColor: '#E8961A' }}
+          style={{ backgroundColor: '#2563EB' }}
         >
           {message.photo_url && (
             <img
@@ -61,7 +61,7 @@ export default function ChatBubble({ message }: ChatBubbleProps) {
     <div className="flex items-end gap-2 max-w-[80%] mr-auto">
       <div
         className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 mb-5"
-        style={{ backgroundColor: '#E8961A' }}
+        style={{ backgroundColor: '#2563EB' }}
       >
         <span className="text-white text-xs font-bold">H</span>
       </div>

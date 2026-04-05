@@ -38,7 +38,7 @@ export default function BottomNav() {
     <>
       <nav
         className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around px-2 pb-safe"
-        style={{ height: 64, backgroundColor: '#1B4A4A' }}
+        style={{ height: 64, backgroundColor: '#162252' }}
       >
         {visible.map((item) => {
           const active = isActive(item);
@@ -52,18 +52,18 @@ export default function BottomNav() {
               <LucideIcon
                 name={item.icon}
                 size={22}
-                color={active ? '#E8961A' : 'rgba(255,255,255,0.6)'}
+                color={active ? '#2563EB' : 'rgba(255,255,255,0.6)'}
               />
               <span
                 className="text-xs leading-none"
-                style={{ color: active ? '#E8961A' : 'rgba(255,255,255,0.6)' }}
+                style={{ color: active ? '#2563EB' : 'rgba(255,255,255,0.6)' }}
               >
                 {item.label}
               </span>
               {active && (
                 <span
                   className="w-1 h-1 rounded-full"
-                  style={{ backgroundColor: '#E8961A' }}
+                  style={{ backgroundColor: '#2563EB' }}
                 />
               )}
             </button>

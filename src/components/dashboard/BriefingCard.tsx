@@ -2,7 +2,7 @@ export default function BriefingCard() {
   return (
     <div className="bg-card rounded-xl shadow-sm border border-border overflow-hidden">
       {/* Header */}
-      <div className="p-4" style={{ backgroundColor: '#1B4A4A' }}>
+      <div className="p-4" style={{ backgroundColor: '#162252' }}>
         <p className="font-bold text-white text-sm tracking-wide">BRIEFING FLOTA GTP</p>
         <p className="text-white text-xs mt-0.5 opacity-80">4 Abril 2026 · 06:00 hrs</p>
       </div>

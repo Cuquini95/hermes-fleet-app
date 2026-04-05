@@ -4,7 +4,7 @@ export default function TypingIndicator() {
       <div className="flex items-end gap-2">
         <div
           className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
-          style={{ backgroundColor: '#E8961A' }}
+          style={{ backgroundColor: '#2563EB' }}
         >
           <span className="text-white text-xs font-bold">H</span>
         </div>

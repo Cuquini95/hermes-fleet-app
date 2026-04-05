@@ -68,7 +68,7 @@ export default function LoginPage() {
   return (
     <div
       className="min-h-screen flex flex-col items-center justify-between py-10 px-4"
-      style={{ background: 'linear-gradient(180deg, #1B4A4A 0%, #0F2E2E 100%)' }}
+      style={{ background: 'linear-gradient(180deg, #162252 0%, #0D1535 100%)' }}
     >
       {selectedRole === null ? (
         /* Phase 1 - Role Selection */
@@ -77,7 +77,7 @@ export default function LoginPage() {
           <div className="flex flex-col items-center gap-3 mb-2">
             <div
               className="flex items-center justify-center rounded-xl"
-              style={{ width: 64, height: 64, backgroundColor: '#E8961A' }}
+              style={{ width: 64, height: 64, backgroundColor: '#2563EB' }}
             >
               <span className="text-white font-bold text-3xl">H</span>
             </div>
@@ -96,7 +96,7 @@ export default function LoginPage() {
                 key={role}
                 onClick={() => handleRoleSelect(role)}
                 className="flex flex-col items-center gap-2 rounded-xl py-5 px-3 transition-opacity active:opacity-70"
-                style={{ backgroundColor: '#2A5A5A' }}
+                style={{ backgroundColor: '#1E3A8A' }}
               >
                 {icon}
                 <span className="text-white text-sm font-medium text-center leading-tight">
@@ -131,7 +131,7 @@ export default function LoginPage() {
                 key={i}
                 className="w-4 h-4 rounded-full transition-colors duration-150"
                 style={{
-                  backgroundColor: i < pin.length ? '#E8961A' : 'rgba(255,255,255,0.25)',
+                  backgroundColor: i < pin.length ? '#2563EB' : 'rgba(255,255,255,0.25)',
                 }}
               />
             ))}
@@ -150,7 +150,7 @@ export default function LoginPage() {
                 ].join(' ')}
                 style={{
                   minHeight: 64,
-                  backgroundColor: key === '' ? 'transparent' : '#2A5A5A',
+                  backgroundColor: key === '' ? 'transparent' : '#1E3A8A',
                 }}
               >
                 {key === 'del' ? (
