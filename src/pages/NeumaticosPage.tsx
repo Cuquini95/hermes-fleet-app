@@ -7,252 +7,260 @@ import {
   AlertTriangle,
   Gauge,
   Ruler,
-  ClipboardList,
   Loader2,
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
 import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
-import { mexicoDate, mexicoTime } from '../lib/date-utils';
+import { mexicoDate } from '../lib/date-utils';
 
-// ── Tire position options by equipment type ─────────────────────────────────
+// ── Column order matches Sheet "13 Neumáticos" cols A→S ─────────────────────
+// A  #
+// B  CÓDIGO UNIDAD
+// C  MODELO
+// D  POSICIÓN
+// E  MARCA NEUMÁTICO
+// F  MODELO NEUMÁTICO
+// G  MEDIDA
+// H  N° SERIE
+// I  FECHA INSTALACIÓN        (blank — filled when tire is installed)
+// J  HORÓMETRO INSTALACIÓN    (blank — filled when tire is installed)
+// K  HORÓMETRO ACTUAL
+// L  HORAS USO                (blank — sheet calculates K-J)
+// M  PROFUNDIDAD ORIGINAL(mm)
+// N  PROFUNDIDAD ACTUAL (mm)
+// O  DESGASTE %               (blank — sheet calculates (M-N)/M*100)
+// P  PRESIÓN RECOMENDADA(PSI)
+// Q  ÚLTIMA PRESIÓN (PSI)
+// R  FECHA ÚLT. INSPECCIÓN
+// S  ESTADO
+
+// ── Positions by equipment type ──────────────────────────────────────────────
+// Camión Articulado (CAT 740B, HM400-3): 6 llantas
+//   FL FR  RL1(dual) RL2(dual)  RR1(dual) RR2(dual) — single front, dual rear
+// Camión Pesado Mack GR84B 8x4: 12 llantas
+//   FL FR  RL1 RL2  RL-INT RL-EXT  RR1 RR2  RR-INT RR-EXT  + 2 extras medianos
 const POSITIONS_BY_TYPE: Record<string, string[]> = {
   'Camión Articulado': [
-    'Delantera Izquierda',
-    'Delantera Derecha',
-    'Trasera Izquierda Exterior',
-    'Trasera Izquierda Interior',
-    'Trasera Derecha Exterior',
-    'Trasera Derecha Interior',
-  ],
-  Cargador: [
-    'Delantera Izquierda',
-    'Delantera Derecha',
-    'Trasera Izquierda',
-    'Trasera Derecha',
-  ],
+    'FL', 'FR',                     // Delanteras (2)
+    'RL-EXT', 'RL-INT',             // Trasera Izq (2 duales)
+    'RR-EXT', 'RR-INT',             // Trasera Der (2 duales)
+  ],                                 // Total: 6
+  Cargador: ['FL', 'FR', 'RL', 'RR'],
   'Camión Pesado': [
-    'Delantera Izquierda',
-    'Delantera Derecha',
-    'Eje Medio Izquierda Exterior',
-    'Eje Medio Izquierda Interior',
-    'Eje Medio Derecha Exterior',
-    'Eje Medio Derecha Interior',
-    'Eje Trasero Izquierda Exterior',
-    'Eje Trasero Izquierda Interior',
-    'Eje Trasero Derecha Exterior',
-    'Eje Trasero Derecha Interior',
-  ],
-  default: [
-    'Delantera Izquierda',
-    'Delantera Derecha',
-    'Trasera Izquierda',
-    'Trasera Derecha',
-  ],
+    'FL', 'FR',                     // Eje Delantero (2)
+    'RL1', 'RL2',                   // Eje Medio Izq (2 duales)
+    'RR1', 'RR2',                   // Eje Medio Der (2 duales)
+    'RL-INT', 'RL-EXT',             // Eje Trasero Izq (2 duales)
+    'RR-INT', 'RR-EXT',             // Eje Trasero Der (2 duales)
+  ],                                 // Total: 12
+  default: ['FL', 'FR', 'RL', 'RR'],
 };
 
-const CONDICIONES = [
-  { value: 'Buena', color: '#16A34A', bg: '#F0FDF4' },
-  { value: 'Desgaste Normal', color: '#2563EB', bg: '#EFF6FF' },
-  { value: 'Desgaste Irregular', color: '#F59E0B', bg: '#FFFBEB' },
-  { value: 'Dañada', color: '#DC2626', bg: '#FEF2F2' },
-  { value: 'Cambio Urgente', color: '#9B1C1C', bg: '#FEF2F2' },
-];
-
-const ACCIONES = [
-  'Sin Acción',
-  'Rotar',
-  'Reparar / Parchar',
-  'Cambiar Inmediato',
-];
-
-const MARCAS_COMUNES = ['Bridgestone', 'Michelin', 'Goodyear', 'Continental', 'Hankook', 'Firestone', 'Otra'];
-
-type Step = 'equipo' | 'llanta' | 'success';
-
-interface LlantaForm {
-  posicion: string;
-  marca: string;
-  medida: string;
-  serie: string;
-  presion: string;
-  profundidad: string;
-  condicion: string;
-  accion: string;
-  observaciones: string;
+// ── Recommended PSI by type + position ──────────────────────────────────────
+function getPresionRecomendada(tipo: string, posicion: string): string {
+  const esFrontal = posicion.startsWith('F');
+  if (tipo === 'Camión Pesado') return esFrontal ? '120' : '115';
+  if (tipo === 'Camión Articulado') return esFrontal ? '115' : '110';
+  if (tipo === 'Cargador') return '80';
+  return '115';
 }
 
-const emptyLlanta = (): LlantaForm => ({
-  posicion: '',
-  marca: '',
-  medida: '',
-  serie: '',
-  presion: '',
-  profundidad: '',
-  condicion: '',
-  accion: '',
-  observaciones: '',
-});
+// ── Auto-calculate ESTADO from form values ───────────────────────────────────
+function calcEstado(condicion: string, profActual: string, presion: string): string {
+  const d = parseFloat(profActual);
+  const p = parseFloat(presion);
+  if (condicion === 'Cambio Urgente' || (!isNaN(d) && d < 5)) return 'Cambio Urgente';
+  if (condicion === 'Dañada') return 'Dañada';
+  if (!isNaN(p) && (p < 70 || p > 135)) return 'Desgaste Irregular';
+  if (condicion === 'Desgaste Irregular' || (!isNaN(d) && d < 10)) return 'Desgaste Irregular';
+  if (condicion === 'Desgaste Normal') return 'Desgaste Normal';
+  return 'Buena';
+}
 
-// ── Tread depth color helper ─────────────────────────────────────────────────
-function profundidadColor(mm: string): string {
+// ── Visual helpers ───────────────────────────────────────────────────────────
+const CONDICIONES = [
+  { value: 'Buena',              color: '#16A34A', bg: '#F0FDF4' },
+  { value: 'Desgaste Normal',    color: '#2563EB', bg: '#EFF6FF' },
+  { value: 'Desgaste Irregular', color: '#F59E0B', bg: '#FFFBEB' },
+  { value: 'Dañada',             color: '#DC2626', bg: '#FEF2F2' },
+  { value: 'Cambio Urgente',     color: '#9B1C1C', bg: '#FEF2F2' },
+];
+
+const MARCAS = ['Bridgestone', 'Michelin', 'Goodyear', 'Continental', 'Hankook', 'Firestone', 'Otra'];
+
+function depthColor(mm: string) {
   const v = parseFloat(mm);
-  if (isNaN(v)) return '#6B7280';
+  if (isNaN(v)) return '#9CA3AF';
   if (v >= 10) return '#16A34A';
   if (v >= 5) return '#F59E0B';
   return '#DC2626';
 }
 
-// ── PSI color helper ─────────────────────────────────────────────────────────
-function presionColor(psi: string): string {
+function psiColor(psi: string) {
   const v = parseFloat(psi);
-  if (isNaN(v)) return '#6B7280';
-  if (v >= 90 && v <= 130) return '#16A34A';
-  if (v >= 70 && v < 90) return '#F59E0B';
+  if (isNaN(v)) return '#9CA3AF';
+  if (v >= 80 && v <= 130) return '#16A34A';
+  if (v >= 65) return '#F59E0B';
   return '#DC2626';
 }
 
-// ── Row counter helper ───────────────────────────────────────────────────────
-let _rowCounter = 1;
-function nextRowNum(): string {
-  return String(_rowCounter++);
+// ── Types ────────────────────────────────────────────────────────────────────
+interface LlantaForm {
+  posicion: string;
+  marca: string;
+  modeloLlanta: string;   // F: MODELO NEUMÁTICO  (e.g. M729, R297, XDN2)
+  medida: string;         // G: MEDIDA
+  serie: string;          // H: N° SERIE / DOT
+  profundidadOrig: string;// M: PROFUNDIDAD ORIGINAL (mm)
+  profundidad: string;    // N: PROFUNDIDAD ACTUAL (mm)
+  presionRec: string;     // P: PRESIÓN RECOMENDADA — auto-filled, editable
+  presion: string;        // Q: ÚLTIMA PRESIÓN (PSI)
+  condicion: string;      // drives S: ESTADO
+  observaciones: string;
 }
 
+const emptyLlanta = (tipo = '', posicion = ''): LlantaForm => ({
+  posicion,
+  marca: '',
+  modeloLlanta: '',
+  medida: '',
+  serie: '',
+  profundidadOrig: '',
+  profundidad: '',
+  presionRec: getPresionRecomendada(tipo, posicion),
+  presion: '',
+  condicion: '',
+  observaciones: '',
+});
+
+type Step = 'equipo' | 'llanta' | 'success';
+
+let _seq = 1;
+function nextSeq() { return String(_seq++); }
+
+// ════════════════════════════════════════════════════════════════════════════
 export default function NeumaticosPage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
 
-  const [step, setStep] = useState<Step>('equipo');
-
-  // Step 1 — equipment
-  const [selectedUnit, setSelectedUnit] = useState('');
-  const [horometro, setHorometro] = useState('');
-
-  // Step 2 — llanta form
-  const [llanta, setLlanta] = useState<LlantaForm>(emptyLlanta());
+  const [step, setStep]             = useState<Step>('equipo');
+  const [selectedUnit, setSelected] = useState('');
+  const [horometro, setHorometro]   = useState('');
+  const [llanta, setLlanta]         = useState<LlantaForm>(emptyLlanta());
   const [submitting, setSubmitting] = useState(false);
   const [registradas, setRegistradas] = useState<string[]>([]);
-  const [errors, setErrors] = useState<Partial<LlantaForm>>({});
+  const [errors, setErrors]         = useState<Partial<Record<keyof LlantaForm, string>>>({});
 
-  const equipment = EQUIPMENT_CATALOG.find((e) => e.unit_id === selectedUnit);
-  const positions =
-    equipment
-      ? (POSITIONS_BY_TYPE[equipment.type] ?? POSITIONS_BY_TYPE.default)
-      : POSITIONS_BY_TYPE.default;
+  const equipment       = EQUIPMENT_CATALOG.find((e) => e.unit_id === selectedUnit);
+  const positions       = equipment ? (POSITIONS_BY_TYPE[equipment.type] ?? POSITIONS_BY_TYPE.default) : [];
+  const available       = positions.filter((p) => !registradas.includes(p));
+  const autoEstado      = calcEstado(llanta.condicion, llanta.profundidad, llanta.presion);
+  const estadoMeta      = CONDICIONES.find((c) => c.value === llanta.condicion);
 
-  // Filter out already registered positions from this session
-  const availablePositions = positions.filter((p) => !registradas.includes(p));
+  // Set presionRec whenever position changes
+  function handlePosicion(pos: string) {
+    setLlanta((f) => ({
+      ...f,
+      posicion: pos,
+      presionRec: getPresionRecomendada(equipment?.type ?? '', pos),
+    }));
+  }
 
-  // ── Validation ───────────────────────────────────────────────────────────
-  function validateLlanta(): boolean {
-    const e: Partial<LlantaForm> = {};
-    if (!llanta.posicion) e.posicion = 'Requerido';
-    if (!llanta.presion) e.presion = 'Requerido';
-    if (!llanta.profundidad) e.profundidad = 'Requerido';
-    if (!llanta.condicion) e.condicion = 'Requerido';
-    if (!llanta.accion) e.accion = 'Requerido';
+  // ── Validation ─────────────────────────────────────────────────────────
+  function validate(): boolean {
+    const e: Partial<Record<keyof LlantaForm, string>> = {};
+    if (!llanta.posicion)        e.posicion        = 'Requerido';
+    if (!llanta.profundidadOrig) e.profundidadOrig = 'Requerido';
+    if (!llanta.profundidad)     e.profundidad     = 'Requerido';
+    if (!llanta.presion)         e.presion         = 'Requerido';
+    if (!llanta.condicion)       e.condicion       = 'Requerido';
     setErrors(e);
     return Object.keys(e).length === 0;
   }
 
-  // ── Submit one tire row ──────────────────────────────────────────────────
-  async function handleSubmitLlanta() {
-    if (!validateLlanta()) return;
+  // ── Submit — writes cols A→S (19 values) ───────────────────────────────
+  async function handleSubmit() {
+    if (!validate()) return;
     setSubmitting(true);
 
     const fecha = mexicoDate();
-    const hora = mexicoTime();
 
-    const values = [
-      nextRowNum(),
-      fecha,
-      hora,
-      selectedUnit,
-      equipment?.model ?? '',
-      userName,
-      horometro,
-      llanta.posicion,
-      llanta.marca,
-      llanta.medida,
-      llanta.serie,
-      llanta.presion,
-      llanta.profundidad,
-      llanta.condicion,
-      llanta.accion,
-      llanta.observaciones,
+    const values: string[] = [
+      nextSeq(),                  // A  #
+      selectedUnit,               // B  CÓDIGO UNIDAD
+      equipment?.model ?? '',     // C  MODELO
+      llanta.posicion,            // D  POSICIÓN
+      llanta.marca,               // E  MARCA NEUMÁTICO
+      llanta.modeloLlanta,        // F  MODELO NEUMÁTICO
+      llanta.medida,              // G  MEDIDA
+      llanta.serie,               // H  N° SERIE
+      '',                         // I  FECHA INSTALACIÓN  (blank)
+      '',                         // J  HORÓMETRO INSTALACIÓN (blank)
+      horometro,                  // K  HORÓMETRO ACTUAL
+      '',                         // L  HORAS USO  (sheet calculates)
+      llanta.profundidadOrig,     // M  PROFUNDIDAD ORIGINAL (mm)
+      llanta.profundidad,         // N  PROFUNDIDAD ACTUAL (mm)
+      '',                         // O  DESGASTE %  (sheet calculates)
+      llanta.presionRec,          // P  PRESIÓN RECOMENDADA (PSI)
+      llanta.presion,             // Q  ÚLTIMA PRESIÓN (PSI)
+      fecha,                      // R  FECHA ÚLT. INSPECCIÓN
+      autoEstado,                 // S  ESTADO
     ];
+
+    // Append observaciones as extra col if needed
+    if (llanta.observaciones) values.push(llanta.observaciones);
 
     try {
       await appendRow(SHEET_TABS.NEUMATICOS, values);
       setRegistradas((prev) => [...prev, llanta.posicion]);
-      setLlanta(emptyLlanta());
+      setLlanta(emptyLlanta(equipment?.type ?? '', ''));
       setErrors({});
     } catch {
-      // Silent fail — offline queue will retry
+      // offline-queue will retry
     } finally {
       setSubmitting(false);
     }
   }
 
-  function handleFinish() {
-    setStep('success');
-  }
-
-  // ── STEP 1: Equipment ────────────────────────────────────────────────────
+  // ── STEP 1: Equipment ──────────────────────────────────────────────────
   if (step === 'equipo') {
-    const validEquipment = EQUIPMENT_CATALOG.filter(
+    const wheeled = EQUIPMENT_CATALOG.filter(
       (e) => e.type !== 'Bulldozer' && e.type !== 'Excavadora'
     );
 
     return (
       <div className="flex flex-col py-4 animate-fade-up">
-        {/* Header */}
         <div className="flex items-center gap-3 mb-6">
           <button onClick={() => navigate(-1)} className="p-1">
             <ChevronLeft size={24} color="#162252" />
           </button>
-          <div className="flex items-center gap-2">
-            <Disc3 size={24} color="#162252" />
-            <h1 className="text-xl font-bold text-text">Reporte de Neumáticos</h1>
-          </div>
+          <Disc3 size={24} color="#162252" />
+          <h1 className="text-xl font-bold text-text">Reporte de Neumáticos</h1>
         </div>
 
-        {/* Subtitle */}
-        <p className="text-sm text-text-secondary mb-4">
-          Selecciona la unidad a inspeccionar
-        </p>
+        <p className="text-sm text-text-secondary mb-4">Selecciona la unidad a inspeccionar</p>
 
-        {/* Equipment list */}
         <div className="flex flex-col gap-2 mb-6">
-          {validEquipment.map((eq) => (
+          {wheeled.map((eq) => (
             <button
               key={eq.unit_id}
-              onClick={() => setSelectedUnit(eq.unit_id)}
+              onClick={() => setSelected(eq.unit_id)}
               className="flex items-center justify-between p-4 rounded-xl border transition-all btn-press"
               style={{
                 backgroundColor: selectedUnit === eq.unit_id ? '#EFF6FF' : '#FFFFFF',
-                borderColor: selectedUnit === eq.unit_id ? '#2563EB' : '#E5E7EB',
+                borderColor:     selectedUnit === eq.unit_id ? '#2563EB' : '#E5E7EB',
               }}
             >
-              <div className="flex flex-col items-start gap-0.5">
-                <span className="font-semibold text-text">{eq.unit_id}</span>
-                <span className="text-sm text-text-secondary">{eq.model}</span>
+              <div className="text-left">
+                <p className="font-semibold text-text">{eq.unit_id}</p>
+                <p className="text-xs text-text-secondary">{eq.model} · {eq.type}</p>
               </div>
               <span
                 className="text-xs font-medium px-2 py-1 rounded-full"
                 style={{
-                  backgroundColor:
-                    eq.status === 'operativo'
-                      ? '#DCFCE7'
-                      : eq.status === 'alerta'
-                        ? '#FEF9C3'
-                        : '#FEE2E2',
-                  color:
-                    eq.status === 'operativo'
-                      ? '#16A34A'
-                      : eq.status === 'alerta'
-                        ? '#92400E'
-                        : '#DC2626',
+                  backgroundColor: eq.status === 'operativo' ? '#DCFCE7' : eq.status === 'alerta' ? '#FEF9C3' : '#FEE2E2',
+                  color:           eq.status === 'operativo' ? '#16A34A' : eq.status === 'alerta' ? '#92400E' : '#DC2626',
                 }}
               >
                 {eq.status}
@@ -261,10 +269,9 @@ export default function NeumaticosPage() {
           ))}
         </div>
 
-        {/* Horómetro */}
         {selectedUnit && (
           <div className="mb-6 animate-fade-up">
-            <label className="block text-sm font-medium text-text mb-1">
+            <label className="block text-sm font-semibold text-text mb-1">
               Horómetro actual (hrs)
             </label>
             <input
@@ -274,33 +281,32 @@ export default function NeumaticosPage() {
               placeholder={String(equipment?.current_horometro ?? '')}
               className="w-full border border-border rounded-xl px-4 py-3 text-text bg-white"
             />
+            <p className="text-xs text-text-secondary mt-1">
+              Se registra como "Horómetro Actual" en el Sheet
+            </p>
           </div>
         )}
 
         <button
           disabled={!selectedUnit}
           onClick={() => setStep('llanta')}
-          className="w-full py-3 rounded-xl font-semibold text-white transition-opacity"
-          style={{
-            backgroundColor: selectedUnit ? '#162252' : '#9CA3AF',
-          }}
+          className="w-full py-3 rounded-xl font-semibold text-white"
+          style={{ backgroundColor: selectedUnit ? '#162252' : '#9CA3AF' }}
         >
-          Continuar →
+          Continuar → {selectedUnit && `(${positions.length} posiciones)`}
         </button>
       </div>
     );
   }
 
-  // ── SUCCESS ──────────────────────────────────────────────────────────────
+  // ── SUCCESS ────────────────────────────────────────────────────────────
   if (step === 'success') {
     return (
       <div className="flex flex-col items-center justify-center py-16 animate-fade-up gap-6">
         <CheckCircle2 size={64} color="#16A34A" />
-        <h2 className="text-2xl font-bold text-text text-center">
-          Reporte Completado
-        </h2>
+        <h2 className="text-2xl font-bold text-text text-center">Reporte Completado</h2>
         <p className="text-text-secondary text-center">
-          {registradas.length} neumático{registradas.length !== 1 ? 's' : ''} registrado{registradas.length !== 1 ? 's' : ''} en el Sheet
+          {registradas.length} llanta{registradas.length !== 1 ? 's' : ''} guardada{registradas.length !== 1 ? 's' : ''} en el Sheet
         </p>
         <div className="w-full bg-white rounded-xl p-4 border border-border">
           {registradas.map((pos) => (
@@ -321,17 +327,17 @@ export default function NeumaticosPage() {
     );
   }
 
-  // ── STEP 2: Llanta form ──────────────────────────────────────────────────
+  // ── STEP 2: Per-tire form ──────────────────────────────────────────────
   return (
     <div className="flex flex-col py-4 animate-fade-up">
       {/* Header */}
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <button onClick={() => setStep('equipo')} className="p-1">
             <ChevronLeft size={24} color="#162252" />
           </button>
           <div>
-            <h1 className="text-lg font-bold text-text">Neumáticos — {selectedUnit}</h1>
+            <h1 className="text-lg font-bold text-text">{selectedUnit} · Neumáticos</h1>
             <p className="text-xs text-text-secondary">{equipment?.model}</p>
           </div>
         </div>
@@ -339,222 +345,246 @@ export default function NeumaticosPage() {
           className="text-xs font-semibold px-2 py-1 rounded-full"
           style={{ backgroundColor: '#EFF6FF', color: '#2563EB' }}
         >
-          {registradas.length}/{positions.length} registradas
+          {registradas.length}/{positions.length}
         </span>
       </div>
 
-      {/* Registered positions summary */}
+      {/* Registered summary */}
       {registradas.length > 0 && (
-        <div className="mb-4 p-3 rounded-xl border" style={{ backgroundColor: '#F0FDF4', borderColor: '#86EFAC' }}>
-          <p className="text-xs font-medium text-success mb-1">Registradas esta sesión:</p>
+        <div className="mb-3 p-3 rounded-xl border" style={{ backgroundColor: '#F0FDF4', borderColor: '#86EFAC' }}>
+          <p className="text-xs font-medium text-success mb-1">Registradas:</p>
           <div className="flex flex-wrap gap-1">
-            {registradas.map((pos) => (
-              <span key={pos} className="text-xs px-2 py-0.5 rounded-full bg-white border border-success text-success">
-                {pos}
-              </span>
+            {registradas.map((p) => (
+              <span key={p} className="text-xs px-2 py-0.5 rounded-full bg-white border border-success text-success">{p}</span>
             ))}
           </div>
         </div>
       )}
 
-      {availablePositions.length === 0 ? (
+      {available.length === 0 ? (
         <div className="flex flex-col items-center gap-4 py-8">
           <CheckCircle2 size={48} color="#16A34A" />
-          <p className="text-center font-semibold text-text">
-            Todas las posiciones registradas
-          </p>
-          <button
-            onClick={handleFinish}
-            className="w-full py-3 rounded-xl font-semibold text-white"
-            style={{ backgroundColor: '#162252' }}
-          >
+          <p className="font-semibold text-text text-center">Todas las posiciones registradas</p>
+          <button onClick={() => setStep('success')} className="w-full py-3 rounded-xl font-semibold text-white" style={{ backgroundColor: '#162252' }}>
             Finalizar Reporte
           </button>
         </div>
       ) : (
         <div className="flex flex-col gap-4">
-          {/* ─ Posición ─ */}
+
+          {/* ─ D: POSICIÓN ─ */}
           <div>
             <label className="block text-sm font-semibold text-text mb-1">
-              Posición de la Llanta *
+              Posición (col D) *
             </label>
-            <div className="grid grid-cols-2 gap-2">
-              {availablePositions.map((pos) => (
+            <div className="grid grid-cols-3 gap-2">
+              {available.map((pos) => (
                 <button
                   key={pos}
-                  onClick={() => setLlanta((f) => ({ ...f, posicion: pos }))}
-                  className="text-left text-sm px-3 py-2 rounded-xl border transition-all leading-snug"
+                  onClick={() => handlePosicion(pos)}
+                  className="text-sm px-2 py-2.5 rounded-xl border transition-all font-mono"
                   style={{
-                    backgroundColor: llanta.posicion === pos ? '#EFF6FF' : '#FFFFFF',
-                    borderColor: llanta.posicion === pos ? '#2563EB' : '#E5E7EB',
-                    color: llanta.posicion === pos ? '#1E3A8A' : '#374151',
-                    fontWeight: llanta.posicion === pos ? '600' : '400',
+                    backgroundColor: llanta.posicion === pos ? '#162252' : '#FFFFFF',
+                    borderColor:     llanta.posicion === pos ? '#162252' : '#E5E7EB',
+                    color:           llanta.posicion === pos ? '#FFFFFF'  : '#374151',
+                    fontWeight:      llanta.posicion === pos ? '700' : '400',
                   }}
                 >
                   {pos}
                 </button>
               ))}
             </div>
-            {errors.posicion && (
-              <p className="text-xs text-red-500 mt-1">{errors.posicion}</p>
-            )}
+            {errors.posicion && <p className="text-xs text-red-500 mt-1">{errors.posicion}</p>}
           </div>
 
-          {/* ─ Marca & Medida ─ */}
+          {/* ─ E + F: MARCA + MODELO NEUMÁTICO ─ */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-semibold text-text mb-1">Marca</label>
+              <label className="block text-xs font-semibold text-text-secondary mb-1">
+                E · Marca Neumático
+              </label>
               <select
                 value={llanta.marca}
                 onChange={(e) => setLlanta((f) => ({ ...f, marca: e.target.value }))}
                 className="w-full border border-border rounded-xl px-3 py-2.5 text-text bg-white text-sm"
               >
                 <option value="">Seleccionar</option>
-                {MARCAS_COMUNES.map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
+                {MARCAS.map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-sm font-semibold text-text mb-1">Medida</label>
+              <label className="block text-xs font-semibold text-text-secondary mb-1">
+                F · Modelo Neumático
+              </label>
               <input
                 type="text"
-                value={llanta.medida}
-                onChange={(e) => setLlanta((f) => ({ ...f, medida: e.target.value }))}
-                placeholder="26.5R25"
+                value={llanta.modeloLlanta}
+                onChange={(e) => setLlanta((f) => ({ ...f, modeloLlanta: e.target.value }))}
+                placeholder="M729, R297, XDN2..."
                 className="w-full border border-border rounded-xl px-3 py-2.5 text-text bg-white text-sm"
               />
             </div>
           </div>
 
-          {/* ─ Serie/DOT ─ */}
-          <div>
-            <label className="block text-sm font-semibold text-text mb-1">Serie / DOT</label>
-            <input
-              type="text"
-              value={llanta.serie}
-              onChange={(e) => setLlanta((f) => ({ ...f, serie: e.target.value }))}
-              placeholder="Ej: DOT 4320"
-              className="w-full border border-border rounded-xl px-3 py-2.5 text-text bg-white text-sm"
-            />
+          {/* ─ G + H: MEDIDA + N° SERIE ─ */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-text-secondary mb-1">
+                G · Medida
+              </label>
+              <input
+                type="text"
+                value={llanta.medida}
+                onChange={(e) => setLlanta((f) => ({ ...f, medida: e.target.value }))}
+                placeholder="26.5R25 / 11R22.5"
+                className="w-full border border-border rounded-xl px-3 py-2.5 text-text bg-white text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-text-secondary mb-1">
+                H · N° Serie / DOT
+              </label>
+              <input
+                type="text"
+                value={llanta.serie}
+                onChange={(e) => setLlanta((f) => ({ ...f, serie: e.target.value }))}
+                placeholder="DOT 4320"
+                className="w-full border border-border rounded-xl px-3 py-2.5 text-text bg-white text-sm"
+              />
+            </div>
           </div>
 
-          {/* ─ Presión & Profundidad ─ */}
-          <div className="grid grid-cols-2 gap-3">
-            {/* Presión */}
-            <div>
-              <label className="block text-sm font-semibold text-text mb-1">
-                <span className="flex items-center gap-1">
-                  <Gauge size={14} />
-                  Presión (PSI) *
-                </span>
-              </label>
-              <div className="relative">
-                <input
-                  type="number"
-                  value={llanta.presion}
-                  onChange={(e) => setLlanta((f) => ({ ...f, presion: e.target.value }))}
-                  placeholder="110"
-                  className="w-full border rounded-xl px-3 py-2.5 text-text bg-white text-sm pr-12"
-                  style={{ borderColor: llanta.presion ? presionColor(llanta.presion) : '#E5E7EB' }}
-                />
-                {llanta.presion && (
-                  <span
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold"
-                    style={{ color: presionColor(llanta.presion) }}
-                  >
-                    PSI
-                  </span>
-                )}
-              </div>
-              {errors.presion && (
-                <p className="text-xs text-red-500 mt-1">{errors.presion}</p>
-              )}
-              {llanta.presion && (
-                <p className="text-xs mt-1" style={{ color: presionColor(llanta.presion) }}>
-                  {parseFloat(llanta.presion) < 70
-                    ? '⚠️ Baja — Riesgo'
-                    : parseFloat(llanta.presion) > 130
-                      ? '⚠️ Alta — Verificar'
-                      : '✓ Rango normal'}
-                </p>
-              )}
+          {/* ─ M + N: PROFUNDIDAD ORIGINAL + ACTUAL ─ */}
+          <div>
+            <div className="flex items-center gap-1 mb-1">
+              <Ruler size={14} color="#162252" />
+              <span className="text-sm font-semibold text-text">Profundidad de Banda *</span>
             </div>
-
-            {/* Profundidad */}
-            <div>
-              <label className="block text-sm font-semibold text-text mb-1">
-                <span className="flex items-center gap-1">
-                  <Ruler size={14} />
-                  Profundidad (mm) *
-                </span>
-              </label>
-              <div className="relative">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-text-secondary mb-1">
+                  M · Original (mm)
+                </label>
                 <input
                   type="number"
                   step="0.5"
-                  value={llanta.profundidad}
-                  onChange={(e) => setLlanta((f) => ({ ...f, profundidad: e.target.value }))}
-                  placeholder="12"
-                  className="w-full border rounded-xl px-3 py-2.5 text-text bg-white text-sm pr-10"
-                  style={{ borderColor: llanta.profundidad ? profundidadColor(llanta.profundidad) : '#E5E7EB' }}
+                  value={llanta.profundidadOrig}
+                  onChange={(e) => setLlanta((f) => ({ ...f, profundidadOrig: e.target.value }))}
+                  placeholder="18"
+                  className="w-full border border-border rounded-xl px-3 py-2.5 text-text bg-white text-sm"
                 />
-                {llanta.profundidad && (
-                  <span
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold"
-                    style={{ color: profundidadColor(llanta.profundidad) }}
-                  >
-                    mm
-                  </span>
+                {errors.profundidadOrig && <p className="text-xs text-red-500 mt-0.5">{errors.profundidadOrig}</p>}
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-text-secondary mb-1">
+                  N · Actual (mm)
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={llanta.profundidad}
+                    onChange={(e) => setLlanta((f) => ({ ...f, profundidad: e.target.value }))}
+                    placeholder="12"
+                    className="w-full border rounded-xl px-3 py-2.5 text-text bg-white text-sm"
+                    style={{ borderColor: llanta.profundidad ? depthColor(llanta.profundidad) : '#E5E7EB' }}
+                  />
+                  {llanta.profundidad && (
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold" style={{ color: depthColor(llanta.profundidad) }}>mm</span>
+                  )}
+                </div>
+                {errors.profundidad && <p className="text-xs text-red-500 mt-0.5">{errors.profundidad}</p>}
+              </div>
+            </div>
+
+            {/* Visual depth bar */}
+            {llanta.profundidad && (
+              <div className="mt-2">
+                <div className="w-full h-2.5 rounded-full bg-gray-100 overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all"
+                    style={{
+                      width: `${Math.min((parseFloat(llanta.profundidad) / 20) * 100, 100)}%`,
+                      backgroundColor: depthColor(llanta.profundidad),
+                    }}
+                  />
+                </div>
+                <p className="text-xs mt-0.5" style={{ color: depthColor(llanta.profundidad) }}>
+                  {parseFloat(llanta.profundidad) < 5 ? '⚠️ Crítico — Cambio inmediato'
+                    : parseFloat(llanta.profundidad) < 10 ? '⚠️ Advertencia — Programar cambio'
+                    : '✓ En rango aceptable'}
+                </p>
+
+                {/* Desgaste % preview */}
+                {llanta.profundidadOrig && (
+                  <p className="text-xs text-text-secondary mt-0.5">
+                    Desgaste:{' '}
+                    <strong>
+                      {Math.round(
+                        ((parseFloat(llanta.profundidadOrig) - parseFloat(llanta.profundidad)) /
+                          parseFloat(llanta.profundidadOrig)) * 100
+                      )}%
+                    </strong>
+                    {' '}(col O — el Sheet lo calcula automáticamente)
+                  </p>
                 )}
               </div>
-              {errors.profundidad && (
-                <p className="text-xs text-red-500 mt-1">{errors.profundidad}</p>
-              )}
-              {llanta.profundidad && (
-                <p className="text-xs mt-1" style={{ color: profundidadColor(llanta.profundidad) }}>
-                  {parseFloat(llanta.profundidad) < 5
-                    ? '⚠️ Crítico — Cambiar'
-                    : parseFloat(llanta.profundidad) < 10
-                      ? '⚠️ Advertencia'
-                      : '✓ Buen estado'}
-                </p>
-              )}
+            )}
+          </div>
+
+          {/* ─ P + Q: PRESIÓN RECOMENDADA + ÚLTIMA PRESIÓN ─ */}
+          <div>
+            <div className="flex items-center gap-1 mb-1">
+              <Gauge size={14} color="#162252" />
+              <span className="text-sm font-semibold text-text">Presión (PSI) *</span>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-text-secondary mb-1">
+                  P · Recomendada (PSI)
+                </label>
+                <input
+                  type="number"
+                  value={llanta.presionRec}
+                  onChange={(e) => setLlanta((f) => ({ ...f, presionRec: e.target.value }))}
+                  className="w-full border border-border rounded-xl px-3 py-2.5 text-text bg-gray-50 text-sm"
+                />
+                <p className="text-xs text-text-secondary mt-0.5">Auto por tipo/posición</p>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-text-secondary mb-1">
+                  Q · Medida hoy (PSI)
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    value={llanta.presion}
+                    onChange={(e) => setLlanta((f) => ({ ...f, presion: e.target.value }))}
+                    placeholder="115"
+                    className="w-full border rounded-xl px-3 py-2.5 text-text bg-white text-sm"
+                    style={{ borderColor: llanta.presion ? psiColor(llanta.presion) : '#E5E7EB' }}
+                  />
+                  {llanta.presion && (
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold" style={{ color: psiColor(llanta.presion) }}>PSI</span>
+                  )}
+                </div>
+                {errors.presion && <p className="text-xs text-red-500 mt-0.5">{errors.presion}</p>}
+                {llanta.presion && (
+                  <p className="text-xs mt-0.5" style={{ color: psiColor(llanta.presion) }}>
+                    {parseFloat(llanta.presion) < 70 ? '⚠️ Muy baja — Riesgo reventón'
+                      : parseFloat(llanta.presion) < 80 ? '⚠️ Baja — Revisar'
+                      : parseFloat(llanta.presion) > 130 ? '⚠️ Alta — Liberar presión'
+                      : '✓ Rango normal'}
+                  </p>
+                )}
+              </div>
             </div>
           </div>
 
-          {/* ─ Visual depth bar ─ */}
-          {llanta.profundidad && (
-            <div>
-              <div className="flex items-center justify-between text-xs text-text-secondary mb-1">
-                <span>0 mm</span>
-                <span>Profundidad de banda</span>
-                <span>20 mm</span>
-              </div>
-              <div className="w-full h-3 rounded-full bg-gray-100 overflow-hidden">
-                <div
-                  className="h-full rounded-full transition-all"
-                  style={{
-                    width: `${Math.min((parseFloat(llanta.profundidad) / 20) * 100, 100)}%`,
-                    backgroundColor: profundidadColor(llanta.profundidad),
-                  }}
-                />
-              </div>
-              <div className="flex justify-between text-xs mt-0.5">
-                <span style={{ color: '#DC2626' }}>Cambio &lt;5</span>
-                <span style={{ color: '#F59E0B' }}>Advertencia 5-10</span>
-                <span style={{ color: '#16A34A' }}>OK &gt;10</span>
-              </div>
-            </div>
-          )}
-
-          {/* ─ Condición ─ */}
+          {/* ─ S: ESTADO — auto-calculated, shown as preview ─ */}
           <div>
             <label className="block text-sm font-semibold text-text mb-1">
-              <span className="flex items-center gap-1">
-                <ClipboardList size={14} />
-                Condición Visual *
-              </span>
+              Condición Visual → <span style={{ color: '#2563EB' }}>col S ESTADO</span> *
             </label>
             <div className="flex flex-col gap-2">
               {CONDICIONES.map(({ value, color, bg }) => (
@@ -564,46 +594,30 @@ export default function NeumaticosPage() {
                   className="flex items-center justify-between px-3 py-2.5 rounded-xl border transition-all text-sm font-medium"
                   style={{
                     backgroundColor: llanta.condicion === value ? bg : '#FFFFFF',
-                    borderColor: llanta.condicion === value ? color : '#E5E7EB',
-                    color: llanta.condicion === value ? color : '#374151',
+                    borderColor:     llanta.condicion === value ? color : '#E5E7EB',
+                    color:           llanta.condicion === value ? color : '#374151',
                   }}
                 >
                   {value}
-                  {llanta.condicion === value && (
-                    <CheckCircle2 size={16} color={color} />
-                  )}
+                  {llanta.condicion === value && <CheckCircle2 size={16} color={color} />}
                 </button>
               ))}
             </div>
-            {errors.condicion && (
-              <p className="text-xs text-red-500 mt-1">{errors.condicion}</p>
-            )}
-          </div>
+            {errors.condicion && <p className="text-xs text-red-500 mt-1">{errors.condicion}</p>}
 
-          {/* ─ Acción ─ */}
-          <div>
-            <label className="block text-sm font-semibold text-text mb-1">
-              Acción Requerida *
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              {ACCIONES.map((ac) => (
-                <button
-                  key={ac}
-                  onClick={() => setLlanta((f) => ({ ...f, accion: ac }))}
-                  className="text-sm px-3 py-2.5 rounded-xl border transition-all leading-snug"
-                  style={{
-                    backgroundColor: llanta.accion === ac ? '#162252' : '#FFFFFF',
-                    borderColor: llanta.accion === ac ? '#162252' : '#E5E7EB',
-                    color: llanta.accion === ac ? '#FFFFFF' : '#374151',
-                    fontWeight: llanta.accion === ac ? '600' : '400',
-                  }}
-                >
-                  {ac}
-                </button>
-              ))}
-            </div>
-            {errors.accion && (
-              <p className="text-xs text-red-500 mt-1">{errors.accion}</p>
+            {/* ESTADO preview */}
+            {llanta.condicion && (
+              <div
+                className="mt-2 flex items-center justify-between px-3 py-2 rounded-lg text-sm font-semibold"
+                style={{
+                  backgroundColor: estadoMeta?.bg ?? '#F9FAFB',
+                  borderColor: estadoMeta?.color ?? '#E5E7EB',
+                  border: '1px solid',
+                }}
+              >
+                <span style={{ color: '#6B7280' }}>Columna S → ESTADO:</span>
+                <span style={{ color: estadoMeta?.color ?? '#374151' }}>{autoEstado}</span>
+              </div>
             )}
           </div>
 
@@ -613,49 +627,39 @@ export default function NeumaticosPage() {
             <textarea
               value={llanta.observaciones}
               onChange={(e) => setLlanta((f) => ({ ...f, observaciones: e.target.value }))}
-              placeholder="Cortes, bultos, mordidas, desgaste irregular..."
+              placeholder="Cortes, bultos, mordidas, desgaste irregular, hora de reencauche..."
               rows={3}
               className="w-full border border-border rounded-xl px-3 py-2.5 text-text bg-white text-sm resize-none"
             />
           </div>
 
-          {/* ─ Warnings ─ */}
+          {/* ─ Critical warning ─ */}
           {(parseFloat(llanta.profundidad) < 5 || parseFloat(llanta.presion) < 70 || llanta.condicion === 'Cambio Urgente') && (
-            <div
-              className="flex items-start gap-2 p-3 rounded-xl"
-              style={{ backgroundColor: '#FEF2F2', border: '1px solid #FECACA' }}
-            >
+            <div className="flex items-start gap-2 p-3 rounded-xl" style={{ backgroundColor: '#FEF2F2', border: '1px solid #FECACA' }}>
               <AlertTriangle size={18} color="#DC2626" className="flex-shrink-0 mt-0.5" />
               <div>
-                <p className="text-sm font-semibold text-red-700">Atención requerida</p>
-                <p className="text-xs text-red-600">
-                  Esta llanta presenta condiciones críticas. Registra y notifica al supervisor de inmediato.
-                </p>
+                <p className="text-sm font-semibold text-red-700">Atención crítica</p>
+                <p className="text-xs text-red-600">Notifica al Supervisor inmediatamente. No operar la unidad hasta revisión.</p>
               </div>
             </div>
           )}
 
-          {/* ─ Action buttons ─ */}
-          <div className="flex gap-3 mt-2 pb-8">
+          {/* ─ Buttons ─ */}
+          <div className="flex gap-3 mt-1 pb-8">
             <button
               disabled={submitting}
-              onClick={handleSubmitLlanta}
-              className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-white transition-opacity"
+              onClick={handleSubmit}
+              className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-white"
               style={{ backgroundColor: '#162252' }}
             >
-              {submitting ? (
-                <Loader2 size={18} className="animate-spin" />
-              ) : (
-                <>
-                  <Disc3 size={18} />
-                  Registrar Llanta
-                </>
-              )}
+              {submitting
+                ? <Loader2 size={18} className="animate-spin" />
+                : <><Disc3 size={18} /> Registrar Llanta</>}
             </button>
             {registradas.length > 0 && (
               <button
-                onClick={handleFinish}
-                className="px-4 py-3 rounded-xl font-semibold border transition-all"
+                onClick={() => setStep('success')}
+                className="px-5 py-3 rounded-xl font-semibold border"
                 style={{ borderColor: '#162252', color: '#162252', backgroundColor: '#FFFFFF' }}
               >
                 Finalizar
