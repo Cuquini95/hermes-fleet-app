@@ -1,19 +1,20 @@
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Wrench, Package, BookOpen, MessageCircle } from 'lucide-react';
-import { useAuthStore } from '../../stores/auth-store';
-import { MOCK_WORKORDERS } from '../../data/mock-workorders';
+import { useWorkOrderStore } from '../../stores/workorder-store';
 import KPICard from '../ui/KPICard';
 import OTCard from '../ui/OTCard';
 
 export default function MechanicHome() {
   const navigate = useNavigate();
-  const userName = useAuthStore((s) => s.userName);
+  const { workorders, fetched, fetchWorkOrders, loading } = useWorkOrderStore();
 
-  const activeStatuses = ['Completado'] as const;
-  const myOTs = MOCK_WORKORDERS.filter(
-    (ot) => ot.mecanico_asignado === userName && !activeStatuses.includes(ot.estado as typeof activeStatuses[number])
-  );
-  const waitingParts = MOCK_WORKORDERS.filter((ot) => ot.estado === 'Esperando Pieza').length;
+  useEffect(() => {
+    if (!fetched) fetchWorkOrders();
+  }, [fetched, fetchWorkOrders]);
+
+  const activeOTs    = workorders.filter((ot) => ot.estado !== 'Completado');
+  const waitingParts = workorders.filter((ot) => ot.estado === 'Esperando Pieza').length;
 
   return (
     <div className="flex flex-col py-4">
@@ -21,26 +22,34 @@ export default function MechanicHome() {
       <div className="flex gap-3 mb-2">
         <KPICard
           icon={<Wrench size={20} />}
-          value={myOTs.length}
-          label="OTs Asignadas"
+          value={loading ? '…' : activeOTs.length}
+          label="OTs Activas"
           color="#2563EB"
         />
         <KPICard
           icon={<Package size={20} />}
-          value={waitingParts}
+          value={loading ? '…' : waitingParts}
           label="Esperando Pieza"
           color="#EA580C"
         />
       </div>
 
       {/* Mis Órdenes Activas */}
-      <h2 className="font-semibold text-lg text-text mt-6 mb-3">Mis Órdenes Activas</h2>
-      {myOTs.length > 0 ? (
-        myOTs.map((ot) => (
-          <OTCard key={ot.ot_id} workorder={ot} />
+      <h2 className="font-semibold text-lg text-text mt-6 mb-3">Órdenes Activas</h2>
+      {loading ? (
+        <div className="text-center py-8 text-text-secondary text-sm">Cargando…</div>
+      ) : activeOTs.length > 0 ? (
+        activeOTs.map((ot) => (
+          <OTCard
+            key={ot.ot_id}
+            workorder={ot}
+            onClick={() => navigate(`/workorders/${ot.ot_id}`)}
+          />
         ))
       ) : (
-        <p className="text-center text-text-secondary py-8">No tienes órdenes asignadas</p>
+        <div className="bg-green-50 border border-success rounded-lg p-4 text-center">
+          <p className="text-sm font-medium text-success">Sin órdenes activas ✓</p>
+        </div>
       )}
 
       {/* Acciones Rápidas */}

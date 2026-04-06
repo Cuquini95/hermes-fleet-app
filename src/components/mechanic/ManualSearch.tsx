@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Search, FileText } from 'lucide-react';
+import { Search, FileText, WifiOff } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { manualLookup, type ManualLookupResult } from '../../lib/hermes-api';
 
@@ -15,45 +15,25 @@ const EQUIPMENT_OPTIONS = [
   'Mack GR84B 8x4',
 ];
 
-const MOCK_RESULT: ManualLookupResult = {
-  extracto:
-    'Procedimiento de cambio de aceite de motor para Komatsu D155AX-6. Intervalo recomendado: cada 500 horas de operación o 6 meses. Utilizar aceite SAE 15W-40 API CH-4 o superior.',
-  pasos_tecnicos: [
-    'Precalentar el motor durante 5 minutos a ralentí para fluidificar el aceite.',
-    'Apagar el motor y esperar 5 minutos antes de drenar.',
-    'Retirar el tapón de drenaje (M20x1.5) y drenar completamente el aceite usado.',
-    'Reemplazar el filtro de aceite (ref. 6156-81-8300) con filtro nuevo.',
-    'Reinstalar el tapón de drenaje con torque especificado.',
-    'Rellenar con 28 litros de aceite SAE 15W-40 API CH-4.',
-    'Verificar nivel con varilla y arrancar motor. Revisar fugas.',
-    'Registrar la intervención en bitácora de mantenimiento.',
-  ],
-  herramientas_requeridas: [
-    'Llave de cubo 22mm',
-    'Llave para filtros de aceite',
-    'Recipiente para residuos de 30L mínimo',
-    'Bandeja de drenaje',
-    'Paños absorbentes',
-  ],
-  torque_specs: 'Tapón de drenaje: 78 N·m (8 kgf·m). Filtro de aceite: apriete a mano + 3/4 de vuelta.',
-};
-
 export default function ManualSearch() {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [selectedEquipo, setSelectedEquipo] = useState('Seleccionar equipo');
   const [result, setResult] = useState<ManualLookupResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [apiError, setApiError] = useState(false);
 
   async function handleSearch() {
     if (!query.trim()) return;
     setLoading(true);
+    setApiError(false);
+    setResult(null);
     try {
       const equipo = selectedEquipo !== 'Seleccionar equipo' ? selectedEquipo : 'General';
       const data = await manualLookup({ equipo, tema: query });
       setResult(data);
     } catch {
-      setResult(MOCK_RESULT);
+      setApiError(true);
     } finally {
       setLoading(false);
     }
@@ -94,8 +74,17 @@ export default function ManualSearch() {
         disabled={!query.trim() || loading}
         className="bg-amber text-white rounded-xl py-3 font-medium text-sm mb-6 disabled:opacity-50 transition-opacity"
       >
-        {loading ? 'Buscando...' : 'Buscar Procedimiento'}
+        {loading ? 'Buscando…' : 'Buscar Procedimiento'}
       </button>
+
+      {/* Error state */}
+      {apiError && (
+        <div className="flex flex-col items-center gap-3 py-10 text-center">
+          <WifiOff size={28} className="text-text-secondary" />
+          <p className="text-sm font-medium text-text">Sin conexión al servidor</p>
+          <p className="text-xs text-text-secondary">Verifica que el VPS esté activo e intenta de nuevo.</p>
+        </div>
+      )}
 
       {/* Result card */}
       {result && (
@@ -135,7 +124,7 @@ export default function ManualSearch() {
         </div>
       )}
 
-      {!result && !loading && (
+      {!result && !loading && !apiError && (
         <p className="text-center text-text-secondary text-sm py-8">
           Ingresa un tema y selecciona el equipo para buscar procedimientos técnicos
         </p>

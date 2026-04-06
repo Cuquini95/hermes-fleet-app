@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import { readRange, appendRow, updateCell, SHEET_TABS } from '../lib/sheets-api';
-import { MOCK_WORKORDERS } from '../data/mock-workorders';
 import type { WorkOrder, StatusLogEntry, OTStatusField, OTEstado, OTPriority } from '../types/workorder';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
 
@@ -125,12 +124,6 @@ export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
         if (wo) baseWorkorders.push(wo);
       }
 
-      // If no sheet data found, use mock data as fallback
-      if (baseWorkorders.length === 0) {
-        set({ workorders: MOCK_WORKORDERS, statusLog: [], loading: false, fetched: true });
-        return;
-      }
-
       const statusLog: StatusLogEntry[] = [];
       for (const row of logRows) {
         const entry = parseStatusLogRow(row);
@@ -140,8 +133,8 @@ export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
       const workorders = applyStatusLog(baseWorkorders, statusLog);
       set({ workorders, statusLog, loading: false, fetched: true });
     } catch (err: unknown) {
-      // On error, fall back to mock data so the page isn't blank
-      set({ workorders: MOCK_WORKORDERS, statusLog: [], error: null, loading: false, fetched: true });
+      const message = err instanceof Error ? err.message : 'Error al cargar órdenes';
+      set({ workorders: [], statusLog: [], error: message, loading: false, fetched: true });
     }
   },
 
@@ -194,7 +187,6 @@ export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
     });
 
     try {
-      // 1. Write to status log (audit trail)
       await appendRow(SHEET_TABS.OT_STATUS_LOG, [
         timestamp,
         otId,
@@ -205,8 +197,6 @@ export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
         role,
       ]);
 
-      // 2. Also update the ORDENES_TRABAJO sheet directly
-      // Column mapping: OT_ID=1, ESTADO=9, MECANICO=8, PRIORIDAD=7
       const FIELD_TO_COLUMN: Record<string, number> = {
         estado: 9,
         mecanico_asignado: 8,

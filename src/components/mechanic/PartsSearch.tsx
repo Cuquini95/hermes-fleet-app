@@ -1,73 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search } from 'lucide-react';
+import { Search, WifiOff } from 'lucide-react';
 import { searchParts, type PartResult } from '../../lib/hermes-api';
 import PartCard from './PartCard';
 
 const EQUIPMENT_FILTERS = ['Todos', 'Komatsu', 'CAT', 'Doosan', 'Mack'];
-
-const MOCK_PARTS: PartResult[] = [
-  {
-    part_number: 'KOM-07100-6171',
-    description: 'Sello hidráulico 85mm — cilindro de dirección',
-    oem_ref: '07100-61711',
-    compatible_units: ['EPAK-09', 'EPAK-02'],
-    stock_quantity: 4,
-    stock_minimum: 2,
-    location: 'Estante A-3',
-    unit_price: 128.5,
-    alternatives: ['SH-850-K', 'KOM-07100-6170'],
-  },
-  {
-    part_number: 'KOM-21T-60-72231',
-    description: 'Rodillo portador — tren de rodaje D155AX',
-    oem_ref: '21T-60-72231',
-    compatible_units: ['EPTK-08', 'EPTK-09', 'EPTK-10'],
-    stock_quantity: 2,
-    stock_minimum: 2,
-    location: 'Estante B-7',
-    unit_price: 345.0,
-    alternatives: [],
-  },
-  {
-    part_number: 'CAT-283-5648',
-    description: 'Relay 24V — sistema eléctrico CAT 740B',
-    oem_ref: '283-5648',
-    compatible_units: ['EPAK-06', 'EPAK-07', 'EPAK-08'],
-    stock_quantity: 8,
-    stock_minimum: 3,
-    location: 'Estante C-1',
-    unit_price: 45.0,
-    alternatives: ['REL-24V-40A'],
-  },
-  {
-    part_number: 'KOM-6156-81-8300',
-    description: 'Filtro de aceite motor SAA6D140E',
-    oem_ref: '6156-81-8300',
-    compatible_units: ['EPTK-08', 'EPTK-09', 'EPTK-12'],
-    stock_quantity: 0,
-    stock_minimum: 5,
-    location: 'Estante A-1',
-    unit_price: 38.75,
-    alternatives: ['FO-D140-K'],
-  },
-  {
-    part_number: 'MACK-25164427',
-    description: 'Filtro combustible Mack GR84B',
-    oem_ref: '25164427',
-    compatible_units: ['ULTRATK-01', 'ULTRATK-02', 'ULTRATK-03'],
-    stock_quantity: 12,
-    stock_minimum: 4,
-    location: 'Estante D-2',
-    unit_price: 52.0,
-    alternatives: ['FF5786', 'P551315'],
-  },
-];
 
 export default function PartsSearch() {
   const [query, setQuery] = useState('');
   const [selectedEquipo, setSelectedEquipo] = useState('Todos');
   const [results, setResults] = useState<PartResult[]>([]);
   const [loading, setLoading] = useState(false);
+  const [apiError, setApiError] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -75,27 +18,20 @@ export default function PartsSearch() {
 
     if (!query.trim()) {
       setResults([]);
+      setApiError(false);
       return;
     }
 
     debounceRef.current = setTimeout(async () => {
       setLoading(true);
+      setApiError(false);
       try {
         const equipo = selectedEquipo !== 'Todos' ? selectedEquipo : undefined;
         const data = await searchParts(query, equipo);
         setResults(data);
       } catch {
-        const q = query.toLowerCase();
-        const equipo = selectedEquipo !== 'Todos' ? selectedEquipo.toLowerCase() : null;
-        const filtered = MOCK_PARTS.filter((p) => {
-          const matchesQuery =
-            p.part_number.toLowerCase().includes(q) ||
-            p.description.toLowerCase().includes(q) ||
-            p.oem_ref.toLowerCase().includes(q);
-          const matchesEquipo = !equipo || p.description.toLowerCase().includes(equipo);
-          return matchesQuery && matchesEquipo;
-        });
-        setResults(filtered.length > 0 ? filtered : MOCK_PARTS.slice(0, 5));
+        setResults([]);
+        setApiError(true);
       } finally {
         setLoading(false);
       }
@@ -137,18 +73,31 @@ export default function PartsSearch() {
         ))}
       </div>
 
-      {/* Results */}
+      {/* States */}
       {loading && (
-        <p className="text-center text-text-secondary text-sm py-4">Buscando...</p>
+        <p className="text-center text-text-secondary text-sm py-4">Buscando…</p>
       )}
-      {!loading && query && results.length === 0 && (
-        <p className="text-center text-text-secondary text-sm py-4">No se encontraron resultados</p>
+
+      {!loading && apiError && (
+        <div className="flex flex-col items-center gap-3 py-10 text-center">
+          <WifiOff size={28} className="text-text-secondary" />
+          <p className="text-sm font-medium text-text">Sin conexión al servidor</p>
+          <p className="text-xs text-text-secondary">Verifica que el VPS esté activo e intenta de nuevo.</p>
+        </div>
       )}
+
+      {!loading && !apiError && query && results.length === 0 && (
+        <p className="text-center text-text-secondary text-sm py-4">
+          No se encontraron resultados para "{query}"
+        </p>
+      )}
+
       {!loading && !query && (
         <p className="text-center text-text-secondary text-sm py-8">
           Ingresa un número de parte, descripción o nombre de equipo
         </p>
       )}
+
       {results.map((part) => (
         <PartCard key={part.part_number} part={part} />
       ))}
