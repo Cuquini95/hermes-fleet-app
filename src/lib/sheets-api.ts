@@ -133,7 +133,6 @@ export const SHEET_TABS = {
   TURNOS: 'Turnos',
   COTIZACIONES: 'Cotizaciones_Pendientes',
   NEUMATICOS: '13 Neumáticos',
-  GASTOS_COMPRAS: 'Gastos_Compras',
-  GASTOS_LINEAS: 'Gastos_Lineas',
+  GASTOS: 'Gastos',
   GASTOS_PRESUPUESTO: 'Gastos_Presupuesto',
 } as const;
