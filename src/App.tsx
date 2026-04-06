@@ -42,8 +42,8 @@ import NuevoGastoPage from './pages/NuevoGastoPage';
 const ALL: AppRole[] = ['operador', 'mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
 const ADMIN: AppRole[] = ['jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
 const WORKSHOP: AppRole[] = ['mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
-const MANAGEMENT: AppRole[] = ['supervisor', 'gerencia'];
-const GASTOS_WRITE: AppRole[] = ['jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
+const MANAGEMENT: AppRole[] = ['jefe_taller', 'coordinador', 'gerencia'];
+const GASTOS_WRITE: AppRole[] = ['jefe_taller', 'coordinador', 'gerencia'];
 
 function RootRedirect() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);

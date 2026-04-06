@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Wrench,
@@ -10,10 +11,11 @@ import {
   Flame,
   Timer,
   Archive,
+  RefreshCw,
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
+import { useWorkOrderStore } from '../stores/workorder-store';
 import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
-import { MOCK_WORKORDERS } from '../data/mock-workorders';
 import { getNextPM } from '../data/pm-rules';
 import KPICard from '../components/ui/KPICard';
 import OTCard from '../components/ui/OTCard';
@@ -25,56 +27,63 @@ interface ActionCard {
 }
 
 const ACTION_CARDS: ActionCard[] = [
-  { label: 'Órdenes', icon: <Wrench size={32} className="text-amber" />, path: '/workorders' },
-  { label: 'Orden PM', icon: <CalendarCheck size={32} className="text-amber" />, path: '/pm-order' },
-  { label: 'Inventario', icon: <Package size={32} className="text-amber" />, path: '/inventory' },
-  { label: 'Programa PM', icon: <Clock size={32} className="text-amber" />, path: '/pm' },
-  { label: 'Pedidos', icon: <ShoppingCart size={32} className="text-amber" />, path: '/pedidos' },
-  { label: 'Alertas', icon: <AlertTriangle size={32} className="text-amber" />, path: '/alerts' },
+  { label: 'Órdenes',    icon: <Wrench       size={32} className="text-amber" />, path: '/workorders' },
+  { label: 'Orden PM',   icon: <CalendarCheck size={32} className="text-amber" />, path: '/pm-order' },
+  { label: 'Inventario', icon: <Package      size={32} className="text-amber" />, path: '/inventory' },
+  { label: 'Programa PM',icon: <Clock        size={32} className="text-amber" />, path: '/pm' },
+  { label: 'Pedidos',    icon: <ShoppingCart size={32} className="text-amber" />, path: '/pedidos' },
+  { label: 'Alertas',    icon: <AlertTriangle size={32} className="text-amber" />, path: '/alerts' },
 ];
 
 export default function CoordinatorHomePage() {
-  const navigate = useNavigate();
-  const userName = useAuthStore((s) => s.userName);
+  const navigate  = useNavigate();
+  const userName  = useAuthStore((s) => s.userName);
+  const { workorders, fetched, fetchWorkOrders, loading } = useWorkOrderStore();
 
-  const openOTs = MOCK_WORKORDERS.filter(
-    (ot) => ot.estado !== 'Completado'
-  );
-  const criticalOTs = MOCK_WORKORDERS.filter((ot) => ot.prioridad === 'CRITICA');
+  useEffect(() => {
+    if (!fetched) fetchWorkOrders();
+  }, [fetched, fetchWorkOrders]);
+
+  const openOTs     = workorders.filter((ot) => ot.estado !== 'Completado');
+  const criticalOTs = workorders.filter((ot) => ot.prioridad === 'CRITICA' && ot.estado !== 'Completado');
 
   const pmProximos = EQUIPMENT_CATALOG.filter((e) => {
     const pm = getNextPM(e.model, e.current_horometro);
     return pm.hours_remaining <= 50;
   }).length;
 
-  const stockCritico = 2;
-
-  const greeting =
-    new Date().getHours() < 12
-      ? 'Buenos días'
-      : new Date().getHours() < 18
-        ? 'Buenas tardes'
-        : 'Buenas noches';
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Buenos días' : hour < 18 ? 'Buenas tardes' : 'Buenas noches';
 
   return (
     <div className="flex flex-col py-4 animate-fade-up">
       {/* Greeting */}
-      <div className="mb-4">
-        <h1 className="text-2xl font-bold text-text">{greeting}, {userName}</h1>
-        <p className="text-text-secondary text-sm mt-0.5">Coordinador de Mantenimiento</p>
+      <div className="flex items-start justify-between mb-4">
+        <div>
+          <h1 className="text-2xl font-bold text-text">{greeting}, {userName}</h1>
+          <p className="text-text-secondary text-sm mt-0.5">Coordinador de Mantenimiento</p>
+        </div>
+        <button
+          onClick={() => useWorkOrderStore.setState({ fetched: false })}
+          className="p-2 rounded-full"
+          style={{ color: '#162252' }}
+          aria-label="Actualizar"
+        >
+          <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
+        </button>
       </div>
 
-      {/* KPI grid 2x2 */}
+      {/* KPI grid 2×2 */}
       <div className="grid grid-cols-2 gap-3 mb-4">
         <KPICard
           icon={<ClipboardList size={20} />}
-          value={openOTs.length}
+          value={loading ? '…' : openOTs.length}
           label="OTs Abiertas"
           color="#2563EB"
         />
         <KPICard
           icon={<Flame size={20} />}
-          value={criticalOTs.length}
+          value={loading ? '…' : criticalOTs.length}
           label="OTs Críticas"
           color="#DC2626"
         />
@@ -86,13 +95,13 @@ export default function CoordinatorHomePage() {
         />
         <KPICard
           icon={<Archive size={20} />}
-          value={stockCritico}
+          value="—"
           label="Stock Crítico"
           color="#EA580C"
         />
       </div>
 
-      {/* Quick actions 2x3 grid */}
+      {/* Quick actions */}
       <div className="grid grid-cols-2 gap-3 mb-6">
         {ACTION_CARDS.map(({ label, icon, path }) => (
           <button
@@ -110,7 +119,9 @@ export default function CoordinatorHomePage() {
       {/* OTs Pendientes */}
       <h2 className="font-semibold text-text mt-2 mb-3">OTs Pendientes</h2>
       <div className="flex flex-col">
-        {openOTs.length > 0 ? (
+        {loading ? (
+          <div className="text-center py-6 text-text-secondary text-sm">Cargando…</div>
+        ) : openOTs.length > 0 ? (
           openOTs.map((ot) => (
             <OTCard
               key={ot.ot_id}
