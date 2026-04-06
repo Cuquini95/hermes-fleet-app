@@ -14,6 +14,8 @@ import {
   ChevronUp,
   Search,
   ArrowRight,
+  WifiOff,
+  RefreshCw,
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { useCartStore, type CartItem } from '../stores/cart-store';
@@ -113,15 +115,18 @@ export default function PedidosPage() {
   const [historial, setHistorial] = useState<PedidoRow[]>([]);
   const [loadingHistorial, setLoadingHistorial] = useState(false);
   const [historialLoaded, setHistorialLoaded] = useState(false);
+  const [historialError, setHistorialError] = useState(false);
+  const [submitError, setSubmitError] = useState(false);
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
 
   const totalItems = items.reduce((s, i) => s + i.quantity, 0);
   const totalPrice = items.reduce((s, i) => s + i.quantity * i.unit_price, 0);
 
   // ── Load historial ────────────────────────────────────────────────────────
-  async function loadHistorial() {
-    if (historialLoaded) return;
+  async function loadHistorial(force = false) {
+    if (historialLoaded && !force) return;
     setLoadingHistorial(true);
+    setHistorialError(false);
     try {
       const rows = await readRange(SHEET_TABS.COTIZACIONES);
       // rows[0] = headers, rows[1..] = data
@@ -163,6 +168,7 @@ export default function PedidosPage() {
       setHistorial(data.reverse()); // newest first
       setHistorialLoaded(true);
     } catch {
+      setHistorialError(true);
       setHistorial([]);
     } finally {
       setLoadingHistorial(false);
@@ -171,13 +177,13 @@ export default function PedidosPage() {
 
   // Auto-load historial on mount (Gerencia starts on historial tab directly)
   useEffect(() => {
-    if (!historialLoaded) loadHistorial();
+    loadHistorial();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function handleTabChange(t: Tab) {
     setTab(t);
-    if (t === 'historial' && !historialLoaded) loadHistorial();
+    if (t === 'historial') loadHistorial();
   }
 
   // ── Status change (Gerencia only) ─────────────────────────────────────────
@@ -219,6 +225,7 @@ export default function PedidosPage() {
   async function handleSubmit() {
     if (items.length === 0) return;
     setSubmitting(true);
+    setSubmitError(false);
     const fecha = mexicoDate();
     const hora = mexicoTime();
     const pedidoId = newPedidoId();
@@ -249,7 +256,7 @@ export default function PedidosPage() {
       setSubmitted(true);
       setHistorialLoaded(false); // force reload next time
     } catch {
-      // silent — offline queue retries
+      setSubmitError(true);
     } finally {
       setSubmitting(false);
     }
@@ -430,6 +437,18 @@ export default function PedidosPage() {
                 </div>
               )}
 
+              {submitError && (
+                <div
+                  className="flex items-center gap-2 p-3 rounded-xl mb-3"
+                  style={{ backgroundColor: '#FEF2F2', border: '1px solid #FECACA' }}
+                >
+                  <WifiOff size={16} color="#DC2626" />
+                  <p className="text-xs text-red-700 font-medium">
+                    Error al enviar — verifica la conexión e intenta de nuevo.
+                  </p>
+                </div>
+              )}
+
               <button
                 disabled={submitting}
                 onClick={handleSubmit}
@@ -441,7 +460,7 @@ export default function PedidosPage() {
                 ) : (
                   <>
                     <Send size={18} />
-                    Enviar Pedido ({items.length} {items.length === 1 ? 'parte' : 'partes'})
+                    {submitError ? 'Reintentar envío' : `Enviar Pedido (${items.length} ${items.length === 1 ? 'parte' : 'partes'})`}
                   </>
                 )}
               </button>
@@ -459,12 +478,42 @@ export default function PedidosPage() {
             </div>
           )}
 
-          {!loadingHistorial && historial.length === 0 && (
-            <div className="flex flex-col items-center gap-3 py-10">
+          {/* Connection error */}
+          {!loadingHistorial && historialError && (
+            <div className="flex flex-col items-center gap-4 py-10">
+              <WifiOff size={40} color="#9CA3AF" />
+              <div className="text-center">
+                <p className="text-sm font-semibold text-text">Sin conexión al servidor</p>
+                <p className="text-xs text-text-secondary mt-1">
+                  No se pudieron cargar los pedidos.<br />Verifica el VPS e intenta de nuevo.
+                </p>
+              </div>
+              <button
+                onClick={() => { setHistorialLoaded(false); loadHistorial(true); }}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-white text-sm"
+                style={{ backgroundColor: '#162252' }}
+              >
+                <RefreshCw size={15} />
+                Reintentar
+              </button>
+            </div>
+          )}
+
+          {/* Empty (loaded successfully but zero rows) */}
+          {!loadingHistorial && !historialError && historial.length === 0 && (
+            <div className="flex flex-col items-center gap-4 py-10">
               <ClipboardList size={48} color="#9CA3AF" />
               <p className="text-text-secondary text-center text-sm">
                 No hay pedidos registrados aún.
               </p>
+              <button
+                onClick={() => loadHistorial(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-medium"
+                style={{ borderColor: '#162252', color: '#162252' }}
+              >
+                <RefreshCw size={14} />
+                Actualizar
+              </button>
             </div>
           )}
 
@@ -477,13 +526,15 @@ export default function PedidosPage() {
             />
           ))}
 
-          {!loadingHistorial && historial.length > 0 && (
+          {/* Refresh at bottom when results are showing */}
+          {!loadingHistorial && !historialError && historial.length > 0 && (
             <button
-              onClick={() => { setHistorialLoaded(false); loadHistorial(); }}
-              className="text-center text-sm py-2"
+              onClick={() => loadHistorial(true)}
+              className="flex items-center justify-center gap-1.5 text-center text-sm py-2"
               style={{ color: '#2563EB' }}
             >
-              ↺ Actualizar
+              <RefreshCw size={13} />
+              Actualizar
             </button>
           )}
         </div>
