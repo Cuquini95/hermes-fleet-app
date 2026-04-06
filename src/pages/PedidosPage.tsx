@@ -21,9 +21,22 @@ import { appendRow, readRange, updateCell, SHEET_TABS } from '../lib/sheets-api'
 import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
 
-// ── Sheet columns for Cotizaciones_Pendientes ────────────────────────────────
-// # | PEDIDO_ID | FECHA | HORA | SOLICITANTE | PARTE_NUM | DESCRIPCION |
-// EQUIPO | CANTIDAD | PRECIO_UNIT | TOTAL | URGENCIA | FUENTE | NOTAS | ESTADO
+// ── Sheet columns for Cotizaciones_Pendientes (matching actual Sheet headers) ─
+// A(0)  Fecha
+// B(1)  Part_Number
+// C(2)  Descripcion
+// D(3)  Equipo
+// E(4)  Qty
+// F(5)  Dealer          ← source / OEM / Manual
+// G(6)  Status          ← Pendiente / Pedido / Completado
+// H(7)  Precio_Recibido ← blank on submit; supplier fills later
+// I(8)  Fecha_Respuesta ← blank on submit; supplier fills later
+// J(9)  PEDIDO_ID       ← tracking reference
+// K(10) Hora
+// L(11) Solicitante
+// M(12) Urgencia
+// N(13) Notas
+// O(14) Total
 
 const URGENCIA_CONFIG = {
   Normal:  { color: '#16A34A', bg: '#F0FDF4' },
@@ -113,21 +126,21 @@ export default function PedidosPage() {
       const rows = await readRange(SHEET_TABS.COTIZACIONES);
       // rows[0] = headers, rows[1..] = data
       const data = rows.slice(1).map((r, idx) => ({
-        id: String(idx),
-        pedidoId:    r[1]  ?? '',
-        fecha:       r[2]  ?? '',
-        hora:        r[3]  ?? '',
-        solicitante: r[4]  ?? '',
-        partNum:     r[5]  ?? '',
-        descripcion: r[6]  ?? '',
-        equipo:      r[7]  ?? '',
-        cantidad:    r[8]  ?? '',
-        precioUnit:  r[9]  ?? '',
-        total:       r[10] ?? '',
-        urgencia:    r[11] ?? '',
-        fuente:      r[12] ?? '',
-        notas:       r[13] ?? '',
-        estado:      r[14] ?? 'Pendiente',
+        id:          String(idx),
+        pedidoId:    r[9]  ?? '',   // J: PEDIDO_ID
+        fecha:       r[0]  ?? '',   // A: Fecha
+        hora:        r[10] ?? '',   // K: Hora
+        solicitante: r[11] ?? '',   // L: Solicitante
+        partNum:     r[1]  ?? '',   // B: Part_Number
+        descripcion: r[2]  ?? '',   // C: Descripcion
+        equipo:      r[3]  ?? '',   // D: Equipo
+        cantidad:    r[4]  ?? '',   // E: Qty
+        precioUnit:  r[7]  ?? '',   // H: Precio_Recibido
+        total:       r[14] ?? '',   // O: Total
+        urgencia:    r[12] ?? '',   // M: Urgencia
+        fuente:      r[5]  ?? '',   // F: Dealer
+        notas:       r[13] ?? '',   // N: Notas
+        estado:      r[6]  ?? 'Pendiente', // G: Status
       }));
       setHistorial(data.reverse()); // newest first
       setHistorialLoaded(true);
@@ -188,23 +201,23 @@ export default function PedidosPage() {
 
     try {
       await Promise.all(
-        items.map((item, idx) =>
+        items.map((item) =>
           appendRow(SHEET_TABS.COTIZACIONES, [
-            String(idx + 1),                     // #
-            pedidoId,                             // PEDIDO_ID
-            fecha,                               // FECHA
-            hora,                               // HORA
-            userName,                           // SOLICITANTE
-            item.part_number,                   // PARTE_NUM
-            item.description,                   // DESCRIPCION
-            item.equipment,                     // EQUIPO
-            String(item.quantity),              // CANTIDAD
-            item.unit_price.toFixed(2),         // PRECIO_UNIT
-            (item.quantity * item.unit_price).toFixed(2), // TOTAL
-            item.urgencia,                      // URGENCIA
-            item.isManual ? 'Manual' : item.source, // FUENTE
-            item.notes,                         // NOTAS
-            'Pendiente',                        // ESTADO
+            fecha,                                              // A: Fecha
+            item.part_number,                                   // B: Part_Number
+            item.description,                                   // C: Descripcion
+            item.equipment,                                     // D: Equipo
+            String(item.quantity),                              // E: Qty
+            item.isManual ? 'Manual' : item.source,             // F: Dealer
+            'Pendiente',                                        // G: Status
+            '',                                                 // H: Precio_Recibido (proveedor llena)
+            '',                                                 // I: Fecha_Respuesta (proveedor llena)
+            pedidoId,                                           // J: PEDIDO_ID
+            hora,                                               // K: Hora
+            userName,                                           // L: Solicitante
+            item.urgencia,                                      // M: Urgencia
+            item.notes,                                         // N: Notas
+            (item.quantity * item.unit_price).toFixed(2),       // O: Total
           ])
         )
       );
@@ -734,8 +747,8 @@ function PedidoRowCard({
     if (!nextStatus || updating) return;
     setUpdating(true);
     try {
-      // Column B (index 1) = PEDIDO_ID, Column O (index 14) = ESTADO
-      await updateCell(SHEET_TABS.COTIZACIONES, 1, row.pedidoId, 14, nextStatus);
+      // Column J (index 9) = PEDIDO_ID, Column G (index 6) = Status
+      await updateCell(SHEET_TABS.COTIZACIONES, 9, row.pedidoId, 6, nextStatus);
       onStatusChange(row.id, nextStatus);
     } catch {
       // silently fail — state not updated
