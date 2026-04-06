@@ -86,7 +86,15 @@ export default function NuevoGastoPage() {
       }
       setOcrDone(true);
     } catch (err: unknown) {
-      setOcrError(err instanceof Error ? err.message : 'Error al leer el recibo');
+      const msg = err instanceof Error ? err.message : '';
+      // Detect that the VPS endpoint hasn't been deployed yet
+      if (msg.includes('404') || msg.includes('Not Found')) {
+        setOcrError('El servicio OCR aún no está activo en el servidor. Completa los datos manualmente.');
+      } else if (msg.includes('fetch') || msg.includes('network') || msg.includes('Failed')) {
+        setOcrError('Sin conexión al servidor. Completa los datos manualmente.');
+      } else {
+        setOcrError('No se pudo leer el recibo. Completa los datos manualmente.');
+      }
     } finally {
       setOcrLoading(false);
     }
