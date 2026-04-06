@@ -129,39 +129,66 @@ export default function PedidosPage() {
     setHistorialError(false);
     try {
       const rows = await readRange(SHEET_TABS.COTIZACIONES);
-      // rows[0] = headers, rows[1..] = data
+      if (rows.length === 0) { setHistorial([]); setHistorialLoaded(true); return; }
+
+      // ── Discover column positions from the header row ──────────────────
+      const headers = rows[0].map((h) => (h ?? '').toLowerCase().trim());
+      const col = (keys: string[]): number =>
+        keys.reduce((found, k) => found !== -1 ? found : headers.findIndex((h) => h.includes(k)), -1);
+
+      const iDate   = col(['fecha']);
+      const iPart   = col(['part_number', 'part number', 'part#', 'numero', 'número']);
+      const iDesc   = col(['descripcion', 'descripción', 'description']);
+      const iEquip  = col(['equipo', 'equipment', 'unidad']);
+      const iQty    = col(['qty', 'cantidad', 'quantity']);
+      const iDealer = col(['dealer', 'fuente', 'source', 'origen']);
+      const iStatus = col(['status', 'estado', 'estatus']);
+      const iPrice  = col(['precio_recibido', 'precio recibido', 'price', 'precio']);
+      const iPedId  = col(['pedido_id', 'pedido id', 'pedidoid', 'folio']);
+      const iHora   = col(['hora', 'time', 'hour']);
+      const iSolic  = col(['solicitante', 'solicitado', 'requested by', 'usuario']);
+      const iUrg    = col(['urgencia', 'urgency', 'prioridad']);
+      const iNotes  = col(['notas', 'notes', 'nota', 'observaciones']);
+      const iTotal  = col(['total']);
+
+      // Safe cell reader — falls back to hardcoded fallback index if header not found
+      const cell = (r: string[], dynamicIdx: number, fallback: number) =>
+        r[dynamicIdx !== -1 ? dynamicIdx : fallback] ?? '';
+
       const VALID_STATUSES = new Set(['Pendiente', 'Pedido', 'Completado']);
 
       const data = rows.slice(1).flatMap((r, idx) => {
-        const pedidoId = r[9] ?? '';
-        const estado   = r[6] ?? '';
+        const pedidoId = cell(r, iPedId, 9);
+        const estado   = cell(r, iStatus, 6);
+        const partNum  = cell(r, iPart, 1);
 
-        // Skip legacy rows (old column format) and blank rows
-        // Valid rows must have a PED- prefixed ID and a known status
-        if (!pedidoId.startsWith('PED-')) return [];
+        // Skip completely blank rows
+        if (!pedidoId && !partNum) return [];
+
+        // Skip rows with unrecognised status values (corrupted legacy data)
         if (estado && !VALID_STATUSES.has(estado)) return [];
 
-        // Guard numeric fields — reject strings that look like names/timestamps
-        const rawCantidad = r[4] ?? '';
-        const rawTotal    = r[14] ?? '';
-        const cantidad    = /^\d+(\.\d+)?$/.test(rawCantidad.trim()) ? rawCantidad : '';
-        const total       = /^\d+(\.\d+)?$/.test(rawTotal.trim())    ? rawTotal    : '';
+        // Guard numeric fields — reject strings that look like names
+        const rawQty   = cell(r, iQty, 4);
+        const rawTotal = cell(r, iTotal, 14);
+        const cantidad = /^\d+(\.\d+)?$/.test(rawQty.trim())    ? rawQty   : '';
+        const total    = /^\d+(\.\d+)?$/.test(rawTotal.trim())  ? rawTotal : '';
 
         return [{
           id:          String(idx),
-          pedidoId,
-          fecha:       r[0]  ?? '',
-          hora:        r[10] ?? '',
-          solicitante: r[11] ?? '',
-          partNum:     r[1]  ?? '',
-          descripcion: r[2]  ?? '',
-          equipo:      r[3]  ?? '',
+          pedidoId:    pedidoId || `ROW-${idx}`,
+          fecha:       cell(r, iDate, 0),
+          hora:        cell(r, iHora, 10),
+          solicitante: cell(r, iSolic, 11),
+          partNum,
+          descripcion: cell(r, iDesc, 2),
+          equipo:      cell(r, iEquip, 3),
           cantidad,
-          precioUnit:  r[7]  ?? '',
+          precioUnit:  cell(r, iPrice, 7),
           total,
-          urgencia:    r[12] ?? '',
-          fuente:      r[5]  ?? '',
-          notas:       r[13] ?? '',
+          urgencia:    cell(r, iUrg, 12),
+          fuente:      cell(r, iDealer, 5),
+          notas:       cell(r, iNotes, 13),
           estado:      estado || 'Pendiente',
         }];
       });
