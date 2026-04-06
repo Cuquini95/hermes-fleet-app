@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type { AppRole } from '../types/roles';
 
 interface AuthState {
@@ -19,31 +20,45 @@ const MOCK_USERS: Record<AppRole, { userName: string; assignedUnits: string[]; p
   gerencia:    { userName: 'Gerencia',       assignedUnits: [], pin: '1963' },
 };
 
-export const useAuthStore = create<AuthState>((set) => ({
-  role: null,
-  userName: '',
-  assignedUnits: [],
-  isAuthenticated: false,
-
-  login: (role: AppRole, pin: string): boolean => {
-    if (pin.length !== 4) return false;
-    const user = MOCK_USERS[role];
-    if (pin !== user.pin) return false;
-    set({
-      role,
-      userName: user.userName,
-      assignedUnits: user.assignedUnits,
-      isAuthenticated: true,
-    });
-    return true;
-  },
-
-  logout: () => {
-    set({
+export const useAuthStore = create<AuthState>()(
+  persist(
+    (set) => ({
       role: null,
       userName: '',
       assignedUnits: [],
       isAuthenticated: false,
-    });
-  },
-}));
+
+      login: (role: AppRole, pin: string): boolean => {
+        if (pin.length !== 4) return false;
+        const user = MOCK_USERS[role];
+        if (pin !== user.pin) return false;
+        set({
+          role,
+          userName: user.userName,
+          assignedUnits: user.assignedUnits,
+          isAuthenticated: true,
+        });
+        return true;
+      },
+
+      logout: () => {
+        set({
+          role: null,
+          userName: '',
+          assignedUnits: [],
+          isAuthenticated: false,
+        });
+      },
+    }),
+    {
+      name: 'hermes-auth',
+      // Only persist the session state, not the action functions
+      partialize: (state) => ({
+        role: state.role,
+        userName: state.userName,
+        assignedUnits: state.assignedUnits,
+        isAuthenticated: state.isAuthenticated,
+      }),
+    }
+  )
+);

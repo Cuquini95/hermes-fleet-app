@@ -1,6 +1,8 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './stores/auth-store';
 import { ROLE_HOME } from './types/roles';
+import type { AppRole } from './types/roles';
+import RequireRole from './components/auth/RequireRole';
 import LoginPage from './pages/LoginPage';
 import OperatorHomePage from './pages/OperatorHomePage';
 import MechanicPage from './pages/MechanicPage';
@@ -31,7 +33,17 @@ import CoordinatorHomePage from './pages/CoordinatorHomePage';
 import WorkshopHomePage from './pages/WorkshopHomePage';
 import NeumaticosPage from './pages/NeumaticosPage';
 import PedidosPage from './pages/PedidosPage';
+import GastosPage from './pages/GastosPage';
+import NuevoGastoPage from './pages/NuevoGastoPage';
 
+// ── Roles allowed per route ───────────────────────────────────────────────────
+// Empty array = any authenticated user
+
+const ALL: AppRole[] = ['operador', 'mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
+const ADMIN: AppRole[] = ['jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
+const WORKSHOP: AppRole[] = ['mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
+const MANAGEMENT: AppRole[] = ['supervisor', 'gerencia'];
+const GASTOS_WRITE: AppRole[] = ['jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
 
 function RootRedirect() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -48,38 +60,61 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
 
-      <Route path="/chat" element={<ChatPage />} />
+      {/* Chat is accessible to any authenticated user */}
+      <Route
+        path="/chat"
+        element={
+          <RequireRole roles={ALL}>
+            <ChatPage />
+          </RequireRole>
+        }
+      />
 
-      <Route element={<AppShell />}>
-        <Route path="/operator" element={<OperatorHomePage />} />
-        <Route path="/mechanic" element={<MechanicPage />} />
-        <Route path="/workshop" element={<WorkshopHomePage />} />
-        <Route path="/coordinator" element={<CoordinatorHomePage />} />
-        <Route path="/supervisor" element={<SupervisorHomePage />} />
-        <Route path="/dashboard" element={<DashboardPage />} />
-        <Route path="/dvir" element={<DVIRPage />} />
-        <Route path="/dvir-compliance" element={<DVIRPage />} />
-        <Route path="/fleet" element={<FleetPage />} />
-        <Route path="/falla" element={<FallaPage />} />
-        <Route path="/workorders/:otId" element={<WorkOrderDetailPage />} />
-        <Route path="/workorders" element={<WorkOrdersPage />} />
-        <Route path="/parts" element={<PartsSearch />} />
-        <Route path="/manuals" element={<ManualSearch />} />
-        <Route path="/diagrams" element={<DiagramViewer />} />
-        <Route path="/alerts" element={<AlertsPage />} />
-        <Route path="/pm" element={<PMSchedulePage />} />
-        <Route path="/pm-order" element={<PMWorkOrderPage />} />
-        <Route path="/inventory" element={<InventoryPage />} />
-        <Route path="/pedidos" element={<PedidosPage />} />
-        <Route path="/briefing" element={<BriefingCard />} />
-        <Route path="/diesel" element={<DieselPage />} />
-        <Route path="/horometro" element={<HorometroPage />} />
-        <Route path="/viaje" element={<ViajePage />} />
-        <Route path="/flete" element={<ViajePage />} />
-        <Route path="/viajes-pena" element={<ViajesPenaPage />} />
-        <Route path="/perfil" element={<PerfilPage />} />
-        <Route path="/my-reports" element={<MyReportsPage />} />
-        <Route path="/neumaticos" element={<NeumaticosPage />} />
+      <Route
+        element={
+          <RequireRole roles={ALL}>
+            <AppShell />
+          </RequireRole>
+        }
+      >
+        {/* ── Role-specific home pages ──────────────────────────────────── */}
+        <Route path="/operator"   element={<RequireRole roles={['operador']}><OperatorHomePage /></RequireRole>} />
+        <Route path="/mechanic"   element={<RequireRole roles={['mecanico']}><MechanicPage /></RequireRole>} />
+        <Route path="/workshop"   element={<RequireRole roles={['jefe_taller', 'gerencia', 'supervisor']}><WorkshopHomePage /></RequireRole>} />
+        <Route path="/coordinator" element={<RequireRole roles={['coordinador', 'gerencia']}><CoordinatorHomePage /></RequireRole>} />
+        <Route path="/supervisor" element={<RequireRole roles={['supervisor', 'gerencia']}><SupervisorHomePage /></RequireRole>} />
+        <Route path="/dashboard"  element={<RequireRole roles={['gerencia', 'supervisor']}><DashboardPage /></RequireRole>} />
+
+        {/* ── Shared operational routes ─────────────────────────────────── */}
+        <Route path="/workorders/:otId" element={<RequireRole roles={WORKSHOP}><WorkOrderDetailPage /></RequireRole>} />
+        <Route path="/workorders"       element={<RequireRole roles={WORKSHOP}><WorkOrdersPage /></RequireRole>} />
+        <Route path="/pm"               element={<RequireRole roles={ADMIN}><PMSchedulePage /></RequireRole>} />
+        <Route path="/pm-order"         element={<RequireRole roles={ADMIN}><PMWorkOrderPage /></RequireRole>} />
+        <Route path="/parts"            element={<RequireRole roles={WORKSHOP}><PartsSearch /></RequireRole>} />
+        <Route path="/manuals"          element={<RequireRole roles={WORKSHOP}><ManualSearch /></RequireRole>} />
+        <Route path="/diagrams"         element={<RequireRole roles={WORKSHOP}><DiagramViewer /></RequireRole>} />
+        <Route path="/inventory"        element={<RequireRole roles={ADMIN}><InventoryPage /></RequireRole>} />
+        <Route path="/pedidos"          element={<RequireRole roles={ADMIN}><PedidosPage /></RequireRole>} />
+        <Route path="/neumaticos"       element={<RequireRole roles={ADMIN}><NeumaticosPage /></RequireRole>} />
+
+        {/* ── Gastos ───────────────────────────────────────────────────── */}
+        <Route path="/gastos"           element={<RequireRole roles={MANAGEMENT}><GastosPage /></RequireRole>} />
+        <Route path="/gastos/nuevo"     element={<RequireRole roles={GASTOS_WRITE}><NuevoGastoPage /></RequireRole>} />
+
+        {/* ── Operator-specific routes ──────────────────────────────────── */}
+        <Route path="/dvir"             element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><DVIRPage /></RequireRole>} />
+        <Route path="/dvir-compliance"  element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><DVIRPage /></RequireRole>} />
+        <Route path="/falla"            element={<RequireRole roles={ALL}><FallaPage /></RequireRole>} />
+        <Route path="/fleet"            element={<RequireRole roles={['supervisor', 'gerencia', 'coordinador']}><FleetPage /></RequireRole>} />
+        <Route path="/alerts"           element={<RequireRole roles={ADMIN}><AlertsPage /></RequireRole>} />
+        <Route path="/diesel"           element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><DieselPage /></RequireRole>} />
+        <Route path="/horometro"        element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><HorometroPage /></RequireRole>} />
+        <Route path="/viaje"            element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><ViajePage /></RequireRole>} />
+        <Route path="/flete"            element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><ViajePage /></RequireRole>} />
+        <Route path="/viajes-pena"      element={<RequireRole roles={['supervisor', 'gerencia']}><ViajesPenaPage /></RequireRole>} />
+        <Route path="/briefing"         element={<RequireRole roles={MANAGEMENT}><BriefingCard /></RequireRole>} />
+        <Route path="/perfil"           element={<RequireRole roles={ALL}><PerfilPage /></RequireRole>} />
+        <Route path="/my-reports"       element={<RequireRole roles={ALL}><MyReportsPage /></RequireRole>} />
       </Route>
 
       <Route path="*" element={<RootRedirect />} />
