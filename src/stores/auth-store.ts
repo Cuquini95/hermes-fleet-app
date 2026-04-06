@@ -11,12 +11,12 @@ interface AuthState {
 }
 
 const MOCK_USERS: Record<AppRole, { userName: string; assignedUnits: string[]; pin: string }> = {
-  operador: { userName: 'Carlos Mendoza', assignedUnits: ['EPAK-09'], pin: '2026' },
-  mecanico: { userName: 'Jorge Ramírez', assignedUnits: [], pin: '2015' },
-  jefe_taller: { userName: 'Juan Martínez', assignedUnits: [], pin: '1995' },
-  coordinador: { userName: 'Roberto Sánchez', assignedUnits: [], pin: '2001' },
-  supervisor: { userName: 'Miguel Ángel Torres', assignedUnits: ['EPAK-09', 'EPTK-08', 'EPCF-08'], pin: '2008' },
-  gerencia: { userName: 'Daniel García', assignedUnits: [], pin: '1963' },
+  operador:    { userName: 'Operador',       assignedUnits: ['EPAK-09'], pin: '2026' },
+  mecanico:    { userName: 'Mecánico',       assignedUnits: [], pin: '2015' },
+  jefe_taller: { userName: 'Jefe de Taller', assignedUnits: [], pin: '1995' },
+  coordinador: { userName: 'Coordinador',    assignedUnits: [], pin: '2001' },
+  supervisor:  { userName: 'Supervisor',     assignedUnits: ['EPAK-09', 'EPTK-08', 'EPCF-08'], pin: '2008' },
+  gerencia:    { userName: 'Gerencia',       assignedUnits: [], pin: '1963' },
 };
 
 export const useAuthStore = create<AuthState>((set) => ({
