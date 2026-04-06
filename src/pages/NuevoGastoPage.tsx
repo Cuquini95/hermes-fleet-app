@@ -16,6 +16,7 @@ import { useGastosStore } from '../stores/gastos-store';
 import { ocrReceipt } from '../lib/sheets-api';
 import type { GastoTipo, MetodoPago } from '../stores/gastos-store';
 import type { OcrLineItem } from '../lib/sheets-api';
+import { uploadPhoto } from '../lib/photo-upload';
 import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
 
 // ── Empty line item ───────────────────────────────────────────────────────────
@@ -43,7 +44,7 @@ export default function NuevoGastoPage() {
   const [otId, setOtId] = useState('');
   const [metodoPago, setMetodoPago] = useState<MetodoPago>('Efectivo');
   const [lineItems, setLineItems] = useState<OcrLineItem[]>([emptyLine()]);
-  const [imageUrl] = useState('');
+  const [imageUrl, setImageUrl] = useState('');
 
   // ── OCR state
   const [ocrLoading, setOcrLoading] = useState(false);
@@ -73,27 +74,39 @@ export default function NuevoGastoPage() {
     setOcrError(null);
     setOcrDone(false);
     try {
-      const result = await ocrReceipt(file);
-      setProveedor(result.proveedor || '');
-      setRfcProveedor(result.rfc_proveedor || '');
-      setFolioFactura(result.folio_factura || '');
-      setSubtotal(result.subtotal || 0);
-      setIva(result.iva || 0);
-      setTotal(result.total || 0);
-      if (result.tipo) setTipo(result.tipo as GastoTipo);
-      if (result.line_items?.length > 0) {
-        setLineItems(result.line_items);
-      }
-      setOcrDone(true);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : '';
-      // Detect that the VPS endpoint hasn't been deployed yet
-      if (msg.includes('404') || msg.includes('Not Found')) {
-        setOcrError('El servicio OCR aún no está activo en el servidor. Completa los datos manualmente.');
-      } else if (msg.includes('fetch') || msg.includes('network') || msg.includes('Failed')) {
-        setOcrError('Sin conexión al servidor. Completa los datos manualmente.');
+      // Run OCR and photo upload in parallel — upload failure is non-blocking
+      const [ocrResult, uploadResult] = await Promise.allSettled([
+        ocrReceipt(file),
+        uploadPhoto(file, 'receipts', `gastos/${Date.now()}`),
+      ]);
+
+      if (ocrResult.status === 'fulfilled') {
+        const result = ocrResult.value;
+        setProveedor(result.proveedor || '');
+        setRfcProveedor(result.rfc_proveedor || '');
+        setFolioFactura(result.folio_factura || '');
+        setSubtotal(result.subtotal || 0);
+        setIva(result.iva || 0);
+        setTotal(result.total || 0);
+        if (result.tipo) setTipo(result.tipo as GastoTipo);
+        if (result.line_items?.length > 0) {
+          setLineItems(result.line_items);
+        }
+        setOcrDone(true);
       } else {
-        setOcrError('No se pudo leer el recibo. Completa los datos manualmente.');
+        const msg = ocrResult.reason instanceof Error ? ocrResult.reason.message : '';
+        if (msg.includes('404') || msg.includes('Not Found')) {
+          setOcrError('El servicio OCR aún no está activo en el servidor. Completa los datos manualmente.');
+        } else if (msg.includes('fetch') || msg.includes('network') || msg.includes('Failed')) {
+          setOcrError('Sin conexión al servidor. Completa los datos manualmente.');
+        } else {
+          setOcrError('No se pudo leer el recibo. Completa los datos manualmente.');
+        }
+      }
+
+      // Save photo URL if upload succeeded (non-blocking — gasto saves even if upload failed)
+      if (uploadResult.status === 'fulfilled') {
+        setImageUrl(uploadResult.value);
       }
     } finally {
       setOcrLoading(false);

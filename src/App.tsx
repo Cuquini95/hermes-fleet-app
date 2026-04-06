@@ -1,5 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect } from 'react';
 import { useAuthStore } from './stores/auth-store';
+import { flushQueue } from './lib/offline-queue';
 import { ROLE_HOME } from './types/roles';
 import type { AppRole } from './types/roles';
 import RequireRole from './components/auth/RequireRole';
@@ -56,6 +58,15 @@ function RootRedirect() {
 }
 
 export default function App() {
+  // Flush queued offline submissions when the device reconnects
+  useEffect(() => {
+    const handleOnline = () => { flushQueue().catch(() => {}); };
+    window.addEventListener('online', handleOnline);
+    // Also flush once on mount in case the app was opened after reconnecting
+    if (navigator.onLine) handleOnline();
+    return () => { window.removeEventListener('online', handleOnline); };
+  }, []);
+
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />

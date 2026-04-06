@@ -48,7 +48,7 @@ function parseWorkOrderRow(row: string[]): WorkOrder | null {
     costo_estimado: Number(row[13]) || 0,
     fecha_cierre: row[14] ?? '',
     observaciones: row[15] ?? '',
-    progreso: 0,
+    progreso: Number(row[16]) || 0,
   };
 }
 
@@ -202,6 +202,8 @@ export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
         mecanico_asignado: 8,
         prioridad: 7,
         observaciones: 15,
+        progreso: 16,
+        costo_estimado: 13,
       };
       const col = FIELD_TO_COLUMN[field];
       if (col !== undefined) {

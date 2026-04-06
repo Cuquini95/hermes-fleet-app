@@ -1,3 +1,5 @@
+import { appendRow } from './sheets-api';
+
 const DB_NAME = 'hermes-offline';
 const STORE_NAME = 'pending-submissions';
 
@@ -52,4 +54,36 @@ export async function clearSubmission(id: number): Promise<void> {
 export async function getPendingCount(): Promise<number> {
   const submissions = await getPendingSubmissions();
   return submissions.length;
+}
+
+/**
+ * Replay all pending submissions against the Sheets API.
+ * Each entry must have been queued with data: { tab: string, values: string[] }.
+ * Succeeded entries are removed from the queue. Failed entries are left for the next retry.
+ * Returns { succeeded, failed } counts.
+ */
+export async function flushQueue(): Promise<{ succeeded: number; failed: number }> {
+  const pending = await getPendingSubmissions();
+  if (pending.length === 0) return { succeeded: 0, failed: 0 };
+
+  let succeeded = 0;
+  let failed = 0;
+
+  for (const submission of pending) {
+    const { tab, values } = submission.data as { tab?: string; values?: string[] };
+    if (!tab || !Array.isArray(values)) {
+      // Malformed entry — remove it rather than retry forever
+      if (submission.id !== undefined) await clearSubmission(submission.id);
+      continue;
+    }
+    try {
+      await appendRow(tab, values);
+      if (submission.id !== undefined) await clearSubmission(submission.id);
+      succeeded++;
+    } catch {
+      failed++;
+    }
+  }
+
+  return { succeeded, failed };
 }
