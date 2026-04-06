@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ShoppingCart,
@@ -125,23 +125,41 @@ export default function PedidosPage() {
     try {
       const rows = await readRange(SHEET_TABS.COTIZACIONES);
       // rows[0] = headers, rows[1..] = data
-      const data = rows.slice(1).map((r, idx) => ({
-        id:          String(idx),
-        pedidoId:    r[9]  ?? '',   // J: PEDIDO_ID
-        fecha:       r[0]  ?? '',   // A: Fecha
-        hora:        r[10] ?? '',   // K: Hora
-        solicitante: r[11] ?? '',   // L: Solicitante
-        partNum:     r[1]  ?? '',   // B: Part_Number
-        descripcion: r[2]  ?? '',   // C: Descripcion
-        equipo:      r[3]  ?? '',   // D: Equipo
-        cantidad:    r[4]  ?? '',   // E: Qty
-        precioUnit:  r[7]  ?? '',   // H: Precio_Recibido
-        total:       r[14] ?? '',   // O: Total
-        urgencia:    r[12] ?? '',   // M: Urgencia
-        fuente:      r[5]  ?? '',   // F: Dealer
-        notas:       r[13] ?? '',   // N: Notas
-        estado:      r[6]  ?? 'Pendiente', // G: Status
-      }));
+      const VALID_STATUSES = new Set(['Pendiente', 'Pedido', 'Completado']);
+
+      const data = rows.slice(1).flatMap((r, idx) => {
+        const pedidoId = r[9] ?? '';
+        const estado   = r[6] ?? '';
+
+        // Skip legacy rows (old column format) and blank rows
+        // Valid rows must have a PED- prefixed ID and a known status
+        if (!pedidoId.startsWith('PED-')) return [];
+        if (estado && !VALID_STATUSES.has(estado)) return [];
+
+        // Guard numeric fields — reject strings that look like names/timestamps
+        const rawCantidad = r[4] ?? '';
+        const rawTotal    = r[14] ?? '';
+        const cantidad    = /^\d+(\.\d+)?$/.test(rawCantidad.trim()) ? rawCantidad : '';
+        const total       = /^\d+(\.\d+)?$/.test(rawTotal.trim())    ? rawTotal    : '';
+
+        return [{
+          id:          String(idx),
+          pedidoId,
+          fecha:       r[0]  ?? '',
+          hora:        r[10] ?? '',
+          solicitante: r[11] ?? '',
+          partNum:     r[1]  ?? '',
+          descripcion: r[2]  ?? '',
+          equipo:      r[3]  ?? '',
+          cantidad,
+          precioUnit:  r[7]  ?? '',
+          total,
+          urgencia:    r[12] ?? '',
+          fuente:      r[5]  ?? '',
+          notas:       r[13] ?? '',
+          estado:      estado || 'Pendiente',
+        }];
+      });
       setHistorial(data.reverse()); // newest first
       setHistorialLoaded(true);
     } catch {
@@ -150,6 +168,12 @@ export default function PedidosPage() {
       setLoadingHistorial(false);
     }
   }
+
+  // Auto-load historial on mount (Gerencia starts on historial tab directly)
+  useEffect(() => {
+    if (!historialLoaded) loadHistorial();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function handleTabChange(t: Tab) {
     setTab(t);
