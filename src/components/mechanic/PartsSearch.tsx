@@ -1,9 +1,25 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, WifiOff } from 'lucide-react';
+import { Search, WifiOff, Languages } from 'lucide-react';
 import { searchParts, type PartResult } from '../../lib/hermes-api';
+import { expandQuery } from '../../lib/parts-dictionary';
 import PartCard from './PartCard';
 
 const EQUIPMENT_FILTERS = ['Todos', 'Komatsu', 'CAT', 'Doosan', 'Mack'];
+
+/** Merge results from multiple queries, deduplicating by part_number */
+function mergeResults(arrays: PartResult[][]): PartResult[] {
+  const seen = new Set<string>();
+  const merged: PartResult[] = [];
+  for (const arr of arrays) {
+    for (const part of arr) {
+      if (!seen.has(part.part_number)) {
+        seen.add(part.part_number);
+        merged.push(part);
+      }
+    }
+  }
+  return merged;
+}
 
 export default function PartsSearch() {
   const [query, setQuery] = useState('');
@@ -11,6 +27,7 @@ export default function PartsSearch() {
   const [results, setResults] = useState<PartResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState(false);
+  const [bilingualHit, setBilingualHit] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -19,16 +36,32 @@ export default function PartsSearch() {
     if (!query.trim()) {
       setResults([]);
       setApiError(false);
+      setBilingualHit(false);
       return;
     }
 
     debounceRef.current = setTimeout(async () => {
       setLoading(true);
       setApiError(false);
+      setBilingualHit(false);
+
       try {
         const equipo = selectedEquipo !== 'Todos' ? selectedEquipo : undefined;
-        const data = await searchParts(query, equipo);
-        setResults(data);
+        const terms = expandQuery(query);
+        const isBilingual = terms.length > 1;
+
+        // Fire all translated queries in parallel
+        const allResults = await Promise.all(
+          terms.map((term) => searchParts(term, equipo))
+        );
+
+        const merged = mergeResults(allResults);
+        setResults(merged);
+
+        // Show bilingual indicator only when translation actually added extra results
+        if (isBilingual && merged.length > allResults[0].length) {
+          setBilingualHit(true);
+        }
       } catch {
         setResults([]);
         setApiError(true);
@@ -51,7 +84,7 @@ export default function PartsSearch() {
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Buscar por número, descripción o equipo..."
+          placeholder="Buscar en español o inglés — alternador / alternator…"
           className="w-full bg-white rounded-xl border-2 border-border focus:border-amber outline-none pl-11 pr-4 py-4 text-sm text-text placeholder:text-text-secondary"
         />
       </div>
@@ -72,6 +105,16 @@ export default function PartsSearch() {
           </button>
         ))}
       </div>
+
+      {/* Bilingual indicator */}
+      {bilingualHit && !loading && (
+        <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-blue-50 border border-blue-100">
+          <Languages size={14} className="text-blue-500 flex-shrink-0" />
+          <p className="text-xs text-blue-600">
+            Se encontraron resultados adicionales buscando en inglés también.
+          </p>
+        </div>
+      )}
 
       {/* States */}
       {loading && (
