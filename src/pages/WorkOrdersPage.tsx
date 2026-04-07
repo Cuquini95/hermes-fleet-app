@@ -35,11 +35,11 @@ export default function WorkOrdersPage() {
     }
   }, [fetched, fetchWorkOrders]);
 
-  // Hide completed OTs by default — only show them if specifically filtered
+  // Never show completed OTs in the app — they stay in the sheet only
   const active = workorders.filter((ot) => ot.estado !== 'Completado');
   const filtered = filter === 'Todas'
     ? active
-    : workorders.filter((ot) =>
+    : active.filter((ot) =>
         ot.prioridad === filter || ot.prioridad?.toUpperCase() === filter || ot.estado === filter
       );
 
