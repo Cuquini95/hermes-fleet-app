@@ -247,18 +247,24 @@ export default function HermesChat() {
             ? `${selectedUnit} / ${selectedEquipment?.model ?? selectedUnit}`
             : detectedModel;
 
-          const sintomaClean = faultCode
-            ? (text.replace(new RegExp(faultCode.replace('-', '\\-'), 'gi'), '').trim() ||
-               `Diagnóstico código de falla ${faultCode}`)
-            : text;
-
           // If no unit selected and model can't be detected from text, still try but warn
           const noContext = effectiveUnit === 'General';
+
+          // Build sintoma that explicitly forces fault code table lookup on VPS
+          const userContext = text.replace(new RegExp((faultCode ?? '').replace('-', '\\-'), 'gi'), '').trim();
+          const sintomaForVPS = faultCode
+            ? `[FAULT CODE LOOKUP] Código de falla: ${faultCode}. ` +
+              `Consulta la sección "Troubleshooting by failure code" del manual de servicio del equipo. ` +
+              `Indica: (1) qué sistema o componente identifica este código según el manual, ` +
+              `(2) causas probables listadas en el manual para este código específico, ` +
+              `(3) procedimiento de verificación y diagnóstico indicado en el manual. ` +
+              (userContext ? `Contexto adicional: ${userContext}` : '')
+            : text;
 
           try {
             const result = await diagnose({
               equipo: effectiveUnit,
-              sintoma: sintomaClean,
+              sintoma: sintomaForVPS,
               codigo_falla: faultCode ?? undefined,
             });
             const label = selectedUnit !== 'General' ? selectedUnit : (detectedModel !== 'General' ? detectedModel : faultCode ?? 'General');
