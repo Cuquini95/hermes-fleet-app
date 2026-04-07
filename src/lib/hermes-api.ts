@@ -107,3 +107,16 @@ export interface DiagramResult {
 export async function findDiagram(equipo: string, search: string): Promise<DiagramResult> {
   return hermesGet('/diagrams/find', { equipo, search });
 }
+
+export interface FaultCodePagesResult {
+  found: boolean;
+  pdf?: string;
+  page_start?: number;
+  page_end?: number;
+  codigo?: string;
+  message?: string;
+}
+
+export async function getFaultCodePages(equipo: string, codigo_falla: string): Promise<FaultCodePagesResult> {
+  return hermesGet('/ai/fault_code_pages', { equipo, codigo_falla });
+}

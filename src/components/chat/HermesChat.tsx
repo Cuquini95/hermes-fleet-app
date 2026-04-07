@@ -7,6 +7,7 @@ import {
   manualLookup,
   searchParts,
   findDiagram,
+  getFaultCodePages,
   type DiagnoseResult,
   type PhotoAnalysisResult,
   type ManualLookupResult,
@@ -116,6 +117,18 @@ function isDiagramQuery(text: string): boolean {
   return /diagrama|diagram|esquema|plano|dibujo/i.test(text);
 }
 
+function isManualPagesQuery(text: string): boolean {
+  return /ver\s+manual|p[aá]ginas?\s+manual|abrir\s+manual|manual\s+p[aá]gina|ver\s+p[aá]gina|workshop\s+manual|ver\s+en\s+manual/i.test(text);
+}
+
+/** Extract search subject from a diagram request: "diagrama sistema hidráulico" → "sistema hidráulico" */
+function extractDiagramSubject(text: string): string {
+  return text
+    .replace(/diagrama|diagram|esquema|plano|dibujo/gi, '')
+    .replace(/\b(de|del|el|la|los|las)\b/gi, '')
+    .trim();
+}
+
 /**
  * Detect fault/error codes across all fleet machine formats:
  * Komatsu TM (HM400): 15K0MW, 25K0MW, 1AK0LW, AETMKX, AEBRKX
@@ -185,7 +198,7 @@ function detectEquipmentFromText(text: string): string {
 // ─── Greeting ────────────────────────────────────────────────────────────────
 
 function buildGreeting(userName: string): ChatMessage {
-  const content = `Hola ${userName}. Soy Hermes, tu asistente técnico.\n\nPuedo ayudarte con:\n• Diagnóstico de fallas — envía foto o describe el síntoma\n• Búsqueda de partes — número OEM o descripción\n• Procedimientos de reparación — manuales y torques\n• Códigos de falla — qué significan y qué revisar\n\n¿En qué te puedo ayudar?`;
+  const content = `Hola ${userName}. Soy Hermes, tu asistente técnico.\n\nPuedo ayudarte con:\n• Diagnóstico de fallas — envía foto o describe el síntoma\n• Búsqueda de partes — número OEM o descripción\n• Procedimientos de reparación — manuales y torques\n• Códigos de falla — qué significan y qué revisar\n• **Diagramas** — escribe _diagrama [sistema]_ para ver el plano\n• **Manual de taller** — después de un código de falla escribe _ver manual_\n\n¿En qué te puedo ayudar?`;
   return {
     id: 'greeting',
     role: 'hermes',
@@ -210,6 +223,9 @@ export default function HermesChat() {
   const [selectedUnit, setSelectedUnit] = useState<string>(defaultUnit);
   const [isLoading, setIsLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Track the last fault code context so "ver manual" can look up pages
+  const lastFaultCodeRef = useRef<{ code: string; equipo: string } | null>(null);
 
   function scrollToBottom() {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -298,6 +314,11 @@ export default function HermesChat() {
             if (noContext) {
               responseText = `⚠️ _Selecciona tu equipo arriba para resultados más precisos con este código._\n\n` + responseText;
             }
+            // Remember this fault code so "ver manual" can look up the PDF pages
+            if (faultCode) {
+              lastFaultCodeRef.current = { code: faultCode, equipo: effectiveUnit };
+              responseText += `\n\n_💡 Escribe **ver manual** para abrir las páginas del manual de taller._`;
+            }
           } catch {
             responseText = formatDiagnose(MOCK_DIAGNOSE, selectedUnit);
           }
@@ -354,9 +375,56 @@ export default function HermesChat() {
           } catch {
             responseText = `📦 **Búsqueda: '${pn}'**\n\nNo pude conectar con el servidor. Verifica tu conexión e intenta de nuevo.`;
           }
+        } else if (isManualPagesQuery(text)) {
+          // ── Workshop manual pages for last fault code ───────────────────────
+          const ctx = lastFaultCodeRef.current;
+          if (ctx) {
+            try {
+              const pages = await getFaultCodePages(ctx.equipo, ctx.code);
+              if (pages.found && pages.pdf && pages.page_start !== undefined && pages.page_end !== undefined) {
+                responseText =
+                  `📖 **Manual de Taller — Código ${ctx.code}**\n` +
+                  `Páginas ${pages.page_start}–${pages.page_end}:\n\n` +
+                  `![Manual p.${pages.page_start}](/hermes-api/diagrams/workshop-page/${pages.pdf}/${pages.page_start})\n\n` +
+                  `![Manual p.${pages.page_end}](/hermes-api/diagrams/workshop-page/${pages.pdf}/${pages.page_end})`;
+              } else {
+                responseText = `📖 No encontré las páginas del manual para **${ctx.code}**.\n\n${pages.message ?? ''}`;
+              }
+            } catch {
+              responseText = `📖 No pude cargar el manual en este momento. Intenta de nuevo.`;
+            }
+          } else {
+            responseText = `📖 Primero consulta un código de falla y luego escribe _ver manual_ para abrir las páginas del manual de taller.`;
+          }
         } else if (isDiagramQuery(text)) {
-          const unitInfo = selectedUnit !== 'General' ? ` para ${selectedUnit}` : '';
-          responseText = `📐 **Diagramas${unitInfo}**\n\nLos diagramas técnicos están disponibles en la sección de **Diagramas** del menú.\n\n👉 Ve a **Más → Diagramas** o usa la pestaña Diagramas en el Workbench del Mecánico.\n\nDisponibles:\n• D155AX-6 (Komatsu)\n• HM400-3 (Komatsu)\n• DX340LC (Doosan)\n• DX225LCA (Doosan)\n• DL420A (Doosan)\n• MACK GR84B`;
+          // ── Standalone diagram request ──────────────────────────────────────
+          const selectedEquip = equipment.find((e) => e.unit_id === selectedUnit);
+          const equipForDiagram = selectedUnit !== 'General'
+            ? `${selectedUnit} / ${selectedEquip?.model ?? selectedUnit}`
+            : detectEquipmentFromText(text);
+          const subject = extractDiagramSubject(text);
+          const searchTerm = subject || equipForDiagram;
+
+          try {
+            const diag = await findDiagram(equipForDiagram !== 'General' ? equipForDiagram : '', searchTerm);
+            if (diag.found && diag.image_url && diag.page !== undefined) {
+              const nextPage = diag.page + 1;
+              responseText =
+                `📐 **Diagrama — ${diag.section ?? searchTerm}**\n\n` +
+                `![Diagrama](/hermes-api${diag.image_url})\n\n` +
+                `📋 **Lista de partes**\n![Partes](/hermes-api/diagrams/page/${diag.pdf}/${nextPage})`;
+            } else if (diag.found && diag.image_url) {
+              responseText = `📐 **Diagrama**\n\n![Diagrama](/hermes-api${diag.image_url})`;
+            } else {
+              const unitInfo = selectedUnit !== 'General' ? ` para ${selectedUnit}` : '';
+              responseText =
+                `📐 **Diagramas${unitInfo}**\n\nNo encontré un diagrama específico para _${subject || 'ese sistema'}_.\n\n` +
+                `Prueba con términos como: _hidráulico_, _motor_, _transmisión_, _tren de rodaje_.\n\n` +
+                `O ve a **Más → Diagramas** para ver todos los planos disponibles.`;
+            }
+          } catch {
+            responseText = `📐 No pude cargar el diagrama. Ve a **Más → Diagramas** para explorar los planos disponibles.`;
+          }
         } else if (isManualQuery(text)) {
           const selectedEquipment = equipment.find((e) => e.unit_id === selectedUnit);
           const manualEquipo = selectedUnit !== 'General' && selectedEquipment
