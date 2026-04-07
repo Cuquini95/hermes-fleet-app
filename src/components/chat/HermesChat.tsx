@@ -273,9 +273,13 @@ export default function HermesChat() {
           const unitInfo = selectedUnit !== 'General' ? ` para ${selectedUnit}` : '';
           responseText = `📐 **Diagramas${unitInfo}**\n\nLos diagramas técnicos están disponibles en la sección de **Diagramas** del menú.\n\n👉 Ve a **Más → Diagramas** o usa la pestaña Diagramas en el Workbench del Mecánico.\n\nDisponibles:\n• D155AX-6 (Komatsu)\n• HM400-3 (Komatsu)\n• DX340LC (Doosan)\n• DX225LCA (Doosan)\n• DL420A (Doosan)\n• MACK GR84B`;
         } else if (isManualQuery(text)) {
+          const selectedEquipment = equipment.find((e) => e.unit_id === selectedUnit);
+          const manualEquipo = selectedUnit !== 'General' && selectedEquipment
+            ? `${selectedUnit} / ${selectedEquipment.model}`
+            : selectedUnit;
           try {
             const result = await manualLookup({
-              equipo: selectedUnit,
+              equipo: manualEquipo,
               tema: text,
             });
             responseText = formatManualLookup(result);
@@ -283,16 +287,19 @@ export default function HermesChat() {
             responseText = `📖 **Procedimiento**\n\nNo pude acceder al manual en este momento. Consulta el manual físico o intenta de nuevo con conexión al servidor.`;
           }
         } else {
-          // Auto-detect equipment from message if selector is "General"
+          // Build equipo string with unit_id + model so VPS can load the right catalog
+          const selectedEquipment = equipment.find((e) => e.unit_id === selectedUnit);
           const effectiveUnit = selectedUnit !== 'General'
-            ? selectedUnit
+            ? selectedEquipment
+              ? `${selectedUnit} / ${selectedEquipment.model}`
+              : selectedUnit
             : detectEquipmentFromText(text);
           try {
             const result = await diagnose({
               equipo: effectiveUnit,
               sintoma: text,
             });
-            responseText = formatDiagnose(result, selectedUnit);
+            responseText = formatDiagnose(result, selectedUnit !== 'General' ? selectedUnit : effectiveUnit);
           } catch {
             responseText = formatDiagnose(MOCK_DIAGNOSE, selectedUnit);
           }
