@@ -1,10 +1,12 @@
 import { useEffect } from 'react';
 import { useEquipmentStore } from '../stores/equipment-store';
+import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
 import type { Equipment } from '../types/equipment';
 
 /**
- * Returns the live equipment list from the "01 Inventario" Google Sheet.
- * Returns empty array while loading — no mock/static fallback.
+ * Returns equipment instantly from the hardcoded catalog.
+ * Also kicks off a background fetch from "01 Inventario" to overlay
+ * live status / horómetro data on the fleet dashboard.
  */
 export function useEquipmentList(): Equipment[] {
   const { equipment, fetchEquipment } = useEquipmentStore();
@@ -13,11 +15,12 @@ export function useEquipmentList(): Equipment[] {
     fetchEquipment();
   }, [fetchEquipment]);
 
-  return equipment;
+  // Live sheet data takes over once loaded; catalog is instant fallback
+  return equipment.length > 0 ? equipment : EQUIPMENT_CATALOG;
 }
 
 /**
- * Look up a single unit by ID from the live store (or static fallback).
+ * Look up a single unit by ID — instant from catalog, upgrades to live data.
  */
 export function useEquipmentById(unit_id: string): Equipment | undefined {
   const equipment = useEquipmentList();

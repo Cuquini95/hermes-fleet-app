@@ -225,7 +225,7 @@ export default function NeumaticosPage() {
   // ── STEP 1: Equipment ──────────────────────────────────────────────────
   if (step === 'equipo') {
     const wheeled = equipmentList.filter(
-      (e) => e.type !== 'Bulldozer' && e.type !== 'Excavadora'
+      (e) => e.type !== 'Tractor de Cadena' && e.type !== 'Excavadora'
     );
 
     return (
