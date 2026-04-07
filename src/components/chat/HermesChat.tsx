@@ -216,32 +216,29 @@ export default function HermesChat() {
           // Part number detected — search catalog first
           const pn = extractPartNumber(text) ?? text.trim();
           const wantsDiagram = isDiagramQuery(text);
-          const equipUnit = selectedUnit !== 'General' ? selectedUnit : detectEquipmentFromText(text);
+
+          // Detect equipment: selected unit > text detection > part number format
+          const selectedEquip = equipment.find((e) => e.unit_id === selectedUnit);
+          let equipUnit = selectedUnit !== 'General'
+            ? `${selectedUnit} / ${selectedEquip?.model ?? selectedUnit}`
+            : detectEquipmentFromText(text);
+
+          // Last resort: detect brand from part number format
+          if (equipUnit === 'General') {
+            if (/^6\d{3}-/.test(pn) || /^0\d{4}-/.test(pn)) equipUnit = 'Komatsu HM400-3';
+            else if (/^\d{3}-\d{4}/.test(pn)) equipUnit = 'CAT 740B';
+            else if (/^[A-Z]\d{6,}/.test(pn)) equipUnit = 'Doosan DX360LCA';
+            else if (/^\d{8}$/.test(pn)) equipUnit = 'Mack GR84B 8x4';
+          }
+
           try {
-            const results = await searchParts(
-              pn,
-              equipUnit !== 'General' ? equipUnit : undefined
-            );
+            const results = await searchParts(pn, equipUnit !== 'General' ? equipUnit : undefined);
             if (results.length > 0) {
               responseText = formatSearchParts(results, pn);
               if (wantsDiagram) {
-                // Determine equipment from search results or part number format
                 let diagEquip = equipUnit;
-                if (diagEquip === 'General') {
-                  // Try to detect from first result's compatible_units or location
-                  const r = results[0];
-                  if (r.compatible_units?.length > 0) {
-                    diagEquip = r.compatible_units[0];
-                  } else if (r.location) {
-                    diagEquip = r.location;
-                  }
-                }
-                // Also detect brand from part number prefix
-                if (diagEquip === 'General') {
-                  if (/^6\d{3}-/.test(pn) || /^0\d{4}-/.test(pn)) diagEquip = 'Komatsu HM400-3';
-                  else if (/^\d{3}-\d{4}$/.test(pn)) diagEquip = 'CAT 740B';
-                  else if (/^[A-Z]\d{4,}/.test(pn) || /^6[5]\.\d/.test(pn)) diagEquip = 'Doosan DX340LC';
-                  else if (/^\d{8}$/.test(pn)) diagEquip = 'Mack GR84B';
+                if (diagEquip === 'General' && results[0].compatible_units?.length > 0) {
+                  diagEquip = results[0].compatible_units[0];
                 }
                 try {
                   const diag = await findDiagram(diagEquip, pn);
@@ -258,13 +255,12 @@ export default function HermesChat() {
                 }
               }
             } else {
-              // No catalog match — ask AI
-              const effectiveUnit = equipUnit !== 'General' ? equipUnit : 'todos';
+              // Not in catalog — ask AI with full fleet context
               const result = await diagnose({
-                equipo: effectiveUnit,
-                sintoma: `BÚSQUEDA DE PARTE: ${pn}. Busca en el catálogo.`,
+                equipo: equipUnit,
+                sintoma: `BÚSQUEDA DE PARTE: ${pn}. Identifica qué es esta pieza, en qué sistema va y alternativas compatibles.`,
               });
-              responseText = formatDiagnose(result, effectiveUnit);
+              responseText = formatDiagnose(result, equipUnit);
             }
           } catch {
             responseText = `📦 **Búsqueda: '${pn}'**\n\nNo pude conectar con el servidor. Verifica tu conexión e intenta de nuevo.`;
