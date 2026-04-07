@@ -20,7 +20,7 @@ interface ActionCard {
 }
 
 const ACTION_CARDS: ActionCard[] = [
-  { label: 'DVIR', icon: <ClipboardCheck size={32} className="text-amber" />, path: '/dvir' },
+  { label: 'Checklist', icon: <ClipboardCheck size={32} className="text-amber" />, path: '/dvir' },
   { label: 'Reportar Falla', icon: <Camera size={32} className="text-amber" />, path: '/falla' },
   { label: 'Diesel', icon: <Fuel size={32} className="text-amber" />, path: '/diesel' },
   { label: 'Horómetro', icon: <Gauge size={32} className="text-amber" />, path: '/horometro' },
@@ -79,7 +79,7 @@ export default function OperatorHomePage() {
       {dvirDone === false && (
         <div className="bg-red-50 border-l-4 border-critical rounded-lg p-3 mb-4">
           <p className="text-sm font-medium text-critical">
-            ⚠️ Tu DVIR de hoy no ha sido completado
+            ⚠️ Tu Checklist de hoy no ha sido completado
           </p>
         </div>
       )}
@@ -87,7 +87,7 @@ export default function OperatorHomePage() {
         <div className="bg-green-50 border-l-4 border-success rounded-lg p-3 mb-4 flex items-center gap-2">
           <CheckCircle size={16} className="text-success shrink-0" />
           <p className="text-sm font-medium text-success">
-            DVIR completado hoy ✓
+            Checklist completado hoy ✓
           </p>
         </div>
       )}

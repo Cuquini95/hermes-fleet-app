@@ -25,7 +25,7 @@ export default function MyReportsPage() {
         </div>
         <p className="text-base font-semibold text-text">Sin reportes hoy</p>
         <p className="text-sm text-text-secondary text-center max-w-xs">
-          Los reportes de DVIR, combustible y horómetro que envíes hoy aparecerán aquí.
+          Los reportes de Checklist, combustible y horómetro que envíes hoy aparecerán aquí.
         </p>
       </div>
     </div>

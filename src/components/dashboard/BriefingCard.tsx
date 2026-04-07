@@ -44,7 +44,7 @@ export default function BriefingCard() {
         {/* DVIR Compliance */}
         <div>
           <p className="font-semibold text-text text-sm">
-            DVIR COMPLIANCE: 87% (13/15 operadores)
+            CHECKLIST COMPLIANCE: 87% (13/15 operadores)
           </p>
           <p className="text-sm mt-0.5" style={{ color: '#F59E0B' }}>
             ⚠️ Faltaron: Carlos M., Juan A.

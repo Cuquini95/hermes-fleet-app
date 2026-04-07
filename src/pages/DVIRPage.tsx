@@ -177,7 +177,7 @@ export default function DVIRPage() {
         >
           <ArrowLeft size={20} className="text-text" />
         </button>
-        <h1 className="text-xl font-bold text-text">Inspección DVIR</h1>
+        <h1 className="text-xl font-bold text-text">Checklist</h1>
       </div>
 
       {/* Unit & type card */}
