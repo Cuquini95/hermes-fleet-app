@@ -46,8 +46,6 @@ const URGENCIA_CONFIG = {
   Crítico: { color: '#DC2626', bg: '#FEF2F2' },
 } as const;
 
-const EQUIPMENT_OPTIONS = equipment.map((e) => e.unit_id);
-
 let _pedidoSeq = 1;
 function newPedidoId(): string {
   const d = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -404,6 +402,7 @@ export default function PedidosPage() {
               onToggle={() => setExpandedItem(expandedItem === item.cartId ? null : item.cartId)}
               onUpdate={(updates) => updateItem(item.cartId, updates)}
               onRemove={() => removeItem(item.cartId)}
+              unitIds={equipment.map((e) => e.unit_id)}
             />
           ))}
 
@@ -427,6 +426,7 @@ export default function PedidosPage() {
               onChange={(f) => setManual(f)}
               onAdd={handleAddManual}
               onCancel={() => { setShowManual(false); setManual(emptyManual()); setManualErrors({}); }}
+              unitIds={equipment.map((e) => e.unit_id)}
             />
           )}
 
@@ -578,12 +578,14 @@ function CartItemCard({
   onToggle,
   onUpdate,
   onRemove,
+  unitIds,
 }: {
   item: CartItem;
   expanded: boolean;
   onToggle: () => void;
   onUpdate: (u: Partial<CartItem>) => void;
   onRemove: () => void;
+  unitIds: string[];
 }) {
   const urgCfg = URGENCIA_CONFIG[item.urgencia] ?? URGENCIA_CONFIG.Normal;
 
@@ -623,7 +625,7 @@ function CartItemCard({
               className="w-full border border-border rounded-lg px-3 py-2 text-sm text-text bg-white"
             >
               <option value="">Sin asignar</option>
-              {EQUIPMENT_OPTIONS.map((u) => <option key={u} value={u}>{u}</option>)}
+              {unitIds.map((u) => <option key={u} value={u}>{u}</option>)}
             </select>
           </div>
 
@@ -687,12 +689,14 @@ function ManualPartForm({
   onChange,
   onAdd,
   onCancel,
+  unitIds,
 }: {
   form: ManualForm;
   errors: Partial<ManualForm>;
   onChange: (f: ManualForm) => void;
   onAdd: () => void;
   onCancel: () => void;
+  unitIds: string[];
 }) {
   const f = (field: keyof ManualForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     onChange({ ...form, [field]: e.target.value });
@@ -777,7 +781,7 @@ function ManualPartForm({
           className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-white text-text"
         >
           <option value="">Sin asignar</option>
-          {EQUIPMENT_OPTIONS.map((u) => <option key={u} value={u}>{u}</option>)}
+          {unitIds.map((u) => <option key={u} value={u}>{u}</option>)}
         </select>
       </div>
 

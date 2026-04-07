@@ -141,7 +141,7 @@ function nextSeq() { return String(_seq++); }
 // ════════════════════════════════════════════════════════════════════════════
 export default function NeumaticosPage() {
   const navigate = useNavigate();
-  const equipment = useEquipmentList();
+  const equipmentList = useEquipmentList();
 
   const [step, setStep]             = useState<Step>('equipo');
   const [selectedUnit, setSelected] = useState('');
@@ -151,7 +151,7 @@ export default function NeumaticosPage() {
   const [registradas, setRegistradas] = useState<string[]>([]);
   const [errors, setErrors]         = useState<Partial<Record<keyof LlantaForm, string>>>({});
 
-  const equipment       = equipment.find((e) => e.unit_id === selectedUnit);
+  const equipment       = equipmentList.find((e) => e.unit_id === selectedUnit);
   const positions       = equipment ? (POSITIONS_BY_TYPE[equipment.type] ?? POSITIONS_BY_TYPE.default) : [];
   const available       = positions.filter((p) => !registradas.includes(p));
   const autoEstado      = calcEstado(llanta.condicion, llanta.profundidad, llanta.presion);
@@ -224,7 +224,7 @@ export default function NeumaticosPage() {
 
   // ── STEP 1: Equipment ──────────────────────────────────────────────────
   if (step === 'equipo') {
-    const wheeled = equipment.filter(
+    const wheeled = equipmentList.filter(
       (e) => e.type !== 'Bulldozer' && e.type !== 'Excavadora'
     );
 

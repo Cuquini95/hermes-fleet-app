@@ -1,8 +1,8 @@
 interface StatusDotProps {
-  status: 'operativo' | 'alerta' | 'taller' | 'inactivo';
+  status: string;
 }
 
-const STATUS_CLASSES: Record<StatusDotProps['status'], string> = {
+const STATUS_CLASSES: Record<string, string> = {
   operativo: 'bg-success',
   alerta: 'bg-warning animate-pulse-dot',
   taller: 'bg-critical',
@@ -10,9 +10,10 @@ const STATUS_CLASSES: Record<StatusDotProps['status'], string> = {
 };
 
 export default function StatusDot({ status }: StatusDotProps) {
+  const cls = STATUS_CLASSES[status] ?? 'bg-gray-400';
   return (
     <span
-      className={`inline-block w-3 h-3 rounded-full flex-shrink-0 ${STATUS_CLASSES[status]}`}
+      className={`inline-block w-3 h-3 rounded-full flex-shrink-0 ${cls}`}
     />
   );
 }
