@@ -53,7 +53,7 @@ export default function WorkshopHomePage() {
   }, [fetched, fetchWorkOrders]);
 
   const otsActivas   = workorders.filter((ot) => ot.estado !== 'Completado');
-  const otsEnProceso = workorders.filter((ot) => ot.estado === 'En Proceso');
+  const otsEnProceso = workorders.filter((ot) => ot.estado === 'En Reparación');
 
   // ── En Taller: unique units with active OTs, resolved from catalog ──────
   const unitsEnTaller = [...new Set(otsActivas.map((ot) => ot.unidad).filter(Boolean))];

@@ -41,7 +41,7 @@ function parseWorkOrderRow(row: string[]): WorkOrder | null {
     severidad: row[6] ?? '',
     prioridad: (row[7] ?? 'MEDIA') as OTPriority,
     mecanico_asignado: row[8] ?? '',
-    estado: (row[9] ?? 'Nuevo') as OTEstado,
+    estado: (row[9] ?? 'Abierta') as OTEstado,
     foto_url: row[10] ?? '',
     averia_ref: row[11] ?? '',
     partes_necesarias: row[12] ?? '',
@@ -211,6 +211,16 @@ export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
           await updateCell(SHEET_TABS.ORDENES_TRABAJO, 1, otId, col, newValue);
         } catch {
           // Non-critical — the log is the source of truth
+        }
+      }
+
+      // Auto-sync Averías sheet when estado changes
+      // Averías ESTADO is at column 9, OT_ID stored at column 13
+      if (field === 'estado') {
+        try {
+          await updateCell(SHEET_TABS.AVERIAS, 13, otId, 9, newValue);
+        } catch {
+          // Non-critical — Averías row may not exist for older OTs
         }
       }
     } catch (err: unknown) {

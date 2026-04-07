@@ -1,7 +1,7 @@
 export type OTPriority = 'CRITICA' | 'ALTA' | 'MEDIA' | 'BAJA';
-export type OTEstado = 'Nuevo' | 'Asignado' | 'En Proceso' | 'Esperando Pieza' | 'Completado';
+export type OTEstado = 'Abierta' | 'En Reparación' | 'Esperando Pieza' | 'Resuelta' | 'Completado';
 
-export const OT_STATUS_FLOW: OTEstado[] = ['Nuevo', 'Asignado', 'En Proceso', 'Esperando Pieza', 'Completado'];
+export const OT_STATUS_FLOW: OTEstado[] = ['Abierta', 'En Reparación', 'Esperando Pieza', 'Resuelta', 'Completado'];
 
 export type OTStatusField = 'estado' | 'mecanico_asignado' | 'progreso' | 'observaciones' | 'costo_estimado' | 'prioridad';
 
@@ -48,9 +48,9 @@ export const PRIORITY_CONFIG: Record<OTPriority, { color: string; bg: string; la
 };
 
 export const ESTADO_CONFIG: Record<OTEstado, { color: string; bg: string }> = {
-  'Nuevo': { color: '#3B82F6', bg: '#DBEAFE' },
-  'Asignado': { color: '#8B5CF6', bg: '#EDE9FE' },
-  'En Proceso': { color: '#2563EB', bg: '#FEF3C7' },
+  'Abierta': { color: '#3B82F6', bg: '#DBEAFE' },
+  'En Reparación': { color: '#2563EB', bg: '#FEF3C7' },
   'Esperando Pieza': { color: '#EA580C', bg: '#FFEDD5' },
+  'Resuelta': { color: '#8B5CF6', bg: '#EDE9FE' },
   'Completado': { color: '#16A34A', bg: '#DCFCE7' },
 };

@@ -105,10 +105,11 @@ export default function FallaPage() {
         userName,          // TÉCNICO
         downtime,          // TIEMPO PARO (hrs)
         '',                // COSTO ESTIMADO
-        'Nuevo',           // ESTADO
+        'Abierta',         // ESTADO
         '',                // SOLUCIÓN
         observaciones,     // OBSERVACIONES (includes photo URLs when present)
         '',                // PROVEEDOR PIEZA
+        otId,              // OT_ID (cross-reference for auto-sync)
       ]);
     } catch (err) {
       console.error('Sheets append failed (Averias):', err);
@@ -125,7 +126,7 @@ export default function FallaPage() {
         priorityValue,
         priorityValue,
         '',
-        'Nuevo',
+        'Abierta',
         '',
         '',
         '',

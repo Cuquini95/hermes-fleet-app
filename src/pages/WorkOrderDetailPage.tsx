@@ -22,7 +22,7 @@ function canEditField(_role: string | null, _field: OTStatusField): boolean {
 }
 
 function StatusPillRow({ current }: { current: OTEstado }) {
-  const allStatuses: OTEstado[] = ['Nuevo', 'Asignado', 'En Proceso', 'Esperando Pieza', 'Completado'];
+  const allStatuses: OTEstado[] = ['Abierta', 'En Reparación', 'Esperando Pieza', 'Resuelta', 'Completado'];
   const currentIdx = allStatuses.indexOf(current);
 
   return (
@@ -140,7 +140,7 @@ export default function WorkOrderDetailPage() {
   const prioKey = wo.prioridad?.toUpperCase() as keyof typeof PRIORITY_CONFIG;
   const priorityConfig = PRIORITY_CONFIG[prioKey] ?? { color: '#6B7280', bg: '#F3F4F6', label: wo.prioridad, time: '' };
   const canEdit = true; // All roles can edit
-  const nextStatuses = getNextStatuses(OT_STATUS_FLOW.includes(wo.estado as OTEstado) ? wo.estado as OTEstado : 'Nuevo');
+  const nextStatuses = getNextStatuses(OT_STATUS_FLOW.includes(wo.estado as OTEstado) ? wo.estado as OTEstado : 'Abierta');
 
   return (
     <div className="flex flex-col gap-4 pb-6 animate-fade-up">

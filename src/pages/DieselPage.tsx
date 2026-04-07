@@ -9,9 +9,9 @@ import { useAuthStore } from '../stores/auth-store';
 import ConfirmModal from '../components/ui/ConfirmModal';
 import SuccessToast from '../components/ui/SuccessToast';
 
-type FuelType = 'ULSD' | 'Diesel' | 'Gasolina';
+type FuelType = 'Urea' | 'Diesel' | 'Gasolina';
 
-const FUEL_TYPES: FuelType[] = ['ULSD', 'Diesel', 'Gasolina'];
+const FUEL_TYPES: FuelType[] = ['Urea', 'Diesel', 'Gasolina'];
 
 export default function DieselPage() {
   const navigate = useNavigate();
@@ -19,7 +19,7 @@ export default function DieselPage() {
   const equipment = useEquipmentList();
 
   const [unidad, setUnidad] = useState('');
-  const [fuelType, setFuelType] = useState<FuelType>('ULSD');
+  const [fuelType, setFuelType] = useState<FuelType>('Urea');
   const [litros, setLitros] = useState('');
   const [costo, setCosto] = useState('');
   const [horometro, setHorometro] = useState('');
