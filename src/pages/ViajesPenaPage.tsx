@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
-import { useEquipmentList } from '../hooks/useEquipmentList';
+import { TRANSPORT_UNITS } from '../data/transport-units';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
 import { useAuthStore } from '../stores/auth-store';
@@ -13,7 +13,6 @@ const MATERIAL_OPTIONS = ['Tierra', 'Roca', 'Grava', 'Mineral', 'Caliza', 'Otro'
 export default function ViajesPenaPage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
-  const equipment = useEquipmentList();
 
   const [unidad, setUnidad] = useState('');
   const [rutaOrigen, setRutaOrigen] = useState('');
@@ -122,11 +121,9 @@ export default function ViajesPenaPage() {
             className="w-full rounded-xl border border-border p-3 bg-white text-text"
           >
             <option value="">Seleccionar unidad...</option>
-            {equipment.filter(
-              (eq) => eq.type === 'Camión Articulado'
-            ).map((eq) => (
+            {TRANSPORT_UNITS.map((eq) => (
               <option key={eq.unit_id} value={eq.unit_id}>
-                {eq.unit_id} — {eq.model}
+                {eq.unit_id} — {eq.type}
               </option>
             ))}
           </select>
