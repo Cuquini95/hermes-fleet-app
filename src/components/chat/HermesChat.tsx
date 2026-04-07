@@ -117,19 +117,30 @@ function isDiagramQuery(text: string): boolean {
 }
 
 /**
- * Detect fault/error codes: E###, F###, P####, C-###, A-###, CA-###, etc.
- * Komatsu: E002, E328, F001, E-28, E-100
- * CAT: E0750, CA-001
- * Doosan: C-123, A-456
- * OBD-II: P0420, U0001
+ * Detect fault/error codes across all fleet machine formats:
+ * Komatsu TM (HM400): 15K0MW, 25K0MW, 1AK0LW, AETMKX, AEBRKX
+ * Komatsu Engine:     E002, E028, E190, E-28
+ * CAT:                E0750, CA-001
+ * Doosan:             C-123, A-456, C-10, C-100
+ * OBD-II:             P0420, U0001
  */
 function extractFaultCode(text: string): string | null {
-  // Standard codes: E328, F001, P0420, U0001, B0001, C123, A456
+  // Komatsu HM400 transmission codes: 15K0MW, 25K0MW, 1AK0LW (digit + letter + digit + 2 letters)
+  const komatsuTM = text.match(/\b(\d{1,2}[A-Z]\d[A-Z]{1,3})\b/i);
+  if (komatsuTM) return komatsuTM[1].toUpperCase();
+
+  // All-letter controller codes: AETMKX, AEBRKX, AEBPKX (6 uppercase letters)
+  const allLetter = text.match(/\b([A-Z]{6})\b/);
+  if (allLetter) return allLetter[1].toUpperCase();
+
+  // Standard letter-prefix codes: E328, F001, P0420, U0001, B0001, C-123, A-456
   const standard = text.match(/\b([EFPUBCA][A-Z]?[-]?\d{3,5}[A-Z]?\d*)\b/i);
   if (standard) return standard[1].toUpperCase();
+
   // Komatsu dash format: E-28, F-100
   const dashCode = text.match(/\b([EF]-\d{2,4})\b/i);
   if (dashCode) return dashCode[1].toUpperCase();
+
   return null;
 }
 
