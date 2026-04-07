@@ -17,7 +17,7 @@ import {
 import { useAuthStore } from '../stores/auth-store';
 import { useWorkOrderStore } from '../stores/workorder-store';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
-import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
+import { useEquipmentList } from '../hooks/useEquipmentList';
 import KPICard from '../components/ui/KPICard';
 import EquipmentCard from '../components/ui/EquipmentCard';
 import OTCard from '../components/ui/OTCard';
@@ -43,6 +43,7 @@ const ACTION_CARDS: ActionCard[] = [
 export default function WorkshopHomePage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
+  const equipment = useEquipmentList();
 
   // ── Real OT data ────────────────────────────────────────────────────────
   const { workorders, fetched, fetchWorkOrders, loading: otLoading } = useWorkOrderStore();
@@ -57,8 +58,8 @@ export default function WorkshopHomePage() {
   // ── En Taller: unique units with active OTs, resolved from catalog ──────
   const unitsEnTaller = [...new Set(otsActivas.map((ot) => ot.unidad).filter(Boolean))];
   const equiposTaller = unitsEnTaller
-    .map((uid) => EQUIPMENT_CATALOG.find((e) => e.unit_id === uid))
-    .filter((e): e is (typeof EQUIPMENT_CATALOG)[0] => e !== undefined);
+    .map((uid) => equipment.find((e) => e.unit_id === uid))
+    .filter((e): e is (typeof equipment)[0] => e !== undefined);
 
   // ── Partes Pendientes from Cotizaciones_Pendientes ──────────────────────
   const [partesPendientes, setPartesPendientes] = useState<number | null>(null);

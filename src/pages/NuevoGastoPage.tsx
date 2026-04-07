@@ -17,7 +17,7 @@ import { ocrReceipt } from '../lib/sheets-api';
 import type { GastoTipo, MetodoPago } from '../stores/gastos-store';
 import type { OcrLineItem } from '../lib/sheets-api';
 import { uploadPhoto } from '../lib/photo-upload';
-import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
+import { useEquipmentList } from '../hooks/useEquipmentList';
 
 // ── Empty line item ───────────────────────────────────────────────────────────
 
@@ -30,6 +30,7 @@ function emptyLine(): OcrLineItem {
 export default function NuevoGastoPage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
+  const equipment = useEquipmentList();
   const { saveGasto, saving } = useGastosStore();
 
   // ── Form state
@@ -179,7 +180,7 @@ export default function NuevoGastoPage() {
     );
   }
 
-  const unitIds = EQUIPMENT_CATALOG.map((e) => e.unit_id);
+  const unitIds = equipment.map((e) => e.unit_id);
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col py-4 gap-4 animate-fade-up">

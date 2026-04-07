@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import type { DVIRCheck, CheckStatus } from '../types/dvir';
 import { DVIR_SYSTEMS } from '../data/dvir-systems';
-import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
+import { useEquipmentList } from '../hooks/useEquipmentList';
 import { generateOTId } from '../lib/ot-generator';
 import { mexicoDate, mexicoTime, mexicoDateCompact, mexicoTimeCompact } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
@@ -35,6 +35,7 @@ function buildInitialChecks(): CheckState[] {
 export default function DVIRPage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
+  const equipment = useEquipmentList();
   const [unit_id, setUnitId] = useState('');
   const [type, setType] = useState<'pre-operacion' | 'post-operacion'>('pre-operacion');
   const [horometro, setHorometro] = useState('');
@@ -106,7 +107,7 @@ export default function DVIRPage() {
     const date = mexicoDate(now);
     const time = mexicoTime(now);
     const inspId = `INS-${mexicoDateCompact(now)}-${mexicoTimeCompact(now)}`;
-    const selectedEquipment = EQUIPMENT_CATALOG.find((eq) => eq.unit_id === unit_id);
+    const selectedEquipment = equipment.find((eq) => eq.unit_id === unit_id);
     const modelo = selectedEquipment?.model ?? '';
 
     const allPhotos = checks.flatMap((c) => c.photos.map((p) => p.file));
@@ -189,7 +190,7 @@ export default function DVIRPage() {
             className="w-full rounded-xl border border-border p-3 bg-white text-text"
           >
             <option value="">Seleccionar unidad...</option>
-            {EQUIPMENT_CATALOG.map((eq) => (
+            {equipment.map((eq) => (
               <option key={eq.unit_id} value={eq.unit_id}>
                 {eq.unit_id} — {eq.model}
               </option>

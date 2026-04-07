@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Wrench, RefreshCw } from 'lucide-react';
-import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
+import { useEquipmentList } from '../hooks/useEquipmentList';
 import { getNextPM } from '../data/pm-rules';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
 import { SkeletonList } from '../components/ui/Skeleton';
@@ -74,6 +74,7 @@ function getCountdownText(hrs: number): string {
 
 export default function PMSchedulePage() {
   const navigate = useNavigate();
+  const equipment = useEquipmentList();
   const [entries, setEntries] = useState<PMEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -91,7 +92,7 @@ export default function PMSchedulePage() {
         // If sheet read fails, we'll use catalog data as fallback
       }
 
-      const pmEntries: PMEntry[] = EQUIPMENT_CATALOG.map((eq) => {
+      const pmEntries: PMEntry[] = equipment.map((eq) => {
         // Use sheet horómetro if available, otherwise catalog
         const hasSheetData = sheetHorometros[eq.unit_id] !== undefined;
         const currentHours = hasSheetData

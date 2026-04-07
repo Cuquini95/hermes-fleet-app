@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Clock } from 'lucide-react';
-import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
+import { useEquipmentList } from '../hooks/useEquipmentList';
 import { getNextPM } from '../data/pm-rules';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
@@ -14,6 +14,7 @@ type TurnoType = 'inicio' | 'final';
 export default function HorometroPage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
+  const equipment = useEquipmentList();
 
   const [turno, setTurno] = useState<TurnoType>('inicio');
   const [unidad, setUnidad] = useState('');
@@ -22,7 +23,7 @@ export default function HorometroPage() {
   const [toastMessage, setToastMessage] = useState('');
   const [toastVisible, setToastVisible] = useState(false);
 
-  const selectedEquipment = EQUIPMENT_CATALOG.find((eq) => eq.unit_id === unidad);
+  const selectedEquipment = equipment.find((eq) => eq.unit_id === unidad);
   const horasActual = horometro ? parseFloat(horometro) : null;
 
   const pmInfo =
@@ -149,7 +150,7 @@ export default function HorometroPage() {
           className="w-full rounded-xl border border-border p-4 bg-white text-text text-lg font-semibold"
         >
           <option value="">Seleccionar unidad...</option>
-          {EQUIPMENT_CATALOG.map((eq) => (
+          {equipment.map((eq) => (
             <option key={eq.unit_id} value={eq.unit_id}>
               {eq.unit_id} — {eq.model}
             </option>

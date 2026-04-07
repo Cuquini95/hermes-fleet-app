@@ -118,6 +118,7 @@ export async function ocrReceipt(file: File): Promise<OcrReceiptResult> {
 // ── Sheet tab names ───────────────────────────────────────────────────────────
 
 export const SHEET_TABS = {
+  FLOTA: '01 Inventario',
   INSPECCIONES: '14 Inspecciones',
   AVERIAS: 'Averías',
   ORDENES_TRABAJO: 'ORDENES_TRABAJO',

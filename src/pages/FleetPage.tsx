@@ -1,13 +1,14 @@
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
-import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
+import { useEquipmentList } from '../hooks/useEquipmentList';
 import FleetGrid from '../components/dashboard/FleetGrid';
 
 export default function FleetPage() {
   const navigate = useNavigate();
+  const equipment = useEquipmentList();
 
-  const operativo = EQUIPMENT_CATALOG.filter((e) => e.status === 'operativo').length;
-  const total = EQUIPMENT_CATALOG.length;
+  const operativo = equipment.filter((e) => e.status === 'operativo').length;
+  const total = equipment.length;
 
   return (
     <div className="flex flex-col pb-4 animate-fade-up">
@@ -25,7 +26,7 @@ export default function FleetPage() {
         </span>
       </div>
 
-      <FleetGrid equipment={EQUIPMENT_CATALOG} />
+      <FleetGrid equipment={equipment} />
     </div>
   );
 }

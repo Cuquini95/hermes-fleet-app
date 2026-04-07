@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Wrench, Package, Clock, CheckCircle, AlertTriangle } from 'lucide-react';
-import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
+import { useEquipmentList } from '../hooks/useEquipmentList';
 import { getNextPM } from '../data/pm-rules';
 import { getCumulativePMParts, getAvailablePMLevels, type PMPart } from '../data/pm-parts-catalog';
 import { generateOTId } from '../lib/ot-generator';
@@ -35,6 +35,7 @@ function groupByCategory(parts: PMPart[]): Record<string, PMPart[]> {
 export default function PMWorkOrderPage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
+  const equipment = useEquipmentList();
 
   const [unidad, setUnidad] = useState('');
   const [pmLevel, setPmLevel] = useState('');
@@ -45,7 +46,7 @@ export default function PMWorkOrderPage() {
   const [toastVisible, setToastVisible] = useState(false);
   const [printData, setPrintData] = useState<Parameters<typeof printPMOrder>[0] | null>(null);
 
-  const selectedEquipment = EQUIPMENT_CATALOG.find((eq) => eq.unit_id === unidad);
+  const selectedEquipment = equipment.find((eq) => eq.unit_id === unidad);
   const model = selectedEquipment?.model ?? '';
 
   // Get PM proximity info for selected unit
@@ -214,7 +215,7 @@ export default function PMWorkOrderPage() {
           className="w-full rounded-xl border border-border p-3 bg-white text-text"
         >
           <option value="">Seleccionar unidad...</option>
-          {EQUIPMENT_CATALOG.map((eq) => (
+          {equipment.map((eq) => (
             <option key={eq.unit_id} value={eq.unit_id}>
               {eq.unit_id} — {eq.model} ({eq.current_horometro.toLocaleString()} hrs)
             </option>

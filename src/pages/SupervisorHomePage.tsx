@@ -9,7 +9,7 @@ import {
   ShieldOff,
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
-import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
+import { useEquipmentList } from '../hooks/useEquipmentList';
 import KPICard from '../components/ui/KPICard';
 import EquipmentCard from '../components/ui/EquipmentCard';
 
@@ -28,16 +28,17 @@ const ACTION_CARDS: ActionCard[] = [
 export default function SupervisorHomePage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
+  const equipment = useEquipmentList();
 
-  const total = EQUIPMENT_CATALOG.length;
-  const operativo = EQUIPMENT_CATALOG.filter((e) => e.status === 'operativo').length;
-  const alerta = EQUIPMENT_CATALOG.filter((e) => e.status === 'alerta').length;
-  const taller = EQUIPMENT_CATALOG.filter((e) => e.status === 'taller').length;
-  const inactivo = EQUIPMENT_CATALOG.filter((e) => e.status === 'inactivo').length;
+  const total = equipment.length;
+  const operativo = equipment.filter((e) => e.status === 'operativo').length;
+  const alerta = equipment.filter((e) => e.status === 'alerta').length;
+  const taller = equipment.filter((e) => e.status === 'taller').length;
+  const inactivo = equipment.filter((e) => e.status === 'inactivo').length;
   const disponibilidad = total > 0 ? Math.round(((operativo + alerta) / total) * 100) : 0;
 
-  const equiposTaller = EQUIPMENT_CATALOG.filter((e) => e.status === 'taller');
-  const equiposAlerta = EQUIPMENT_CATALOG.filter((e) => e.status === 'alerta');
+  const equiposTaller = equipment.filter((e) => e.status === 'taller');
+  const equiposAlerta = equipment.filter((e) => e.status === 'alerta');
 
   const greeting =
     new Date().getHours() < 12

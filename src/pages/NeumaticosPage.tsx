@@ -10,7 +10,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
-import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
+import { useEquipmentList } from '../hooks/useEquipmentList';
 import { mexicoDate } from '../lib/date-utils';
 
 // ── Column order matches Sheet "13 Neumáticos" cols A→S ─────────────────────
@@ -141,6 +141,7 @@ function nextSeq() { return String(_seq++); }
 // ════════════════════════════════════════════════════════════════════════════
 export default function NeumaticosPage() {
   const navigate = useNavigate();
+  const equipment = useEquipmentList();
 
   const [step, setStep]             = useState<Step>('equipo');
   const [selectedUnit, setSelected] = useState('');
@@ -150,7 +151,7 @@ export default function NeumaticosPage() {
   const [registradas, setRegistradas] = useState<string[]>([]);
   const [errors, setErrors]         = useState<Partial<Record<keyof LlantaForm, string>>>({});
 
-  const equipment       = EQUIPMENT_CATALOG.find((e) => e.unit_id === selectedUnit);
+  const equipment       = equipment.find((e) => e.unit_id === selectedUnit);
   const positions       = equipment ? (POSITIONS_BY_TYPE[equipment.type] ?? POSITIONS_BY_TYPE.default) : [];
   const available       = positions.filter((p) => !registradas.includes(p));
   const autoEstado      = calcEstado(llanta.condicion, llanta.profundidad, llanta.presion);
@@ -223,7 +224,7 @@ export default function NeumaticosPage() {
 
   // ── STEP 1: Equipment ──────────────────────────────────────────────────
   if (step === 'equipo') {
-    const wheeled = EQUIPMENT_CATALOG.filter(
+    const wheeled = equipment.filter(
       (e) => e.type !== 'Bulldozer' && e.type !== 'Excavadora'
     );
 

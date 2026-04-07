@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle } from 'lucide-react';
-import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
+import { useEquipmentList } from '../hooks/useEquipmentList';
 import { isAnomalous } from '../data/fuel-benchmarks';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
@@ -16,6 +16,7 @@ const FUEL_TYPES: FuelType[] = ['ULSD', 'Diesel', 'Gasolina'];
 export default function DieselPage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
+  const equipment = useEquipmentList();
 
   const [unidad, setUnidad] = useState('');
   const [fuelType, setFuelType] = useState<FuelType>('ULSD');
@@ -30,7 +31,7 @@ export default function DieselPage() {
   const [toastVisible, setToastVisible] = useState(false);
   const [anomalyWarning, setAnomalyWarning] = useState(false);
 
-  const selectedEquipment = EQUIPMENT_CATALOG.find((eq) => eq.unit_id === unidad);
+  const selectedEquipment = equipment.find((eq) => eq.unit_id === unidad);
   const isTruck = selectedEquipment?.type === 'Camión Pesado';
 
   const canSubmit = unidad !== '' && litros !== '' && horometro !== '';
@@ -135,7 +136,7 @@ export default function DieselPage() {
             className="w-full rounded-xl border border-border p-3 bg-white text-text"
           >
             <option value="">Seleccionar unidad...</option>
-            {EQUIPMENT_CATALOG.map((eq) => (
+            {equipment.map((eq) => (
               <option key={eq.unit_id} value={eq.unit_id}>
                 {eq.unit_id} — {eq.model}
               </option>

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
-import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
+import { useEquipmentList } from '../hooks/useEquipmentList';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
 import { useAuthStore } from '../stores/auth-store';
@@ -30,6 +30,7 @@ const MATERIAL_OPTIONS = ['Tierra', 'Roca', 'Grava', 'Mineral', 'Caliza', 'Otro'
 export default function ViajePage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
+  const equipment = useEquipmentList();
 
   const [unidad, setUnidad] = useState('');
   const [rutaOrigen, setRutaOrigen] = useState('');
@@ -135,7 +136,7 @@ export default function ViajePage() {
             className="w-full rounded-xl border border-border p-3 bg-white text-text"
           >
             <option value="">Seleccionar unidad...</option>
-            {EQUIPMENT_CATALOG.filter(
+            {equipment.filter(
               (eq) => eq.type === 'Camión Articulado' || eq.type === 'Camión Pesado'
             ).map((eq) => (
               <option key={eq.unit_id} value={eq.unit_id}>

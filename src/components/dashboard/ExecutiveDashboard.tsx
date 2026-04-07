@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { Activity, AlertTriangle, Fuel, Bell, RefreshCw } from 'lucide-react';
-import { EQUIPMENT_CATALOG } from '../../data/equipment-catalog';
+import { useEquipmentList } from '../../hooks/useEquipmentList';
 import { useDashboardData } from '../../hooks/useDashboardData';
 import KPICard from '../ui/KPICard';
 import { SkeletonKPI } from '../ui/Skeleton';
@@ -21,6 +21,7 @@ const TABS: { id: Tab; label: string }[] = [
 
 export default function ExecutiveDashboard() {
   const [activeTab, setActiveTab] = useState<Tab>('general');
+  const equipment = useEquipmentList();
   const data = useDashboardData();
 
   const handleRefresh = useCallback(async () => {
@@ -111,7 +112,7 @@ export default function ExecutiveDashboard() {
           )}
 
           {/* Fleet grid */}
-          <FleetGrid equipment={EQUIPMENT_CATALOG} />
+          <FleetGrid equipment={equipment} />
 
           {/* Availability chart */}
           <AvailabilityChart />

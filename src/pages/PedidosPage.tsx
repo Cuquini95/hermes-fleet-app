@@ -20,7 +20,7 @@ import {
 import { useAuthStore } from '../stores/auth-store';
 import { useCartStore, type CartItem } from '../stores/cart-store';
 import { appendRow, readRange, updateCell, SHEET_TABS } from '../lib/sheets-api';
-import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
+import { useEquipmentList } from '../hooks/useEquipmentList';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
 
 // ── Sheet columns for Cotizaciones_Pendientes (matching actual Sheet headers) ─
@@ -46,7 +46,7 @@ const URGENCIA_CONFIG = {
   Crítico: { color: '#DC2626', bg: '#FEF2F2' },
 } as const;
 
-const EQUIPMENT_OPTIONS = EQUIPMENT_CATALOG.map((e) => e.unit_id);
+const EQUIPMENT_OPTIONS = equipment.map((e) => e.unit_id);
 
 let _pedidoSeq = 1;
 function newPedidoId(): string {
@@ -101,6 +101,7 @@ export default function PedidosPage() {
   const navigate = useNavigate();
   const role = useAuthStore((s) => s.role);
   const userName = useAuthStore((s) => s.userName);
+  const equipment = useEquipmentList();
   const { items, removeItem, updateItem, clearCart } = useCartStore();
 
   const isJT = role === 'jefe_taller';

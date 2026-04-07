@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { useWorkOrderStore } from '../stores/workorder-store';
-import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
+import { useEquipmentList } from '../hooks/useEquipmentList';
 import { getNextPM } from '../data/pm-rules';
 import KPICard from '../components/ui/KPICard';
 import OTCard from '../components/ui/OTCard';
@@ -38,6 +38,7 @@ const ACTION_CARDS: ActionCard[] = [
 export default function CoordinatorHomePage() {
   const navigate  = useNavigate();
   const userName  = useAuthStore((s) => s.userName);
+  const equipment = useEquipmentList();
   const { workorders, fetched, fetchWorkOrders, loading } = useWorkOrderStore();
 
   useEffect(() => {
@@ -47,7 +48,7 @@ export default function CoordinatorHomePage() {
   const openOTs     = workorders.filter((ot) => ot.estado !== 'Completado');
   const criticalOTs = workorders.filter((ot) => ot.prioridad === 'CRITICA' && ot.estado !== 'Completado');
 
-  const pmProximos = EQUIPMENT_CATALOG.filter((e) => {
+  const pmProximos = equipment.filter((e) => {
     const pm = getNextPM(e.model, e.current_horometro);
     return pm.hours_remaining <= 50;
   }).length;

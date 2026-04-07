@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
-import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
+import { useEquipmentList } from './useEquipmentList';
 import { mexicoDate } from '../lib/date-utils';
 
 export interface DashboardData {
@@ -11,13 +11,6 @@ export interface DashboardData {
   loading: boolean;
   error: string | null;
   refresh: () => void;
-}
-
-function computeAvailability(): number {
-  const available = EQUIPMENT_CATALOG.filter(
-    (e) => e.status === 'operativo' || e.status === 'alerta'
-  ).length;
-  return Math.round((available / EQUIPMENT_CATALOG.length) * 100);
 }
 
 async function fetchCriticalOTs(): Promise<number> {
@@ -73,7 +66,13 @@ export function useDashboardData(): DashboardData {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const availability = computeAvailability();
+  const equipmentList = useEquipmentList();
+  const available = equipmentList.filter(
+    (e) => e.status === 'operativo' || e.status === 'alerta'
+  ).length;
+  const availability = equipmentList.length > 0
+    ? Math.round((available / equipmentList.length) * 100)
+    : 0;
 
   const fetchAll = useCallback(async () => {
     setLoading(true);

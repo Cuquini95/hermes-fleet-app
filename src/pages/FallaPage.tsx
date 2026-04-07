@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
-import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
+import { useEquipmentList } from '../hooks/useEquipmentList';
 import { generateOTId } from '../lib/ot-generator';
 import { calculatePriority } from '../lib/priority-calculator';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
@@ -34,6 +34,7 @@ interface PhotoItem {
 export default function FallaPage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
+  const equipment = useEquipmentList();
 
   const [unidad, setUnidad] = useState('');
   const [tipoFalla, setTipoFalla] = useState('');
@@ -179,7 +180,7 @@ export default function FallaPage() {
             className="w-full rounded-xl border border-border p-3 bg-white text-text"
           >
             <option value="">Seleccionar unidad...</option>
-            {EQUIPMENT_CATALOG.map((eq) => (
+            {equipment.map((eq) => (
               <option key={eq.unit_id} value={eq.unit_id}>
                 {eq.unit_id} — {eq.model}
               </option>

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuthStore } from '../../stores/auth-store';
-import { EQUIPMENT_CATALOG } from '../../data/equipment-catalog';
+import { useEquipmentList } from '../../hooks/useEquipmentList';
 import {
   diagnose,
   photoToFailure,
@@ -163,6 +163,7 @@ function buildGreeting(userName: string): ChatMessage {
 export default function HermesChat() {
   const userName = useAuthStore((s) => s.userName);
   const assignedUnits = useAuthStore((s) => s.assignedUnits);
+  const equipment = useEquipmentList();
 
   const defaultUnit =
     assignedUnits.length > 0 ? assignedUnits[0] : 'General';
@@ -331,7 +332,7 @@ export default function HermesChat() {
           }}
         >
           <option value="General">General</option>
-          {EQUIPMENT_CATALOG.map((eq) => (
+          {equipment.map((eq) => (
             <option key={eq.unit_id} value={eq.unit_id}>
               {eq.unit_id} — {eq.model}
             </option>
