@@ -10,10 +10,8 @@ import {
   CheckCircle,
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
-import { getEquipmentById } from '../data/equipment-catalog';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
 import { mexicoDate } from '../lib/date-utils';
-import EquipmentCard from '../components/ui/EquipmentCard';
 
 interface ActionCard {
   label: string;
@@ -33,7 +31,6 @@ const ACTION_CARDS: ActionCard[] = [
 export default function OperatorHomePage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
-  const assignedUnits = useAuthStore((s) => s.assignedUnits);
 
   const [dvirDone, setDvirDone] = useState<boolean | null>(null); // null = loading
   const [reportCount, setReportCount] = useState(0);
@@ -67,10 +64,6 @@ export default function OperatorHomePage() {
   useEffect(() => {
     checkDVIRStatus();
   }, [checkDVIRStatus]);
-
-  const assignedEquipment = assignedUnits
-    .map((id) => getEquipmentById(id))
-    .filter((e) => e !== undefined);
 
   const greeting = new Date().getHours() < 12 ? 'Buenos días' : new Date().getHours() < 18 ? 'Buenas tardes' : 'Buenas noches';
 
@@ -112,18 +105,6 @@ export default function OperatorHomePage() {
             <span className="text-sm font-medium text-center text-text">{label}</span>
           </button>
         ))}
-      </div>
-
-      {/* Mi Equipo section */}
-      <h2 className="font-semibold text-text mt-6 mb-3">Mi Equipo Asignado</h2>
-      <div className="flex flex-col gap-3">
-        {assignedEquipment.length > 0 ? (
-          assignedEquipment.map((equipment) => (
-            <EquipmentCard key={equipment!.unit_id} equipment={equipment!} />
-          ))
-        ) : (
-          <p className="text-sm text-text-secondary">No tienes equipos asignados.</p>
-        )}
       </div>
 
       {/* Footer counter — dynamic */}
