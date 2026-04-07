@@ -1,22 +1,19 @@
 import { useEffect } from 'react';
 import { useEquipmentStore } from '../stores/equipment-store';
-import { EQUIPMENT_CATALOG } from '../data/equipment-catalog';
 import type { Equipment } from '../types/equipment';
 
 /**
  * Returns the live equipment list from the "01 Inventario" Google Sheet.
- * Falls back to the static EQUIPMENT_CATALOG while the sheet is loading
- * or if the fetch fails.
+ * Returns empty array while loading — no mock/static fallback.
  */
 export function useEquipmentList(): Equipment[] {
-  const { equipment, fetched, fetchEquipment } = useEquipmentStore();
+  const { equipment, fetchEquipment } = useEquipmentStore();
 
   useEffect(() => {
     fetchEquipment();
   }, [fetchEquipment]);
 
-  // Use live data once available; static catalog while loading
-  return fetched && equipment.length > 0 ? equipment : EQUIPMENT_CATALOG;
+  return equipment;
 }
 
 /**

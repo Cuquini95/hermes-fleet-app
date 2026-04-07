@@ -1,7 +1,7 @@
 import { Wrench, Clock, ChevronRight } from 'lucide-react';
 import type { WorkOrder } from '../../types/workorder';
 import { PRIORITY_CONFIG, ESTADO_CONFIG } from '../../types/workorder';
-import { getEquipmentById } from '../../data/equipment-catalog';
+import { useEquipmentById } from '../../hooks/useEquipmentList';
 
 interface OTCardProps {
   workorder: WorkOrder;
@@ -27,7 +27,7 @@ function timeSince(dateStr: string): string {
 }
 
 export default function OTCard({ workorder, onClick }: OTCardProps) {
-  const equipment = getEquipmentById(workorder.unidad);
+  const equipment = useEquipmentById(workorder.unidad);
   const DEFAULT_PRIORITY = { color: '#6B7280', bg: '#F3F4F6', label: workorder.prioridad, time: '' };
   const DEFAULT_ESTADO = { color: '#6B7280', bg: '#F3F4F6' };
 

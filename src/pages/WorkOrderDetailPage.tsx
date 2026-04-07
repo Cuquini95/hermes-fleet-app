@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Clock, Wrench, ChevronRight } from 'lucide-react';
 import { useWorkOrderStore } from '../stores/workorder-store';
 import { useAuthStore } from '../stores/auth-store';
-import { getEquipmentById } from '../data/equipment-catalog';
+import { useEquipmentById } from '../hooks/useEquipmentList';
 import { PRIORITY_CONFIG, ESTADO_CONFIG, OT_STATUS_FLOW, getNextStatuses } from '../types/workorder';
 import type { OTEstado, OTStatusField, StatusLogEntry } from '../types/workorder';
 
@@ -90,7 +90,7 @@ export default function WorkOrderDetailPage() {
   }, [fetched, fetchWorkOrders]);
 
   const wo = otId ? getWorkOrderById(otId) : undefined;
-  const equipment = wo ? getEquipmentById(wo.unidad) : undefined;
+  const equipment = useEquipmentById(wo?.unidad ?? '');
 
   // Initialize edit fields when workorder loads
   useEffect(() => {
