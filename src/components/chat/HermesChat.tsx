@@ -115,6 +115,19 @@ function isDiagramQuery(text: string): boolean {
   return /diagrama|diagram|esquema|plano|dibujo/i.test(text);
 }
 
+/**
+ * Detect fault/error codes: E###, F###, P####, C-###, A-###, CA-###, etc.
+ * Komatsu: E002, E328, F001
+ * CAT: E0750, MA, MID/CID/FMI codes
+ * Doosan: C-123, A-456
+ * OBD-II: P0420, U0001
+ */
+function extractFaultCode(text: string): string | null {
+  const match = text.match(/\b([EFPUBC][A-Z]?[-]?\d{3,4}[A-Z]?\d*)\b/i);
+  return match ? match[1].toUpperCase() : null;
+}
+
+
 function extractPartNumber(text: string): string | null {
   // Extract the part number from mixed text like "223-1335 diagrama"
   const match = text.match(/([A-Z]?\d{2,}-\d{2,}[-\d]*|\d{7,}|[A-Z]\d{3,}-\d{3,}[\w]*|\d{2,}\.\d{4,}[-\w]*)/i);
@@ -290,10 +303,18 @@ export default function HermesChat() {
               ? `${selectedUnit} / ${selectedEquipment.model}`
               : selectedUnit
             : detectEquipmentFromText(text);
+
+          // Extract fault code if present (E328, P0420, etc.) and pass separately
+          const faultCode = extractFaultCode(text) ?? undefined;
+          const sintomaClean = faultCode
+            ? text.replace(new RegExp(faultCode, 'i'), '').trim() || `Código de falla ${faultCode}`
+            : text;
+
           try {
             const result = await diagnose({
               equipo: effectiveUnit,
-              sintoma: text,
+              sintoma: sintomaClean,
+              codigo_falla: faultCode,
             });
             responseText = formatDiagnose(result, selectedUnit !== 'General' ? selectedUnit : effectiveUnit);
           } catch {
