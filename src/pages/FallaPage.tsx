@@ -6,6 +6,7 @@ import { generateOTId } from '../lib/ot-generator';
 import { calculatePriority } from '../lib/priority-calculator';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
+import { tryUploadPhotos } from '../lib/photo-upload-safe';
 import { useAuthStore } from '../stores/auth-store';
 import AutoPriorityIndicator from '../components/falla/AutoPriorityIndicator';
 import PhotoCapture from '../components/ui/PhotoCapture';
@@ -84,21 +85,30 @@ export default function FallaPage() {
     const otId = generateOTId();
     const priorityValue = priority ?? 'media';
 
+    // Upload photos to Supabase; embed URLs in Observaciones
+    const photoUrls = photos.length > 0
+      ? await tryUploadPhotos(photos.map((p) => p.file), 'falla-photos')
+      : [];
+    const obsBase = `Ubicación: ${ubicacion}. Cliente: ${clienteAfectado}. Puede moverse: ${puedeMoverse ? 'Sí' : 'No'}`;
+    const observaciones = photoUrls.length > 0
+      ? `${obsBase} | Fotos: ${photoUrls.join(', ')}`
+      : obsBase;
+
     try {
       await appendRow(SHEET_TABS.AVERIAS, [
-        mexicoDate(),                                                                          // FECHA
-        mexicoTime(),                                                                          // HORA
-        unidad,                                                                                                   // UNIDAD
-        tipoFalla,                                                                                                // TIPO AVERÍA
-        descripcion,                                                                                              // DESCRIPCIÓN
-        priorityValue,                                                                                            // SEVERIDAD
-        userName,                                                                                                 // TÉCNICO
-        downtime,                                                                                                 // TIEMPO PARO (hrs)
-        '',                                                                                                       // COSTO ESTIMADO
-        'Nuevo',                                                                                                  // ESTADO
-        '',                                                                                                       // SOLUCIÓN
-        `Ubicación: ${ubicacion}. Cliente: ${clienteAfectado}. Puede moverse: ${puedeMoverse ? 'Sí' : 'No'}`,   // OBSERVACIONES
-        '',                                                                                                       // PROVEEDOR PIEZA
+        mexicoDate(),      // FECHA
+        mexicoTime(),      // HORA
+        unidad,            // UNIDAD
+        tipoFalla,         // TIPO AVERÍA
+        descripcion,       // DESCRIPCIÓN
+        priorityValue,     // SEVERIDAD
+        userName,          // TÉCNICO
+        downtime,          // TIEMPO PARO (hrs)
+        '',                // COSTO ESTIMADO
+        'Nuevo',           // ESTADO
+        '',                // SOLUCIÓN
+        observaciones,     // OBSERVACIONES (includes photo URLs when present)
+        '',                // PROVEEDOR PIEZA
       ]);
     } catch (err) {
       console.error('Sheets append failed (Averias):', err);
