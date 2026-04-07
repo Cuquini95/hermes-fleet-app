@@ -13,6 +13,7 @@ import {
   type PartResult,
 } from '../../lib/hermes-api';
 import { fileToBase64 } from '../../lib/photo-upload';
+import { lookupFaultCode, buildFaultCodeSintoma } from '../../data/fault-codes';
 import type { ChatMessage } from '../../types/chat';
 import ChatBubble from './ChatBubble';
 import TypingIndicator from './TypingIndicator';
@@ -250,14 +251,22 @@ export default function HermesChat() {
           // If no unit selected and model can't be detected from text, still try but warn
           const noContext = effectiveUnit === 'General';
 
-          // Build sintoma that explicitly forces fault code table lookup on VPS
-          const userContext = text.replace(new RegExp((faultCode ?? '').replace('-', '\\-'), 'gi'), '').trim();
-          const sintomaForVPS = faultCode
-            ? `[FAULT CODE LOOKUP] Código de falla: ${faultCode}. ` +
-              `Consulta la sección "Troubleshooting by failure code" del manual de servicio del equipo. ` +
-              `Indica: (1) qué sistema o componente identifica este código según el manual, ` +
-              `(2) causas probables listadas en el manual para este código específico, ` +
-              `(3) procedimiento de verificación y diagnóstico indicado en el manual. ` +
+          const userContext = faultCode
+            ? text.replace(new RegExp(faultCode.replace('-', '\\-'), 'gi'), '').trim()
+            : text;
+
+          // Look up the fault code in our local database first
+          const knownCode = faultCode ? lookupFaultCode(faultCode) : null;
+
+          const sintomaForVPS = faultCode && knownCode
+            // Known code: give AI the official description + system context
+            ? buildFaultCodeSintoma(faultCode, knownCode, userContext || undefined)
+            : faultCode
+            // Unknown code: instruct AI to search the fault code table in the manual
+            ? `[FAULT CODE LOOKUP] Código de falla: ${faultCode}.\n` +
+              `Busca este código en la sección "Troubleshooting by failure code" del manual de servicio del equipo.\n` +
+              `Indica: (1) qué sistema o componente identifica este código, ` +
+              `(2) causas probables, (3) procedimiento de diagnóstico.\n` +
               (userContext ? `Contexto adicional: ${userContext}` : '')
             : text;
 
@@ -267,8 +276,14 @@ export default function HermesChat() {
               sintoma: sintomaForVPS,
               codigo_falla: faultCode ?? undefined,
             });
-            const label = selectedUnit !== 'General' ? selectedUnit : (detectedModel !== 'General' ? detectedModel : faultCode ?? 'General');
-            responseText = formatDiagnose(result, label);
+            const unitLabel = selectedUnit !== 'General' ? selectedUnit : (detectedModel !== 'General' ? detectedModel : faultCode ?? 'General');
+            // Prepend known code summary so user sees the official description immediately
+            const codeHeader = knownCode
+              ? `🔴 **Código ${faultCode}** — ${knownCode.descripcion}\n📍 Sistema: ${knownCode.sistema}\n${knownCode.accion ? `⚠️ **${knownCode.accion}**\n` : ''}\n`
+              : faultCode
+              ? `🔴 **Código ${faultCode}** — consultando manual...\n\n`
+              : '';
+            responseText = codeHeader + formatDiagnose(result, unitLabel);
             if (noContext) {
               responseText = `⚠️ _Selecciona tu equipo arriba para resultados más precisos con este código._\n\n` + responseText;
             }
