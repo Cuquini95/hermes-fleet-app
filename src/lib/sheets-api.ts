@@ -88,22 +88,33 @@ export interface OcrReceiptResult {
   line_items: OcrLineItem[];
 }
 
-/** Compress an image file to ≤ 800 KB using canvas, then base64-encode it. */
+/**
+ * Compress an image file for OCR upload.
+ * - Printed documents (invoices, receipts, cotizaciones): up to 2400 px wide at 0.90 quality
+ *   so small text stays legible for Gemini Vision.
+ * - Photos (boletas, breakdowns): up to 1600 px wide at 0.85 quality — good balance.
+ * Both paths keep output well under 1.5 MB.
+ */
 async function compressToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
-        const maxW = 1200;
+        // Detect if this is a scanned/photographed document vs a camera photo.
+        // Documents tend to be portrait with high aspect ratio; photos are wider.
+        const isDocument = img.height > img.width * 1.2;
+        const maxW  = isDocument ? 2400 : 1600;
+        const quality = isDocument ? 0.90 : 0.85;
+
         const scale = img.width > maxW ? maxW / img.width : 1;
         const canvas = document.createElement('canvas');
-        canvas.width = img.width * scale;
-        canvas.height = img.height * scale;
+        canvas.width  = Math.round(img.width  * scale);
+        canvas.height = Math.round(img.height * scale);
         const ctx = canvas.getContext('2d');
         if (!ctx) { reject(new Error('Canvas unavailable')); return; }
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
         resolve(dataUrl.split(',')[1]); // strip "data:image/jpeg;base64,"
       };
       img.onerror = reject;
