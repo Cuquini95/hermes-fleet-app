@@ -179,6 +179,36 @@ export async function ocrReceipt(file: File): Promise<OcrReceiptResult> {
   return response.json() as Promise<OcrReceiptResult>;
 }
 
+// ── Parts catalog import ──────────────────────────────────────────────────────
+
+export interface PartImportEntry {
+  part_number: string;
+  description: string;
+  unit_price: number;
+}
+
+/**
+ * Upsert parts from a supplier quote into the server-side supplier_catalog.json.
+ * Called automatically after saving a Refaccion gasto that has line items with part numbers.
+ * Fire-and-forget — non-blocking, does not throw on failure.
+ */
+export async function importPartsFromQuote(
+  supplier: string,
+  parts: PartImportEntry[]
+): Promise<void> {
+  const partsWithNumbers = parts.filter((p) => p.part_number.trim() !== '');
+  if (partsWithNumbers.length === 0) return;
+  try {
+    await fetch(`${HERMES_API}/api/parts/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ supplier, parts: partsWithNumbers }),
+    });
+  } catch {
+    // Non-critical — parts import failure should never block gasto save
+  }
+}
+
 // ── Sheet tab names ───────────────────────────────────────────────────────────
 
 export const SHEET_TABS = {

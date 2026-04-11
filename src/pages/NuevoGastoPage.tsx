@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { useGastosStore } from '../stores/gastos-store';
-import { ocrReceipt } from '../lib/sheets-api';
+import { ocrReceipt, importPartsFromQuote } from '../lib/sheets-api';
 import type { GastoTipo, MetodoPago } from '../stores/gastos-store';
 import type { OcrLineItem } from '../lib/sheets-api';
 import { uploadPhoto } from '../lib/photo-upload';
@@ -41,7 +41,11 @@ export default function NuevoGastoPage() {
   const [subtotal, setSubtotal] = useState(0);
   const [iva, setIva] = useState(0);
   const [total, setTotal] = useState(0);
+  // ── Unit mode
+  const [unitMode, setUnitMode] = useState<'single' | 'multi'>('single');
   const [unidad, setUnidad] = useState('');
+  const [splitEntries, setSplitEntries] = useState<{ unitId: string; amount: number }[]>([]);
+  const [splitPickerValue, setSplitPickerValue] = useState('');
   const [otId, setOtId] = useState('');
   const [metodoPago, setMetodoPago] = useState<MetodoPago>('Efectivo');
   const [lineItems, setLineItems] = useState<OcrLineItem[]>([emptyLine()]);
@@ -140,27 +144,83 @@ export default function NuevoGastoPage() {
     setLineItems((prev) => prev.filter((_, i) => i !== index));
   }
 
+  // ── Split helpers ─────────────────────────────────────────────────────────
+
+  function addSplitUnit(uid: string) {
+    if (!uid || splitEntries.some((e) => e.unitId === uid)) return;
+    setSplitEntries((prev) => {
+      const count = prev.length + 1;
+      const equal = parseFloat((total / count).toFixed(2));
+      // Redistribute equally
+      const updated = prev.map((e) => ({ ...e, amount: equal }));
+      // Last entry absorbs rounding remainder
+      const sumRest = equal * (count - 1);
+      const last = parseFloat((total - sumRest).toFixed(2));
+      return [...updated, { unitId: uid, amount: last }];
+    });
+    setSplitPickerValue('');
+  }
+
+  function removeSplitUnit(uid: string) {
+    setSplitEntries((prev) => prev.filter((e) => e.unitId !== uid));
+  }
+
+  function updateSplitAmount(uid: string, amount: number) {
+    setSplitEntries((prev) =>
+      prev.map((e) => (e.unitId === uid ? { ...e, amount } : e))
+    );
+  }
+
+  const splitSum = splitEntries.reduce((s, e) => s + e.amount, 0);
+  const splitOk = splitEntries.length > 0 && Math.abs(splitSum - total) < 0.01;
+
   // ── Submit ────────────────────────────────────────────────────────────────
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitError(null);
+    const commonFields = {
+      tipo,
+      proveedor,
+      rfc_proveedor: rfcProveedor,
+      folio_factura: folioFactura,
+      ot_id: otId,
+      metodo_pago: metodoPago,
+      imagen_url: imageUrl,
+      solicitante: userName,
+      line_items: lineItems.filter((l) => l.description.trim() !== ''),
+    };
+
     try {
-      await saveGasto({
-        tipo,
-        proveedor,
-        rfc_proveedor: rfcProveedor,
-        folio_factura: folioFactura,
-        subtotal,
-        iva,
-        total,
-        unidad,
-        ot_id: otId,
-        metodo_pago: metodoPago,
-        imagen_url: imageUrl,
-        solicitante: userName,
-        line_items: lineItems.filter((l) => l.description.trim() !== ''),
-      });
+      if (unitMode === 'single') {
+        await saveGasto({ ...commonFields, subtotal, iva, total, unidad });
+      } else {
+        for (const entry of splitEntries) {
+          const proportion = total > 0 ? entry.amount / total : 1 / splitEntries.length;
+          await saveGasto({
+            ...commonFields,
+            unidad: entry.unitId,
+            total: entry.amount,
+            subtotal: parseFloat((subtotal * proportion).toFixed(2)),
+            iva: parseFloat((iva * proportion).toFixed(2)),
+          });
+        }
+      }
+
+      // Auto-import parts into catalog when saving a Refaccion quote.
+      // Fire-and-forget — non-blocking. Upserts by part_number so no duplicates;
+      // always updates price to the latest from this quote.
+      if (tipo === 'Refaccion' && commonFields.line_items.length > 0) {
+        importPartsFromQuote(
+          proveedor,
+          commonFields.line_items.map((l) => ({
+            part_number: l.part_number,
+            description: l.description,
+            unit_price: l.unit_price,
+          }))
+        );
+      }
+
       setSubmitDone(true);
       setTimeout(() => navigate(-1), 1800);
     } catch (err: unknown) {
@@ -171,16 +231,19 @@ export default function NuevoGastoPage() {
   // ── Success screen ────────────────────────────────────────────────────────
 
   if (submitDone) {
+    const count = unitMode === 'multi' ? splitEntries.length : 1;
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-4 animate-fade-up">
         <CheckCircle size={56} className="text-success" />
-        <p className="text-xl font-semibold text-text">Gasto registrado</p>
+        <p className="text-xl font-semibold text-text">
+          {count === 1 ? 'Gasto registrado' : `${count} gastos registrados`}
+        </p>
         <p className="text-sm text-text-secondary">Regresando…</p>
       </div>
     );
   }
 
-  const unitIds = equipment.map((e) => e.unit_id);
+  const unitIds = ['FLOTA', ...equipment.map((e) => e.unit_id)];
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col py-4 gap-4 animate-fade-up">
@@ -308,20 +371,99 @@ export default function NuevoGastoPage() {
           />
         </div>
 
-        {/* Unidad */}
+        {/* Unidad(es) */}
         <div>
-          <label className="text-xs text-text-secondary mb-1 block">Unidad</label>
-          <select
-            value={unidad}
-            onChange={(e) => setUnidad(e.target.value)}
-            className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-white"
-            required
-          >
-            <option value="">Seleccionar unidad…</option>
-            {unitIds.map((uid) => (
-              <option key={uid} value={uid}>{uid}</option>
-            ))}
-          </select>
+          <label className="text-xs text-text-secondary mb-1 block">Unidad(es)</label>
+
+          {/* Mode toggle */}
+          <div className="flex gap-2 mb-2">
+            <button
+              type="button"
+              onClick={() => setUnitMode('single')}
+              className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                unitMode === 'single' ? 'bg-amber text-white' : 'bg-white border border-border text-text-secondary'
+              }`}
+            >
+              Una unidad
+            </button>
+            <button
+              type="button"
+              onClick={() => setUnitMode('multi')}
+              className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                unitMode === 'multi' ? 'bg-amber text-white' : 'bg-white border border-border text-text-secondary'
+              }`}
+            >
+              Múltiples · Flota
+            </button>
+          </div>
+
+          {unitMode === 'single' ? (
+            <select
+              value={unidad}
+              onChange={(e) => setUnidad(e.target.value)}
+              className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-white"
+              required={unitMode === 'single'}
+            >
+              <option value="">Seleccionar unidad…</option>
+              {unitIds.map((uid) => (
+                <option key={uid} value={uid}>{uid === 'FLOTA' ? '── FLOTA (global) ──' : uid}</option>
+              ))}
+            </select>
+          ) : (
+            <div className="bg-amber/5 border border-amber/30 rounded-xl p-3 flex flex-col gap-2">
+              <p className="text-xs font-semibold text-amber-800">
+                Distribución — Total: ${total.toFixed(2)}
+              </p>
+
+              {splitEntries.map((entry) => (
+                <div key={entry.unitId} className="flex items-center gap-2">
+                  <span className="flex-1 bg-white border border-border rounded-lg px-3 py-1.5 text-sm font-semibold text-text">
+                    {entry.unitId}
+                  </span>
+                  <span className="text-xs text-text-secondary">$</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={entry.amount || ''}
+                    onChange={(e) => updateSplitAmount(entry.unitId, parseFloat(e.target.value) || 0)}
+                    className="w-24 border border-border rounded-lg px-2 py-1.5 text-sm font-semibold text-right"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeSplitUnit(entry.unitId)}
+                    className="w-7 h-7 rounded-full bg-red-50 text-red-400 flex items-center justify-center hover:bg-red-100 transition-colors"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+
+              {/* Add unit picker */}
+              <select
+                value={splitPickerValue}
+                onChange={(e) => addSplitUnit(e.target.value)}
+                className="w-full border border-dashed border-border rounded-lg px-3 py-1.5 text-sm text-text-secondary bg-white"
+              >
+                <option value="">+ Agregar unidad…</option>
+                {unitIds
+                  .filter((uid) => !splitEntries.some((e) => e.unitId === uid))
+                  .map((uid) => (
+                    <option key={uid} value={uid}>{uid === 'FLOTA' ? '── FLOTA (global) ──' : uid}</option>
+                  ))}
+              </select>
+
+              {/* Running total */}
+              {splitEntries.length > 0 && (
+                <div className="flex justify-between items-center pt-1 border-t border-amber/20">
+                  <span className="text-xs text-amber-800">Distribuido</span>
+                  <span className={`text-xs font-bold ${splitOk ? 'text-green-600' : 'text-red-500'}`}>
+                    ${splitSum.toFixed(2)} {splitOk ? '✓' : `— faltan $${(total - splitSum).toFixed(2)}`}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* OT (optional) */}
@@ -476,7 +618,7 @@ export default function NuevoGastoPage() {
       {/* ── Submit ───────────────────────────────────────────────────────── */}
       <button
         type="submit"
-        disabled={saving}
+        disabled={saving || (unitMode === 'multi' && !splitOk)}
         className="w-full bg-amber text-white font-semibold rounded-xl py-3.5 flex items-center justify-center gap-2 disabled:opacity-60"
       >
         {saving ? (
@@ -484,6 +626,8 @@ export default function NuevoGastoPage() {
             <Loader2 size={18} className="animate-spin" />
             Guardando…
           </>
+        ) : unitMode === 'multi' ? (
+          `Registrar ${splitEntries.length} gastos`
         ) : (
           'Registrar Gasto'
         )}
