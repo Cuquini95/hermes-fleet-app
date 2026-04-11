@@ -37,6 +37,7 @@ import NeumaticosPage from './pages/NeumaticosPage';
 import PedidosPage from './pages/PedidosPage';
 import GastosPage from './pages/GastosPage';
 import NuevoGastoPage from './pages/NuevoGastoPage';
+import BulkBoletasPage from './pages/BulkBoletasPage';
 
 // ── Roles allowed per route ───────────────────────────────────────────────────
 // Empty array = any authenticated user
@@ -122,6 +123,7 @@ export default function App() {
         <Route path="/horometro"        element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><HorometroPage /></RequireRole>} />
         <Route path="/viaje"            element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><ViajePage /></RequireRole>} />
         <Route path="/flete"            element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><ViajePage /></RequireRole>} />
+        <Route path="/bulk-boletas"     element={<RequireRole roles={['operador', 'coordinador', 'supervisor', 'gerencia']}><BulkBoletasPage /></RequireRole>} />
         <Route path="/viajes-pena"      element={<RequireRole roles={['supervisor', 'gerencia']}><ViajesPenaPage /></RequireRole>} />
         <Route path="/briefing"         element={<RequireRole roles={MANAGEMENT}><BriefingCard /></RequireRole>} />
         <Route path="/perfil"           element={<RequireRole roles={ALL}><PerfilPage /></RequireRole>} />

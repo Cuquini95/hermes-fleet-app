@@ -47,6 +47,24 @@ export async function updateCell(
   }
 }
 
+export async function upsertRow(
+  tab: string,
+  key: string,
+  values: string[]
+): Promise<'updated' | 'inserted'> {
+  const response = await fetch(`${HERMES_API}/api/sheets/upsert-row`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tab, key, values }),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Sheets upsert error ${response.status}: ${text}`);
+  }
+  const data = await response.json();
+  return data.action;
+}
+
 // ── OCR ──────────────────────────────────────────────────────────────────────
 
 export interface OcrLineItem {
@@ -96,6 +114,41 @@ async function compressToBase64(file: File): Promise<string> {
   });
 }
 
+// ── Boleta (trip ticket) OCR ──────────────────────────────────────────────────
+
+export interface OcrBoletaResult {
+  folio: string;
+  fecha: string;          // YYYY-MM-DD
+  hora: string;           // HH:MM (24h)
+  fletero: string;
+  placas: string;
+  capacidad_m3: number;
+  material: string;
+  banco_carga: string;    // origin
+  banco_descarga: string; // destination
+  distancia_km: number;
+  obra: string;
+}
+
+/**
+ * Send a boleta (trip ticket) image to the VPS OCR endpoint.
+ * VPS exposes: POST /api/ocr/boleta  { image_base64: string }
+ * Returns structured boleta data.
+ */
+export async function ocrBoleta(file: File): Promise<OcrBoletaResult> {
+  const image_base64 = await compressToBase64(file);
+  const response = await fetch(`${HERMES_API}/api/ocr/boleta`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image_base64 }),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`OCR boleta error ${response.status}: ${text}`);
+  }
+  return response.json() as Promise<OcrBoletaResult>;
+}
+
 /**
  * Send a receipt image to the VPS OCR endpoint.
  * VPS must expose: POST /api/ocr/receipt  { image_base64: string }
@@ -136,4 +189,5 @@ export const SHEET_TABS = {
   NEUMATICOS: '13 Neumáticos',
   GASTOS: 'Gastos',
   GASTOS_PRESUPUESTO: 'Gastos_Presupuesto',
+  CATALOGO_PRECIOS: 'Catalogo_Precios',
 } as const;

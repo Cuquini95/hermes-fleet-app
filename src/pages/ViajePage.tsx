@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Trash2, Plus, ScanLine } from 'lucide-react';
 import { TRANSPORT_UNITS } from '../data/transport-units';
-import { mexicoDate, mexicoTime } from '../lib/date-utils';
+import { mexicoDateInput, mexicoTimeInput } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
 import { useAuthStore } from '../stores/auth-store';
 import ConfirmModal from '../components/ui/ConfirmModal';
 import SuccessToast from '../components/ui/SuccessToast';
 
-const MATERIAL_OPTIONS = ['Tierra', 'Roca', 'Grava', 'Mineral', 'Caliza', 'Otro'];
+const MATERIAL_OPTIONS = ['Tierra', 'Roca', 'Grava', 'Mineral', 'Caliza', 'Otro'] as const;
 
 // ── Column mapping for Reporte_Fletes_Transporte ──────────────────────────────
 // A (0)  Fecha
@@ -17,83 +17,180 @@ const MATERIAL_OPTIONS = ['Tierra', 'Roca', 'Grava', 'Mineral', 'Caliza', 'Otro'
 // D (3)  Conductor
 // E (4)  KM Cargado
 // F (5)  KM Vacío
-// G (6)  ORIGEN          ← visible in sheet header
-// H (7)  RUTA DESTINO    ← visible in sheet header
-// I (8)  KM TOTAL        ← visible in sheet header
-// J (9)  CLIENTE         ← visible in sheet header
-// K (10) TIPO CARGA      ← visible in sheet header
-// L (11) TONELAJE        ← visible in sheet header
-// M (12) FLETE ($)       ← visible in sheet header
-// N (13) OBSERVACIONES   ← visible in sheet header
-// O (14) Ticket_Bascula  ← visible in sheet header
+// G (6)  ORIGEN
+// H (7)  RUTA DESTINO
+// I (8)  KM TOTAL
+// J (9)  CLIENTE
+// K (10) TIPO CARGA
+// L (11) TONELAJE
+// M (12) FLETE ($)
+// N (13) OBSERVACIONES
+// O (14) Ticket_Bascula
+
+type Mode = 'single' | 'multi';
+
+interface TripEntry {
+  hora:     string;
+  tonelaje: string;
+  flete:    string;
+}
+
+const emptyTrip = (hora: string = ''): TripEntry => ({
+  hora,
+  tonelaje: '',
+  flete:    '',
+});
 
 export default function ViajePage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
 
-  const [unidad, setUnidad] = useState('');
-  const [rutaOrigen, setRutaOrigen] = useState('');
-  const [rutaDestino, setRutaDestino] = useState('');
-  const [kmCargado, setKmCargado] = useState('');
-  const [kmVacio, setKmVacio] = useState('');
-  const [material, setMaterial] = useState('');
-  const [tonelaje, setTonelaje] = useState('');
-  const [cliente, setCliente] = useState('');
-  const [flete, setFlete] = useState('');
-  const [observaciones, setObservaciones] = useState('');
-  const [showConfirm, setShowConfirm] = useState(false);
-  const [toastMessage, setToastMessage] = useState('');
-  const [toastVisible, setToastVisible] = useState(false);
+  // ── Mode ──────────────────────────────────────────────────────────────────
+  const [mode, setMode] = useState<Mode>('single');
+
+  // ── Common fields ─────────────────────────────────────────────────────────
+  const [fecha, setFecha] = useState<string>(mexicoDateInput());
+  const [hora, setHora] = useState<string>(mexicoTimeInput());
+  const [unidad, setUnidad] = useState<string>('');
+  const [rutaOrigen, setRutaOrigen] = useState<string>('');
+  const [rutaDestino, setRutaDestino] = useState<string>('');
+  const [kmCargado, setKmCargado] = useState<string>('');
+  const [kmVacio, setKmVacio] = useState<string>('');
+  const [material, setMaterial] = useState<string>('');
+  const [cliente, setCliente] = useState<string>('');
+  const [observaciones, setObservaciones] = useState<string>('');
+
+  // ── Single-mode fields ────────────────────────────────────────────────────
+  const [tonelaje, setTonelaje] = useState<string>('');
+  const [flete, setFlete] = useState<string>('');
+
+  // ── Multi-mode trips ──────────────────────────────────────────────────────
+  const [trips, setTrips] = useState<TripEntry[]>([emptyTrip(mexicoTimeInput())]);
+
+  // ── UI state ──────────────────────────────────────────────────────────────
+  const [showConfirm, setShowConfirm] = useState<boolean>(false);
+  const [submitting, setSubmitting] = useState<boolean>(false);
+  const [toastMessage, setToastMessage] = useState<string>('');
+  const [toastVisible, setToastVisible] = useState<boolean>(false);
 
   const kmCargadoNum = parseFloat(kmCargado) || 0;
   const kmVacioNum   = parseFloat(kmVacio)   || 0;
   const kmTotal      = kmCargado !== '' && kmVacio !== '' ? kmCargadoNum + kmVacioNum : null;
 
-  const canSubmit =
+  // ── Totals in multi mode ──────────────────────────────────────────────────
+  const totalTonelaje = trips.reduce((s, t) => s + (parseFloat(t.tonelaje) || 0), 0);
+  const totalFlete    = trips.reduce((s, t) => s + (parseFloat(t.flete)    || 0), 0);
+
+  const commonsFilled =
     unidad !== '' &&
     rutaOrigen.trim() !== '' &&
     rutaDestino.trim() !== '' &&
     kmCargado !== '' &&
     kmVacio !== '';
 
-  function handleSubmitIntent() {
+  const tripsValid = trips.length > 0 && trips.every(
+    (t) => t.hora.trim() !== '' && (parseFloat(t.tonelaje) || 0) > 0
+  );
+
+  const canSubmit =
+    mode === 'single'
+      ? commonsFilled
+      : commonsFilled && tripsValid;
+
+  // ── Trip helpers ──────────────────────────────────────────────────────────
+
+  function updateTrip(index: number, patch: Partial<TripEntry>): void {
+    setTrips((prev) => prev.map((t, i) => (i === index ? { ...t, ...patch } : t)));
+  }
+
+  function addTrip(): void {
+    // Pre-fill flete from the most recent trip if set (same client/route usually = same rate)
+    const last = trips[trips.length - 1];
+    setTrips((prev) => [
+      ...prev,
+      { hora: mexicoTimeInput(), tonelaje: '', flete: last?.flete ?? '' },
+    ]);
+  }
+
+  function removeTrip(index: number): void {
+    setTrips((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  // ── Submit ────────────────────────────────────────────────────────────────
+
+  function handleSubmitIntent(): void {
     if (!canSubmit) return;
     setShowConfirm(true);
   }
 
-  async function handleConfirm() {
+  async function handleConfirm(): Promise<void> {
     setShowConfirm(false);
+    setSubmitting(true);
+
+    const fechaSheet = fecha.split('-').reverse().join('/'); // dd/MM/yyyy
+    const kmTotalStr = String(kmCargadoNum + kmVacioNum);
+
+    /**
+     * Builds a row with EXACTLY 15 columns in the order of Reporte_Fletes_Transporte:
+     * A:Fecha B:Hora C:Unidad D:Conductor E:KM_Cargado F:KM_Vacio
+     * G:Origen H:Destino I:KM_Total J:Cliente K:Tipo_Carga L:Tonelaje
+     * M:Flete N:Observaciones O:Ticket_Bascula
+     */
+    const buildRow = (horaVal: string, tonelajeVal: string, fleteVal: string): string[] => {
+      const horaNormalised = horaVal.length === 5 ? `${horaVal}:00` : horaVal;
+      return [
+        fechaSheet,                                // A (0)  Fecha
+        horaNormalised,                            // B (1)  Hora
+        unidad,                                    // C (2)  No. Unidad
+        userName,                                  // D (3)  Conductor
+        String(kmCargadoNum),                      // E (4)  KM Cargado
+        String(kmVacioNum),                        // F (5)  KM Vacío
+        rutaOrigen,                                // G (6)  ORIGEN
+        rutaDestino,                               // H (7)  RUTA DESTINO
+        kmTotalStr,                                // I (8)  KM TOTAL
+        cliente,                                   // J (9)  CLIENTE
+        material,                                  // K (10) TIPO CARGA
+        String(parseFloat(tonelajeVal) || 0),      // L (11) TONELAJE
+        String(parseFloat(fleteVal) || 0),         // M (12) FLETE ($)
+        observaciones,                             // N (13) OBSERVACIONES
+        '',                                        // O (14) Ticket_Bascula
+      ];
+    };
 
     try {
-      await appendRow(SHEET_TABS.FLETES, [
-        mexicoDate(),                              // A (0):  Fecha
-        mexicoTime(),                              // B (1):  Hora
-        unidad,                                    // C (2):  No. Unidad
-        userName,                                  // D (3):  Conductor
-        String(kmCargadoNum),                      // E (4):  KM Cargado
-        String(kmVacioNum),                        // F (5):  KM Vacío
-        rutaOrigen,                                // G (6):  ORIGEN         ✓
-        rutaDestino,                               // H (7):  RUTA DESTINO   ✓
-        String(kmCargadoNum + kmVacioNum),         // I (8):  KM TOTAL       ✓
-        cliente,                                   // J (9):  CLIENTE        ✓
-        material,                                  // K (10): TIPO CARGA     ✓
-        String(parseFloat(tonelaje) || 0),         // L (11): TONELAJE       ✓
-        String(parseFloat(flete) || 0),            // M (12): FLETE ($)      ✓
-        observaciones,                             // N (13): OBSERVACIONES  ✓
-        '',                                        // O (14): Ticket_Bascula
-      ]);
-    } catch (err) {
-      console.error('Sheets append failed (Fletes):', err);
-    }
+      if (mode === 'single') {
+        await appendRow(SHEET_TABS.FLETES, buildRow(hora, tonelaje, flete));
+        setToastMessage('Flete registrado ✓');
+      } else {
+        // Sort trips chronologically so the Google Sheet shows them in order —
+        // operator may enter them out of order when catching up at home.
+        const orderedTrips = [...trips].sort((a, b) => a.hora.localeCompare(b.hora));
 
-    setToastMessage('Flete registrado ✓');
-    setToastVisible(true);
+        // Sequential await guarantees rows land in order (no parallel races).
+        for (const t of orderedTrips) {
+          await appendRow(SHEET_TABS.FLETES, buildRow(t.hora, t.tonelaje, t.flete));
+        }
+        setToastMessage(`${orderedTrips.length} viajes registrados ✓`);
+      }
+      setToastVisible(true);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error al registrar';
+      setToastMessage(`Error: ${msg}`);
+      setToastVisible(true);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
-  function handleToastDismiss() {
+  function handleToastDismiss(): void {
     setToastVisible(false);
     navigate(-1);
   }
+
+  const confirmMessage =
+    mode === 'single'
+      ? `¿Registrar flete de ${rutaOrigen} → ${rutaDestino} para ${unidad || 'la unidad'}?`
+      : `¿Registrar ${trips.length} viajes de ${rutaOrigen} → ${rutaDestino} para ${unidad || 'la unidad'}? Total: ${totalTonelaje.toFixed(1)} ton · $${totalFlete.toFixed(2)}`;
 
   return (
     <div className="flex flex-col pb-4 animate-fade-up">
@@ -105,8 +202,8 @@ export default function ViajePage() {
 
       <ConfirmModal
         open={showConfirm}
-        title="Confirmar registro de flete"
-        message={`¿Registrar flete de ${rutaOrigen} → ${rutaDestino} para ${unidad || 'la unidad'}?`}
+        title={mode === 'single' ? 'Confirmar registro de flete' : `Confirmar ${trips.length} viajes`}
+        message={confirmMessage}
         onConfirm={handleConfirm}
         onCancel={() => setShowConfirm(false)}
       />
@@ -120,11 +217,75 @@ export default function ViajePage() {
         >
           <ArrowLeft size={20} className="text-text" />
         </button>
-        <h1 className="text-xl font-bold text-text">Registro de Flete</h1>
+        <h1 className="text-xl font-bold text-text flex-1">Registro de Flete</h1>
+        <button
+          type="button"
+          onClick={() => navigate('/bulk-boletas')}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border"
+          style={{ borderColor: '#F59E0B', color: '#D97706', background: '#FFFBEB' }}
+          title="Registro masivo por OCR de boletas"
+        >
+          <ScanLine size={14} />
+          Boletas OCR
+        </button>
       </div>
 
-      {/* Form card */}
+      {/* ── Mode toggle ────────────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl p-3 shadow-sm border border-border mb-3">
+        <label className="text-xs font-medium text-text-secondary mb-2 block">Modo</label>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setMode('single')}
+            className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              mode === 'single' ? 'bg-amber text-white' : 'bg-white border border-border text-text-secondary'
+            }`}
+          >
+            Un viaje
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('multi')}
+            className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              mode === 'multi' ? 'bg-amber text-white' : 'bg-white border border-border text-text-secondary'
+            }`}
+          >
+            Varios viajes del día
+          </button>
+        </div>
+      </div>
+
+      {/* ── Common fields card ────────────────────────────────────────── */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-border flex flex-col gap-4">
+        {mode === 'multi' && (
+          <p className="text-xs font-semibold text-blue-700 bg-blue-50 rounded-lg px-3 py-2">
+            Datos comunes — aplica a todos los viajes
+          </p>
+        )}
+
+        {/* Fecha + (single-mode Hora) */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-text-secondary">Fecha</label>
+            <input
+              type="date"
+              value={fecha}
+              onChange={(e) => setFecha(e.target.value)}
+              className="w-full rounded-xl border border-border p-3 text-text bg-white"
+            />
+          </div>
+          {mode === 'single' && (
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium text-text-secondary">Hora</label>
+              <input
+                type="time"
+                value={hora}
+                onChange={(e) => setHora(e.target.value)}
+                className="w-full rounded-xl border border-border p-3 text-text bg-white"
+              />
+            </div>
+          )}
+        </div>
 
         {/* Unidad */}
         <div className="flex flex-col gap-1">
@@ -197,7 +358,7 @@ export default function ViajePage() {
           </div>
         </div>
 
-        {/* Material + Tonelaje */}
+        {/* Tipo de Carga + (single-mode Tonelaje) */}
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
             <label className="text-sm font-medium text-text-secondary">Tipo de Carga</label>
@@ -212,46 +373,63 @@ export default function ViajePage() {
               ))}
             </select>
           </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium text-text-secondary">Tonelaje</label>
-            <input
-              type="number"
-              value={tonelaje}
-              onChange={(e) => setTonelaje(e.target.value)}
-              placeholder="0"
-              className="w-full rounded-xl border border-border p-3 text-text bg-white"
-            />
-          </div>
+          {mode === 'single' ? (
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium text-text-secondary">Tonelaje</label>
+              <input
+                type="number"
+                value={tonelaje}
+                onChange={(e) => setTonelaje(e.target.value)}
+                placeholder="0"
+                className="w-full rounded-xl border border-border p-3 text-text bg-white"
+              />
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium text-text-secondary">Cliente</label>
+              <input
+                type="text"
+                value={cliente}
+                onChange={(e) => setCliente(e.target.value)}
+                placeholder="Nombre del cliente"
+                className="w-full rounded-xl border border-border p-3 text-text bg-white"
+              />
+            </div>
+          )}
         </div>
 
-        {/* Cliente + Flete */}
-        <div className="grid grid-cols-2 gap-3">
-          <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium text-text-secondary">Cliente</label>
-            <input
-              type="text"
-              value={cliente}
-              onChange={(e) => setCliente(e.target.value)}
-              placeholder="Nombre del cliente"
-              className="w-full rounded-xl border border-border p-3 text-text bg-white"
-            />
+        {/* Cliente + Flete (single only — in multi these live per-trip/in commons) */}
+        {mode === 'single' && (
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium text-text-secondary">Cliente</label>
+              <input
+                type="text"
+                value={cliente}
+                onChange={(e) => setCliente(e.target.value)}
+                placeholder="Nombre del cliente"
+                className="w-full rounded-xl border border-border p-3 text-text bg-white"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium text-text-secondary">Flete ($)</label>
+              <input
+                type="number"
+                value={flete}
+                onChange={(e) => setFlete(e.target.value)}
+                placeholder="0.00"
+                step="0.01"
+                className="w-full rounded-xl border border-border p-3 text-text bg-white"
+              />
+            </div>
           </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium text-text-secondary">Flete ($)</label>
-            <input
-              type="number"
-              value={flete}
-              onChange={(e) => setFlete(e.target.value)}
-              placeholder="0.00"
-              step="0.01"
-              className="w-full rounded-xl border border-border p-3 text-text bg-white"
-            />
-          </div>
-        </div>
+        )}
 
         {/* Observaciones */}
         <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-text-secondary">Observaciones</label>
+          <label className="text-sm font-medium text-text-secondary">
+            Observaciones {mode === 'multi' && <span className="text-xs text-text-secondary">(del día)</span>}
+          </label>
           <textarea
             value={observaciones}
             onChange={(e) => setObservaciones(e.target.value)}
@@ -262,15 +440,116 @@ export default function ViajePage() {
         </div>
       </div>
 
+      {/* ── Multi-mode trips list ─────────────────────────────────────── */}
+      {mode === 'multi' && (
+        <div className="mt-3 rounded-xl p-4 border" style={{ background: '#FFFBEB', borderColor: '#F59E0B' }}>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm font-bold" style={{ color: '#92400E' }}>
+              🚚 Viajes del día
+            </p>
+            <span className="text-xs font-semibold" style={{ color: '#92400E' }}>
+              {trips.length} {trips.length === 1 ? 'viaje' : 'viajes'}
+            </span>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            {trips.map((t, i) => (
+              <div
+                key={i}
+                className="bg-white rounded-lg p-3 border"
+                style={{ borderColor: '#FDE68A' }}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold" style={{ color: '#92400E' }}>
+                    Viaje {i + 1}
+                  </span>
+                  {trips.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeTrip(i)}
+                      className="w-7 h-7 rounded-full bg-red-50 text-red-500 flex items-center justify-center"
+                      aria-label="Eliminar viaje"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="text-xs text-text-secondary block mb-1">Hora</label>
+                    <input
+                      type="time"
+                      value={t.hora}
+                      onChange={(e) => updateTrip(i, { hora: e.target.value })}
+                      className="w-full rounded-lg border p-2 text-sm text-text bg-white text-center"
+                      style={{ borderColor: '#FDE68A' }}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-text-secondary block mb-1">Tonelaje</label>
+                    <input
+                      type="number"
+                      value={t.tonelaje}
+                      onChange={(e) => updateTrip(i, { tonelaje: e.target.value })}
+                      placeholder="0"
+                      className="w-full rounded-lg border p-2 text-sm font-semibold text-center bg-white"
+                      style={{ borderColor: '#FDE68A', color: '#D97706' }}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-text-secondary block mb-1">Flete $</label>
+                    <input
+                      type="number"
+                      value={t.flete}
+                      onChange={(e) => updateTrip(i, { flete: e.target.value })}
+                      placeholder="0"
+                      step="0.01"
+                      className="w-full rounded-lg border p-2 text-sm text-center bg-white"
+                      style={{ borderColor: '#FDE68A' }}
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            onClick={addTrip}
+            className="mt-3 w-full py-2.5 rounded-lg border border-dashed text-sm font-semibold flex items-center justify-center gap-2 bg-white"
+            style={{ borderColor: '#F59E0B', color: '#D97706' }}
+          >
+            <Plus size={16} /> Agregar otro viaje
+          </button>
+
+          {/* Totals strip */}
+          <div
+            className="mt-3 pt-3 border-t border-dashed flex justify-between items-center"
+            style={{ borderColor: '#FCD34D' }}
+          >
+            <span className="text-xs font-medium" style={{ color: '#92400E' }}>
+              Total del día
+            </span>
+            <span className="text-sm font-bold text-green-600">
+              {totalTonelaje.toFixed(1)} ton · ${totalFlete.toFixed(2)}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Submit */}
       <button
         type="button"
         onClick={handleSubmitIntent}
-        disabled={!canSubmit}
+        disabled={!canSubmit || submitting}
         className="mt-4 w-full bg-amber text-white rounded-xl py-4 font-semibold text-lg disabled:opacity-40 disabled:cursor-not-allowed transition-opacity btn-press"
         style={{ minHeight: 52 }}
       >
-        Registrar Flete
+        {submitting
+          ? 'Guardando...'
+          : mode === 'single'
+            ? 'Registrar Flete'
+            : `Registrar ${trips.length} Viajes`}
       </button>
     </div>
   );
