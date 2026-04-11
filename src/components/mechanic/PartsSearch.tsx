@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, WifiOff, Languages } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Search, WifiOff, Languages, PackagePlus } from 'lucide-react';
 import { searchParts, type PartResult } from '../../lib/hermes-api';
 import { expandQuery } from '../../lib/parts-dictionary';
 import PartCard from './PartCard';
@@ -22,6 +23,7 @@ function mergeResults(arrays: PartResult[][]): PartResult[] {
 }
 
 export default function PartsSearch() {
+  const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [selectedEquipo, setSelectedEquipo] = useState('Todos');
   const [results, setResults] = useState<PartResult[]>([]);
@@ -77,6 +79,18 @@ export default function PartsSearch() {
 
   return (
     <div className="flex flex-col py-4">
+      {/* Header row with import button */}
+      <div className="flex items-center justify-between mb-3">
+        <h1 className="text-xl font-bold text-text">Partes</h1>
+        <button
+          onClick={() => navigate('/parts/import')}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber text-white text-xs font-semibold"
+        >
+          <PackagePlus size={14} />
+          Importar
+        </button>
+      </div>
+
       {/* Search bar */}
       <div className="relative mb-3">
         <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-secondary" />

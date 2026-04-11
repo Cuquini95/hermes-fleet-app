@@ -38,6 +38,7 @@ import PedidosPage from './pages/PedidosPage';
 import GastosPage from './pages/GastosPage';
 import NuevoGastoPage from './pages/NuevoGastoPage';
 import BulkBoletasPage from './pages/BulkBoletasPage';
+import CatalogoImportPage from './pages/CatalogoImportPage';
 
 // ── Roles allowed per route ───────────────────────────────────────────────────
 // Empty array = any authenticated user
@@ -103,6 +104,7 @@ export default function App() {
         <Route path="/pm"               element={<RequireRole roles={ADMIN}><PMSchedulePage /></RequireRole>} />
         <Route path="/pm-order"         element={<RequireRole roles={ADMIN}><PMWorkOrderPage /></RequireRole>} />
         <Route path="/parts"            element={<RequireRole roles={WORKSHOP}><PartsSearch /></RequireRole>} />
+        <Route path="/parts/import"     element={<RequireRole roles={ADMIN}><CatalogoImportPage /></RequireRole>} />
         <Route path="/manuals"          element={<RequireRole roles={WORKSHOP}><ManualSearch /></RequireRole>} />
         <Route path="/diagrams"         element={<RequireRole roles={WORKSHOP}><DiagramViewer /></RequireRole>} />
         <Route path="/inventory"        element={<RequireRole roles={ADMIN}><InventoryPage /></RequireRole>} />
