@@ -57,6 +57,7 @@ export const NAV_CONFIG: Record<AppRole, { visible: NavItem[]; overflow: NavItem
       { id: 'pedidos',    label: 'Pedidos',     icon: 'ShoppingCart',  path: '/pedidos' },
       { id: 'neumaticos', label: 'Neumáticos',  icon: 'Disc3',         path: '/neumaticos' },
       { id: 'gastos',     label: 'Gastos',      icon: 'Receipt',       path: '/gastos/nuevo' },
+      { id: 'datos',      label: 'Datos',       icon: 'Table2',        path: '/data' },
     ],
   },
   coordinador: {
@@ -72,6 +73,7 @@ export const NAV_CONFIG: Record<AppRole, { visible: NavItem[]; overflow: NavItem
       { id: 'pedidos', label: 'Pedidos',     icon: 'ShoppingCart', path: '/pedidos' },
       { id: 'alertas', label: 'Alertas',     icon: 'AlertTriangle',path: '/alerts' },
       { id: 'gastos',  label: 'Gastos',      icon: 'Receipt',      path: '/gastos/nuevo' },
+      { id: 'datos',   label: 'Datos',       icon: 'Table2',       path: '/data' },
     ],
   },
   supervisor: {
@@ -94,6 +96,7 @@ export const NAV_CONFIG: Record<AppRole, { visible: NavItem[]; overflow: NavItem
     ],
     overflow: [
       { id: 'briefing', label: 'Briefing', icon: 'FileText', path: '/briefing' },
+      { id: 'datos',    label: 'Datos',    icon: 'Table2',   path: '/data' },
     ],
   },
 };

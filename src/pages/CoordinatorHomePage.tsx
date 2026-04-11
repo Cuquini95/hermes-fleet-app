@@ -12,6 +12,7 @@ import {
   Timer,
   Archive,
   RefreshCw,
+  Table2,
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { useWorkOrderStore } from '../stores/workorder-store';
@@ -33,6 +34,7 @@ const ACTION_CARDS: ActionCard[] = [
   { label: 'Programa PM',icon: <Clock        size={32} className="text-amber" />, path: '/pm' },
   { label: 'Pedidos',    icon: <ShoppingCart size={32} className="text-amber" />, path: '/pedidos' },
   { label: 'Alertas',    icon: <AlertTriangle size={32} className="text-amber" />, path: '/alerts' },
+  { label: 'Datos',      icon: <Table2        size={32} className="text-amber" />, path: '/data' },
 ];
 
 export default function CoordinatorHomePage() {

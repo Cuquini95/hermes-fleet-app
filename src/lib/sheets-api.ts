@@ -1,3 +1,14 @@
+/**
+ * Fleet Data API
+ *
+ * All write functions call the VPS gateway (/hermes-api) which routes:
+ *   PRIMARY_DB=pocketbase → PocketBase first, then mirrors to Google Sheets
+ *   PRIMARY_DB=sheets     → Google Sheets directly (rollback mode)
+ *
+ * The frontend never talks to PocketBase directly — auth and routing
+ * are handled by the gateway. No changes are needed here when switching
+ * between backends; the VPS env var controls it transparently.
+ */
 const HERMES_API = '/hermes-api';
 
 export async function appendRow(tab: string, values: string[]): Promise<void> {

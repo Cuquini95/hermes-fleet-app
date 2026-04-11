@@ -39,6 +39,7 @@ import GastosPage from './pages/GastosPage';
 import NuevoGastoPage from './pages/NuevoGastoPage';
 import BulkBoletasPage from './pages/BulkBoletasPage';
 import CatalogoImportPage from './pages/CatalogoImportPage';
+import DataManagerPage from './pages/DataManagerPage';
 
 // ── Roles allowed per route ───────────────────────────────────────────────────
 // Empty array = any authenticated user
@@ -121,6 +122,7 @@ export default function App() {
         <Route path="/falla"            element={<RequireRole roles={ALL}><FallaPage /></RequireRole>} />
         <Route path="/fleet"            element={<RequireRole roles={['supervisor', 'gerencia', 'coordinador']}><FleetPage /></RequireRole>} />
         <Route path="/alerts"           element={<RequireRole roles={ADMIN}><AlertsPage /></RequireRole>} />
+        <Route path="/data"             element={<RequireRole roles={ADMIN}><DataManagerPage /></RequireRole>} />
         <Route path="/diesel"           element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><DieselPage /></RequireRole>} />
         <Route path="/horometro"        element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><HorometroPage /></RequireRole>} />
         <Route path="/viaje"            element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><ViajePage /></RequireRole>} />
