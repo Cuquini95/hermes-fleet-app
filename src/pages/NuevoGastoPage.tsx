@@ -337,7 +337,7 @@ export default function NuevoGastoPage() {
             className="flex-1 flex flex-col items-center gap-1 border-2 border-dashed border-border rounded-lg py-4 text-text-secondary hover:border-amber transition-colors"
           >
             <Upload size={22} />
-            <span className="text-xs">Galería</span>
+            <span className="text-xs">Galería / PDF</span>
           </button>
           <input
             ref={fileRef}
