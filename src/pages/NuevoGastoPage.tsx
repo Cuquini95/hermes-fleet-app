@@ -342,7 +342,7 @@ export default function NuevoGastoPage() {
           <input
             ref={fileRef}
             type="file"
-            accept="image/*"
+            accept="image/*,application/pdf"
             className="hidden"
             onChange={handleFileInput}
           />

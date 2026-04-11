@@ -161,16 +161,35 @@ export async function ocrBoleta(file: File): Promise<OcrBoletaResult> {
 }
 
 /**
- * Send a receipt image to the VPS OCR endpoint.
- * VPS must expose: POST /api/ocr/receipt  { image_base64: string }
+ * Read any file as a raw base64 string (no canvas resizing).
+ * Used for PDFs which cannot be drawn on a Canvas.
+ */
+async function fileToBase64Raw(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      resolve(dataUrl.split(',')[1]); // strip "data:application/pdf;base64,"
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Send a receipt image **or PDF** to the VPS OCR endpoint.
+ * VPS exposes: POST /api/ocr/receipt  { image_base64, media_type }
  * Returns structured receipt data.
  */
 export async function ocrReceipt(file: File): Promise<OcrReceiptResult> {
-  const image_base64 = await compressToBase64(file);
+  const isPdf = file.type === 'application/pdf';
+  const image_base64 = isPdf ? await fileToBase64Raw(file) : await compressToBase64(file);
+  const media_type   = isPdf ? 'application/pdf' : 'image/jpeg';
+
   const response = await fetch(`${HERMES_API}/api/ocr/receipt`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ image_base64 }),
+    body: JSON.stringify({ image_base64, media_type }),
   });
   if (!response.ok) {
     const text = await response.text();

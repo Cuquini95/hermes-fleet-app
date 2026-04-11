@@ -28,6 +28,19 @@ export async function compressImage(file: File, maxWidth = 1200): Promise<Blob> 
 }
 
 export async function uploadPhoto(file: File, bucket: string, path?: string): Promise<string> {
+  const isPdf = file.type === 'application/pdf';
+
+  if (isPdf) {
+    // Upload PDF as-is — no canvas compression
+    const fileName = path ? `${path}.pdf` : `${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`;
+    const { data, error } = await supabase.storage.from(bucket).upload(fileName, file, {
+      contentType: 'application/pdf',
+    });
+    if (error) throw new Error(`Upload failed: ${error.message}`);
+    const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(data.path);
+    return urlData.publicUrl;
+  }
+
   const compressed = await compressImage(file);
   const fileName = path ? `${path}.jpg` : `${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`;
   const { data, error } = await supabase.storage.from(bucket).upload(fileName, compressed, {
