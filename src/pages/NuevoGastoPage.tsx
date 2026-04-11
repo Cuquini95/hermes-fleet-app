@@ -15,7 +15,7 @@ import { useAuthStore } from '../stores/auth-store';
 import { useGastosStore } from '../stores/gastos-store';
 import { ocrReceipt, importPartsFromQuote } from '../lib/sheets-api';
 import type { GastoTipo, MetodoPago } from '../stores/gastos-store';
-import type { OcrLineItem } from '../lib/sheets-api';
+import type { OcrLineItem, PriceChange } from '../lib/sheets-api';
 import { uploadPhoto } from '../lib/photo-upload';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 
@@ -59,6 +59,7 @@ export default function NuevoGastoPage() {
   // ── Submit state
   const [submitDone, setSubmitDone] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [priceChanges, setPriceChanges] = useState<PriceChange[]>([]);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -208,10 +209,9 @@ export default function NuevoGastoPage() {
       }
 
       // Auto-import parts into catalog when saving a Refaccion quote.
-      // Fire-and-forget — non-blocking. Upserts by part_number so no duplicates;
-      // always updates price to the latest from this quote.
+      // Returns any price changes so we can show an alert before navigating away.
       if (tipo === 'Refaccion' && commonFields.line_items.length > 0) {
-        importPartsFromQuote(
+        const changes = await importPartsFromQuote(
           proveedor,
           commonFields.line_items.map((l) => ({
             part_number: l.part_number,
@@ -219,6 +219,13 @@ export default function NuevoGastoPage() {
             unit_price: l.unit_price,
           }))
         );
+        if (changes.length > 0) {
+          setPriceChanges(changes);
+          // Give the user time to read the alert before navigating
+          setSubmitDone(true);
+          setTimeout(() => navigate(-1), 6000);
+          return;
+        }
       }
 
       setSubmitDone(true);
@@ -233,12 +240,56 @@ export default function NuevoGastoPage() {
   if (submitDone) {
     const count = unitMode === 'multi' ? splitEntries.length : 1;
     return (
-      <div className="flex flex-col items-center justify-center py-20 gap-4 animate-fade-up">
+      <div className="flex flex-col items-center justify-center py-10 gap-4 animate-fade-up">
         <CheckCircle size={56} className="text-success" />
         <p className="text-xl font-semibold text-text">
           {count === 1 ? 'Gasto registrado' : `${count} gastos registrados`}
         </p>
-        <p className="text-sm text-text-secondary">Regresando…</p>
+
+        {/* ── Price change alert ──────────────────────────────────────── */}
+        {priceChanges.length > 0 && (
+          <div className="w-full max-w-sm bg-amber-50 border border-amber-300 rounded-xl p-4 shadow-sm">
+            <div className="flex items-center gap-2 mb-3">
+              <AlertCircle size={18} className="text-amber-600 shrink-0" />
+              <p className="text-sm font-bold text-amber-800">
+                ⚠️ Cambio de precios detectado
+              </p>
+            </div>
+            <p className="text-xs text-amber-700 mb-3">
+              Los siguientes productos tienen un precio diferente al registrado anteriormente.
+              Verifica si te lo dieron al precio correcto.
+            </p>
+            <div className="flex flex-col gap-2">
+              {priceChanges.map((ch) => {
+                const up = ch.pct_change > 0;
+                return (
+                  <div key={ch.part_number} className="bg-white rounded-lg border border-amber-200 p-3 text-xs">
+                    <p className="font-semibold text-text">{ch.part_number}</p>
+                    <p className="text-text-secondary truncate">{ch.description}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-text-secondary line-through">
+                        ${ch.old_price.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                      </span>
+                      <span className="text-text font-medium">
+                        ${ch.new_price.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                      </span>
+                      <span className={`font-bold ${up ? 'text-red-600' : 'text-green-600'}`}>
+                        {up ? '▲' : '▼'} {Math.abs(ch.pct_change)}%
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-xs text-amber-600 mt-3 text-center">
+              Se envió una alerta por WhatsApp · Regresando en unos segundos…
+            </p>
+          </div>
+        )}
+
+        {priceChanges.length === 0 && (
+          <p className="text-sm text-text-secondary">Regresando…</p>
+        )}
       </div>
     );
   }

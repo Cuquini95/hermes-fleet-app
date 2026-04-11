@@ -187,25 +187,38 @@ export interface PartImportEntry {
   unit_price: number;
 }
 
+export interface PriceChange {
+  part_number: string;
+  description: string;
+  old_price: number;
+  new_price: number;
+  pct_change: number;
+  supplier: string;
+}
+
 /**
  * Upsert parts from a supplier quote into the server-side supplier_catalog.json.
- * Called automatically after saving a Refaccion gasto that has line items with part numbers.
- * Fire-and-forget — non-blocking, does not throw on failure.
+ * Returns any price changes detected (existing part with different price).
+ * Returns empty array on failure — non-blocking, does not throw on failure.
  */
 export async function importPartsFromQuote(
   supplier: string,
   parts: PartImportEntry[]
-): Promise<void> {
+): Promise<PriceChange[]> {
   const partsWithNumbers = parts.filter((p) => p.part_number.trim() !== '');
-  if (partsWithNumbers.length === 0) return;
+  if (partsWithNumbers.length === 0) return [];
   try {
-    await fetch(`${HERMES_API}/api/parts/import`, {
+    const res = await fetch(`${HERMES_API}/api/parts/import`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ supplier, parts: partsWithNumbers }),
     });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.price_changes as PriceChange[]) ?? [];
   } catch {
     // Non-critical — parts import failure should never block gasto save
+    return [];
   }
 }
 
