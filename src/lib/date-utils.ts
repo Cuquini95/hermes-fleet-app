@@ -27,6 +27,25 @@ export function mexicoTime(date: Date = new Date()): string {
   });
 }
 
+/** Returns YYYY-MM-DD for use in <input type="date"> */
+export function mexicoDateInput(date: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: MEXICO_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const y = parts.find((p) => p.type === 'year')?.value ?? '';
+  const m = parts.find((p) => p.type === 'month')?.value ?? '';
+  const d = parts.find((p) => p.type === 'day')?.value ?? '';
+  return `${y}-${m}-${d}`;
+}
+
+/** Returns HH:mm for use in <input type="time"> */
+export function mexicoTimeInput(date: Date = new Date()): string {
+  return mexicoTime(date).slice(0, 5);
+}
+
 /** Returns ISO-style date for IDs: "20260405" */
 export function mexicoDateCompact(date: Date = new Date()): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
