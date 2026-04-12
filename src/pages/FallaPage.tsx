@@ -85,14 +85,12 @@ export default function FallaPage() {
     const otId = generateOTId();
     const priorityValue = priority ?? 'media';
 
-    // Upload photos to Supabase; embed URLs in Observaciones
+    // Upload photos to Supabase
     const photoUrls = photos.length > 0
       ? await tryUploadPhotos(photos.map((p) => p.file), 'falla-photos')
       : [];
-    const obsBase = `Ubicación: ${ubicacion}. Cliente: ${clienteAfectado}. Puede moverse: ${puedeMoverse ? 'Sí' : 'No'}`;
-    const observaciones = photoUrls.length > 0
-      ? `${obsBase} | Fotos: ${photoUrls.join(', ')}`
-      : obsBase;
+    const observaciones = `Ubicación: ${ubicacion}. Cliente: ${clienteAfectado}. Puede moverse: ${puedeMoverse ? 'Sí' : 'No'}`;
+    const fotoUrl = photoUrls[0] ?? '';   // primary photo hyperlink column
 
     try {
       await appendRow(SHEET_TABS.AVERIAS, [
@@ -107,9 +105,10 @@ export default function FallaPage() {
         '',                // COSTO ESTIMADO
         'Abierta',         // ESTADO
         '',                // SOLUCIÓN
-        observaciones,     // OBSERVACIONES (includes photo URLs when present)
+        observaciones,     // OBSERVACIONES
         '',                // PROVEEDOR PIEZA
-        otId,              // OT_ID (cross-reference for auto-sync)
+        otId,              // OT_ID
+        fotoUrl,           // FOTO_URL (hyperlink)
       ]);
     } catch (err) {
       console.error('Sheets append failed (Averias):', err);
