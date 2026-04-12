@@ -7,6 +7,8 @@ import {
   Database,
   Loader2,
   Pencil,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { readRange, upsertRow } from '../lib/sheets-api';
 
@@ -288,6 +290,14 @@ function downloadCSV(filename: string, columns: ColumnDef[], rows: string[][]) {
   URL.revokeObjectURL(url);
 }
 
+function buildTSV(columns: ColumnDef[], rows: string[][]): string {
+  const header = columns.map((c) => c.label).join('\t');
+  const body = rows
+    .map((r) => columns.map((c) => (r[c.index] ?? '').replace(/\t/g, ' ')).join('\t'))
+    .join('\n');
+  return `${header}\n${body}`;
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 type TabCache = Record<string, string[][]>;
@@ -306,6 +316,7 @@ export default function DataManagerPage() {
   const [savingCell, setSavingCell] = useState<SavingCell>(null);
   const [flashCell, setFlashCell] = useState<FlashCell>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const active = useMemo(
     () => COLLECTIONS.find((c) => c.id === activeId) ?? COLLECTIONS[0],
@@ -374,6 +385,14 @@ export default function DataManagerPage() {
         : filtered;
     return body.length;
   };
+
+  async function handleCopy() {
+    if (visibleRows.length === 0) return;
+    const tsv = buildTSV(active.columns, visibleRows);
+    await navigator.clipboard.writeText(tsv);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
 
   function handleExport() {
     const stamp = new Date().toISOString().slice(0, 10);
@@ -537,6 +556,17 @@ export default function DataManagerPage() {
           className="flex items-center justify-center w-9 h-9 rounded-lg bg-white border border-[#E5E7EB] text-[#6B7280] hover:text-[#162252] hover:border-[#162252]/40 transition-colors disabled:opacity-50"
         >
           <RefreshCw size={15} className={isLoading ? 'animate-spin' : ''} />
+        </button>
+
+        <button
+          type="button"
+          onClick={handleCopy}
+          disabled={visibleRows.length === 0}
+          title="Copiar para Excel"
+          className="flex items-center gap-1.5 px-3 h-9 rounded-lg border border-[#E5E7EB] bg-white text-[#162252] text-xs font-semibold hover:bg-[#F1F5F9] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {copied ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
+          <span className="hidden sm:inline">{copied ? '¡Copiado!' : 'Copiar'}</span>
         </button>
 
         <button
