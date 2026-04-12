@@ -84,7 +84,7 @@ export const useAnalyticsStore = create<AnalyticsState>((set, get) => ({
     set({
       raw: { gastos, combustible, fletes, averias },
       status: errors.length < 4 ? 'ready' : 'error',
-      lastFetched: new Date(),
+      lastFetched: new Date(), // records last attempt time (not last successful fetch)
       fetchErrors: errors,
     })
   },
