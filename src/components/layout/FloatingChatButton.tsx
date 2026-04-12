@@ -28,6 +28,7 @@ export default function FloatingChatButton() {
       <button
         onClick={() => navigate('/chat')}
         title="Asistente IA — Diagnóstico inteligente de flota"
+        aria-label="Asistente IA — Diagnóstico inteligente de flota"
         style={{
           width: '56px',
           height: '56px',

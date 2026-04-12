@@ -622,10 +622,11 @@ export default function DataManagerPage() {
           type="button"
           onClick={() => loadTab(active)}
           disabled={isLoading}
-          title="Recargar"
+          title="Recargar datos"
+          aria-label="Recargar datos"
           className="flex items-center justify-center w-9 h-9 rounded-lg bg-white border border-[#E5E7EB] text-[#6B7280] hover:text-[#162252] hover:border-[#162252]/40 transition-colors disabled:opacity-50"
         >
-          <RefreshCw size={15} className={isLoading ? 'animate-spin' : ''} />
+          <RefreshCw size={15} className={isLoading ? 'animate-spin' : ''} aria-hidden="true" />
         </button>
 
         <button
@@ -633,9 +634,10 @@ export default function DataManagerPage() {
           onClick={handleCopy}
           disabled={visibleRows.length === 0}
           title="Copiar para Excel"
+          aria-label="Copiar tabla para Excel"
           className="flex items-center gap-1.5 px-3 h-9 rounded-lg border border-[#E5E7EB] bg-white text-[#162252] text-xs font-semibold hover:bg-[#F1F5F9] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          {copied ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
+          {copied ? <Check size={14} className="text-green-600" aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
           <span className="hidden sm:inline">{copied ? '¡Copiado!' : 'Copiar'}</span>
         </button>
 
@@ -644,18 +646,20 @@ export default function DataManagerPage() {
           onClick={handleExport}
           disabled={visibleRows.length === 0}
           title="Exportar CSV"
+          aria-label="Exportar como CSV"
           className="flex items-center gap-1.5 px-3 h-9 rounded-lg bg-[#162252] text-white text-xs font-semibold hover:bg-[#1E3A8A] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          <Download size={14} />
+          <Download size={14} aria-hidden="true" />
           <span className="hidden sm:inline">Exportar CSV</span>
         </button>
 
         <button
           type="button"
           onClick={() => setAnalyticsOpen(true)}
+          aria-label="Abrir analítica"
           className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-700 hover:bg-violet-600 text-white text-sm rounded-md font-medium transition-colors"
         >
-          📊 Analítica
+          <span aria-hidden="true">📊</span> Analítica
         </button>
       </div>
 

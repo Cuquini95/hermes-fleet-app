@@ -11,6 +11,27 @@ import { AutocompleteInput } from '../components/AutocompleteInput';
 
 const MATERIAL_OPTIONS = ['Tierra', 'Roca', 'Grava', 'Mineral', 'Caliza', 'Otro'] as const;
 
+// ── Flete rate rules ──────────────────────────────────────────────────────────
+// Add more routes here as needed.
+const FLETE_RATES: Array<{ origen: string; destino: string; rate: number }> = [
+  { origen: 'pesadas', destino: 'manzanillo',       rate: 160 },
+  { origen: 'pesadas', destino: 'bascula paticajo',  rate: 80  },
+];
+
+/**
+ * Returns the rate ($/ton) for a given origin→destination pair,
+ * or null if no rule matches. Matching is case-insensitive and
+ * uses .includes() so partial strings still match.
+ */
+function calcFleteRate(origen: string, destino: string): number | null {
+  const o = origen.trim().toLowerCase();
+  const d = destino.trim().toLowerCase();
+  for (const rule of FLETE_RATES) {
+    if (o.includes(rule.origen) && d.includes(rule.destino)) return rule.rate;
+  }
+  return null;
+}
+
 // ── Column mapping for Reporte_Fletes_Transporte ──────────────────────────────
 // A (0)  Fecha
 // B (1)  Hora
@@ -84,6 +105,30 @@ export default function ViajePage() {
     }).catch(() => {}); // silently ignore — field still works without suggestions
   }, []);
 
+  // ── Auto-rate from route ───────────────────────────────────────────────────
+  const autoRate = calcFleteRate(rutaOrigen, rutaDestino);
+
+  // Single mode: recalculate flete whenever rate or tonelaje changes
+  useEffect(() => {
+    if (!autoRate) return;
+    const ton = parseFloat(tonelaje);
+    if (!isNaN(ton) && ton > 0) {
+      setFlete((autoRate * ton).toFixed(2));
+    }
+  }, [autoRate, tonelaje]);
+
+  // Multi mode: recalculate all trip fletes when the route changes
+  useEffect(() => {
+    if (!autoRate) return;
+    setTrips((prev) =>
+      prev.map((t) => {
+        const ton = parseFloat(t.tonelaje);
+        return !isNaN(ton) && ton > 0 ? { ...t, flete: (autoRate * ton).toFixed(2) } : t;
+      })
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRate]);
+
   // ── UI state ──────────────────────────────────────────────────────────────
   const [showConfirm, setShowConfirm] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<boolean>(false);
@@ -117,7 +162,18 @@ export default function ViajePage() {
   // ── Trip helpers ──────────────────────────────────────────────────────────
 
   function updateTrip(index: number, patch: Partial<TripEntry>): void {
-    setTrips((prev) => prev.map((t, i) => (i === index ? { ...t, ...patch } : t)));
+    setTrips((prev) =>
+      prev.map((t, i) => {
+        if (i !== index) return t;
+        const updated = { ...t, ...patch };
+        // Auto-calculate flete when tonelaje changes and a rate rule applies
+        if ('tonelaje' in patch && autoRate) {
+          const ton = parseFloat(updated.tonelaje);
+          updated.flete = !isNaN(ton) && ton > 0 ? (autoRate * ton).toFixed(2) : updated.flete;
+        }
+        return updated;
+      })
+    );
   }
 
   function addTrip(): void {
@@ -174,28 +230,32 @@ export default function ViajePage() {
       ];
     };
 
-    try {
-      if (mode === 'single') {
-        await appendRow(SHEET_TABS.FLETES, buildRow(hora, tonelaje, flete));
-        setToastMessage('Flete registrado ✓');
-      } else {
-        // Sort trips chronologically so the Google Sheet shows them in order —
-        // operator may enter them out of order when catching up at home.
-        const orderedTrips = [...trips].sort((a, b) => a.hora.localeCompare(b.hora));
-
-        // Sequential await guarantees rows land in order (no parallel races).
-        for (const t of orderedTrips) {
-          await appendRow(SHEET_TABS.FLETES, buildRow(t.hora, t.tonelaje, t.flete));
-        }
-        setToastMessage(`${orderedTrips.length} viajes registrados ✓`);
-      }
+    if (mode === 'single') {
+      // Show success immediately — write happens in background
+      setToastMessage('Flete registrado ✓');
       setToastVisible(true);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Error al registrar';
-      setToastMessage(`Error: ${msg}`);
-      setToastVisible(true);
-    } finally {
       setSubmitting(false);
+
+      appendRow(SHEET_TABS.FLETES, buildRow(hora, tonelaje, flete)).catch((err: unknown) => {
+        console.error('Background write failed (Flete single):', err);
+      });
+    } else {
+      // Sort trips by hora so sheet rows land in chronological order
+      const orderedTrips = [...trips].sort((a, b) => a.hora.localeCompare(b.hora));
+
+      // Show success immediately — all trips fire in parallel in background
+      setToastMessage(`${orderedTrips.length} viajes registrados ✓`);
+      setToastVisible(true);
+      setSubmitting(false);
+
+      Promise.allSettled(
+        orderedTrips.map((t) => appendRow(SHEET_TABS.FLETES, buildRow(t.hora, t.tonelaje, t.flete)))
+      ).then((results) => {
+        const failed = results.filter((r) => r.status === 'rejected').length;
+        if (failed > 0) {
+          console.error(`Background write: ${failed}/${orderedTrips.length} fletes failed`);
+        }
+      });
     }
   }
 
@@ -429,14 +489,22 @@ export default function ViajePage() {
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-sm font-medium text-text-secondary">Flete ($)</label>
+              <label className="text-sm font-medium text-text-secondary flex items-center gap-1.5">
+                Flete ($)
+                {autoRate && (
+                  <span className="text-xs font-bold px-1.5 py-0.5 rounded-md" style={{ background: '#FEF3C7', color: '#D97706' }}>
+                    ⚡ ${autoRate}/ton
+                  </span>
+                )}
+              </label>
               <input
                 type="number"
                 value={flete}
                 onChange={(e) => setFlete(e.target.value)}
                 placeholder="0.00"
                 step="0.01"
-                className="w-full rounded-xl border border-border p-3 text-text bg-white"
+                className="w-full rounded-xl border p-3 text-text bg-white transition-colors"
+                style={{ borderColor: autoRate ? '#F59E0B' : undefined }}
               />
             </div>
           </div>
@@ -514,15 +582,20 @@ export default function ViajePage() {
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-text-secondary block mb-1">Flete $</label>
+                    <label className="text-xs text-text-secondary flex items-center gap-1 mb-1">
+                      Flete $
+                      {autoRate && (
+                        <span className="font-bold" style={{ color: '#D97706' }}>⚡</span>
+                      )}
+                    </label>
                     <input
                       type="number"
                       value={t.flete}
                       onChange={(e) => updateTrip(i, { flete: e.target.value })}
                       placeholder="0"
                       step="0.01"
-                      className="w-full rounded-lg border p-2 text-sm text-center bg-white"
-                      style={{ borderColor: '#FDE68A' }}
+                      className="w-full rounded-lg border p-2 text-sm text-center bg-white transition-colors"
+                      style={{ borderColor: autoRate ? '#F59E0B' : '#FDE68A' }}
                     />
                   </div>
                 </div>

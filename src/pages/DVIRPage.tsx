@@ -5,7 +5,7 @@ import type { DVIRCheck, CheckStatus } from '../types/dvir';
 import { DVIR_SYSTEMS } from '../data/dvir-systems';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { generateOTId } from '../lib/ot-generator';
-import { mexicoDate, mexicoTime, mexicoDateCompact, mexicoTimeCompact } from '../lib/date-utils';
+import { mexicoDateInput, mexicoTimeInput, mexicoDateCompact, mexicoTimeCompact } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
 import { tryUploadPhotos } from '../lib/photo-upload-safe';
 import { useAuthStore } from '../stores/auth-store';
@@ -36,6 +36,8 @@ export default function DVIRPage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
   const equipment = useEquipmentList();
+  const [fecha, setFecha] = useState(mexicoDateInput());
+  const [hora, setHora] = useState(mexicoTimeInput());
   const [unit_id, setUnitId] = useState('');
   const [type, setType] = useState<'pre-operacion' | 'post-operacion'>('pre-operacion');
   const [horometro, setHorometro] = useState('');
@@ -104,47 +106,48 @@ export default function DVIRPage() {
     }
 
     const now = new Date();
-    const date = mexicoDate(now);
-    const time = mexicoTime(now);
+    const date = fecha.split('-').reverse().join('/');      // dd/MM/yyyy
+    const time = hora.length === 5 ? hora + ':00' : hora;  // HH:mm:ss
     const inspId = `INS-${mexicoDateCompact(now)}-${mexicoTimeCompact(now)}`;
     const selectedEquipment = equipment.find((eq) => eq.unit_id === unit_id);
     const modelo = selectedEquipment?.model ?? '';
 
+    // Photo upload must complete first — URL goes in the row
     const allPhotos = checks.flatMap((c) => c.photos.map((p) => p.file));
     const photoUrls = await tryUploadPhotos(allPhotos, 'dvir-photos');
     const photoUrlStr = photoUrls.join(', ');
 
-    try {
-      await appendRow(SHEET_TABS.INSPECCIONES, [
-        '',                                    // # (auto-number)
-        inspId,                                // INSP_ID
-        date,                                  // FECHA
-        time,                                  // HORA
-        unit_id,                               // CÓDIGO UNIDAD
-        modelo,                                // MODELO
-        userName,                              // OPERADOR
-        type,                                  // TIPO
-        String(horometro),                     // HORÓMETRO
-        ...checks.map((c) => c.status || 'N/A'), // MOTOR through TREN RODAJE (12 cols)
-        `${okCount}/12`,                       // SCORE TOTAL
-        result,                                // RESULTADO
-        observations,                          // DEFECTOS ENCONTRADOS
-        photoUrlStr,                           // FOTO_URL
-        otId || '',                            // ACCIÓN REQUERIDA
-        otId ? 'Pendiente' : '',               // ESTADO ACCIÓN
-        userName,                              // FIRMA_OPERADOR
-      ]);
-    } catch (err) {
-      console.error('Sheets append failed (DVIR):', err);
-    }
+    const row = [
+      '',                                    // # (auto-number)
+      inspId,                                // INSP_ID
+      date,                                  // FECHA
+      time,                                  // HORA
+      unit_id,                               // CÓDIGO UNIDAD
+      modelo,                                // MODELO
+      userName,                              // OPERADOR
+      type,                                  // TIPO
+      String(horometro),                     // HORÓMETRO
+      ...checks.map((c) => c.status || 'N/A'), // MOTOR through TREN RODAJE (12 cols)
+      `${okCount}/12`,                       // SCORE TOTAL
+      result,                                // RESULTADO
+      observations,                          // DEFECTOS ENCONTRADOS
+      photoUrlStr,                           // FOTO_URL
+      otId || '',                            // ACCIÓN REQUERIDA
+      otId ? 'Pendiente' : '',               // ESTADO ACCIÓN
+      userName,                              // FIRMA_OPERADOR
+    ];
 
+    // Show success immediately — sheet write happens in background
     if (otId) {
       setToastMessage(`Inspección registrada — OT ${otId} generada`);
     } else {
       setToastMessage(`Inspección registrada — Score: ${okCount}/12`);
     }
-
     setToastVisible(true);
+
+    appendRow(SHEET_TABS.INSPECCIONES, row).catch((err: unknown) => {
+      console.error('Background write failed (DVIR):', err);
+    });
   }
 
   function handleToastDismiss() {
@@ -182,6 +185,28 @@ export default function DVIRPage() {
 
       {/* Unit & type card */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-border mb-4 flex flex-col gap-3">
+        {/* Fecha / Hora */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-text-secondary">Fecha</label>
+            <input
+              type="date"
+              value={fecha}
+              onChange={(e) => setFecha(e.target.value)}
+              className="w-full rounded-xl border border-border p-3 text-text bg-white"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-text-secondary">Hora</label>
+            <input
+              type="time"
+              value={hora}
+              onChange={(e) => setHora(e.target.value)}
+              className="w-full rounded-xl border border-border p-3 text-text bg-white"
+            />
+          </div>
+        </div>
+
         <div className="flex flex-col gap-1">
           <label className="text-sm font-medium text-text-secondary">Unidad</label>
           <select

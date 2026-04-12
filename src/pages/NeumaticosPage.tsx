@@ -12,6 +12,7 @@ import {
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { mexicoDate } from '../lib/date-utils';
+import SuccessToast from '../components/ui/SuccessToast';
 
 // ── Column order matches Sheet "13 Neumáticos" cols A→S ─────────────────────
 // A  #
@@ -150,6 +151,9 @@ export default function NeumaticosPage() {
   const [submitting, setSubmitting] = useState(false);
   const [registradas, setRegistradas] = useState<string[]>([]);
   const [errors, setErrors]         = useState<Partial<Record<keyof LlantaForm, string>>>({});
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+  const [toastType, setToastType]       = useState<'success' | 'error'>('success');
 
   const equipment       = equipmentList.find((e) => e.unit_id === selectedUnit);
   const positions       = equipment ? (POSITIONS_BY_TYPE[equipment.type] ?? POSITIONS_BY_TYPE.default) : [];
@@ -215,8 +219,13 @@ export default function NeumaticosPage() {
       setRegistradas((prev) => [...prev, llanta.posicion]);
       setLlanta(emptyLlanta(equipment?.type ?? '', ''));
       setErrors({});
+      setToastMessage(`Llanta ${llanta.posicion} registrada ✓`);
+      setToastType('success');
+      setToastVisible(true);
     } catch {
-      // offline-queue will retry
+      setToastMessage('Error al guardar. Reintenta.');
+      setToastType('error');
+      setToastVisible(true);
     } finally {
       setSubmitting(false);
     }
@@ -231,8 +240,8 @@ export default function NeumaticosPage() {
     return (
       <div className="flex flex-col py-4 animate-fade-up">
         <div className="flex items-center gap-3 mb-6">
-          <button onClick={() => navigate(-1)} className="p-1">
-            <ChevronLeft size={24} color="#162252" />
+          <button onClick={() => navigate(-1)} className="p-1" aria-label="Volver">
+            <ChevronLeft size={24} color="#162252" aria-hidden="true" />
           </button>
           <Disc3 size={24} color="#162252" />
           <h1 className="text-xl font-bold text-text">Reporte de Neumáticos</h1>
@@ -329,11 +338,18 @@ export default function NeumaticosPage() {
   // ── STEP 2: Per-tire form ──────────────────────────────────────────────
   return (
     <div className="flex flex-col py-4 animate-fade-up">
+      <SuccessToast
+        message={toastMessage}
+        visible={toastVisible}
+        type={toastType}
+        onDismiss={() => setToastVisible(false)}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <button onClick={() => setStep('equipo')} className="p-1">
-            <ChevronLeft size={24} color="#162252" />
+          <button onClick={() => setStep('equipo')} className="p-1" aria-label="Volver a selección de equipo">
+            <ChevronLeft size={24} color="#162252" aria-hidden="true" />
           </button>
           <div>
             <h1 className="text-lg font-bold text-text">{selectedUnit} · Neumáticos</h1>

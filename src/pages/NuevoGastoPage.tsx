@@ -328,8 +328,8 @@ export default function NuevoGastoPage() {
     <form onSubmit={handleSubmit} className="flex flex-col py-4 gap-4 animate-fade-up">
       {/* Header */}
       <div className="flex items-center gap-2 mb-1">
-        <button type="button" onClick={() => navigate(-1)} className="p-1 -ml-1">
-          <ChevronLeft size={22} className="text-text-secondary" />
+        <button type="button" onClick={() => navigate(-1)} className="p-1 -ml-1" aria-label="Volver">
+          <ChevronLeft size={22} className="text-text-secondary" aria-hidden="true" />
         </button>
         <h1 className="text-xl font-bold text-text">Nuevo Gasto</h1>
       </div>
@@ -649,8 +649,9 @@ export default function NuevoGastoPage() {
                   type="button"
                   onClick={() => removeLine(i)}
                   className="text-red-400 hover:text-red-600"
+                  aria-label={`Eliminar línea ${i + 1}`}
                 >
-                  <Trash2 size={14} />
+                  <Trash2 size={14} aria-hidden="true" />
                 </button>
               )}
             </div>

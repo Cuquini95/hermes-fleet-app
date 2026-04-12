@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle } from 'lucide-react';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { isAnomalous } from '../data/fuel-benchmarks';
-import { mexicoDate, mexicoTime } from '../lib/date-utils';
+import { mexicoDateInput, mexicoTimeInput } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
 import { useAuthStore } from '../stores/auth-store';
 import ConfirmModal from '../components/ui/ConfirmModal';
@@ -18,6 +18,8 @@ export default function DieselPage() {
   const userName = useAuthStore((s) => s.userName);
   const equipment = useEquipmentList();
 
+  const [fecha, setFecha] = useState(mexicoDateInput());
+  const [hora, setHora] = useState(mexicoTimeInput());
   const [unidad, setUnidad] = useState('');
   const [fuelType, setFuelType] = useState<FuelType>('Urea');
   const [litros, setLitros] = useState('');
@@ -48,38 +50,37 @@ export default function DieselPage() {
     setShowConfirm(true);
   }
 
-  async function handleConfirm() {
+  function handleConfirm() {
     setShowConfirm(false);
 
     const litrosNum = parseFloat(litros) || 0;
     const costoNum = parseFloat(costo) || 0;
     const horometroNum = parseFloat(horometro) || 0;
     const kmNum = parseFloat(kmActual) || 0;
-    // Rendimiento requires horómetro delta which is calculated in the sheet
-    const rendimiento = '';
 
-    try {
-      await appendRow(SHEET_TABS.COMBUSTIBLE, [
-        String(Date.now()),
-        mexicoDate(),
-        mexicoTime(),
-        unidad,
-        userName,
-        fuelType,
-        String(litrosNum),
-        String(costoNum),
-        String(horometroNum),
-        String(kmNum),
-        String(rendimiento),
-        estacion,
-        observaciones,
-      ]);
-    } catch (err) {
-      console.error('Sheets append failed (Combustible):', err);
-    }
+    const row = [
+      String(Date.now()),
+      fecha.split('-').reverse().join('/'),      // dd/MM/yyyy
+      hora.length === 5 ? hora + ':00' : hora,   // HH:mm:ss
+      unidad,
+      userName,
+      fuelType,
+      String(litrosNum),
+      String(costoNum),
+      String(horometroNum),
+      String(kmNum),
+      '',                                        // Rendimiento — sheet calculates
+      estacion,
+      observaciones,
+    ];
 
+    // Show success immediately — write happens in background
     setToastMessage('Combustible registrado ✓');
     setToastVisible(true);
+
+    appendRow(SHEET_TABS.COMBUSTIBLE, row).catch((err: unknown) => {
+      console.error('Background write failed (Combustible):', err);
+    });
   }
 
   function handleToastDismiss() {
@@ -127,6 +128,28 @@ export default function DieselPage() {
 
       {/* Form card */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-border flex flex-col gap-4">
+        {/* Fecha / Hora */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-text-secondary">Fecha</label>
+            <input
+              type="date"
+              value={fecha}
+              onChange={(e) => setFecha(e.target.value)}
+              className="w-full rounded-xl border border-border p-3 text-text bg-white"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-text-secondary">Hora</label>
+            <input
+              type="time"
+              value={hora}
+              onChange={(e) => setHora(e.target.value)}
+              className="w-full rounded-xl border border-border p-3 text-text bg-white"
+            />
+          </div>
+        </div>
+
         {/* Unidad */}
         <div className="flex flex-col gap-1">
           <label className="text-sm font-medium text-text-secondary">Unidad</label>

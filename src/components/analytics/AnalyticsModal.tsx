@@ -88,6 +88,7 @@ export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
             <button
               onClick={handlePdfClick}
               disabled={isLoading || status === 'error' || hasNoData}
+              aria-label="Generar reporte PDF"
               className="bg-violet-700 hover:bg-violet-600 text-white px-2 py-1 rounded text-xs font-semibold disabled:opacity-50 transition-colors shrink-0"
             >
               🖨️ PDF
@@ -96,16 +97,19 @@ export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
             <button
               onClick={() => store.fetch()}
               className="text-slate-400 hover:text-slate-200 px-1.5 py-1 rounded transition-colors shrink-0"
-              title="Actualizar"
+              title="Actualizar datos"
+              aria-label="Actualizar datos"
             >
-              {isLoading ? <span className="inline-block animate-spin">↻</span> : '↻'}
+              {isLoading ? <span className="inline-block animate-spin" aria-hidden="true">↻</span> : <span aria-hidden="true">↻</span>}
             </button>
             {/* Close */}
             <button
               onClick={onClose}
               className="text-slate-400 hover:text-slate-200 px-1.5 py-1 rounded transition-colors shrink-0"
+              title="Cerrar"
+              aria-label="Cerrar analítica"
             >
-              ✕
+              <span aria-hidden="true">✕</span>
             </button>
           </div>
 

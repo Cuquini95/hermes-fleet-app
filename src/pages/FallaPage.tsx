@@ -85,59 +85,63 @@ export default function FallaPage() {
     const otId = generateOTId();
     const priorityValue = priority ?? 'media';
 
-    // Upload photos to Supabase
+    // Photo upload must complete first — URL goes in the Averías row
     const photoUrls = photos.length > 0
       ? await tryUploadPhotos(photos.map((p) => p.file), 'falla-photos')
       : [];
     const observaciones = `Ubicación: ${ubicacion}. Cliente: ${clienteAfectado}. Puede moverse: ${puedeMoverse ? 'Sí' : 'No'}`;
-    const fotoUrl = photoUrls[0] ?? '';   // primary photo hyperlink column
+    const fotoUrl = photoUrls[0] ?? '';
 
-    try {
-      await appendRow(SHEET_TABS.AVERIAS, [
-        mexicoDate(),      // FECHA
-        mexicoTime(),      // HORA
-        unidad,            // UNIDAD
-        tipoFalla,         // TIPO AVERÍA
-        descripcion,       // DESCRIPCIÓN
-        priorityValue,     // SEVERIDAD
-        userName,          // TÉCNICO
-        downtime,          // TIEMPO PARO (hrs)
-        '',                // COSTO ESTIMADO
-        'Abierta',         // ESTADO
-        '',                // SOLUCIÓN
-        observaciones,     // OBSERVACIONES
-        '',                // PROVEEDOR PIEZA
-        otId,              // OT_ID
-        fotoUrl,           // FOTO_URL (hyperlink)
-      ]);
-    } catch (err) {
-      console.error('Sheets append failed (Averias):', err);
-    }
+    const averiaRow = [
+      mexicoDate(),      // FECHA
+      mexicoTime(),      // HORA
+      unidad,            // UNIDAD
+      tipoFalla,         // TIPO AVERÍA
+      descripcion,       // DESCRIPCIÓN
+      priorityValue,     // SEVERIDAD
+      userName,          // TÉCNICO
+      downtime,          // TIEMPO PARO (hrs)
+      '',                // COSTO ESTIMADO
+      'Abierta',         // ESTADO
+      '',                // SOLUCIÓN
+      observaciones,     // OBSERVACIONES
+      '',                // PROVEEDOR PIEZA
+      otId,              // OT_ID
+      fotoUrl,           // FOTO_URL (hyperlink)
+    ];
 
-    try {
-      await appendRow(SHEET_TABS.ORDENES_TRABAJO, [
-        String(Date.now()),
-        otId,
-        mexicoDate(),
-        unidad,
-        tipoFalla,
-        descripcion,
-        priorityValue,
-        priorityValue,
-        '',
-        'Abierta',
-        '',
-        '',
-        '',
-        '',
-        '',
-      ]);
-    } catch (err) {
-      console.error('Sheets append failed (OT):', err);
-    }
+    const otRow = [
+      String(Date.now()),
+      otId,
+      mexicoDate(),
+      unidad,
+      tipoFalla,
+      descripcion,
+      priorityValue,
+      priorityValue,
+      '',
+      'Abierta',
+      '',
+      '',
+      '',
+      '',
+      '',
+    ];
 
+    // Show success immediately — both sheet writes fire in parallel in background
     setToastMessage(`${otId} creada — Jefe de Taller notificado`);
     setToastVisible(true);
+
+    Promise.allSettled([
+      appendRow(SHEET_TABS.AVERIAS, averiaRow),
+      appendRow(SHEET_TABS.ORDENES_TRABAJO, otRow),
+    ]).then((results) => {
+      results.forEach((r, i) => {
+        if (r.status === 'rejected') {
+          console.error(`Background write failed (Falla row ${i}):`, r.reason);
+        }
+      });
+    });
   }
 
   function handleToastDismiss() {
