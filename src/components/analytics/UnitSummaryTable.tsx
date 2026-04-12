@@ -21,9 +21,10 @@ export default function UnitSummaryTable({ units }: UnitSummaryTableProps) {
       combustibleLitros: acc.combustibleLitros + u.combustibleLitros,
       combustibleCosto: acc.combustibleCosto + u.combustibleCosto,
       fletes: acc.fletes + u.fletes,
+      fletesAmount: acc.fletesAmount + u.fletesAmount,
       averias: acc.averias + u.averias,
     }),
-    { gastos: 0, combustibleLitros: 0, combustibleCosto: 0, fletes: 0, averias: 0 }
+    { gastos: 0, combustibleLitros: 0, combustibleCosto: 0, fletes: 0, fletesAmount: 0, averias: 0 }
   )
 
   return (
@@ -39,6 +40,7 @@ export default function UnitSummaryTable({ units }: UnitSummaryTableProps) {
               <th className="text-right py-2 px-3 font-medium">Gastos</th>
               <th className="text-right py-2 px-3 font-medium">Combustible</th>
               <th className="text-right py-2 px-3 font-medium">Fletes</th>
+              <th className="text-right py-2 px-3 font-medium">Flete $</th>
               <th className="text-right py-2 px-3 font-medium">Averías</th>
               <th className="text-right py-2 px-3 font-medium">Total</th>
             </tr>
@@ -59,6 +61,9 @@ export default function UnitSummaryTable({ units }: UnitSummaryTableProps) {
                 <td className="py-2 px-3 text-right text-[#f1f5f9]">
                   {u.fletes > 0 ? u.fletes : '—'}
                 </td>
+                <td className="py-2 px-3 text-right text-[#fdba74]">
+                  {u.fletesAmount > 0 ? formatPeso(u.fletesAmount) : '—'}
+                </td>
                 <td className="py-2 px-3 text-right text-[#fca5a5]">
                   {u.averias > 0 ? u.averias : '—'}
                 </td>
@@ -74,6 +79,7 @@ export default function UnitSummaryTable({ units }: UnitSummaryTableProps) {
               <td className="py-2 px-3 text-right text-[#60a5fa]">{formatPeso(totals.gastos)}</td>
               <td className="py-2 px-3 text-right text-[#4ade80]">{formatLitros(totals.combustibleLitros)}</td>
               <td className="py-2 px-3 text-right text-[#f1f5f9]">{totals.fletes}</td>
+              <td className="py-2 px-3 text-right text-[#fdba74]">{formatPeso(totals.fletesAmount)}</td>
               <td className="py-2 px-3 text-right text-[#f87171]">{totals.averias}</td>
               <td className="py-2 px-3 text-right text-[#f1f5f9]">{formatPeso(totals.gastos + totals.combustibleCosto)}</td>
             </tr>

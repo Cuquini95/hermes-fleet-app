@@ -421,7 +421,7 @@ function buildFletesPage(
   const dataRows = fletesRows.slice(1)
 
   autoTable(doc, {
-    head: [['Fecha', 'Unidad', 'Conductor', 'Origen', 'Destino', 'Tonelaje', 'KM Total']],
+    head: [['Fecha', 'Unidad', 'Conductor', 'Origen', 'Destino', 'Tonelaje', 'KM Total', 'Flete ($)']],
     body: dataRows.map(r => [
       r[0] ?? '',
       r[2] ?? '',
@@ -430,6 +430,7 @@ function buildFletesPage(
       r[6] ?? '',
       r[11] ?? '',
       r[8] ?? '',
+      r[12] ?? '',
     ]),
     startY,
     styles: {
@@ -454,6 +455,7 @@ function buildFletesPage(
       4: { cellWidth: 'auto' },
       5: { cellWidth: 22, halign: 'right', textColor: COLORS.orange },
       6: { cellWidth: 22, halign: 'right' },
+      7: { cellWidth: 28, halign: 'right', textColor: COLORS.orange },
     },
     margin: { left: 10, right: 10 },
   })
