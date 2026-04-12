@@ -19,10 +19,11 @@ export default function UnitSummaryTable({ units }: UnitSummaryTableProps) {
     (acc, u) => ({
       gastos: acc.gastos + u.gastos,
       combustibleLitros: acc.combustibleLitros + u.combustibleLitros,
+      combustibleCosto: acc.combustibleCosto + u.combustibleCosto,
       fletes: acc.fletes + u.fletes,
       averias: acc.averias + u.averias,
     }),
-    { gastos: 0, combustibleLitros: 0, fletes: 0, averias: 0 }
+    { gastos: 0, combustibleLitros: 0, combustibleCosto: 0, fletes: 0, averias: 0 }
   )
 
   return (
@@ -39,6 +40,7 @@ export default function UnitSummaryTable({ units }: UnitSummaryTableProps) {
               <th className="text-right py-2 px-3 font-medium">Combustible</th>
               <th className="text-right py-2 px-3 font-medium">Fletes</th>
               <th className="text-right py-2 px-3 font-medium">Averías</th>
+              <th className="text-right py-2 px-3 font-medium">Total</th>
             </tr>
           </thead>
           <tbody>
@@ -60,6 +62,9 @@ export default function UnitSummaryTable({ units }: UnitSummaryTableProps) {
                 <td className="py-2 px-3 text-right text-[#fca5a5]">
                   {u.averias > 0 ? u.averias : '—'}
                 </td>
+                <td className="py-2 px-3 text-right text-[#f1f5f9]">
+                  {formatPeso(u.gastos + u.combustibleCosto)}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -70,6 +75,7 @@ export default function UnitSummaryTable({ units }: UnitSummaryTableProps) {
               <td className="py-2 px-3 text-right text-[#4ade80]">{formatLitros(totals.combustibleLitros)}</td>
               <td className="py-2 px-3 text-right text-[#f1f5f9]">{totals.fletes}</td>
               <td className="py-2 px-3 text-right text-[#f87171]">{totals.averias}</td>
+              <td className="py-2 px-3 text-right text-[#f1f5f9]">{formatPeso(totals.gastos + totals.combustibleCosto)}</td>
             </tr>
           </tfoot>
         </table>

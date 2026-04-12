@@ -52,7 +52,7 @@ export default function CombustibleTrendChart({ data }: CombustibleTrendChartPro
             width={36}
           />
           <Tooltip
-            formatter={(value: number) => [formatLitros(value), 'Combustible']}
+            formatter={(value) => [formatLitros(Number(value)), 'Combustible']}
             contentStyle={{
               background: '#0f172a',
               border: '1px solid #334155',

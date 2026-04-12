@@ -1,5 +1,21 @@
 // src/components/analytics/analyticsUtils.ts
 
+// ── Month sort helpers ────────────────────────────────────────────────────────
+
+const MONTH_ORDER = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+
+function sortTrendKeys(a: string, b: string): number {
+  // Week keys like "S1", "S2" — sort numerically
+  if (a.startsWith('S') && b.startsWith('S')) {
+    return parseInt(a.slice(1)) - parseInt(b.slice(1))
+  }
+  // Month abbreviations — sort by calendar order
+  const ai = MONTH_ORDER.indexOf(a)
+  const bi = MONTH_ORDER.indexOf(b)
+  if (ai !== -1 && bi !== -1) return ai - bi
+  return a.localeCompare(b, 'es-MX', { numeric: true })
+}
+
 // ── Column indices (match DataManagerPage COLLECTIONS order) ─────────────────
 // Gastos  ('Gastos'):              Fecha=0, Total=9, Unidad=10
 // Combustible ('Combustible'):     Fecha=0, Unidad=3, Litros=6, Costo=7
@@ -161,7 +177,8 @@ export function buildTrend(combustibleRows: string[][], period: Period): WeekPoi
 
     let key: string
     if (period === 'year') {
-      key = d.toLocaleString('es-MX', { month: 'short', timeZone: 'UTC' })
+      const raw = d.toLocaleString('es-MX', { month: 'short', timeZone: 'UTC' })
+      key = raw.charAt(0).toUpperCase() + raw.slice(1)
     } else {
       // Relative week index from window start
       const cutoff = getPeriodCutoff(period)
@@ -173,7 +190,7 @@ export function buildTrend(combustibleRows: string[][], period: Period): WeekPoi
   }
 
   return Array.from(buckets.entries())
-    .sort(([a], [b]) => a.localeCompare(b, 'es-MX', { numeric: true }))
+    .sort(([a], [b]) => sortTrendKeys(a, b))
     .map(([label, litros]) => ({ label, litros }))
     .slice(-12) // last 12 buckets max
 }

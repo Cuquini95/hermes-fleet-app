@@ -155,6 +155,26 @@ describe('buildTrend', () => {
     const totalLitros = trend.reduce((sum, p) => sum + p.litros, 0)
     expect(totalLitros).toBe(1000)
   })
+
+  it('returns months in calendar order, not alphabetical order', () => {
+    // Ago (August=8) comes before Ene (January=1) alphabetically,
+    // but must appear after Ene in calendar order.
+    const rows = [
+      ['01/08/2025', '', '', 'CV103', '', '', '300'], // Ago
+      ['01/01/2026', '', '', 'CV103', '', '', '100'], // Ene
+      ['01/02/2026', '', '', 'CV103', '', '', '200'], // Feb
+    ]
+    const trend = buildTrend(rows, 'year')
+    const labels = trend.map(p => p.label)
+
+    expect(labels).toContain('Ene')
+    expect(labels).toContain('Feb')
+    expect(labels).toContain('Ago')
+
+    // Calendar order: Ene < Feb < Ago
+    expect(labels.indexOf('Ene')).toBeLessThan(labels.indexOf('Feb'))
+    expect(labels.indexOf('Feb')).toBeLessThan(labels.indexOf('Ago'))
+  })
 })
 
 describe('extractUnits', () => {

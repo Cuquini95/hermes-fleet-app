@@ -48,7 +48,7 @@ export default function GastosPorUnidadChart({ units }: GastosPorUnidadChartProp
             width={36}
           />
           <Tooltip
-            formatter={(value: number) => [formatPeso(value), 'Gastos']}
+            formatter={(value) => [formatPeso(Number(value)), 'Gastos']}
             contentStyle={{
               background: '#0f172a',
               border: '1px solid #334155',
