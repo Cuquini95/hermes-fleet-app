@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Camera,
@@ -17,7 +17,14 @@ import { ocrReceipt, importPartsFromQuote } from '../lib/sheets-api';
 import type { GastoTipo, MetodoPago } from '../stores/gastos-store';
 import type { OcrLineItem, PriceChange } from '../lib/sheets-api';
 import { uploadPhoto } from '../lib/photo-upload';
+import { tryUploadPhotos } from '../lib/photo-upload-safe';
 import { useEquipmentList } from '../hooks/useEquipmentList';
+import PhotoCapture from '../components/ui/PhotoCapture';
+
+interface PhotoItem {
+  file: File;
+  preview: string;
+}
 
 // ── Empty line item ───────────────────────────────────────────────────────────
 
@@ -50,6 +57,19 @@ export default function NuevoGastoPage() {
   const [metodoPago, setMetodoPago] = useState<MetodoPago>('Efectivo');
   const [lineItems, setLineItems] = useState<OcrLineItem[]>([emptyLine()]);
   const [imageUrl, setImageUrl] = useState('');
+  const [receiptPhotos, setReceiptPhotos] = useState<PhotoItem[]>([]);
+
+  const handleReceiptCapture = useCallback((file: File) => {
+    const preview = URL.createObjectURL(file);
+    setReceiptPhotos([{ file, preview }]); // only one receipt photo
+  }, []);
+
+  const handleReceiptRemove = useCallback(() => {
+    setReceiptPhotos((prev) => {
+      if (prev[0]) URL.revokeObjectURL(prev[0].preview);
+      return [];
+    });
+  }, []);
 
   // ── OCR state
   const [ocrLoading, setOcrLoading] = useState(false);
@@ -180,6 +200,14 @@ export default function NuevoGastoPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitError(null);
+
+    // If OCR didn't upload a photo but user manually captured one, upload it now
+    let finalImageUrl = imageUrl;
+    if (!finalImageUrl && receiptPhotos.length > 0) {
+      const urls = await tryUploadPhotos([receiptPhotos[0].file], 'receipts');
+      finalImageUrl = urls[0] ?? '';
+    }
+
     const commonFields = {
       tipo,
       proveedor,
@@ -187,7 +215,7 @@ export default function NuevoGastoPage() {
       folio_factura: folioFactura,
       ot_id: otId,
       metodo_pago: metodoPago,
-      imagen_url: imageUrl,
+      imagen_url: finalImageUrl,
       solicitante: userName,
       line_items: lineItems.filter((l) => l.description.trim() !== ''),
     };
@@ -365,6 +393,29 @@ export default function NuevoGastoPage() {
           <div className="flex items-center gap-2 mt-3 text-sm text-red-600">
             <AlertCircle size={16} />
             {ocrError}
+          </div>
+        )}
+
+        {/* Standalone photo (no OCR) — shown only when imageUrl not set by OCR */}
+        {!imageUrl && (
+          <div className="mt-3 border-t border-border pt-3">
+            <p className="text-xs text-text-secondary mb-2">
+              {ocrDone ? 'Foto ya adjunta desde escáner' : 'Foto del recibo (sin OCR)'}
+            </p>
+            {!ocrDone && (
+              <PhotoCapture
+                photos={receiptPhotos}
+                onCapture={handleReceiptCapture}
+                onRemove={() => handleReceiptRemove()}
+                multiple={false}
+              />
+            )}
+          </div>
+        )}
+        {imageUrl && (
+          <div className="mt-3 border-t border-border pt-3 flex items-center gap-2 text-xs text-success">
+            <CheckCircle size={14} />
+            Foto subida correctamente
           </div>
         )}
       </div>
