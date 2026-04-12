@@ -350,18 +350,21 @@ export default function HermesChat() {
                 if (diagEquip === 'General' && results[0].compatible_units?.length > 0) {
                   diagEquip = results[0].compatible_units[0];
                 }
+                // Use description as search term (e.g. "Injector") — far more reliable
+                // than the raw part number which may not exist in the local index files
+                const diagSearchTerm = results[0].description ?? pn;
                 try {
-                  const diag = await findDiagram(diagEquip, pn);
+                  const diag = await findDiagram(diagEquip, diagSearchTerm);
                   if (diag.found && diag.image_url && diag.page !== undefined) {
                     const nextPage = diag.page + 1;
                     responseText += `\n\n📐 **Diagrama — ${diag.section ?? ''}**\n![Diagrama](/hermes-api${diag.image_url})\n\n📋 **Lista de Partes**\n![Partes](/hermes-api/diagrams/page/${diag.pdf}/${nextPage})`;
                   } else if (diag.found && diag.image_url) {
                     responseText += `\n\n📐 **Diagrama**\n![Diagrama](/hermes-api${diag.image_url})`;
                   } else {
-                    responseText += `\n\n📐 **Diagrama**\nVe a **Más → Diagramas** y busca el modelo del equipo.`;
+                    responseText += `\n\n📐 **Diagrama**\nNo encontré un diagrama para _${diagSearchTerm}_. Ve a **Más → Diagramas** para explorar los planos disponibles.`;
                   }
                 } catch {
-                  responseText += `\n\n📐 **Diagrama**\nVe a **Más → Diagramas** y busca el modelo del equipo.`;
+                  responseText += `\n\n📐 **Diagrama**\nNo pude cargar el diagrama. Ve a **Más → Diagramas** para explorar los planos disponibles.`;
                 }
               }
             } else {
