@@ -1,7 +1,7 @@
 // src/components/analytics/analyticsUtils.ts
 
 // ── Column indices (match DataManagerPage COLLECTIONS order) ─────────────────
-// Gastos  ('02 Gastos'):           Fecha=0, Total=9, Unidad=10
+// Gastos  ('Gastos'):              Fecha=0, Total=9, Unidad=10
 // Combustible ('Combustible'):     Fecha=0, Unidad=3, Litros=6, Costo=7
 // Fletes  ('Reporte_Fletes_Transporte'): Fecha=0, Unidad=2, KM_Total=8, Tonelaje=11, Flete=12
 // Averias ('Averías'):             Fecha=0, Unidad=2, Descripcion=4, Status=7
@@ -163,16 +163,17 @@ export function buildTrend(combustibleRows: string[][], period: Period): WeekPoi
     if (period === 'year') {
       key = d.toLocaleString('es-MX', { month: 'short', timeZone: 'UTC' })
     } else {
-      // ISO week number within the period
-      const startOfYear = new Date(d.getFullYear(), 0, 1)
-      const weekNum = Math.ceil(((d.getTime() - startOfYear.getTime()) / 86_400_000 + startOfYear.getDay() + 1) / 7)
-      key = `S${weekNum}`
+      // Relative week index from window start
+      const cutoff = getPeriodCutoff(period)
+      const weekIndex = Math.floor((d.getTime() - cutoff.getTime()) / (7 * 86_400_000))
+      key = `S${weekIndex + 1}`
     }
 
     buckets.set(key, (buckets.get(key) ?? 0) + litros)
   }
 
   return Array.from(buckets.entries())
+    .sort(([a], [b]) => a.localeCompare(b, 'es-MX', { numeric: true }))
     .map(([label, litros]) => ({ label, litros }))
     .slice(-12) // last 12 buckets max
 }
