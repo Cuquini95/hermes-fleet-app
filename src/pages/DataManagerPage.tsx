@@ -9,8 +9,11 @@ import {
   Pencil,
   Copy,
   Check,
+  Trash2,
 } from 'lucide-react';
-import { readRange, upsertRow } from '../lib/sheets-api';
+import { readRange, updateCell, deleteRow } from '../lib/sheets-api';
+import { useAnalyticsStore } from '../stores/analyticsStore';
+import { AnalyticsModal } from '../components/analytics/AnalyticsModal';
 
 // ── Collection definitions ───────────────────────────────────────────────────
 
@@ -317,6 +320,10 @@ export default function DataManagerPage() {
   const [flashCell, setFlashCell] = useState<FlashCell>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [analyticsOpen, setAnalyticsOpen] = useState(false);
 
   const active = useMemo(
     () => COLLECTIONS.find((c) => c.id === activeId) ?? COLLECTIONS[0],
@@ -350,7 +357,13 @@ export default function DataManagerPage() {
     setEditingCell(null);
     setSavingCell(null);
     setFlashCell(null);
+    setSelectedRows(new Set());
   }, [activeId]);
+
+  // Pre-fetch analytics data on mount
+  useEffect(() => {
+    useAnalyticsStore.getState().fetch();
+  }, []);
 
   // Clean rows: drop empties and any header row
   const cleanRows = useMemo(() => {
@@ -415,44 +428,36 @@ export default function DataManagerPage() {
 
   async function handleCellSave(rowIndex: number, colIndex: number, newValue: string) {
     const sourceRow = visibleRows[rowIndex];
-    if (!sourceRow) {
-      setEditingCell(null);
-      return;
-    }
+    if (!sourceRow) { setEditingCell(null); return; }
+
     const targetCol = active.columns[colIndex];
     const originalValue = sourceRow[targetCol.index] ?? '';
+    if (newValue === originalValue) { setEditingCell(null); return; }
 
-    if (newValue === originalValue) {
-      setEditingCell(null);
-      return;
-    }
-
-    // Find key column (sticky col or col index 0)
+    // Use the sticky (first) column as search key
     const keyCol = active.columns.find((c) => c.sticky) ?? active.columns[0];
     const keyValue = sourceRow[keyCol.index];
-    if (!keyValue) {
-      setEditingCell(null);
-      return;
-    }
-
-    // Build the updated full row (pad to accommodate targetCol.index if needed)
-    const updatedRow = [...sourceRow];
-    while (updatedRow.length <= targetCol.index) {
-      updatedRow.push('');
-    }
-    updatedRow[targetCol.index] = newValue;
+    if (!keyValue) { setEditingCell(null); return; }
 
     setEditingCell(null);
     setSavingCell({ rowIndex, colIndex });
 
     try {
-      await upsertRow(active.tab, keyValue, updatedRow);
-      // Update cache: replace the matching row (by key) in the raw cache
+      await updateCell(active.tab, keyCol.index, keyValue, targetCol.index, newValue);
+      // Update local cache
       setCache((prev) => {
         const tabRows = prev[active.id];
         if (!tabRows) return prev;
+        // Find all rows matching the key and update the first one that also matches the original value
+        let updated = false;
         const nextRows = tabRows.map((r) => {
-          if ((r[keyCol.index] ?? '') === keyValue) return updatedRow;
+          if (!updated && (r[keyCol.index] ?? '') === keyValue && (r[targetCol.index] ?? '') === originalValue) {
+            updated = true;
+            const newRow = [...r];
+            while (newRow.length <= targetCol.index) newRow.push('');
+            newRow[targetCol.index] = newValue;
+            return newRow;
+          }
           return r;
         });
         return { ...prev, [active.id]: nextRows };
@@ -468,6 +473,57 @@ export default function DataManagerPage() {
     } finally {
       setSavingCell(null);
     }
+  }
+
+  function toggleRowSelection(rowIndex: number) {
+    setSelectedRows(prev => {
+      const next = new Set(prev);
+      if (next.has(rowIndex)) next.delete(rowIndex);
+      else next.add(rowIndex);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedRows.size === visibleRows.length) {
+      setSelectedRows(new Set());
+    } else {
+      setSelectedRows(new Set(visibleRows.map((_, i) => i)));
+    }
+  }
+
+  async function handleDeleteSelected() {
+    if (selectedRows.size === 0) return;
+    setIsDeleting(true);
+    setShowDeleteConfirm(false);
+
+    // Build match keys: use first 3 columns of each collection as composite key
+    const keyColIndices = active.columns.slice(0, 3).map(c => c.index);
+
+    let successCount = 0;
+    for (const rowIndex of Array.from(selectedRows).sort((a, b) => b - a)) {
+      const row = visibleRows[rowIndex];
+      if (!row) continue;
+      const match: Record<string, string> = {};
+      keyColIndices.forEach(idx => {
+        match[String(idx)] = row[idx] ?? '';
+      });
+      try {
+        await deleteRow(active.tab, match);
+        successCount++;
+      } catch {
+        // continue deleting others
+      }
+    }
+
+    // Refresh cache
+    setCache(prev => ({ ...prev, [active.id]: undefined as unknown as string[][] }));
+    setSelectedRows(new Set());
+    setIsDeleting(false);
+    setToast(successCount > 0 ? `${successCount} registro(s) eliminado(s)` : 'No se pudo eliminar');
+    setTimeout(() => setToast(null), 3000);
+    // Reload
+    loadTab(active);
   }
 
   return (
@@ -548,6 +604,20 @@ export default function DataManagerPage() {
           )}
         </div>
 
+        {selectedRows.size > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowDeleteConfirm(true)}
+            disabled={isDeleting}
+            className="flex items-center gap-1.5 px-3 h-9 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-700 transition-colors disabled:opacity-50"
+          >
+            <Trash2 size={14} />
+            <span className="hidden sm:inline">
+              {isDeleting ? 'Eliminando…' : `Eliminar (${selectedRows.size})`}
+            </span>
+          </button>
+        )}
+
         <button
           type="button"
           onClick={() => loadTab(active)}
@@ -578,6 +648,14 @@ export default function DataManagerPage() {
         >
           <Download size={14} />
           <span className="hidden sm:inline">Exportar CSV</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setAnalyticsOpen(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-700 hover:bg-violet-600 text-white text-sm rounded-md font-medium transition-colors"
+        >
+          📊 Analítica
         </button>
       </div>
 
@@ -611,6 +689,9 @@ export default function DataManagerPage() {
             onCellChange={handleCellChange}
             onCellSave={handleCellSave}
             onCellCancel={handleCellCancel}
+            selectedRows={selectedRows}
+            onToggleRow={toggleRowSelection}
+            onToggleAll={toggleSelectAll}
           />
         )}
       </div>
@@ -620,6 +701,35 @@ export default function DataManagerPage() {
           {toast}
         </div>
       )}
+
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full">
+            <h3 className="text-base font-bold text-[#1A2B2B] mb-2">
+              ¿Eliminar {selectedRows.size} registro(s)?
+            </h3>
+            <p className="text-sm text-[#6B7280] mb-5">
+              Esta acción eliminará las filas seleccionadas de Google Sheets y PocketBase. No se puede deshacer.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="flex-1 py-2 rounded-xl border border-[#E5E7EB] text-sm font-semibold text-[#6B7280] hover:bg-[#F1F5F9]"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleDeleteSelected}
+                className="flex-1 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold hover:bg-red-700"
+              >
+                Sí, eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <AnalyticsModal open={analyticsOpen} onClose={() => setAnalyticsOpen(false)} />
     </div>
   );
 }
@@ -636,6 +746,9 @@ interface DataTableProps {
   onCellChange: (value: string) => void;
   onCellSave: (rowIndex: number, colIndex: number, value: string) => void;
   onCellCancel: () => void;
+  selectedRows: Set<number>;
+  onToggleRow: (rowIndex: number) => void;
+  onToggleAll: () => void;
 }
 
 function DataTable({
@@ -648,6 +761,9 @@ function DataTable({
   onCellChange,
   onCellSave,
   onCellCancel,
+  selectedRows,
+  onToggleRow,
+  onToggleAll,
 }: DataTableProps) {
   return (
     <div className="rounded-xl border border-[#E5E7EB] bg-white overflow-hidden shadow-sm">
@@ -655,6 +771,14 @@ function DataTable({
         <table className="min-w-full border-collapse text-sm">
           <thead className="sticky top-0 z-10">
             <tr className="bg-[#F8FAFC]">
+              <th className="w-10 px-3 py-3 border-b-2 border-[#162252]/20 bg-[#F8FAFC]">
+                <input
+                  type="checkbox"
+                  checked={rows.length > 0 && selectedRows.size === rows.length}
+                  onChange={onToggleAll}
+                  className="w-4 h-4 rounded accent-[#162252] cursor-pointer"
+                />
+              </th>
               {columns.map((col, i) => (
                 <th
                   key={i}
@@ -677,9 +801,19 @@ function DataTable({
               <tr
                 key={ri}
                 className={`group transition-colors ${
-                  ri % 2 === 0 ? 'bg-white' : 'bg-[#F8FAFC]'
+                  selectedRows.has(ri)
+                    ? 'bg-blue-50 ring-1 ring-inset ring-blue-200'
+                    : ri % 2 === 0 ? 'bg-white' : 'bg-[#F8FAFC]'
                 } hover:bg-[#EFF6FF]`}
               >
+                <td className="w-10 px-3 py-2">
+                  <input
+                    type="checkbox"
+                    checked={selectedRows.has(ri)}
+                    onChange={() => onToggleRow(ri)}
+                    className="w-4 h-4 rounded accent-[#162252] cursor-pointer"
+                  />
+                </td>
                 {columns.map((col, ci) => {
                   const raw = row[col.index] ?? '';
                   const isEditable = !col.sticky && !col.badge;
