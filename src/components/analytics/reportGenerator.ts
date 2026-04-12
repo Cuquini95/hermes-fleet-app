@@ -90,12 +90,14 @@ function addPageHeader(
 function buildExecutiveSummary(
   doc: jsPDF,
   period: string,
+  unitFilter: string,
   kpiTotals: KpiTotals,
   unitMetrics: UnitMetrics[],
   timestamp: string
 ): void {
   const pageW = doc.internal.pageSize.width
   const periodLabel = PERIOD_LABELS[period] ?? period
+  const unitLabel = unitFilter === 'all' ? 'Todas' : unitFilter
 
   // Full-width dark header
   doc.setFillColor(...DARK_BLUE)
@@ -106,7 +108,7 @@ function buildExecutiveSummary(
   doc.text('HERMES FLEET — REPORTE GERENCIAL', pageW / 2, 14, { align: 'center' })
   doc.setFontSize(10)
   doc.setFont('helvetica', 'normal')
-  doc.text(`Período: ${periodLabel}  |  Generado: ${timestamp}`, pageW / 2, 23, { align: 'center' })
+  doc.text(`Período: ${periodLabel}  |  Unidad: ${unitLabel}  |  Generado: ${timestamp}`, pageW / 2, 23, { align: 'center' })
   doc.setTextColor(0, 0, 0)
 
   // KPI boxes — 4 in a row
@@ -316,7 +318,7 @@ function buildAveriasPage(
 
 export function generateReport(
   period: 'week' | 'month' | 'year',
-  _unitFilter: string,
+  unitFilter: string,
   filteredRows: {
     gastos: string[][]
     combustible: string[][]
@@ -330,7 +332,7 @@ export function generateReport(
   const timestamp = buildTimestamp()
 
   // Page 1 — Executive Summary
-  buildExecutiveSummary(doc, period, kpiTotals, unitMetrics, timestamp)
+  buildExecutiveSummary(doc, period, unitFilter, kpiTotals, unitMetrics, timestamp)
 
   // Page 2 — Gastos
   doc.addPage()

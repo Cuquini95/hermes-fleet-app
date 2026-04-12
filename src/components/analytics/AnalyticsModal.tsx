@@ -43,7 +43,11 @@ export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
   if (!open) return null
 
   const isLoading = status === 'loading'
-  const hasNoData = raw.gastos.length === 0
+  const hasNoData =
+    raw.gastos.length === 0 &&
+    raw.combustible.length === 0 &&
+    raw.fletes.length === 0 &&
+    raw.averias.length === 0
   const units = store.getUnits()
 
   function handlePdfClick() {
@@ -107,7 +111,7 @@ export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
               {/* PDF button */}
               <button
                 onClick={handlePdfClick}
-                disabled={isLoading}
+                disabled={isLoading || status === 'error' || hasNoData}
                 className="bg-violet-700 hover:bg-violet-600 text-white px-3 py-1 rounded text-sm font-semibold disabled:opacity-50 transition-colors"
               >
                 🖨️ PDF
