@@ -23,11 +23,16 @@ const FLETE_RATES: Array<{ origen: string; destino: string; rate: number }> = [
  * or null if no rule matches. Matching is case-insensitive and
  * uses .includes() so partial strings still match.
  */
+/** Strip diacritics so "Báscula" matches "bascula", etc. */
+function normalize(s: string): string {
+  return s.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
 function calcFleteRate(origen: string, destino: string): number | null {
-  const o = origen.trim().toLowerCase();
-  const d = destino.trim().toLowerCase();
+  const o = normalize(origen);
+  const d = normalize(destino);
   for (const rule of FLETE_RATES) {
-    if (o.includes(rule.origen) && d.includes(rule.destino)) return rule.rate;
+    if (o.includes(normalize(rule.origen)) && d.includes(normalize(rule.destino))) return rule.rate;
   }
   return null;
 }
