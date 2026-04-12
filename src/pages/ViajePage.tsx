@@ -12,27 +12,38 @@ import { AutocompleteInput } from '../components/AutocompleteInput';
 const MATERIAL_OPTIONS = ['Tierra', 'Roca', 'Grava', 'Mineral', 'Caliza', 'Otro'] as const;
 
 // ── Flete rate rules ──────────────────────────────────────────────────────────
-// Add more routes here as needed.
-const FLETE_RATES: Array<{ origen: string; destino: string; rate: number }> = [
-  { origen: 'pesadas', destino: 'manzanillo',       rate: 160 },
-  { origen: 'pesadas', destino: 'bascula paticajo',  rate: 80  },
+// Each rule lists one or more destino aliases (all spellings that mean the same place).
+// Matching is case-insensitive, diacritic-insensitive, and uses .includes().
+// To add a new route: add an entry with its origen, destinos array, and rate.
+const FLETE_RATES: Array<{ origen: string; destinos: string[]; rate: number }> = [
+  {
+    origen:  'pesadas',
+    destinos: ['manzanillo'],
+    rate: 160,
+  },
+  {
+    origen:  'pesadas',
+    destinos: ['bascula paticajo', 'bascula paticajo', 'bascula paticajó'],
+    rate: 80,
+  },
 ];
 
-/**
- * Returns the rate ($/ton) for a given origin→destination pair,
- * or null if no rule matches. Matching is case-insensitive and
- * uses .includes() so partial strings still match.
- */
 /** Strip diacritics so "Báscula" matches "bascula", etc. */
 function normalize(s: string): string {
   return s.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
 
+/**
+ * Returns the rate ($/ton) for a given origin→destination pair,
+ * or null if no rule matches.
+ */
 function calcFleteRate(origen: string, destino: string): number | null {
   const o = normalize(origen);
   const d = normalize(destino);
   for (const rule of FLETE_RATES) {
-    if (o.includes(normalize(rule.origen)) && d.includes(normalize(rule.destino))) return rule.rate;
+    const origenMatch = o.includes(normalize(rule.origen));
+    const destinoMatch = rule.destinos.some((alias) => d.includes(normalize(alias)));
+    if (origenMatch && destinoMatch) return rule.rate;
   }
   return null;
 }
