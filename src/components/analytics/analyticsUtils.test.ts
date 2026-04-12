@@ -1,5 +1,5 @@
 // src/components/analytics/analyticsUtils.test.ts
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   parseSheetDate,
   getPeriodCutoff,
@@ -112,10 +112,27 @@ describe('computeKpiTotals', () => {
     expect(totals.fletesCount).toBe(3)
     expect(totals.averiasCount).toBe(3)
   })
+
+  it('returns zero totals for empty units array', () => {
+    const totals = computeKpiTotals([])
+    expect(totals.gastosTotal).toBe(0)
+    expect(totals.combustibleLitros).toBe(0)
+    expect(totals.fletesCount).toBe(0)
+    expect(totals.averiasCount).toBe(0)
+  })
 })
 
 describe('buildTrend', () => {
-  it('returns an array of week points', () => {
+  beforeEach(() => {
+    // Fix "today" to 2026-04-12 so dates don't expire
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-12'))
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('sums litros into weekly buckets for month period', () => {
     const rows = [
       ['05/04/2026', '', '', 'CV103', '', '', '500'],
       ['06/04/2026', '', '', 'CV104', '', '', '300'],
@@ -123,7 +140,20 @@ describe('buildTrend', () => {
     const trend = buildTrend(rows, 'month')
     expect(trend.length).toBeGreaterThan(0)
     expect(trend[0]).toHaveProperty('label')
-    expect(trend[0]).toHaveProperty('litros')
+    // Both rows are in the same week bucket — litros should sum to 800
+    const totalLitros = trend.reduce((sum, p) => sum + p.litros, 0)
+    expect(totalLitros).toBe(800)
+  })
+
+  it('groups by month name for year period', () => {
+    const rows = [
+      ['05/04/2026', '', '', 'CV103', '', '', '400'],
+      ['10/03/2026', '', '', 'CV103', '', '', '600'],
+    ]
+    const trend = buildTrend(rows, 'year')
+    expect(trend.length).toBe(2)
+    const totalLitros = trend.reduce((sum, p) => sum + p.litros, 0)
+    expect(totalLitros).toBe(1000)
   })
 })
 
