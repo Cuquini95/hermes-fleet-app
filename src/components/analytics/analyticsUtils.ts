@@ -32,6 +32,7 @@ export interface UnitMetrics {
   fletes: number         // count of rows
   tonelaje: number
   averias: number        // count of rows
+  fletesAmount: number   // sum of FLETE ($) column (col 12)
 }
 
 export interface KpiTotals {
@@ -40,6 +41,7 @@ export interface KpiTotals {
   combustibleCosto: number
   fletesCount: number
   averiasCount: number
+  fletesAmount: number   // sum of FLETE ($) across all units
 }
 
 export interface WeekPoint {
@@ -126,6 +128,7 @@ export function aggregateByUnit(
         fletes: 0,
         tonelaje: 0,
         averias: 0,
+        fletesAmount: 0,
       })
     }
     return map.get(unit)!
@@ -151,6 +154,7 @@ export function aggregateByUnit(
     const m = getOrCreate(unit)
     m.fletes += 1
     m.tonelaje += parseNum(row[11] ?? '')
+    m.fletesAmount += parseCurrency(row[12] ?? '')
   }
 
   for (const row of averias) {
@@ -171,8 +175,9 @@ export function computeKpiTotals(units: UnitMetrics[]): KpiTotals {
       combustibleCosto: acc.combustibleCosto + u.combustibleCosto,
       fletesCount: acc.fletesCount + u.fletes,
       averiasCount: acc.averiasCount + u.averias,
+      fletesAmount: acc.fletesAmount + u.fletesAmount,
     }),
-    { gastosTotal: 0, combustibleLitros: 0, combustibleCosto: 0, fletesCount: 0, averiasCount: 0 }
+    { gastosTotal: 0, combustibleLitros: 0, combustibleCosto: 0, fletesCount: 0, averiasCount: 0, fletesAmount: 0 }
   )
 }
 

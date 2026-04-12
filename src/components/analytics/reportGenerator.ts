@@ -146,6 +146,7 @@ interface KpiCardConfig {
   unit: string
   accentColor: [number, number, number]
   bgColor: [number, number, number]
+  subValue?: string   // optional secondary line (e.g. peso amount for Fletes)
 }
 
 function drawKpiCard(
@@ -183,6 +184,14 @@ function drawKpiCard(
   doc.setFontSize(7)
   doc.setTextColor(...COLORS.gray600)
   doc.text(cfg.unit, x + w / 2, y + 19, { align: 'center' })
+
+  // Sub-value (e.g. peso amount) — small, gray600, below unit
+  if (cfg.subValue) {
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(7)
+    doc.setTextColor(...COLORS.gray600)
+    doc.text(cfg.subValue, x + w / 2, y + 24, { align: 'center' })
+  }
 }
 
 // ── Page 1: Executive Summary ─────────────────────────────────────────────────
@@ -234,7 +243,7 @@ function buildExecutiveSummary(
   const cardGap = 3
   const totalGaps = cardGap * 3
   const cardW = (pageW - margin * 2 - totalGaps) / 4
-  const cardH = 23
+  const cardH = 27
   const cardY = headerH + 6
 
   const cards: KpiCardConfig[] = [
@@ -258,6 +267,7 @@ function buildExecutiveSummary(
       unit: 'viajes',
       accentColor: COLORS.orange,
       bgColor: COLORS.orangeLight,
+      subValue: kpiTotals.fletesAmount > 0 ? formatPeso(kpiTotals.fletesAmount) : undefined,
     },
     {
       label: 'Averías',

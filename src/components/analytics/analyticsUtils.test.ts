@@ -101,8 +101,8 @@ describe('aggregateByUnit', () => {
 describe('computeKpiTotals', () => {
   it('sums all units into fleet totals', () => {
     const units = [
-      { unit: 'CV103', gastos: 42000, combustibleLitros: 1200, combustibleCosto: 15000, fletes: 2, tonelaje: 77, averias: 1 },
-      { unit: 'CV104', gastos: 31000, combustibleLitros: 800, combustibleCosto: 10000, fletes: 1, tonelaje: 25, averias: 2 },
+      { unit: 'CV103', gastos: 42000, combustibleLitros: 1200, combustibleCosto: 15000, fletes: 2, tonelaje: 77, averias: 1, fletesAmount: 8000 },
+      { unit: 'CV104', gastos: 31000, combustibleLitros: 800, combustibleCosto: 10000, fletes: 1, tonelaje: 25, averias: 2, fletesAmount: 4500 },
     ]
     const totals = computeKpiTotals(units)
     expect(totals.gastosTotal).toBe(73000)
