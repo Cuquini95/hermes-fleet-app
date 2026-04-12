@@ -1,8 +1,13 @@
 import { useNavigate, useLocation } from 'react-router-dom'
+import { useAuthStore } from '../../stores/auth-store'
 
 export default function FloatingChatButton() {
   const navigate = useNavigate()
   const location = useLocation()
+  const role = useAuthStore(s => s.role)
+
+  const ALLOWED_ROLES = ['mecanico', 'coordinador', 'jefe_taller']
+  if (!role || !ALLOWED_ROLES.includes(role)) return null
 
   if (location.pathname === '/chat') return null
 
