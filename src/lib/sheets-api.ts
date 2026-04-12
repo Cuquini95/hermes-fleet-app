@@ -21,6 +21,10 @@ export async function appendRow(tab: string, values: string[]): Promise<void> {
     const text = await response.text();
     throw new Error(`Sheets API error ${response.status}: ${text}`);
   }
+  const json = await response.json();
+  if (!json.success) {
+    throw new Error(json.error ?? 'appendRow failed — row not written');
+  }
 }
 
 export async function readRange(tab: string): Promise<string[][]> {
@@ -56,6 +60,10 @@ export async function updateCell(
     const text = await response.text();
     throw new Error(`Sheets update error ${response.status}: ${text}`);
   }
+  const json = await response.json();
+  if (!json.success) {
+    throw new Error(json.error ?? 'updateCell failed — row not found');
+  }
 }
 
 export async function upsertRow(
@@ -73,6 +81,9 @@ export async function upsertRow(
     throw new Error(`Sheets upsert error ${response.status}: ${text}`);
   }
   const data = await response.json();
+  if (!data.success) {
+    throw new Error(data.error ?? 'upsertRow failed — row not written');
+  }
   return data.action;
 }
 
@@ -250,6 +261,26 @@ export async function importPartsFromQuote(
     // Non-critical — parts import failure should never block gasto save
     return [];
   }
+}
+
+export async function deleteRow(
+  tab: string,
+  match: Record<string, string>  // { "0": "11/04/2026", "1": "14:00", "2": "CV103" }
+): Promise<boolean> {
+  const response = await fetch(`${HERMES_API}/api/sheets/delete-row`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tab, match }),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Delete error ${response.status}: ${text}`);
+  }
+  const data = await response.json();
+  if (!data.success) {
+    throw new Error(data.error ?? 'deleteRow failed — row not found');
+  }
+  return data.deleted === true;
 }
 
 // ── Sheet tab names ───────────────────────────────────────────────────────────
