@@ -16,16 +16,11 @@ const MATERIAL_OPTIONS = ['Tierra', 'Roca', 'Grava', 'Mineral', 'Caliza', 'Otro'
 // Matching is case-insensitive, diacritic-insensitive, and uses .includes().
 // To add a new route: add an entry with its origen, destinos array, and rate.
 const FLETE_RATES: Array<{ origen: string; destinos: string[]; rate: number }> = [
-  {
-    origen:  'pesadas',
-    destinos: ['manzanillo'],
-    rate: 160,
-  },
-  {
-    origen:  'pesadas',
-    destinos: ['bascula paticajo', 'bascula paticajo', 'bascula paticajó'],
-    rate: 80,
-  },
+  { origen: 'pesadas',  destinos: ['manzanillo'],                                    rate: 160 },
+  { origen: 'pesadas',  destinos: ['bascula paticajo', 'bascula paticajó'],           rate: 80  },
+  { origen: 'presidio', destinos: ['llanitos'],                                       rate: 180 },
+  { origen: 'llanitos', destinos: ['manzanillo'],                                     rate: 220 },
+  { origen: 'ocote',    destinos: ['manzanillo'],                                     rate: 200 },
 ];
 
 /** Strip diacritics so "Báscula" matches "bascula", etc. */
