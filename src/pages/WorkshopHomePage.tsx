@@ -13,6 +13,7 @@ import {
   PackageSearch,
   Disc3,
   RefreshCw,
+  Table2,
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { useWorkOrderStore } from '../stores/workorder-store';
@@ -38,6 +39,7 @@ const ACTION_CARDS: ActionCard[] = [
   { label: 'Manuales', icon: <BookOpen     size={32} className="text-amber" />, path: '/manuals' },
   { label: 'Diagramas',icon: <FileImage    size={32} className="text-amber" />, path: '/diagrams' },
   { label: 'Neumáticos',icon: <Disc3       size={32} className="text-amber" />, path: '/neumaticos' },
+  { label: 'Datos',     icon: <Table2      size={32} className="text-amber" />, path: '/data' },
 ];
 
 export default function WorkshopHomePage() {

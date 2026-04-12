@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
-import { Activity, AlertTriangle, Fuel, Bell, RefreshCw } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Activity, AlertTriangle, Fuel, Bell, RefreshCw, Table2 } from 'lucide-react';
 import { useEquipmentList } from '../../hooks/useEquipmentList';
 import { useDashboardData } from '../../hooks/useDashboardData';
 import KPICard from '../ui/KPICard';
@@ -21,6 +22,7 @@ const TABS: { id: Tab; label: string }[] = [
 
 export default function ExecutiveDashboard() {
   const [activeTab, setActiveTab] = useState<Tab>('general');
+  const navigate = useNavigate();
   const equipment = useEquipmentList();
   const data = useDashboardData();
 
@@ -119,6 +121,15 @@ export default function ExecutiveDashboard() {
 
           {/* Daily actions */}
           <AccionesDelDia />
+
+          {/* Quick access */}
+          <button
+            onClick={() => navigate('/data')}
+            className="flex items-center gap-3 bg-white rounded-xl px-4 py-3 shadow-sm border border-border btn-press w-full"
+          >
+            <Table2 size={22} style={{ color: '#162252' }} />
+            <span className="text-sm font-medium text-text">Gestor de Datos</span>
+          </button>
         </div>
       )}
 
