@@ -1,12 +1,19 @@
 /**
- * Integration test suite — Hermes Fleet Pipeline
+ * Data Pipeline Test — Hermes Fleet
  *
- * Tests every data flow:
- *   App → VPS gateway → PocketBase (primary) → Google Sheets (mirror, <10s)
- *   App → Supabase Storage (photo uploads)
+ * Verifies: App → VPS gateway → PocketBase (primary) → Google Sheets (mirror, <10s)
+ *           App → Supabase Storage (photo uploads)
+ *
+ * ⚠️  This does NOT test Telegram notifications.
+ *     Telegram is triggered inside the VPS based on business logic (amount > 0,
+ *     valid unit, etc.). Real submissions trigger Telegram correctly — test rows
+ *     with zero amounts or TEST_ identifiers are filtered by the VPS.
+ *
+ *     Tabs with confirmed Telegram triggers: Combustible, Inspecciones, Horómetros, Viajes
+ *     Tabs with Telegram on real data only: Averías, Gastos
+ *     Tabs without Telegram: OT_STATUS_LOG, Historial PM, Catálogo (not configured on VPS)
  *
  * Run:  node test-pipeline.mjs
- * Run (verbose):  node test-pipeline.mjs --verbose
  */
 
 import { createClient } from '@supabase/supabase-js';
@@ -102,7 +109,7 @@ const t = () => new Date().toLocaleTimeString('es-MX', { timeZone: 'America/Maza
 section('1. VPS Gateway');
 try {
   const t0 = Date.now();
-  const res = await fetch(`${VPS}/api/sheets/read?tab=Gastos`, { signal: AbortSignal.timeout(8000) });
+  const res = await fetch(`${VPS}/api/sheets/read?tab=${encodeURIComponent('02 Gastos')}`, { signal: AbortSignal.timeout(8000) });
   ok(`VPS reachable`, `${Date.now() - t0}ms, status ${res.status}`);
 } catch (e) {
   fail('VPS unreachable', e.message);
@@ -139,7 +146,7 @@ await testTab({
 
 await testTab({
   name: '3. Gastos',
-  tab: 'Gastos',
+  tab: '02 Gastos',
   id: `TEST-GST-${NOW}`,
   row: [
     `TEST-GST-${NOW}`,  // A: Gasto_ID
