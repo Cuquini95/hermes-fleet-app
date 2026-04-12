@@ -1,15 +1,44 @@
 // src/components/analytics/reportGenerator.ts
-// 5-page jsPDF fleet management report
+// 5-page jsPDF fleet management report — professional dark-accented design
 
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import type { KpiTotals, UnitMetrics } from './analyticsUtils'
 import { formatPeso, formatLitros } from './analyticsUtils'
 
-// ── Constants ─────────────────────────────────────────────────────────────────
+// ── Design System ─────────────────────────────────────────────────────────────
 
-const DARK_BLUE: [number, number, number] = [15, 23, 42]
-const LIGHT_BLUE_BG: [number, number, number] = [241, 245, 249]
+const COLORS = {
+  // Primary
+  navy:        [15, 23, 42]   as [number, number, number],   // #0f172a
+  navyMid:     [30, 58, 95]   as [number, number, number],   // #1e3a5f
+  navyLight:   [51, 65, 85]   as [number, number, number],   // #334155
+
+  // Category — Gastos
+  blue:        [59, 130, 246] as [number, number, number],   // #3b82f6
+  blueLight:   [219, 234, 254] as [number, number, number],  // #dbeafe
+
+  // Category — Combustible
+  green:       [34, 197, 94]  as [number, number, number],   // #22c55e
+  greenLight:  [220, 252, 231] as [number, number, number],  // #dcfce7
+
+  // Category — Fletes
+  orange:      [249, 115, 22] as [number, number, number],   // #f97316
+  orangeLight: [255, 237, 213] as [number, number, number],  // #ffedd5
+
+  // Category — Averías
+  red:         [248, 113, 113] as [number, number, number],  // #f87171
+  redLight:    [254, 226, 226] as [number, number, number],  // #fee2e2
+
+  // Neutrals
+  white:       [255, 255, 255] as [number, number, number],
+  offWhite:    [248, 250, 252] as [number, number, number],  // #f8fafc
+  gray100:     [241, 245, 249] as [number, number, number],  // #f1f5f9
+  gray400:     [148, 163, 184] as [number, number, number],  // #94a3b8
+  gray600:     [71, 85, 105]   as [number, number, number],  // #475569
+  gray900:     [15, 23, 42]    as [number, number, number],  // text
+} as const
+
 const PERIOD_LABELS: Record<string, string> = {
   week: 'Última semana',
   month: 'Último mes',
@@ -48,41 +77,107 @@ function addFooters(doc: jsPDF, timestamp: string): void {
   const pageCount = doc.getNumberOfPages()
   const pageH = doc.internal.pageSize.height
   const pageW = doc.internal.pageSize.width
+  const margin = 14
 
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i)
-    doc.setFontSize(8)
-    doc.setTextColor(120, 120, 120)
-    doc.text(
-      `Página ${i} de ${pageCount}  |  Generado: ${timestamp}`,
-      pageW / 2,
-      pageH - 5,
-      { align: 'center' }
-    )
+
+    // Thin separator line
+    doc.setDrawColor(...COLORS.navyLight)
+    doc.setLineWidth(0.3)
+    doc.line(margin, pageH - 10, pageW - margin, pageH - 10)
+
+    doc.setFontSize(7)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(...COLORS.gray400)
+    doc.text(`Página ${i} de ${pageCount}`, margin, pageH - 6)
+    doc.text(`Generado: ${timestamp}`, pageW - margin, pageH - 6, { align: 'right' })
   }
 }
 
-function addPageHeader(
+/**
+ * Draws the page header strip used on detail pages (pages 2–5).
+ * Returns the Y coordinate where content should begin.
+ */
+function addDetailPageHeader(
   doc: jsPDF,
-  title: string,
+  sectionLabel: string,
   periodLabel: string
 ): number {
   const pageW = doc.internal.pageSize.width
-  // Blue banner
-  doc.setFillColor(...DARK_BLUE)
-  doc.rect(0, 0, pageW, 22, 'F')
-  doc.setTextColor(255, 255, 255)
-  doc.setFontSize(14)
-  doc.setFont('helvetica', 'bold')
-  doc.text('HERMES FLEET', 14, 10)
-  doc.setFontSize(10)
+  const headerH = 14
+
+  // Full-width navy strip
+  doc.setFillColor(...COLORS.navy)
+  doc.rect(0, 0, pageW, headerH, 'F')
+
+  // "HERMES FLEET" small left
+  doc.setFontSize(7)
   doc.setFont('helvetica', 'normal')
-  doc.text(title, 14, 17)
-  // Period on right side
-  doc.setFontSize(9)
-  doc.text(`Período: ${periodLabel}`, pageW - 14, 17, { align: 'right' })
+  doc.setTextColor(...COLORS.gray400)
+  doc.text('HERMES FLEET', 14, 6)
+
+  // Section name bold center
+  doc.setFontSize(10)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(...COLORS.white)
+  doc.text(sectionLabel, pageW / 2, 9.5, { align: 'center' })
+
+  // Period right
+  doc.setFontSize(8)
+  doc.setFont('helvetica', 'normal')
+  doc.setTextColor(...COLORS.gray400)
+  doc.text(periodLabel, pageW - 14, 9.5, { align: 'right' })
+
   doc.setTextColor(0, 0, 0)
-  return 28 // return Y after header
+  return headerH + 6
+}
+
+// ── KPI Card Helper ───────────────────────────────────────────────────────────
+
+interface KpiCardConfig {
+  label: string
+  value: string
+  unit: string
+  accentColor: [number, number, number]
+  bgColor: [number, number, number]
+}
+
+function drawKpiCard(
+  doc: jsPDF,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  cfg: KpiCardConfig
+): void {
+  const barW = 3
+
+  // Colored left bar
+  doc.setFillColor(...cfg.accentColor)
+  doc.rect(x, y, barW, h, 'F')
+
+  // Card background
+  doc.setFillColor(...cfg.bgColor)
+  doc.rect(x + barW, y, w - barW, h, 'F')
+
+  // Label — uppercase, gray600
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7)
+  doc.setTextColor(...COLORS.gray600)
+  doc.text(cfg.label.toUpperCase(), x + w / 2, y + 5, { align: 'center' })
+
+  // Value — large bold, category color
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(15)
+  doc.setTextColor(...cfg.accentColor)
+  doc.text(cfg.value, x + w / 2, y + 14, { align: 'center' })
+
+  // Unit — small, gray600
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7)
+  doc.setTextColor(...COLORS.gray600)
+  doc.text(cfg.unit, x + w / 2, y + 19, { align: 'center' })
 }
 
 // ── Page 1: Executive Summary ─────────────────────────────────────────────────
@@ -97,61 +192,91 @@ function buildExecutiveSummary(
 ): void {
   const pageW = doc.internal.pageSize.width
   const periodLabel = PERIOD_LABELS[period] ?? period
-  const unitLabel = unitFilter === 'all' ? 'Todas' : unitFilter
+  const unitLabel = unitFilter === 'all' ? 'Todas las unidades' : unitFilter
+  const margin = 10
 
-  // Full-width dark header
-  doc.setFillColor(...DARK_BLUE)
-  doc.rect(0, 0, pageW, 28, 'F')
-  doc.setTextColor(255, 255, 255)
-  doc.setFontSize(18)
+  // ── Full-width dark header (28mm) ─────────────────────────────────────────
+  const headerH = 28
+  doc.setFillColor(...COLORS.navy)
+  doc.rect(0, 0, pageW, headerH, 'F')
+
+  // Left accent bar
+  doc.setFillColor(...COLORS.blue)
+  doc.rect(0, 0, 4, headerH, 'F')
+
+  // Title
   doc.setFont('helvetica', 'bold')
-  doc.text('HERMES FLEET — REPORTE GERENCIAL', pageW / 2, 14, { align: 'center' })
-  doc.setFontSize(10)
+  doc.setFontSize(20)
+  doc.setTextColor(...COLORS.white)
+  doc.text('HERMES FLEET', 12, 13)
+
+  // Subtitle
   doc.setFont('helvetica', 'normal')
-  doc.text(`Período: ${periodLabel}  |  Unidad: ${unitLabel}  |  Generado: ${timestamp}`, pageW / 2, 23, { align: 'center' })
+  doc.setFontSize(10)
+  doc.setTextColor(...COLORS.gray400)
+  doc.text('REPORTE GERENCIAL', 12, 22)
+
+  // Right: period / unit / timestamp
+  doc.setFontSize(9)
+  doc.setTextColor(...COLORS.gray400)
+  doc.text(`${periodLabel}  ·  ${unitLabel}  ·  ${timestamp}`, pageW - margin, 17, { align: 'right' })
+
   doc.setTextColor(0, 0, 0)
 
-  // KPI boxes — 4 in a row
-  const kpiData = [
-    { label: 'Gastos Total', value: formatPeso(kpiTotals.gastosTotal) },
-    { label: 'Combustible', value: formatLitros(kpiTotals.combustibleLitros) },
-    { label: 'Fletes', value: String(kpiTotals.fletesCount) },
-    { label: 'Averías', value: String(kpiTotals.averiasCount) },
+  // ── KPI Cards (4 in a row) ─────────────────────────────────────────────────
+  const cardGap = 3
+  const totalGaps = cardGap * 3
+  const cardW = (pageW - margin * 2 - totalGaps) / 4
+  const cardH = 23
+  const cardY = headerH + 6
+
+  const cards: KpiCardConfig[] = [
+    {
+      label: 'Gastos',
+      value: formatPeso(kpiTotals.gastosTotal),
+      unit: '$',
+      accentColor: COLORS.blue,
+      bgColor: COLORS.blueLight,
+    },
+    {
+      label: 'Combustible',
+      value: formatLitros(kpiTotals.combustibleLitros),
+      unit: 'Litros',
+      accentColor: COLORS.green,
+      bgColor: COLORS.greenLight,
+    },
+    {
+      label: 'Fletes',
+      value: String(kpiTotals.fletesCount),
+      unit: 'viajes',
+      accentColor: COLORS.orange,
+      bgColor: COLORS.orangeLight,
+    },
+    {
+      label: 'Averías',
+      value: String(kpiTotals.averiasCount),
+      unit: 'eventos',
+      accentColor: COLORS.red,
+      bgColor: COLORS.redLight,
+    },
   ]
 
-  const boxMargin = 10
-  const boxGap = 5
-  const totalGap = boxGap * 3
-  const boxW = (pageW - boxMargin * 2 - totalGap) / 4
-  const boxH = 22
-  const boxY = 34
-
-  kpiData.forEach((kpi, i) => {
-    const x = boxMargin + i * (boxW + boxGap)
-    // Box background
-    doc.setFillColor(241, 245, 249)
-    doc.roundedRect(x, boxY, boxW, boxH, 2, 2, 'F')
-    // Label
-    doc.setFontSize(8)
-    doc.setTextColor(80, 80, 80)
-    doc.setFont('helvetica', 'normal')
-    doc.text(kpi.label, x + boxW / 2, boxY + 7, { align: 'center' })
-    // Value
-    doc.setFontSize(13)
-    doc.setTextColor(...DARK_BLUE)
-    doc.setFont('helvetica', 'bold')
-    doc.text(kpi.value, x + boxW / 2, boxY + 17, { align: 'center' })
+  cards.forEach((card, i) => {
+    const x = margin + i * (cardW + cardGap)
+    drawKpiCard(doc, x, cardY, cardW, cardH, card)
   })
 
-  doc.setTextColor(0, 0, 0)
-  doc.setFont('helvetica', 'normal')
-
-  // Per-unit summary table
-  const tableY = boxY + boxH + 8
-  doc.setFontSize(10)
+  // ── Section label: Resumen por Unidad ─────────────────────────────────────
+  const sectionY = cardY + cardH + 7
+  doc.setFillColor(...COLORS.navyMid)
+  doc.rect(margin, sectionY, pageW - margin * 2, 7, 'F')
   doc.setFont('helvetica', 'bold')
-  doc.text('Resumen por Unidad', boxMargin, tableY)
+  doc.setFontSize(8)
+  doc.setTextColor(...COLORS.white)
+  doc.text('RESUMEN POR UNIDAD', margin + 3, sectionY + 5)
+  doc.setTextColor(0, 0, 0)
 
+  // ── Per-unit table ─────────────────────────────────────────────────────────
   autoTable(doc, {
     head: [['Unidad', 'Gastos', 'Combustible (L)', 'Fletes', 'Averías', 'Total (Gastos + Comb.)']],
     body: unitMetrics.map(u => [
@@ -162,11 +287,32 @@ function buildExecutiveSummary(
       String(u.averias),
       formatPeso(u.gastos + u.combustibleCosto),
     ]),
-    startY: tableY + 4,
-    styles: { fontSize: 8, cellPadding: 2 },
-    headStyles: { fillColor: DARK_BLUE, textColor: 255, fontStyle: 'bold' },
-    alternateRowStyles: { fillColor: LIGHT_BLUE_BG },
-    margin: { left: boxMargin, right: boxMargin },
+    startY: sectionY + 7,
+    styles: {
+      fontSize: 8,
+      cellPadding: 2.5,
+      textColor: COLORS.gray900,
+      lineColor: COLORS.gray100,
+      lineWidth: 0.2,
+    },
+    headStyles: {
+      fillColor: COLORS.navyMid,
+      textColor: COLORS.white,
+      fontStyle: 'bold',
+      fontSize: 8,
+    },
+    alternateRowStyles: {
+      fillColor: COLORS.offWhite,
+    },
+    columnStyles: {
+      0: { fontStyle: 'bold' },
+      1: { textColor: COLORS.blue,   halign: 'right' },
+      2: { textColor: COLORS.green,  halign: 'right' },
+      3: { halign: 'right' },
+      4: { textColor: COLORS.red,    halign: 'right' },
+      5: { fontStyle: 'bold', textColor: COLORS.gray900, halign: 'right' },
+    },
+    margin: { left: margin, right: margin },
   })
 }
 
@@ -178,29 +324,34 @@ function buildGastosPage(
   gastosRows: string[][]
 ): void {
   const periodLabel = PERIOD_LABELS[period] ?? period
-  const startY = addPageHeader(doc, 'Gastos — Detalle', periodLabel)
-
+  const startY = addDetailPageHeader(doc, 'GASTOS — DETALLE', periodLabel)
   const dataRows = gastosRows.slice(1)
 
   autoTable(doc, {
     head: [['Fecha', 'Unidad', 'Descripción', 'Monto']],
-    body: dataRows.map(r => [
-      r[0] ?? '',
-      r[10] ?? '',
-      r[3] ?? '',
-      r[9] ?? '',
-    ]),
+    body: dataRows.map(r => [r[0] ?? '', r[10] ?? '', r[3] ?? '', r[9] ?? '']),
     startY,
-    styles: { fontSize: 7, cellPadding: 2 },
-    headStyles: { fillColor: DARK_BLUE, textColor: 255, fontStyle: 'bold' },
-    alternateRowStyles: { fillColor: LIGHT_BLUE_BG },
-    margin: { left: 10, right: 10 },
-    columnStyles: {
-      0: { cellWidth: 22 },
-      1: { cellWidth: 30 },
-      2: { cellWidth: 'auto' },
-      3: { cellWidth: 28, halign: 'right' },
+    styles: {
+      fontSize: 8,
+      cellPadding: 2.5,
+      textColor: COLORS.gray900,
+      lineColor: COLORS.gray100,
+      lineWidth: 0.2,
     },
+    headStyles: {
+      fillColor: COLORS.navyMid,
+      textColor: COLORS.white,
+      fontStyle: 'bold',
+      fontSize: 8,
+    },
+    alternateRowStyles: { fillColor: COLORS.offWhite },
+    columnStyles: {
+      0: { cellWidth: 24 },
+      1: { cellWidth: 32 },
+      2: { cellWidth: 'auto' },
+      3: { cellWidth: 30, halign: 'right', textColor: COLORS.blue },
+    },
+    margin: { left: 10, right: 10 },
   })
 }
 
@@ -212,31 +363,35 @@ function buildCombustiblePage(
   combustibleRows: string[][]
 ): void {
   const periodLabel = PERIOD_LABELS[period] ?? period
-  const startY = addPageHeader(doc, 'Combustible — Detalle', periodLabel)
-
+  const startY = addDetailPageHeader(doc, 'COMBUSTIBLE — DETALLE', periodLabel)
   const dataRows = combustibleRows.slice(1)
 
   autoTable(doc, {
     head: [['Fecha', 'Unidad', 'Litros', 'Proveedor', 'Km']],
-    body: dataRows.map(r => [
-      r[0] ?? '',
-      r[3] ?? '',
-      r[6] ?? '',
-      r[2] ?? '',
-      r[5] ?? '',
-    ]),
+    body: dataRows.map(r => [r[0] ?? '', r[3] ?? '', r[6] ?? '', r[2] ?? '', r[5] ?? '']),
     startY,
-    styles: { fontSize: 7, cellPadding: 2 },
-    headStyles: { fillColor: DARK_BLUE, textColor: 255, fontStyle: 'bold' },
-    alternateRowStyles: { fillColor: LIGHT_BLUE_BG },
-    margin: { left: 10, right: 10 },
-    columnStyles: {
-      0: { cellWidth: 22 },
-      1: { cellWidth: 30 },
-      2: { cellWidth: 20, halign: 'right' },
-      3: { cellWidth: 'auto' },
-      4: { cellWidth: 20, halign: 'right' },
+    styles: {
+      fontSize: 8,
+      cellPadding: 2.5,
+      textColor: COLORS.gray900,
+      lineColor: COLORS.gray100,
+      lineWidth: 0.2,
     },
+    headStyles: {
+      fillColor: COLORS.navyMid,
+      textColor: COLORS.white,
+      fontStyle: 'bold',
+      fontSize: 8,
+    },
+    alternateRowStyles: { fillColor: COLORS.offWhite },
+    columnStyles: {
+      0: { cellWidth: 24 },
+      1: { cellWidth: 32 },
+      2: { cellWidth: 22, halign: 'right', textColor: COLORS.green },
+      3: { cellWidth: 'auto' },
+      4: { cellWidth: 22, halign: 'right' },
+    },
+    margin: { left: 10, right: 10 },
   })
 }
 
@@ -248,8 +403,7 @@ function buildFletesPage(
   fletesRows: string[][]
 ): void {
   const periodLabel = PERIOD_LABELS[period] ?? period
-  const startY = addPageHeader(doc, 'Fletes — Detalle', periodLabel)
-
+  const startY = addDetailPageHeader(doc, 'FLETES — DETALLE', periodLabel)
   const dataRows = fletesRows.slice(1)
 
   autoTable(doc, {
@@ -264,19 +418,30 @@ function buildFletesPage(
       r[8] ?? '',
     ]),
     startY,
-    styles: { fontSize: 7, cellPadding: 2 },
-    headStyles: { fillColor: DARK_BLUE, textColor: 255, fontStyle: 'bold' },
-    alternateRowStyles: { fillColor: LIGHT_BLUE_BG },
-    margin: { left: 10, right: 10 },
+    styles: {
+      fontSize: 8,
+      cellPadding: 2.5,
+      textColor: COLORS.gray900,
+      lineColor: COLORS.gray100,
+      lineWidth: 0.2,
+    },
+    headStyles: {
+      fillColor: COLORS.navyMid,
+      textColor: COLORS.white,
+      fontStyle: 'bold',
+      fontSize: 8,
+    },
+    alternateRowStyles: { fillColor: COLORS.offWhite },
     columnStyles: {
-      0: { cellWidth: 22 },
+      0: { cellWidth: 24 },
       1: { cellWidth: 28 },
-      2: { cellWidth: 35 },
+      2: { cellWidth: 36 },
       3: { cellWidth: 'auto' },
       4: { cellWidth: 'auto' },
-      5: { cellWidth: 20, halign: 'right' },
-      6: { cellWidth: 20, halign: 'right' },
+      5: { cellWidth: 22, halign: 'right', textColor: COLORS.orange },
+      6: { cellWidth: 22, halign: 'right' },
     },
+    margin: { left: 10, right: 10 },
   })
 }
 
@@ -288,29 +453,34 @@ function buildAveriasPage(
   averiasRows: string[][]
 ): void {
   const periodLabel = PERIOD_LABELS[period] ?? period
-  const startY = addPageHeader(doc, 'Averías — Detalle', periodLabel)
-
+  const startY = addDetailPageHeader(doc, 'AVERÍAS — DETALLE', periodLabel)
   const dataRows = averiasRows.slice(1)
 
   autoTable(doc, {
     head: [['Fecha', 'Unidad', 'Descripción', 'Estado']],
-    body: dataRows.map(r => [
-      r[0] ?? '',
-      r[2] ?? '',
-      r[3] ?? '',
-      r[7] ?? '',
-    ]),
+    body: dataRows.map(r => [r[0] ?? '', r[2] ?? '', r[3] ?? '', r[7] ?? '']),
     startY,
-    styles: { fontSize: 7, cellPadding: 2 },
-    headStyles: { fillColor: DARK_BLUE, textColor: 255, fontStyle: 'bold' },
-    alternateRowStyles: { fillColor: LIGHT_BLUE_BG },
-    margin: { left: 10, right: 10 },
-    columnStyles: {
-      0: { cellWidth: 22 },
-      1: { cellWidth: 30 },
-      2: { cellWidth: 'auto' },
-      3: { cellWidth: 30 },
+    styles: {
+      fontSize: 8,
+      cellPadding: 2.5,
+      textColor: COLORS.gray900,
+      lineColor: COLORS.gray100,
+      lineWidth: 0.2,
     },
+    headStyles: {
+      fillColor: COLORS.navyMid,
+      textColor: COLORS.white,
+      fontStyle: 'bold',
+      fontSize: 8,
+    },
+    alternateRowStyles: { fillColor: COLORS.offWhite },
+    columnStyles: {
+      0: { cellWidth: 24 },
+      1: { cellWidth: 32 },
+      2: { cellWidth: 'auto' },
+      3: { cellWidth: 32, textColor: COLORS.red },
+    },
+    margin: { left: 10, right: 10 },
   })
 }
 
