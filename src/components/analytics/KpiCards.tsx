@@ -27,7 +27,7 @@ function KpiCard({ label, value, accent, sub }: CardProps) {
 
 export default function KpiCards({ totals }: KpiCardsProps) {
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
       <KpiCard
         label="💰 Gastos"
         value={totals.gastosTotal > 0 ? formatPeso(totals.gastosTotal) : '—'}
@@ -42,7 +42,11 @@ export default function KpiCards({ totals }: KpiCardsProps) {
         label="🚛 Fletes"
         value={totals.fletesCount > 0 ? `${totals.fletesCount} viajes` : '—'}
         accent="border-[#f97316]"
-        sub={totals.fletesAmount > 0 ? formatPeso(totals.fletesAmount) : undefined}
+      />
+      <KpiCard
+        label="📥 Ingresos"
+        value={totals.fletesAmount > 0 ? formatPeso(totals.fletesAmount) : '—'}
+        accent="border-[#10b981]"
       />
       <KpiCard
         label="🔧 Averías"

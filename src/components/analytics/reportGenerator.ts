@@ -30,6 +30,10 @@ const COLORS = {
   red:         [248, 113, 113] as [number, number, number],  // #f87171
   redLight:    [254, 226, 226] as [number, number, number],  // #fee2e2
 
+  // Category — Ingresos
+  emerald:     [16, 185, 129]  as [number, number, number],  // #10b981
+  emeraldLight:[209, 250, 229] as [number, number, number],  // #d1fae5
+
   // Neutrals
   white:       [255, 255, 255] as [number, number, number],
   offWhite:    [248, 250, 252] as [number, number, number],  // #f8fafc
@@ -239,10 +243,10 @@ function buildExecutiveSummary(
 
   doc.setTextColor(0, 0, 0)
 
-  // ── KPI Cards (4 in a row) ─────────────────────────────────────────────────
+  // ── KPI Cards (5 in a row) ─────────────────────────────────────────────────
   const cardGap = 3
-  const totalGaps = cardGap * 3
-  const cardW = (pageW - margin * 2 - totalGaps) / 4
+  const totalGaps = cardGap * 4
+  const cardW = (pageW - margin * 2 - totalGaps) / 5
   const cardH = 27
   const cardY = headerH + 6
 
@@ -267,7 +271,13 @@ function buildExecutiveSummary(
       unit: 'viajes',
       accentColor: COLORS.orange,
       bgColor: COLORS.orangeLight,
-      subValue: kpiTotals.fletesAmount > 0 ? formatPeso(kpiTotals.fletesAmount) : undefined,
+    },
+    {
+      label: 'Ingresos',
+      value: kpiTotals.fletesAmount > 0 ? formatPeso(kpiTotals.fletesAmount) : '—',
+      unit: '$',
+      accentColor: COLORS.emerald,
+      bgColor: COLORS.emeraldLight,
     },
     {
       label: 'Averías',
