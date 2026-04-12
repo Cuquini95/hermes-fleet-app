@@ -2,8 +2,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   parseSheetDate,
-  getPeriodCutoff,
-  isInPeriod,
   isDataRow,
   parseCurrency,
   parseNum,

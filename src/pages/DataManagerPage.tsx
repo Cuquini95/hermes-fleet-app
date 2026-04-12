@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { readRange, updateCell, deleteRow } from '../lib/sheets-api';
 import { useAnalyticsStore } from '../stores/analyticsStore';
-import { AnalyticsModal } from '../components/analytics/AnalyticsModal';
+import AnalyticsModal from '../components/analytics/AnalyticsModal';
 
 // ── Collection definitions ───────────────────────────────────────────────────
 
