@@ -22,7 +22,7 @@ function sortTrendKeys(a: string, b: string): number {
 // Fletes  ('Reporte_Fletes_Transporte'): Fecha=0, Unidad=2, KM_Total=8, Tonelaje=11, Flete=12
 // Averias ('Averías'):             Fecha=0, Unidad=2, Descripcion=4, Status=7
 
-export type Period = 'week' | 'month' | 'year'
+export type Period = 'week' | 'month' | 'year' | 'custom'
 
 export interface UnitMetrics {
   unit: string
@@ -60,16 +60,29 @@ export function parseSheetDate(s: string): Date | null {
 }
 
 /** Cutoff date for the given period (days before today). */
-export function getPeriodCutoff(period: Period): Date {
+export function getPeriodCutoff(period: Exclude<Period, 'custom'>): Date {
   const days = period === 'week' ? 7 : period === 'month' ? 30 : 365
   return new Date(Date.now() - days * 86_400_000)
 }
 
 /** Return true if a row's Fecha (col 0) falls within the period. */
-export function isInPeriod(row: string[], period: Period): boolean {
+export function isInPeriod(row: string[], period: Exclude<Period, 'custom'>): boolean {
   const d = parseSheetDate(row[0] ?? '')
   if (!d) return false
   return d >= getPeriodCutoff(period)
+}
+
+/** Return true if a row's date column falls within the given date range. */
+export function isInDateRange(row: string[], dateCol: number, from: string, to: string): boolean {
+  const raw = (row[dateCol] ?? '').trim()
+  if (!raw) return false
+  const d = parseSheetDate(raw)
+  if (!d) return false
+  const fromDate = from ? new Date(from + 'T00:00:00') : null
+  const toDate = to ? new Date(to + 'T23:59:59') : null
+  if (fromDate && d < fromDate) return false
+  if (toDate && d > toDate) return false
+  return true
 }
 
 /** Return true if a row has a real date in col 0 (skips header + empty rows). */
@@ -120,13 +133,13 @@ export function aggregateByUnit(
 
   for (const row of gastos) {
     const unit = (row[10] ?? '').trim()
-    if (!unit) continue
+    if (!unit || !isRealUnit(unit)) continue
     getOrCreate(unit).gastos += parseCurrency(row[9] ?? '')
   }
 
   for (const row of combustible) {
     const unit = (row[3] ?? '').trim()
-    if (!unit) continue
+    if (!unit || !isRealUnit(unit)) continue
     const m = getOrCreate(unit)
     m.combustibleLitros += parseNum(row[6] ?? '')
     m.combustibleCosto += parseCurrency(row[7] ?? '')
@@ -134,7 +147,7 @@ export function aggregateByUnit(
 
   for (const row of fletes) {
     const unit = (row[2] ?? '').trim()
-    if (!unit) continue
+    if (!unit || !isRealUnit(unit)) continue
     const m = getOrCreate(unit)
     m.fletes += 1
     m.tonelaje += parseNum(row[11] ?? '')
@@ -142,7 +155,7 @@ export function aggregateByUnit(
 
   for (const row of averias) {
     const unit = (row[2] ?? '').trim()
-    if (!unit) continue
+    if (!unit || !isRealUnit(unit)) continue
     getOrCreate(unit).averias += 1
   }
 
@@ -179,6 +192,10 @@ export function buildTrend(combustibleRows: string[][], period: Period): WeekPoi
     if (period === 'year') {
       const raw = d.toLocaleString('es-MX', { month: 'short', timeZone: 'UTC' })
       key = raw.charAt(0).toUpperCase() + raw.slice(1)
+    } else if (period === 'custom') {
+      // For custom range, group by month like year view
+      const raw = d.toLocaleString('es-MX', { month: 'short', timeZone: 'UTC' })
+      key = raw.charAt(0).toUpperCase() + raw.slice(1)
     } else {
       // Relative week index from window start
       const cutoff = getPeriodCutoff(period)
@@ -195,7 +212,15 @@ export function buildTrend(combustibleRows: string[][], period: Period): WeekPoi
     .slice(-12) // last 12 buckets max
 }
 
-/** Extract sorted unique unit names from all collections. */
+/** Pattern matching test/dev unit names that should be excluded from analytics. */
+const TEST_UNIT_PATTERN = /^(test|fallback|fixtest|livetest)/i
+
+/** Returns true if the unit name is a real fleet unit (not a test/dev artifact). */
+export function isRealUnit(unit: string): boolean {
+  return !TEST_UNIT_PATTERN.test(unit)
+}
+
+/** Extract sorted unique unit names from all collections, excluding test/dev units. */
 export function extractUnits(
   gastos: string[][],
   combustible: string[][],
@@ -207,7 +232,7 @@ export function extractUnits(
   for (const row of combustible) { const u = (row[3] ?? '').trim(); if (u) units.add(u) }
   for (const row of fletes) { const u = (row[2] ?? '').trim(); if (u) units.add(u) }
   for (const row of averias) { const u = (row[2] ?? '').trim(); if (u) units.add(u) }
-  return Array.from(units).sort()
+  return Array.from(units).filter(isRealUnit).sort()
 }
 
 /** Format a peso amount for display: "$1,234,567" */
