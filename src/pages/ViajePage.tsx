@@ -1,12 +1,13 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Trash2, Plus, ScanLine } from 'lucide-react';
 import { TRANSPORT_UNITS } from '../data/transport-units';
 import { mexicoDateInput, mexicoTimeInput } from '../lib/date-utils';
-import { appendRow, SHEET_TABS } from '../lib/sheets-api';
+import { appendRow, readRange, SHEET_TABS } from '../lib/sheets-api';
 import { useAuthStore } from '../stores/auth-store';
 import ConfirmModal from '../components/ui/ConfirmModal';
 import SuccessToast from '../components/ui/SuccessToast';
+import { AutocompleteInput } from '../components/AutocompleteInput';
 
 const MATERIAL_OPTIONS = ['Tierra', 'Roca', 'Grava', 'Mineral', 'Caliza', 'Otro'] as const;
 
@@ -66,6 +67,22 @@ export default function ViajePage() {
 
   // ── Multi-mode trips ──────────────────────────────────────────────────────
   const [trips, setTrips] = useState<TripEntry[]>([emptyTrip(mexicoTimeInput())]);
+
+  // ── Autocomplete suggestions ──────────────────────────────────────────────
+  const [origenSuggestions, setOrigenSuggestions] = useState<string[]>([]);
+  const [destinoSuggestions, setDestinoSuggestions] = useState<string[]>([]);
+  const [clienteSuggestions, setClienteSuggestions] = useState<string[]>([]);
+
+  useEffect(() => {
+    readRange(SHEET_TABS.FLETES).then((rows) => {
+      const dataRows = rows.slice(1); // skip header
+      const col = (i: number) =>
+        [...new Set(dataRows.map((r) => (r[i] ?? '').trim()).filter(Boolean))].sort();
+      setOrigenSuggestions(col(6));   // G (6)  ORIGEN
+      setDestinoSuggestions(col(7));  // H (7)  RUTA DESTINO
+      setClienteSuggestions(col(9));  // J (9)  CLIENTE
+    }).catch(() => {}); // silently ignore — field still works without suggestions
+  }, []);
 
   // ── UI state ──────────────────────────────────────────────────────────────
   const [showConfirm, setShowConfirm] = useState<boolean>(false);
@@ -308,20 +325,20 @@ export default function ViajePage() {
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
             <label className="text-sm font-medium text-text-secondary">Origen</label>
-            <input
-              type="text"
+            <AutocompleteInput
               value={rutaOrigen}
-              onChange={(e) => setRutaOrigen(e.target.value)}
+              onChange={setRutaOrigen}
+              suggestions={origenSuggestions}
               placeholder="Ej: Frente 3"
               className="w-full rounded-xl border border-border p-3 text-text bg-white"
             />
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-sm font-medium text-text-secondary">Destino</label>
-            <input
-              type="text"
+            <AutocompleteInput
               value={rutaDestino}
-              onChange={(e) => setRutaDestino(e.target.value)}
+              onChange={setRutaDestino}
+              suggestions={destinoSuggestions}
               placeholder="Ej: Patio de acopio"
               className="w-full rounded-xl border border-border p-3 text-text bg-white"
             />
@@ -387,10 +404,10 @@ export default function ViajePage() {
           ) : (
             <div className="flex flex-col gap-1">
               <label className="text-sm font-medium text-text-secondary">Cliente</label>
-              <input
-                type="text"
+              <AutocompleteInput
                 value={cliente}
-                onChange={(e) => setCliente(e.target.value)}
+                onChange={setCliente}
+                suggestions={clienteSuggestions}
                 placeholder="Nombre del cliente"
                 className="w-full rounded-xl border border-border p-3 text-text bg-white"
               />
@@ -403,10 +420,10 @@ export default function ViajePage() {
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">
               <label className="text-sm font-medium text-text-secondary">Cliente</label>
-              <input
-                type="text"
+              <AutocompleteInput
                 value={cliente}
-                onChange={(e) => setCliente(e.target.value)}
+                onChange={setCliente}
+                suggestions={clienteSuggestions}
                 placeholder="Nombre del cliente"
                 className="w-full rounded-xl border border-border p-3 text-text bg-white"
               />
