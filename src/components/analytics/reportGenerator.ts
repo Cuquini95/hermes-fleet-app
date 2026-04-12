@@ -45,6 +45,11 @@ const PERIOD_LABELS: Record<string, string> = {
   year: 'Último año',
 }
 
+function getPeriodLabel(period: string, dateFrom?: string, dateTo?: string): string {
+  if (period === 'custom') return `${dateFrom ?? ''} — ${dateTo ?? ''}`
+  return PERIOD_LABELS[period] ?? period
+}
+
 // ── Column indices in raw sheet data ─────────────────────────────────────────
 // Row 0 is header — skip with .slice(1)
 // Gastos:      Fecha=0, Unidad=10, Descripción=3, Monto=9
@@ -188,10 +193,12 @@ function buildExecutiveSummary(
   unitFilter: string,
   kpiTotals: KpiTotals,
   unitMetrics: UnitMetrics[],
-  timestamp: string
+  timestamp: string,
+  dateFrom?: string,
+  dateTo?: string
 ): void {
   const pageW = doc.internal.pageSize.width
-  const periodLabel = PERIOD_LABELS[period] ?? period
+  const periodLabel = getPeriodLabel(period, dateFrom, dateTo)
   const unitLabel = unitFilter === 'all' ? 'Todas las unidades' : unitFilter
   const margin = 10
 
@@ -320,10 +327,9 @@ function buildExecutiveSummary(
 
 function buildGastosPage(
   doc: jsPDF,
-  period: string,
+  periodLabel: string,
   gastosRows: string[][]
 ): void {
-  const periodLabel = PERIOD_LABELS[period] ?? period
   const startY = addDetailPageHeader(doc, 'GASTOS — DETALLE', periodLabel)
   const dataRows = gastosRows.slice(1)
 
@@ -359,10 +365,9 @@ function buildGastosPage(
 
 function buildCombustiblePage(
   doc: jsPDF,
-  period: string,
+  periodLabel: string,
   combustibleRows: string[][]
 ): void {
-  const periodLabel = PERIOD_LABELS[period] ?? period
   const startY = addDetailPageHeader(doc, 'COMBUSTIBLE — DETALLE', periodLabel)
   const dataRows = combustibleRows.slice(1)
 
@@ -399,10 +404,9 @@ function buildCombustiblePage(
 
 function buildFletesPage(
   doc: jsPDF,
-  period: string,
+  periodLabel: string,
   fletesRows: string[][]
 ): void {
-  const periodLabel = PERIOD_LABELS[period] ?? period
   const startY = addDetailPageHeader(doc, 'FLETES — DETALLE', periodLabel)
   const dataRows = fletesRows.slice(1)
 
@@ -449,10 +453,9 @@ function buildFletesPage(
 
 function buildAveriasPage(
   doc: jsPDF,
-  period: string,
+  periodLabel: string,
   averiasRows: string[][]
 ): void {
-  const periodLabel = PERIOD_LABELS[period] ?? period
   const startY = addDetailPageHeader(doc, 'AVERÍAS — DETALLE', periodLabel)
   const dataRows = averiasRows.slice(1)
 
@@ -487,7 +490,7 @@ function buildAveriasPage(
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export function generateReport(
-  period: 'week' | 'month' | 'year',
+  period: 'week' | 'month' | 'year' | 'custom',
   unitFilter: string,
   filteredRows: {
     gastos: string[][]
@@ -496,29 +499,32 @@ export function generateReport(
     averias: string[][]
   },
   kpiTotals: KpiTotals,
-  unitMetrics: UnitMetrics[]
+  unitMetrics: UnitMetrics[],
+  dateFrom?: string,
+  dateTo?: string
 ): void {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
   const timestamp = buildTimestamp()
+  const periodLabel = getPeriodLabel(period, dateFrom, dateTo)
 
   // Page 1 — Executive Summary
-  buildExecutiveSummary(doc, period, unitFilter, kpiTotals, unitMetrics, timestamp)
+  buildExecutiveSummary(doc, period, unitFilter, kpiTotals, unitMetrics, timestamp, dateFrom, dateTo)
 
   // Page 2 — Gastos
   doc.addPage()
-  buildGastosPage(doc, period, filteredRows.gastos)
+  buildGastosPage(doc, periodLabel, filteredRows.gastos)
 
   // Page 3 — Combustible
   doc.addPage()
-  buildCombustiblePage(doc, period, filteredRows.combustible)
+  buildCombustiblePage(doc, periodLabel, filteredRows.combustible)
 
   // Page 4 — Fletes
   doc.addPage()
-  buildFletesPage(doc, period, filteredRows.fletes)
+  buildFletesPage(doc, periodLabel, filteredRows.fletes)
 
   // Page 5 — Averías
   doc.addPage()
-  buildAveriasPage(doc, period, filteredRows.averias)
+  buildAveriasPage(doc, periodLabel, filteredRows.averias)
 
   // Footers on all pages (must be last)
   addFooters(doc, timestamp)

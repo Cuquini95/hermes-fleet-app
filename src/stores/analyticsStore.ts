@@ -8,6 +8,7 @@ import {
   type WeekPoint,
   isDataRow,
   isInPeriod,
+  isInDateRange,
   aggregateByUnit,
   computeKpiTotals,
   buildTrend,
@@ -36,11 +37,14 @@ interface AnalyticsState {
   // UI filter state
   period: Period
   unitFilter: string  // 'all' or a unit name like 'CV103'
+  dateFrom: string    // 'YYYY-MM-DD' or '' when not set
+  dateTo: string      // 'YYYY-MM-DD' or '' when not set
 
   // actions
   fetch: () => Promise<void>
   setPeriod: (p: Period) => void
   setUnitFilter: (u: string) => void
+  setDateRange: (from: string, to: string) => void
 
   // derived selectors (computed on read)
   getFilteredRows: () => RawData
@@ -57,6 +61,8 @@ export const useAnalyticsStore = create<AnalyticsState>((set, get) => ({
   fetchErrors: [],
   period: 'month',
   unitFilter: 'all',
+  dateFrom: '',
+  dateTo: '',
 
   fetch: async () => {
     if (get().status === 'loading') return
@@ -89,23 +95,31 @@ export const useAnalyticsStore = create<AnalyticsState>((set, get) => ({
     })
   },
 
-  setPeriod: (period) => set({ period }),
+  setPeriod: (p) => set({ period: p, ...(p !== 'custom' ? { dateFrom: '', dateTo: '' } : {}) }),
   setUnitFilter: (unitFilter) => set({ unitFilter }),
+  setDateRange: (from, to) => set({ dateFrom: from, dateTo: to, period: 'custom' }),
 
   getFilteredRows: () => {
-    const { raw, period, unitFilter } = get()
+    const { raw, period, unitFilter, dateFrom, dateTo } = get()
 
-    const filterRow = (unitColIndex: number) => (row: string[]) => {
-      if (!isInPeriod(row, period)) return false
-      if (unitFilter === 'all') return true
-      return (row[unitColIndex] ?? '').trim() === unitFilter
+    const filterRow = (dateColIndex: number, unitColIndex: number) => (row: string[]) => {
+      // Period/date filter
+      const inPeriod = period === 'custom'
+        ? isInDateRange(row, dateColIndex, dateFrom, dateTo)
+        : isInPeriod(row, period)
+      if (!inPeriod) return false
+      // Unit filter
+      if (unitFilter !== 'all') {
+        if ((row[unitColIndex] ?? '').trim() !== unitFilter) return false
+      }
+      return true
     }
 
     return {
-      gastos: raw.gastos.filter(filterRow(10)),
-      combustible: raw.combustible.filter(filterRow(3)),
-      fletes: raw.fletes.filter(filterRow(2)),
-      averias: raw.averias.filter(filterRow(2)),
+      gastos:      raw.gastos.filter(filterRow(0, 10)),
+      combustible: raw.combustible.filter(filterRow(0, 3)),
+      fletes:      raw.fletes.filter(filterRow(0, 2)),
+      averias:     raw.averias.filter(filterRow(0, 2)),
     }
   },
 

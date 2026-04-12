@@ -17,11 +17,12 @@ const PERIOD_OPTIONS: { value: Period; label: string }[] = [
   { value: 'week', label: 'Semana' },
   { value: 'month', label: 'Mes' },
   { value: 'year', label: 'Año' },
+  { value: 'custom', label: 'Personalizado' },
 ]
 
 export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
   const store = useAnalyticsStore()
-  const { status, fetchErrors, period, unitFilter, raw } = store
+  const { status, fetchErrors, period, unitFilter, raw, dateFrom, dateTo } = store
 
   // ESC key handler
   useEffect(() => {
@@ -51,9 +52,9 @@ export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
   const units = store.getUnits()
 
   function handlePdfClick() {
-    const { period: p, unitFilter: uf, getFilteredRows, getKpiTotals, getUnitMetrics } =
+    const { period: p, unitFilter: uf, dateFrom: df, dateTo: dt, getFilteredRows, getKpiTotals, getUnitMetrics } =
       useAnalyticsStore.getState()
-    generateReport(p, uf, getFilteredRows(), getKpiTotals(), getUnitMetrics())
+    generateReport(p, uf, getFilteredRows(), getKpiTotals(), getUnitMetrics(), df, dt)
   }
 
   return (
@@ -65,8 +66,8 @@ export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
     >
       <div className="bg-[#0f172a] rounded-xl w-full max-w-6xl max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-800">
         {/* Header */}
-        <div className="sticky top-0 bg-[#0f172a] border-b border-slate-800 px-6 py-4 z-10">
-          <div className="flex items-center gap-4">
+        <div className="sticky top-0 bg-[#0f172a] border-b border-slate-800 z-10">
+          <div className="flex items-center gap-4 px-6 py-4">
             {/* Title */}
             <span className="text-lg font-bold text-slate-100 shrink-0">
               📊 Analítica de Flota
@@ -139,6 +140,24 @@ export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
               </button>
             </div>
           </div>
+          {period === 'custom' && (
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', padding: '8px 20px', borderTop: '1px solid #1e293b', background: '#0f172a' }}>
+              <span className="text-xs text-slate-400">Desde</span>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={e => store.setDateRange(e.target.value, dateTo)}
+                className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded px-2 py-1"
+              />
+              <span className="text-xs text-slate-400">Hasta</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={e => store.setDateRange(dateFrom, e.target.value)}
+                className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded px-2 py-1"
+              />
+            </div>
+          )}
         </div>
 
         {/* Body */}
