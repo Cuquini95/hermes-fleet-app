@@ -344,6 +344,7 @@ export default function HermesChat() {
           // Last resort: detect brand from part number format
           if (equipUnit === 'General') {
             if (/^6\d{3}-/.test(pn) || /^0\d{4}-/.test(pn)) equipUnit = 'Komatsu HM400-3';
+            else if (/^7\d{2}-\d{2}-/.test(pn)) equipUnit = 'Komatsu D155AX-6'; // 707-xx-xxxxx seal kits
             else if (/^\d{3}-\d{4}/.test(pn)) equipUnit = 'CAT 740B';
             else if (/^[A-Z]\d{6,}/.test(pn)) equipUnit = 'Doosan DX360LCA';
             else if (/^\d{8}$/.test(pn)) equipUnit = 'Mack GR84B 8x4';
@@ -376,12 +377,29 @@ export default function HermesChat() {
                 }
               }
             } else {
-              // Not in catalog — ask AI with full fleet context
-              const result = await diagnose({
-                equipo: equipUnit,
-                sintoma: `BÚSQUEDA DE PARTE: ${pn}. Identifica qué es esta pieza, en qué sistema va y alternativas compatibles.`,
-              });
-              responseText = formatDiagnose(result, equipUnit);
+              // Not in PocketBase catalog
+              if (wantsDiagram) {
+                // User wants a diagram — try to find one directly, don't fall into AI diagnose
+                responseText = `📦 **Búsqueda: '${pn}'**\n\nNo encontré esta parte en el catálogo.`;
+                try {
+                  const diag = await findDiagram(equipUnit !== 'General' ? equipUnit : '', pn);
+                  if (diag.found && diag.image_url && diag.page !== undefined) {
+                    const nextPage = diag.page + 1;
+                    responseText += `\n\n📐 **Diagrama — ${diag.section ?? ''}**\n![Diagrama](/hermes-api${diag.image_url})\n\n📋 **Lista de Partes**\n![Partes](/hermes-api/diagrams/page/${diag.pdf}/${nextPage})`;
+                  } else {
+                    responseText += `\n\n📐 Selecciona el equipo en el filtro de arriba e intenta de nuevo, o ve a **Más → Diagramas** para explorar los planos disponibles.`;
+                  }
+                } catch {
+                  responseText += `\n\n📐 No pude cargar el diagrama. Ve a **Más → Diagramas** para explorar los planos disponibles.`;
+                }
+              } else {
+                // Not a diagram request — ask AI for context
+                const result = await diagnose({
+                  equipo: equipUnit,
+                  sintoma: `BÚSQUEDA DE PARTE: ${pn}. Identifica qué es esta pieza, en qué sistema va y alternativas compatibles.`,
+                });
+                responseText = formatDiagnose(result, equipUnit);
+              }
             }
           } catch {
             responseText = `📦 **Búsqueda: '${pn}'**\n\nNo pude conectar con el servidor. Verifica tu conexión e intenta de nuevo.`;

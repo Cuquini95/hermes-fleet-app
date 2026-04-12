@@ -67,94 +67,81 @@ export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
       <div className="bg-[#0f172a] rounded-xl w-full max-w-6xl max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-800">
         {/* Header */}
         <div className="sticky top-0 bg-[#0f172a] border-b border-slate-800 z-10">
-          <div className="flex items-center gap-4 px-6 py-4">
-            {/* Title */}
-            <span className="text-lg font-bold text-slate-100 shrink-0">
-              📊 Analítica de Flota
+          {/* Row 1: Title + right controls */}
+          <div className="flex items-center gap-2 px-4 py-3">
+            <span className="text-base font-bold text-slate-100 shrink-0">
+              📊 Analítica
             </span>
-
-            {/* Period pills */}
-            <div className="flex gap-1">
-              {PERIOD_OPTIONS.map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => useAnalyticsStore.getState().setPeriod(opt.value)}
-                  className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
-                    period === opt.value
-                      ? 'bg-blue-600 text-white'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Spacer */}
             <div className="flex-1" />
-
-            {/* Right controls */}
-            <div className="flex items-center gap-2">
-              {/* Unit filter dropdown */}
-              <select
-                value={unitFilter}
-                onChange={(e) => store.setUnitFilter(e.target.value)}
-                className="bg-slate-800 text-slate-300 border border-slate-700 rounded px-2 py-1 text-sm"
-              >
-                <option value="all">Todas las unidades</option>
-                {units.map((u) => (
-                  <option key={u} value={u}>
-                    {u}
-                  </option>
-                ))}
-              </select>
-
-              {/* PDF button */}
-              <button
-                onClick={handlePdfClick}
-                disabled={isLoading || status === 'error' || hasNoData}
-                className="bg-violet-700 hover:bg-violet-600 text-white px-3 py-1 rounded text-sm font-semibold disabled:opacity-50 transition-colors"
-              >
-                🖨️ PDF
-              </button>
-
-              {/* Refresh button */}
-              <button
-                onClick={() => store.fetch()}
-                className="text-slate-400 hover:text-slate-200 px-2 py-1 rounded transition-colors"
-                title="Actualizar datos"
-              >
-                {isLoading ? (
-                  <span className="inline-block animate-spin">↻</span>
-                ) : (
-                  '↻'
-                )}
-              </button>
-
-              {/* Close button */}
-              <button
-                onClick={onClose}
-                className="text-slate-400 hover:text-slate-200 px-2 py-1 rounded transition-colors"
-              >
-                ✕
-              </button>
-            </div>
+            {/* Unit filter dropdown */}
+            <select
+              value={unitFilter}
+              onChange={(e) => store.setUnitFilter(e.target.value)}
+              className="bg-slate-800 text-slate-300 border border-slate-700 rounded px-2 py-1 text-xs max-w-[140px]"
+            >
+              <option value="all">Todas las unidades</option>
+              {units.map((u) => (
+                <option key={u} value={u}>{u}</option>
+              ))}
+            </select>
+            {/* PDF button */}
+            <button
+              onClick={handlePdfClick}
+              disabled={isLoading || status === 'error' || hasNoData}
+              className="bg-violet-700 hover:bg-violet-600 text-white px-2 py-1 rounded text-xs font-semibold disabled:opacity-50 transition-colors shrink-0"
+            >
+              🖨️ PDF
+            </button>
+            {/* Refresh */}
+            <button
+              onClick={() => store.fetch()}
+              className="text-slate-400 hover:text-slate-200 px-1.5 py-1 rounded transition-colors shrink-0"
+              title="Actualizar"
+            >
+              {isLoading ? <span className="inline-block animate-spin">↻</span> : '↻'}
+            </button>
+            {/* Close */}
+            <button
+              onClick={onClose}
+              className="text-slate-400 hover:text-slate-200 px-1.5 py-1 rounded transition-colors shrink-0"
+            >
+              ✕
+            </button>
           </div>
+
+          {/* Row 2: Period pills */}
+          <div className="flex gap-1 px-4 pb-2 overflow-x-auto no-scrollbar">
+            {PERIOD_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => useAnalyticsStore.getState().setPeriod(opt.value)}
+                className={`px-3 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                  period === opt.value
+                    ? 'bg-blue-600 text-white'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Row 3: Custom date range */}
           {period === 'custom' && (
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', padding: '8px 20px', borderTop: '1px solid #1e293b', background: '#0f172a' }}>
+            <div className="flex flex-wrap gap-2 items-center px-4 pb-3 border-t border-slate-800 pt-2">
               <span className="text-xs text-slate-400">Desde</span>
               <input
                 type="date"
                 value={dateFrom}
                 onChange={e => store.setDateRange(e.target.value, dateTo)}
-                className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded px-2 py-1"
+                className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded px-2 py-1 flex-1 min-w-0"
               />
               <span className="text-xs text-slate-400">Hasta</span>
               <input
                 type="date"
                 value={dateTo}
                 onChange={e => store.setDateRange(dateFrom, e.target.value)}
-                className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded px-2 py-1"
+                className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded px-2 py-1 flex-1 min-w-0"
               />
             </div>
           )}

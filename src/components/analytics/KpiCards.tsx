@@ -27,7 +27,7 @@ function KpiCard({ label, value, accent, sub }: CardProps) {
 
 export default function KpiCards({ totals }: KpiCardsProps) {
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
       <KpiCard
         label="💰 Gastos"
         value={totals.gastosTotal > 0 ? formatPeso(totals.gastosTotal) : '—'}
