@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Activity, AlertTriangle, Fuel, Bell, RefreshCw, Table2 } from 'lucide-react';
+import { Activity, AlertTriangle, Fuel, Bell, RefreshCw } from 'lucide-react';
 import { useEquipmentList } from '../../hooks/useEquipmentList';
 import { useDashboardData } from '../../hooks/useDashboardData';
 import KPICard from '../ui/KPICard';
@@ -12,12 +12,13 @@ import BriefingCard from './BriefingCard';
 import { usePullToRefresh } from '../../hooks/usePullToRefresh';
 import PullIndicator from '../ui/PullIndicator';
 
-type Tab = 'general' | 'briefing' | 'pedidos';
+type Tab = 'general' | 'briefing' | 'pedidos' | 'datos';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'briefing', label: 'Briefing' },
   { id: 'pedidos', label: 'Pedidos' },
+  { id: 'datos', label: 'Datos' },
 ];
 
 export default function ExecutiveDashboard() {
@@ -52,7 +53,7 @@ export default function ExecutiveDashboard() {
         {TABS.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => tab.id === 'datos' ? navigate('/data') : setActiveTab(tab.id)}
             className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
               activeTab === tab.id
                 ? 'text-white'
@@ -122,14 +123,6 @@ export default function ExecutiveDashboard() {
           {/* Daily actions */}
           <AccionesDelDia />
 
-          {/* Quick access */}
-          <button
-            onClick={() => navigate('/data')}
-            className="flex items-center gap-3 bg-white rounded-xl px-4 py-3 shadow-sm border border-border btn-press w-full"
-          >
-            <Table2 size={22} style={{ color: '#162252' }} />
-            <span className="text-sm font-medium text-text">Gestor de Datos</span>
-          </button>
         </div>
       )}
 
