@@ -77,15 +77,23 @@ function formatPhotoAnalysis(result: PhotoAnalysisResult): string {
   return `📷 **Análisis de imagen**\n\n**Componente:** ${result.componente_probable}\n**Tipo de daño:** ${result.tipo_de_dano}\n**Severidad:** ${result.severidad}\n\n**Recomendación:** ${result.recomendacion_inicial}`;
 }
 
+function formatPrecioMXN(price: number): string {
+  if (!price || price === 0) return 'Sin precio';
+  return `$${price.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MXN`;
+}
+
 function formatSearchParts(results: PartResult[], query: string): string {
   if (results.length === 0) {
     return `📦 **Resultados para '${query}'**\n\nNo se encontraron partes con ese criterio.`;
   }
   const lines = results
-    .map(
-      (p) =>
-        `• ${p.part_number} — ${p.description} | Stock: ${p.stock_quantity} | $${p.unit_price}`
-    )
+    .map((p) => {
+      const stock = p.stock_quantity > 0 ? `Stock: ${p.stock_quantity}` : 'Sin stock';
+      const precio = formatPrecioMXN(p.unit_price);
+      const ubicacion = p.location ? ` | 📍 ${p.location}` : '';
+      const alts = p.alternatives?.length > 0 ? `\n  ↳ _Alternativas: ${p.alternatives.slice(0,3).join(', ')}_` : '';
+      return `• **${p.part_number}** — ${p.description} | ${stock} | ${precio}${ubicacion}${alts}`;
+    })
     .join('\n');
   return `📦 **Resultados para '${query}'**\n\n${lines}`;
 }
