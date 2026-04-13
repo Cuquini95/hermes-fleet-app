@@ -12,6 +12,9 @@ export default defineConfig(({ mode }) => {
       react(),
       tailwindcss(),
       VitePWA({
+        strategies: 'injectManifest',
+        srcDir: 'src',
+        filename: 'sw.ts',
         registerType: 'autoUpdate',
         includeAssets: ['favicon.svg', 'icons.svg', 'logo-transplus.svg'],
         manifest: {
@@ -55,23 +58,9 @@ export default defineConfig(({ mode }) => {
             },
           ],
         },
-        workbox: {
-          maximumFileSizeToCacheInBytes: 4 * 1024 * 1024, // 4 MiB
+        injectManifest: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-          runtimeCaching: [
-            {
-              // Cache Google Fonts
-              urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
-              handler: 'CacheFirst',
-              options: { cacheName: 'google-fonts-cache', expiration: { maxEntries: 10, maxAgeSeconds: 60 * 60 * 24 * 365 } },
-            },
-            {
-              // Cache API responses for offline resilience (read-only)
-              urlPattern: /\/hermes-api\/(parts|diagrams)\//i,
-              handler: 'NetworkFirst',
-              options: { cacheName: 'hermes-api-cache', expiration: { maxEntries: 50, maxAgeSeconds: 60 * 60 * 24 } },
-            },
-          ],
+          maximumFileSizeToCacheInBytes: 4 * 1024 * 1024, // 4 MiB
         },
       }),
     ],
