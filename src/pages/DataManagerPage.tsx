@@ -303,6 +303,8 @@ function buildTSV(columns: ColumnDef[], rows: string[][]): string {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
+const PAGE_SIZE = 50;
+
 type TabCache = Record<string, string[][]>;
 
 type EditingCell = { rowIndex: number; colIndex: number; value: string } | null;
@@ -315,6 +317,7 @@ export default function DataManagerPage() {
   const [loadingTabs, setLoadingTabs] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string | null>>({});
   const [search, setSearch] = useState('');
+  const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE);
   const [editingCell, setEditingCell] = useState<EditingCell>(null);
   const [savingCell, setSavingCell] = useState<SavingCell>(null);
   const [flashCell, setFlashCell] = useState<FlashCell>(null);
@@ -324,6 +327,7 @@ export default function DataManagerPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   const active = useMemo(
     () => COLLECTIONS.find((c) => c.id === activeId) ?? COLLECTIONS[0],
@@ -351,14 +355,37 @@ export default function DataManagerPage() {
     }
   }, [active, cache, loadingTabs, errors, loadTab]);
 
-  // Reset search and editing when switching tabs
+  // Reset search, editing, and pagination when switching tabs
   useEffect(() => {
     setSearch('');
     setEditingCell(null);
     setSavingCell(null);
     setFlashCell(null);
     setSelectedRows(new Set());
+    setDisplayLimit(PAGE_SIZE);
   }, [activeId]);
+
+  // Reset pagination when search changes
+  useEffect(() => {
+    setDisplayLimit(PAGE_SIZE);
+  }, [search]);
+
+  // IntersectionObserver: load next page when sentinel enters viewport.
+  // Re-attach after each page load so the new sentinel position is observed.
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return undefined;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setDisplayLimit((prev) => prev + PAGE_SIZE);
+        }
+      },
+      { rootMargin: '100px' },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [displayLimit, activeId, search]);
 
   // Pre-fetch analytics data on mount
   useEffect(() => {
@@ -384,6 +411,13 @@ export default function DataManagerPage() {
       row.some((cell) => (cell || '').toLowerCase().includes(q))
     );
   }, [cleanRows, search]);
+
+  // Page the visible rows — only show the first `displayLimit` rows
+  const pagedRows = useMemo(
+    () => visibleRows.slice(0, displayLimit),
+    [visibleRows, displayLimit],
+  );
+  const hasMore = visibleRows.length > displayLimit;
 
   const isLoading = !!loadingTabs[active.id];
   const error = errors[active.id];
@@ -683,20 +717,29 @@ export default function DataManagerPage() {
         ) : visibleRows.length === 0 ? (
           <EmptyState message={search ? 'Sin resultados para tu búsqueda' : active.emptyMessage} />
         ) : (
-          <DataTable
-            columns={active.columns}
-            rows={visibleRows}
-            editingCell={editingCell}
-            savingCell={savingCell}
-            flashCell={flashCell}
-            onCellClick={handleCellClick}
-            onCellChange={handleCellChange}
-            onCellSave={handleCellSave}
-            onCellCancel={handleCellCancel}
-            selectedRows={selectedRows}
-            onToggleRow={toggleRowSelection}
-            onToggleAll={toggleSelectAll}
-          />
+          <>
+            <DataTable
+              columns={active.columns}
+              rows={pagedRows}
+              editingCell={editingCell}
+              savingCell={savingCell}
+              flashCell={flashCell}
+              onCellClick={handleCellClick}
+              onCellChange={handleCellChange}
+              onCellSave={handleCellSave}
+              onCellCancel={handleCellCancel}
+              selectedRows={selectedRows}
+              onToggleRow={toggleRowSelection}
+              onToggleAll={toggleSelectAll}
+            />
+            {/* Infinite scroll sentinel — visible when user scrolls near the bottom */}
+            {hasMore && (
+              <div ref={sentinelRef} className="flex justify-center items-center py-4 text-xs text-[#6B7280]">
+                <Loader2 size={16} className="animate-spin mr-2" />
+                Cargando más…
+              </div>
+            )}
+          </>
         )}
       </div>
 

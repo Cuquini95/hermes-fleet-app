@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import { readRange, appendRow, updateCell, SHEET_TABS } from '../lib/sheets-api';
+import { OT_COL, OT_LOG_COL, OT_FIELD_COLUMN, AVERIA_COL } from '../lib/data-adapter';
+import { supabase } from '../lib/supabase';
 import type { WorkOrder, StatusLogEntry, OTStatusField, OTEstado, OTPriority } from '../types/workorder';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
 
@@ -31,37 +33,37 @@ interface WorkOrderState {
 }
 
 function parseWorkOrderRow(row: string[]): WorkOrder | null {
-  if (!row[1] || !row[1].startsWith('OT-')) return null;
+  if (!row[OT_COL.OT_ID] || !row[OT_COL.OT_ID].startsWith('OT-')) return null;
   return {
-    ot_id: row[1] ?? '',
-    fecha: row[2] ?? '',
-    unidad: row[3] ?? '',
-    tipo_averia: row[4] ?? '',
-    descripcion: row[5] ?? '',
-    severidad: row[6] ?? '',
-    prioridad: (row[7] ?? 'MEDIA') as OTPriority,
-    mecanico_asignado: row[8] ?? '',
-    estado: (row[9] ?? 'Abierta') as OTEstado,
-    foto_url: row[10] ?? '',
-    averia_ref: row[11] ?? '',
-    partes_necesarias: row[12] ?? '',
-    costo_estimado: Number(row[13]) || 0,
-    fecha_cierre: row[14] ?? '',
-    observaciones: row[15] ?? '',
-    progreso: Number(row[16]) || 0,
+    ot_id:             row[OT_COL.OT_ID]          ?? '',
+    fecha:             row[OT_COL.FECHA]           ?? '',
+    unidad:            row[OT_COL.UNIDAD]          ?? '',
+    tipo_averia:       row[OT_COL.TIPO_AVERIA]     ?? '',
+    descripcion:       row[OT_COL.DESCRIPCION]     ?? '',
+    severidad:         row[OT_COL.SEVERIDAD]       ?? '',
+    prioridad:         (row[OT_COL.PRIORIDAD]      ?? 'MEDIA') as OTPriority,
+    mecanico_asignado: row[OT_COL.MECANICO]        ?? '',
+    estado:            (row[OT_COL.ESTADO]         ?? 'Abierta') as OTEstado,
+    foto_url:          row[OT_COL.FOTO_URL]        ?? '',
+    averia_ref:        row[OT_COL.AVERIA_REF]      ?? '',
+    partes_necesarias: row[OT_COL.PARTES]          ?? '',
+    costo_estimado:    Number(row[OT_COL.COSTO_ESTIMADO]) || 0,
+    fecha_cierre:      row[OT_COL.FECHA_CIERRE]    ?? '',
+    observaciones:     row[OT_COL.OBSERVACIONES]   ?? '',
+    progreso:          Number(row[OT_COL.PROGRESO]) || 0,
   };
 }
 
 function parseStatusLogRow(row: string[]): StatusLogEntry | null {
-  if (!row[1] || !row[1].startsWith('OT-')) return null;
+  if (!row[OT_LOG_COL.OT_ID] || !row[OT_LOG_COL.OT_ID].startsWith('OT-')) return null;
   return {
-    timestamp: row[0] ?? '',
-    ot_id: row[1] ?? '',
-    field: (row[2] ?? 'estado') as OTStatusField,
-    old_value: row[3] ?? '',
-    new_value: row[4] ?? '',
-    changed_by: row[5] ?? '',
-    role: row[6] ?? '',
+    timestamp:   row[OT_LOG_COL.TIMESTAMP]   ?? '',
+    ot_id:       row[OT_LOG_COL.OT_ID]       ?? '',
+    field:       (row[OT_LOG_COL.FIELD]      ?? 'estado') as OTStatusField,
+    old_value:   row[OT_LOG_COL.OLD_VALUE]   ?? '',
+    new_value:   row[OT_LOG_COL.NEW_VALUE]   ?? '',
+    changed_by:  row[OT_LOG_COL.CHANGED_BY]  ?? '',
+    role:        row[OT_LOG_COL.ROLE]        ?? '',
   };
 }
 
@@ -197,15 +199,7 @@ export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
         role,
       ]);
 
-      const FIELD_TO_COLUMN: Record<string, number> = {
-        estado: 9,
-        mecanico_asignado: 8,
-        prioridad: 7,
-        observaciones: 15,
-        progreso: 16,
-        costo_estimado: 13,
-      };
-      const col = FIELD_TO_COLUMN[field];
+      const col = OT_FIELD_COLUMN[field];
       if (col !== undefined) {
         try {
           await updateCell(SHEET_TABS.ORDENES_TRABAJO, 1, otId, col, newValue);
@@ -215,10 +209,9 @@ export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
       }
 
       // Auto-sync Averías sheet when estado changes
-      // Averías ESTADO is at column 9, OT_ID stored at column 13
       if (field === 'estado') {
         try {
-          await updateCell(SHEET_TABS.AVERIAS, 13, otId, 9, newValue);
+          await updateCell(SHEET_TABS.AVERIAS, AVERIA_COL.OT_ID, otId, AVERIA_COL.ESTADO, newValue);
         } catch {
           // Non-critical — Averías row may not exist for older OTs
         }
@@ -233,3 +226,36 @@ export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
     return get().workorders.find((w) => w.ot_id === otId);
   },
 }));
+
+// ── Supabase Realtime subscription ────────────────────────────────────────────
+// Activates only when real Supabase credentials are configured (T1-4).
+// When credentials are placeholders, the subscription silently no-ops.
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? '';
+if (supabaseUrl && !supabaseUrl.includes('placeholder')) {
+  supabase
+    .channel('workorders-realtime')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'workorders' },
+      (payload) => {
+        const store = useWorkOrderStore.getState();
+        if (!store.fetched) return;
+
+        if (payload.eventType === 'INSERT') {
+          const newWO = payload.new as WorkOrder;
+          useWorkOrderStore.setState((s) => ({
+            workorders: [...s.workorders, newWO],
+          }));
+        } else if (payload.eventType === 'UPDATE') {
+          const updated = payload.new as WorkOrder;
+          useWorkOrderStore.setState((s) => ({
+            workorders: s.workorders.map((w) =>
+              w.ot_id === updated.ot_id ? { ...w, ...updated } : w
+            ),
+          }));
+        }
+      }
+    )
+    .subscribe();
+}

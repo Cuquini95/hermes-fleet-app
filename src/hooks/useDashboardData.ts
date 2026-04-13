@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
 import { useEquipmentList } from './useEquipmentList';
 import { mexicoDate } from '../lib/date-utils';
@@ -13,8 +13,8 @@ export interface DashboardData {
   refresh: () => void;
 }
 
-async function fetchCriticalOTs(): Promise<number> {
-  const rows = await readRange(SHEET_TABS.ORDENES_TRABAJO);
+async function fetchCriticalOTs(signal?: AbortSignal): Promise<number> {
+  const rows = await readRange(SHEET_TABS.ORDENES_TRABAJO, signal);
   let count = 0;
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
@@ -30,8 +30,8 @@ async function fetchCriticalOTs(): Promise<number> {
   return count;
 }
 
-async function fetchAvgConsumption(): Promise<string> {
-  const rows = await readRange(SHEET_TABS.COMBUSTIBLE);
+async function fetchAvgConsumption(signal?: AbortSignal): Promise<string> {
+  const rows = await readRange(SHEET_TABS.COMBUSTIBLE, signal);
   let total = 0;
   let count = 0;
   for (let i = 2; i < rows.length; i++) {
@@ -46,8 +46,8 @@ async function fetchAvgConsumption(): Promise<string> {
   return `${(total / count).toFixed(2)} L/avg`;
 }
 
-async function fetchAlertsToday(): Promise<number> {
-  const rows = await readRange(SHEET_TABS.AVERIAS);
+async function fetchAlertsToday(signal?: AbortSignal): Promise<number> {
+  const rows = await readRange(SHEET_TABS.AVERIAS, signal);
   const today = mexicoDate();
   let count = 0;
   for (let i = 1; i < rows.length; i++) {
@@ -65,6 +65,7 @@ export function useDashboardData(): DashboardData {
   const [alertsToday, setAlertsToday] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const equipmentList = useEquipmentList();
   const available = equipmentList.filter(
@@ -74,15 +75,17 @@ export function useDashboardData(): DashboardData {
     ? Math.round((available / equipmentList.length) * 100)
     : 0;
 
-  const fetchAll = useCallback(async () => {
+  const fetchAll = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setError(null);
 
     const results = await Promise.allSettled([
-      fetchCriticalOTs(),
-      fetchAvgConsumption(),
-      fetchAlertsToday(),
+      fetchCriticalOTs(signal),
+      fetchAvgConsumption(signal),
+      fetchAlertsToday(signal),
     ]);
+
+    if (signal?.aborted) return;
 
     const [otsResult, consumptionResult, alertsResult] = results;
 
@@ -113,7 +116,20 @@ export function useDashboardData(): DashboardData {
   }, []);
 
   useEffect(() => {
-    fetchAll();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    fetchAll(controller.signal).catch(() => {});
+    return () => {
+      controller.abort();
+      abortRef.current = null;
+    };
+  }, [fetchAll]);
+
+  const refresh = useCallback(() => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    fetchAll(controller.signal).catch(() => {});
   }, [fetchAll]);
 
   return {
@@ -123,6 +139,6 @@ export function useDashboardData(): DashboardData {
     alertsToday,
     loading,
     error,
-    refresh: fetchAll,
+    refresh,
   };
 }

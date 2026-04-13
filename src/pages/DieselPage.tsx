@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle } from 'lucide-react';
+import { z } from 'zod';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { isAnomalous } from '../data/fuel-benchmarks';
 import { mexicoDateInput, mexicoTimeInput } from '../lib/date-utils';
@@ -8,6 +9,25 @@ import { appendRow, SHEET_TABS } from '../lib/sheets-api';
 import { useAuthStore } from '../stores/auth-store';
 import ConfirmModal from '../components/ui/ConfirmModal';
 import SuccessToast from '../components/ui/SuccessToast';
+
+const dieselSchema = z.object({
+  unidad: z.string().min(1, 'Selecciona una unidad'),
+  litros: z
+    .string()
+    .min(1, 'Ingresa los litros')
+    .refine((v) => {
+      const n = parseFloat(v);
+      return !isNaN(n) && n > 0;
+    }, 'Debe ser un número positivo')
+    .refine((v) => parseFloat(v) <= 1000, 'Máximo 1,000 litros'),
+  horometro: z
+    .string()
+    .min(1, 'Ingresa el horómetro')
+    .refine((v) => {
+      const n = parseFloat(v);
+      return !isNaN(n) && n > 0;
+    }, 'Debe ser un número positivo'),
+});
 
 type FuelType = 'Urea' | 'Diesel' | 'Gasolina';
 
@@ -36,7 +56,15 @@ export default function DieselPage() {
   const selectedEquipment = equipment.find((eq) => eq.unit_id === unidad);
   const isTruck = selectedEquipment?.type === 'Camión Pesado';
 
-  const canSubmit = unidad !== '' && litros !== '' && horometro !== '';
+  const validation = dieselSchema.safeParse({ unidad, litros, horometro });
+  const canSubmit = validation.success;
+
+  function getFieldError(field: 'unidad' | 'litros' | 'horometro'): string | undefined {
+    if (!validation.success) {
+      const issue = validation.error.issues.find((i) => i.path[0] === field);
+      return issue?.message;
+    }
+  }
 
   function handleSubmitIntent() {
     if (!canSubmit) return;
@@ -165,6 +193,9 @@ export default function DieselPage() {
               </option>
             ))}
           </select>
+          {unidad === '' && getFieldError('unidad') && (
+            <span className="text-xs text-red-500">{getFieldError('unidad')}</span>
+          )}
         </div>
 
         {/* Tipo combustible */}
@@ -198,6 +229,9 @@ export default function DieselPage() {
             placeholder="0"
             className="w-full rounded-xl border border-border p-4 text-3xl font-semibold text-text bg-white text-center"
           />
+          {litros !== '' && getFieldError('litros') && (
+            <span className="text-xs text-red-500">{getFieldError('litros')}</span>
+          )}
         </div>
 
         {/* Costo */}
@@ -222,6 +256,9 @@ export default function DieselPage() {
             placeholder="Ej: 8450"
             className="w-full rounded-xl border border-border p-3 text-text bg-white"
           />
+          {horometro !== '' && getFieldError('horometro') && (
+            <span className="text-xs text-red-500">{getFieldError('horometro')}</span>
+          )}
         </div>
 
         {/* KM actual — trucks only */}

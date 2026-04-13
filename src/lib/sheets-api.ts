@@ -11,8 +11,102 @@
  */
 const HERMES_API = '/hermes-api';
 
+// ── Retry + timeout helper ────────────────────────────────────────────────────
+
+const RETRY_DELAYS_MS = [1000, 2000, 4000];
+const REQUEST_TIMEOUT_MS = 15_000;
+
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit = {},
+  signal?: AbortSignal,
+): Promise<Response> {
+  let lastError: Error = new Error('Unknown error');
+
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
+    const timeoutCtrl = new AbortController();
+    const timeoutId = setTimeout(() => timeoutCtrl.abort(), REQUEST_TIMEOUT_MS);
+
+    // Combine caller abort signal with our timeout signal
+    const combinedSignal = signal
+      ? createCombinedSignal(signal, timeoutCtrl.signal)
+      : timeoutCtrl.signal;
+
+    try {
+      const res = await fetch(url, { ...options, signal: combinedSignal });
+      clearTimeout(timeoutId);
+      return res;
+    } catch (err: unknown) {
+      clearTimeout(timeoutId);
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      lastError = err instanceof Error ? err : new Error(String(err));
+
+      if (attempt < RETRY_DELAYS_MS.length) {
+        await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+      }
+    }
+  }
+
+  throw lastError;
+}
+
+function createCombinedSignal(...signals: AbortSignal[]): AbortSignal {
+  const ctrl = new AbortController();
+  for (const sig of signals) {
+    if (sig.aborted) { ctrl.abort(); break; }
+    sig.addEventListener('abort', () => ctrl.abort(), { once: true });
+  }
+  return ctrl.signal;
+}
+
+// ── Read-side localStorage cache (30s TTL) ────────────────────────────────────
+
+const CACHE_TTL_MS = 30_000;
+
+interface CacheEntry {
+  data: string[][];
+  expiresAt: number;
+}
+
+function getCachedTab(tab: string): string[][] | null {
+  try {
+    const raw = localStorage.getItem(`hermes_tab_${tab}`);
+    if (!raw) return null;
+    const entry = JSON.parse(raw) as CacheEntry;
+    if (Date.now() > entry.expiresAt) {
+      localStorage.removeItem(`hermes_tab_${tab}`);
+      return null;
+    }
+    return entry.data;
+  } catch {
+    return null;
+  }
+}
+
+function setCachedTab(tab: string, data: string[][]): void {
+  try {
+    const entry: CacheEntry = { data, expiresAt: Date.now() + CACHE_TTL_MS };
+    localStorage.setItem(`hermes_tab_${tab}`, JSON.stringify(entry));
+  } catch {
+    // localStorage full — not critical
+  }
+}
+
+function invalidateCachedTab(tab: string): void {
+  try {
+    localStorage.removeItem(`hermes_tab_${tab}`);
+  } catch {
+    // not critical
+  }
+}
+
+// ── API functions ─────────────────────────────────────────────────────────────
+
 export async function appendRow(tab: string, values: string[]): Promise<void> {
-  const response = await fetch(`${HERMES_API}/api/sheets/append`, {
+  invalidateCachedTab(tab);
+  const response = await fetchWithRetry(`${HERMES_API}/api/sheets/append`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tab, values }),
@@ -27,15 +121,46 @@ export async function appendRow(tab: string, values: string[]): Promise<void> {
   }
 }
 
-export async function readRange(tab: string): Promise<string[][]> {
+/**
+ * Read all rows from a sheet tab.
+ * - Served from localStorage cache if data is <30s old.
+ * - Supports optional limit/offset for server-side pagination (VPS >= 2.0).
+ * - Pass signal to cancel in-flight request when component unmounts.
+ */
+export async function readRange(
+  tab: string,
+  signal?: AbortSignal,
+  limit?: number,
+  offset?: number,
+): Promise<string[][]> {
+  // Return cached data when no pagination is requested
+  if (limit === undefined && offset === undefined) {
+    const cached = getCachedTab(tab);
+    if (cached) return cached;
+  }
+
   const params = new URLSearchParams({ tab });
-  const response = await fetch(`${HERMES_API}/api/sheets/read?${params}`);
+  if (limit !== undefined) params.set('limit', String(limit));
+  if (offset !== undefined) params.set('offset', String(offset));
+
+  const response = await fetchWithRetry(
+    `${HERMES_API}/api/sheets/read?${params}`,
+    {},
+    signal,
+  );
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`Sheets API error ${response.status}: ${text}`);
   }
   const data = await response.json();
-  return data.data || [];
+  const rows: string[][] = data.data || [];
+
+  // Cache only full fetches (no pagination)
+  if (limit === undefined && offset === undefined) {
+    setCachedTab(tab, rows);
+  }
+
+  return rows;
 }
 
 export async function updateCell(
@@ -45,7 +170,8 @@ export async function updateCell(
   updateColumn: number,
   updateValue: string
 ): Promise<void> {
-  const response = await fetch(`${HERMES_API}/api/sheets/update`, {
+  invalidateCachedTab(tab);
+  const response = await fetchWithRetry(`${HERMES_API}/api/sheets/update`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -71,7 +197,8 @@ export async function upsertRow(
   key: string,
   values: string[]
 ): Promise<'updated' | 'inserted'> {
-  const response = await fetch(`${HERMES_API}/api/sheets/upsert-row`, {
+  invalidateCachedTab(tab);
+  const response = await fetchWithRetry(`${HERMES_API}/api/sheets/upsert-row`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tab, key, values }),
@@ -170,7 +297,7 @@ export interface OcrBoletaResult {
  */
 export async function ocrBoleta(file: File): Promise<OcrBoletaResult> {
   const image_base64 = await compressToBase64(file);
-  const response = await fetch(`${HERMES_API}/api/ocr/boleta`, {
+  const response = await fetchWithRetry(`${HERMES_API}/api/ocr/boleta`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ image_base64 }),
@@ -208,7 +335,7 @@ export async function ocrReceipt(file: File): Promise<OcrReceiptResult> {
   const image_base64 = isPdf ? await fileToBase64Raw(file) : await compressToBase64(file);
   const media_type   = isPdf ? 'application/pdf' : 'image/jpeg';
 
-  const response = await fetch(`${HERMES_API}/api/ocr/receipt`, {
+  const response = await fetchWithRetry(`${HERMES_API}/api/ocr/receipt`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ image_base64, media_type }),
@@ -249,7 +376,7 @@ export async function importPartsFromQuote(
   const partsWithNumbers = parts.filter((p) => p.part_number.trim() !== '');
   if (partsWithNumbers.length === 0) return [];
   try {
-    const res = await fetch(`${HERMES_API}/api/parts/import`, {
+    const res = await fetchWithRetry(`${HERMES_API}/api/parts/import`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ supplier, parts: partsWithNumbers }),
@@ -267,7 +394,8 @@ export async function deleteRow(
   tab: string,
   match: Record<string, string>  // { "0": "11/04/2026", "1": "14:00", "2": "CV103" }
 ): Promise<boolean> {
-  const response = await fetch(`${HERMES_API}/api/sheets/delete-row`, {
+  invalidateCachedTab(tab);
+  const response = await fetchWithRetry(`${HERMES_API}/api/sheets/delete-row`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tab, match }),

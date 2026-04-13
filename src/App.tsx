@@ -40,6 +40,7 @@ import NuevoGastoPage from './pages/NuevoGastoPage';
 import BulkBoletasPage from './pages/BulkBoletasPage';
 import CatalogoImportPage from './pages/CatalogoImportPage';
 import DataManagerPage from './pages/DataManagerPage';
+import ErrorBoundary from './components/ErrorBoundary';
 
 // ── Roles allowed per route ───────────────────────────────────────────────────
 // Empty array = any authenticated user
@@ -87,7 +88,9 @@ export default function App() {
       <Route
         element={
           <RequireRole roles={ALL}>
-            <AppShell />
+            <ErrorBoundary>
+              <AppShell />
+            </ErrorBoundary>
           </RequireRole>
         }
       >

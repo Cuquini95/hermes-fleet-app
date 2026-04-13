@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { Bell, LogOut, ShoppingCart } from 'lucide-react';
 import { useAuthStore } from '../../stores/auth-store';
 import { useCartStore } from '../../stores/cart-store';
+import { useWorkOrderStore } from '../../stores/workorder-store';
 import { ROLE_LABELS } from '../../types/roles';
 
 export default function Header() {
@@ -10,6 +11,11 @@ export default function Header() {
   const role = useAuthStore((s) => s.role);
   const logout = useAuthStore((s) => s.logout);
   const cartCount = useCartStore((s) => s.items.length);
+  const alertCount = useWorkOrderStore((s) =>
+    s.workorders.filter(
+      (w) => w.estado !== 'Resuelta' && w.estado !== 'Completado'
+    ).length
+  );
 
   const canSeeCart = role === 'jefe_taller' || role === 'gerencia';
 
@@ -65,12 +71,14 @@ export default function Header() {
           aria-label="Alertas"
         >
           <Bell size={22} />
-          <span
-            className="absolute -top-1 -right-1 flex items-center justify-center rounded-full text-white"
-            style={{ width: 16, height: 16, fontSize: 9, backgroundColor: '#DC2626' }}
-          >
-            2
-          </span>
+          {alertCount > 0 && (
+            <span
+              className="absolute -top-1 -right-1 flex items-center justify-center rounded-full text-white"
+              style={{ width: 16, height: 16, fontSize: 9, backgroundColor: '#DC2626' }}
+            >
+              {alertCount > 9 ? '9+' : alertCount}
+            </span>
+          )}
         </button>
 
         <button

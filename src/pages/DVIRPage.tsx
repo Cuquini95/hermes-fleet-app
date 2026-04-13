@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
+import { z } from 'zod';
 import type { DVIRCheck, CheckStatus } from '../types/dvir';
 import { DVIR_SYSTEMS } from '../data/dvir-systems';
 import { useEquipmentList } from '../hooks/useEquipmentList';
@@ -8,11 +9,17 @@ import { generateOTId } from '../lib/ot-generator';
 import { mexicoDateInput, mexicoTimeInput, mexicoDateCompact, mexicoTimeCompact } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
 import { tryUploadPhotos } from '../lib/photo-upload-safe';
+import { sendPushEvent } from '../lib/push-notifications';
 import { useAuthStore } from '../stores/auth-store';
 import SystemCheckRow from '../components/dvir/SystemCheckRow';
 import DVIRResultBanner from '../components/dvir/DVIRResultBanner';
 import ConfirmModal from '../components/ui/ConfirmModal';
 import SuccessToast from '../components/ui/SuccessToast';
+
+const dvirSchema = z.object({
+  unit_id: z.string().min(1, 'Selecciona una unidad'),
+  allChecked: z.literal(true, 'Completa todos los sistemas'),
+});
 
 interface PhotoItem {
   file: File;
@@ -48,7 +55,11 @@ export default function DVIRPage() {
   const [toastVisible, setToastVisible] = useState(false);
 
   const allChecked = checks.every((c) => c.status !== null);
-  const canSubmit = allChecked && unit_id !== '';
+  const validation = dvirSchema.safeParse({
+    unit_id,
+    allChecked: allChecked || undefined,
+  });
+  const canSubmit = validation.success;
 
   function updateCheck(index: number, status: CheckStatus) {
     setChecks((prev) =>
@@ -144,6 +155,11 @@ export default function DVIRPage() {
       setToastMessage(`Inspección registrada — Score: ${okCount}/12`);
     }
     setToastVisible(true);
+
+    // Push notification to supervisor when DVIR is deficient
+    if (result === 'reprobado') {
+      sendPushEvent('dvir_deficiente', { unidad: unit_id, score: `${okCount}/12`, ot_id: otId ?? '' });
+    }
 
     appendRow(SHEET_TABS.INSPECCIONES, row).catch((err: unknown) => {
       console.error('Background write failed (DVIR):', err);

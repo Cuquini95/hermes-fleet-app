@@ -1,12 +1,14 @@
 import { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
+import { z } from 'zod';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { generateOTId } from '../lib/ot-generator';
 import { calculatePriority } from '../lib/priority-calculator';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
 import { tryUploadPhotos } from '../lib/photo-upload-safe';
+import { sendPushEvent } from '../lib/push-notifications';
 import { useAuthStore } from '../stores/auth-store';
 import AutoPriorityIndicator from '../components/falla/AutoPriorityIndicator';
 import PhotoCapture from '../components/ui/PhotoCapture';
@@ -25,6 +27,13 @@ const TIPO_FALLA_OPTIONS = [
 ];
 
 const DOWNTIME_OPTIONS = ['<1 hora', '1-4 horas', '4-8 horas', '>8 horas'];
+
+const fallaSchema = z.object({
+  unidad: z.string().min(1, 'Selecciona una unidad'),
+  tipoFalla: z.string().min(1, 'Selecciona el tipo de falla'),
+  descripcion: z.string().min(1, 'Describe la falla'),
+  puedeMoverse: z.boolean(),
+});
 
 interface PhotoItem {
   file: File;
@@ -58,8 +67,13 @@ export default function FallaPage() {
       })
     : null;
 
-  const canSubmit =
-    unidad !== '' && tipoFalla !== '' && descripcion.trim() !== '' && puedeMoverse !== null;
+  const validation = fallaSchema.safeParse({
+    unidad,
+    tipoFalla,
+    descripcion: descripcion.trim(),
+    puedeMoverse: puedeMoverse === null ? undefined : puedeMoverse,
+  });
+  const canSubmit = validation.success;
 
   const handlePhotoCapture = useCallback((file: File) => {
     const preview = URL.createObjectURL(file);
@@ -131,6 +145,9 @@ export default function FallaPage() {
     // Show success immediately — both sheet writes fire in parallel in background
     setToastMessage(`${otId} creada — Jefe de Taller notificado`);
     setToastVisible(true);
+
+    // Push notification to fleet manager / workshop
+    sendPushEvent('nueva_falla', { ot_id: otId, unidad, tipo: tipoFalla, prioridad: priorityValue });
 
     Promise.allSettled([
       appendRow(SHEET_TABS.AVERIAS, averiaRow),
