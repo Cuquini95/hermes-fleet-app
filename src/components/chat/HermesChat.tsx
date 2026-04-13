@@ -14,7 +14,9 @@ import {
   type PartResult,
 } from '../../lib/hermes-api';
 import { fileToBase64 } from '../../lib/photo-upload';
+import { readRange, SHEET_TABS } from '../../lib/sheets-api';
 import { lookupFaultCode, buildFaultCodeSintoma } from '../../data/fault-codes';
+import { TRANSPORT_UNITS } from '../../data/transport-units';
 import type { ChatMessage } from '../../types/chat';
 import ChatBubble from './ChatBubble';
 import TypingIndicator from './TypingIndicator';
@@ -203,10 +205,132 @@ function detectEquipmentFromText(text: string): string {
   return 'General';
 }
 
+// ─── Trip / Flete report lookup ──────────────────────────────────────────────
+
+const MONTH_NAMES = [
+  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+] as const;
+
+const MONTH_MAP: Record<string, number> = {
+  enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6,
+  julio: 7, agosto: 8, septiembre: 9, setiembre: 9, octubre: 10,
+  noviembre: 11, diciembre: 12,
+};
+
+const TRANSPORT_UNIT_SET = new Set(TRANSPORT_UNITS.map((u) => u.unit_id.toUpperCase()));
+
+/**
+ * Detect queries about trip/flete counts or totals for a transport unit.
+ * Examples: "cuántos viajes lleva CV100 en abril", "reporte de fletes CV105 este mes",
+ * "viajes CV103 marzo", "total de viajes CV100".
+ */
+function isTripReportQuery(text: string): boolean {
+  const hasTripKeyword = /\bviaj(es?|ó|o)\b|\bflet(es?|e)\b|\btrips?\b/i.test(text);
+  if (!hasTripKeyword) return false;
+  const hasCountWord = /\bcu[aá]nt(os|as)\b|\breporte\b|\bresumen\b|\btotal\b|\blleva\b|\bllev[oó]\b|\bhiz[oó]\b|\brealiz[oó]\b|\bhech(o|os)\b|\bcuenta\b|\bregistrad[oa]s?\b/i.test(text);
+  const hasUnitRef = /\bCV\s*\d{2,3}\b/i.test(text);
+  return hasCountWord || hasUnitRef;
+}
+
+/** Extract a transport unit ID like "CV100" from free text, returns canonical form. */
+function extractTransportUnit(text: string): string | null {
+  const match = text.match(/\bCV\s*(\d{2,3})\b/i);
+  if (!match) return null;
+  const canonical = `CV${match[1]}`.toUpperCase();
+  return TRANSPORT_UNIT_SET.has(canonical) ? canonical : canonical;
+}
+
+/**
+ * Extract month/year from the text. Supports named months (abril, mayo…),
+ * "este mes", "mes pasado". Defaults to the current month/year.
+ */
+function extractMonthYear(
+  text: string,
+  reference: Date = new Date(),
+): { month: number; year: number; label: string } {
+  const lower = text.toLowerCase();
+  if (/\bmes\s+pasado\b/.test(lower)) {
+    const d = new Date(reference);
+    d.setDate(1);
+    d.setMonth(d.getMonth() - 1);
+    return { month: d.getMonth() + 1, year: d.getFullYear(), label: MONTH_NAMES[d.getMonth()] };
+  }
+  for (const [name, num] of Object.entries(MONTH_MAP)) {
+    if (new RegExp(`\\b${name}\\b`, 'i').test(lower)) {
+      const yearMatch = lower.match(/\b(20\d{2})\b/);
+      const year = yearMatch ? parseInt(yearMatch[1], 10) : reference.getFullYear();
+      return { month: num, year, label: MONTH_NAMES[num - 1] };
+    }
+  }
+  return {
+    month: reference.getMonth() + 1,
+    year: reference.getFullYear(),
+    label: MONTH_NAMES[reference.getMonth()],
+  };
+}
+
+/** Read the Fletes sheet and summarise trips for a unit in a given month. */
+async function fetchTripReport(
+  unit: string,
+  month: number,
+  year: number,
+  monthLabel: string,
+): Promise<string> {
+  let rows: string[][];
+  try {
+    rows = await readRange(SHEET_TABS.FLETES);
+  } catch {
+    return `📊 No pude acceder al reporte de fletes. Verifica tu conexión al servidor e intenta de nuevo.`;
+  }
+
+  const dataRows = rows.slice(1); // skip header
+  const matching = dataRows.filter((row) => {
+    const u = (row[2] ?? '').trim().toUpperCase();
+    if (u !== unit) return false;
+    const fecha = (row[0] ?? '').trim();
+    const m = fecha.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (!m) return false;
+    return parseInt(m[2], 10) === month && parseInt(m[3], 10) === year;
+  });
+
+  const count = matching.length;
+  const tonelaje = matching.reduce(
+    (s, r) => s + (parseFloat((r[11] ?? '').replace(/,/g, '')) || 0),
+    0,
+  );
+  const flete = matching.reduce(
+    (s, r) => s + (parseFloat((r[12] ?? '').replace(/[$,\s]/g, '')) || 0),
+    0,
+  );
+
+  if (count === 0) {
+    return (
+      `📊 **Reporte de viajes — ${unit}**\n` +
+      `${monthLabel} ${year}\n\n` +
+      `No hay viajes registrados para ${unit} en ${monthLabel.toLowerCase()} ${year}.`
+    );
+  }
+
+  const fletePretty = flete.toLocaleString('es-MX', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  const tonPretty = tonelaje.toLocaleString('es-MX', { maximumFractionDigits: 1 });
+
+  return (
+    `📊 **Reporte de viajes — ${unit}**\n` +
+    `${monthLabel} ${year}\n\n` +
+    `• **${count}** ${count === 1 ? 'viaje registrado' : 'viajes registrados'}\n` +
+    `• Tonelaje total: **${tonPretty} ton**\n` +
+    `• Flete total: **$${fletePretty} MXN**`
+  );
+}
+
 // ─── Greeting ────────────────────────────────────────────────────────────────
 
 function buildGreeting(userName: string): ChatMessage {
-  const content = `Hola ${userName}. Soy Hermes, tu asistente técnico.\n\nPuedo ayudarte con:\n• Diagnóstico de fallas — envía foto o describe el síntoma\n• Búsqueda de partes — número OEM o descripción\n• Procedimientos de reparación — manuales y torques\n• Códigos de falla — qué significan y qué revisar\n• **Diagramas** — escribe _diagrama [sistema]_ para ver el plano\n• **Manual de taller** — después de un código de falla escribe _ver manual_\n\n¿En qué te puedo ayudar?`;
+  const content = `Hola ${userName}. Soy Hermes, tu asistente técnico.\n\nPuedo ayudarte con:\n• Diagnóstico de fallas — envía foto o describe el síntoma\n• Búsqueda de partes — número OEM o descripción\n• Procedimientos de reparación — manuales y torques\n• Códigos de falla — qué significan y qué revisar\n• **Diagramas** — escribe _diagrama [sistema]_ para ver el plano\n• **Manual de taller** — después de un código de falla escribe _ver manual_\n• **Reporte de viajes** — ej: _cuántos viajes lleva CV100 en abril_\n\n¿En qué te puedo ayudar?`;
   return {
     id: 'greeting',
     role: 'hermes',
@@ -274,6 +398,19 @@ export default function HermesChat() {
             responseText = formatPhotoAnalysis(result);
           } catch {
             responseText = formatPhotoAnalysis(MOCK_PHOTO_ANALYSIS);
+          }
+        } else if (isTripReportQuery(text)) {
+          // ── Trip / Flete report for a transport unit (CV100-CV110) ─────────
+          const unitFromText = extractTransportUnit(text);
+          const unit = unitFromText
+            ?? (selectedUnit && /^CV\d{2,3}$/i.test(selectedUnit) ? selectedUnit.toUpperCase() : null);
+          if (!unit) {
+            responseText =
+              `📊 **Reporte de viajes**\n\n` +
+              `Dime qué unidad quieres consultar — por ejemplo: _cuántos viajes lleva CV100 en abril_.`;
+          } else {
+            const { month, year, label } = extractMonthYear(text);
+            responseText = await fetchTripReport(unit, month, year, label);
           }
         } else if (faultCode || (isFaultCodeQuery(text) && !isPartNumber(text))) {
           // ── Fault code path ─────────────────────────────────────────────────
