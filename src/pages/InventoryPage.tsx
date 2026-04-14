@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, RefreshCw } from 'lucide-react';
+import { readRange, SHEET_TABS } from '../lib/sheets-api';
 
 interface StockItem {
   partNumber: string;
@@ -8,91 +9,10 @@ interface StockItem {
   oemRef: string;
   stock: number;
   minimum: number;
+  unit: string;
+  category: string;
   status: 'critical' | 'low' | 'ok';
 }
-
-const STOCK_ITEMS: StockItem[] = [
-  {
-    partNumber: 'FLT-HYD-001',
-    description: 'Filtro Hidráulico Komatsu',
-    oemRef: 'KOM-207-60-71181',
-    stock: 0,
-    minimum: 4,
-    status: 'critical',
-  },
-  {
-    partNumber: 'FREIN-001',
-    description: 'Pastillas de Freno CAT 740B',
-    oemRef: 'CAT-9W-2620',
-    stock: 2,
-    minimum: 5,
-    status: 'critical',
-  },
-  {
-    partNumber: 'FLT-ACE-002',
-    description: 'Filtro Aceite Motor D155',
-    oemRef: 'KOM-600-211-5240',
-    stock: 3,
-    minimum: 6,
-    status: 'low',
-  },
-  {
-    partNumber: 'EMP-001',
-    description: 'Empaque Cabeza Motor',
-    oemRef: 'MACK-21893456',
-    stock: 1,
-    minimum: 3,
-    status: 'low',
-  },
-  {
-    partNumber: 'COR-HYD-003',
-    description: 'Correa Alternador Doosan',
-    oemRef: 'DOO-K9002983',
-    stock: 4,
-    minimum: 6,
-    status: 'low',
-  },
-  {
-    partNumber: 'NEU-CAM-001',
-    description: 'Neumático 23.5R25',
-    oemRef: 'BRI-OTR-23525',
-    stock: 2,
-    minimum: 4,
-    status: 'low',
-  },
-  {
-    partNumber: 'ACE-MOT-001',
-    description: 'Aceite Motor 15W40 (bidón 5L)',
-    oemRef: 'SHELL-RIM-X-15W40',
-    stock: 5,
-    minimum: 8,
-    status: 'low',
-  },
-  {
-    partNumber: 'BAT-24V-001',
-    description: 'Batería 24V 170Ah',
-    oemRef: 'BOSCH-S5-A08',
-    stock: 6,
-    minimum: 4,
-    status: 'ok',
-  },
-  {
-    partNumber: 'FLT-COM-001',
-    description: 'Filtro Combustible Komatsu',
-    oemRef: 'KOM-600-311-3750',
-    stock: 12,
-    minimum: 6,
-    status: 'ok',
-  },
-  {
-    partNumber: 'SEL-HYD-001',
-    description: 'Sello Cilindro Hidráulico',
-    oemRef: 'KOM-707-99-01340',
-    stock: 8,
-    minimum: 4,
-    status: 'ok',
-  },
-];
 
 type FilterType = 'all' | 'critical' | 'low' | 'ok';
 
@@ -114,23 +34,95 @@ const STATUS_LABEL: Record<StockItem['status'], string> = {
   ok: 'OK',
 };
 
+function computeStatus(stock: number, minimum: number): StockItem['status'] {
+  if (stock === 0 || stock < minimum) return 'critical';
+  if (stock < minimum * 1.5) return 'low';
+  return 'ok';
+}
+
+function parseRows(rows: string[][]): StockItem[] {
+  return rows.reduce<StockItem[]>((acc, row) => {
+    const partNumber = row[0]?.trim() ?? '';
+    if (!partNumber || partNumber.startsWith('#')) return acc;
+
+    const stock = parseFloat(row[3] ?? '') || 0;
+    const minimum = parseFloat(row[4] ?? '') || 0;
+
+    acc.push({
+      partNumber,
+      description: row[1]?.trim() ?? '',
+      oemRef: row[2]?.trim() ?? '',
+      stock,
+      minimum,
+      unit: row[5]?.trim() ?? '',
+      category: row[6]?.trim() ?? '',
+      status: computeStatus(stock, minimum),
+    });
+
+    return acc;
+  }, []);
+}
+
+function formatTimestamp(date: Date): string {
+  return date.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+}
+
+function SkeletonCard() {
+  return (
+    <div className="bg-white rounded-xl shadow-sm border border-border border-l-4 border-l-border p-4 flex items-center gap-3 animate-pulse">
+      <div className="flex-1 min-w-0 space-y-2">
+        <div className="h-3 w-24 bg-gray-200 rounded" />
+        <div className="h-4 w-48 bg-gray-200 rounded" />
+        <div className="h-3 w-32 bg-gray-200 rounded" />
+      </div>
+      <div className="flex flex-col items-end gap-1.5 shrink-0 space-y-1">
+        <div className="h-5 w-14 bg-gray-200 rounded-full" />
+        <div className="h-7 w-8 bg-gray-200 rounded" />
+        <div className="h-3 w-12 bg-gray-200 rounded" />
+      </div>
+    </div>
+  );
+}
+
 export default function InventoryPage() {
   const navigate = useNavigate();
   const [filter, setFilter] = useState<FilterType>('all');
+  const [items, setItems] = useState<StockItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
 
-  const criticalCount = STOCK_ITEMS.filter((i) => i.status === 'critical').length;
-  const lowCount = STOCK_ITEMS.filter((i) => i.status === 'low').length;
-  const okCount = STOCK_ITEMS.filter((i) => i.status === 'ok').length;
+  useEffect(() => {
+    const ctrl = new AbortController();
+    setLoading(true);
+    setError(null);
 
-  const filtered =
-    filter === 'all'
-      ? STOCK_ITEMS
-      : STOCK_ITEMS.filter((i) => i.status === filter);
+    readRange(SHEET_TABS.INVENTARIO, ctrl.signal)
+      .then((rows) => {
+        setItems(parseRows(rows));
+        setUpdatedAt(new Date());
+        setLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        setError(err instanceof Error ? err.message : 'Error al cargar inventario');
+        setLoading(false);
+      });
+
+    return () => ctrl.abort();
+  }, [retryKey]);
+
+  const criticalCount = items.filter((i) => i.status === 'critical').length;
+  const lowCount = items.filter((i) => i.status === 'low').length;
+  const okCount = items.filter((i) => i.status === 'ok').length;
+
+  const filtered = filter === 'all' ? items : items.filter((i) => i.status === filter);
 
   return (
     <div className="flex flex-col pb-4 animate-fade-up">
       {/* Header */}
-      <div className="flex items-center gap-3 mb-4">
+      <div className="flex items-center gap-3 mb-1">
         <button
           type="button"
           onClick={() => navigate(-1)}
@@ -138,73 +130,119 @@ export default function InventoryPage() {
         >
           <ArrowLeft size={20} className="text-text" />
         </button>
-        <h1 className="text-xl font-bold text-text">Inventario Repuestos</h1>
+        <h1 className="text-xl font-bold text-text">
+          Inventario Repuestos{!loading && items.length > 0 ? ` (${items.length})` : ''}
+        </h1>
       </div>
 
+      {/* Timestamp */}
+      <p className="text-xs text-text-secondary mb-4 ml-12">
+        {loading
+          ? 'Cargando…'
+          : updatedAt
+          ? `Actualizado ${formatTimestamp(updatedAt)}`
+          : ''}
+      </p>
+
+      {/* Error state */}
+      {error && (
+        <div className="bg-red-50 border border-critical rounded-xl p-4 mb-4 flex items-center justify-between gap-3">
+          <p className="text-sm text-critical font-medium">{error}</p>
+          <button
+            type="button"
+            onClick={() => setRetryKey((k) => k + 1)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-critical text-critical text-sm font-semibold shrink-0"
+          >
+            <RefreshCw size={14} />
+            Reintentar
+          </button>
+        </div>
+      )}
+
       {/* Summary pills */}
-      <div className="flex gap-2 mb-4">
-        <button
-          type="button"
-          onClick={() => setFilter(filter === 'critical' ? 'all' : 'critical')}
-          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-colors border ${
-            filter === 'critical'
-              ? 'bg-red-100 border-critical text-critical'
-              : 'bg-white border-border text-text-secondary'
-          }`}
-        >
-          <span className="text-base">🔴</span>
-          CRÍTICO {criticalCount}
-        </button>
-        <button
-          type="button"
-          onClick={() => setFilter(filter === 'low' ? 'all' : 'low')}
-          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-colors border ${
-            filter === 'low'
-              ? 'bg-amber-100 border-amber text-amber'
-              : 'bg-white border-border text-text-secondary'
-          }`}
-        >
-          <span className="text-base">🟡</span>
-          BAJO {lowCount}
-        </button>
-        <button
-          type="button"
-          onClick={() => setFilter(filter === 'ok' ? 'all' : 'ok')}
-          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-colors border ${
-            filter === 'ok'
-              ? 'bg-green-100 border-success text-success'
-              : 'bg-white border-border text-text-secondary'
-          }`}
-        >
-          <span className="text-base">✅</span>
-          OK {okCount}
-        </button>
-      </div>
+      {!error && (
+        <div className="flex gap-2 mb-4">
+          <button
+            type="button"
+            onClick={() => setFilter(filter === 'critical' ? 'all' : 'critical')}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-colors border ${
+              filter === 'critical'
+                ? 'bg-red-100 border-critical text-critical'
+                : 'bg-white border-border text-text-secondary'
+            }`}
+          >
+            <span className="text-base">🔴</span>
+            CRÍTICO {loading ? '…' : criticalCount}
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilter(filter === 'low' ? 'all' : 'low')}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-colors border ${
+              filter === 'low'
+                ? 'bg-amber-100 border-amber text-amber'
+                : 'bg-white border-border text-text-secondary'
+            }`}
+          >
+            <span className="text-base">🟡</span>
+            BAJO {loading ? '…' : lowCount}
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilter(filter === 'ok' ? 'all' : 'ok')}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-colors border ${
+              filter === 'ok'
+                ? 'bg-green-100 border-success text-success'
+                : 'bg-white border-border text-text-secondary'
+            }`}
+          >
+            <span className="text-base">✅</span>
+            OK {loading ? '…' : okCount}
+          </button>
+        </div>
+      )}
 
       {/* Stock items */}
       <div className="flex flex-col gap-3">
-        {filtered.map((item) => (
-          <div
-            key={item.partNumber}
-            className={`bg-white rounded-xl shadow-sm border border-border border-l-4 ${STATUS_BORDER[item.status]} p-4 flex items-center gap-3`}
-          >
-            {/* Left: part info */}
-            <div className="flex-1 min-w-0">
-              <p className="font-mono text-xs font-semibold text-amber">{item.partNumber}</p>
-              <p className="font-medium text-text text-sm mt-0.5">{item.description}</p>
-              <p className="text-text-secondary text-xs mt-0.5">{item.oemRef}</p>
-            </div>
+        {loading && (
+          <>
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </>
+        )}
 
-            {/* Right: stock info */}
-            <div className="flex flex-col items-end gap-1.5 shrink-0">
-              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${STATUS_BADGE[item.status]}`}>
-                {STATUS_LABEL[item.status]}
-              </span>
-              <span className="text-xl font-bold text-text">{item.stock}</span>
-              <span className="text-xs text-text-secondary">Mín: {item.minimum}</span>
-            </div>
+        {!loading && !error && filtered.length === 0 && (
+          <div className="bg-white rounded-xl border border-border p-8 text-center">
+            <p className="text-text-secondary text-sm">Sin artículos en esta categoría.</p>
           </div>
-        ))}
+        )}
+
+        {!loading &&
+          !error &&
+          filtered.map((item) => (
+            <div
+              key={item.partNumber}
+              className={`bg-white rounded-xl shadow-sm border border-border border-l-4 ${STATUS_BORDER[item.status]} p-4 flex items-center gap-3`}
+            >
+              {/* Left: part info */}
+              <div className="flex-1 min-w-0">
+                <p className="font-mono text-xs font-semibold text-amber">{item.partNumber}</p>
+                <p className="font-medium text-text text-sm mt-0.5">{item.description}</p>
+                <p className="text-text-secondary text-xs mt-0.5">{item.oemRef}</p>
+              </div>
+
+              {/* Right: stock info */}
+              <div className="flex flex-col items-end gap-1.5 shrink-0">
+                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${STATUS_BADGE[item.status]}`}>
+                  {STATUS_LABEL[item.status]}
+                </span>
+                <span className="text-xl font-bold text-text">{item.stock}</span>
+                <span className="text-xs text-text-secondary">Mín: {item.minimum}</span>
+              </div>
+            </div>
+          ))}
       </div>
     </div>
   );

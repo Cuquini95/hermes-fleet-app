@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle } from 'lucide-react';
 import { z } from 'zod';
@@ -6,6 +6,8 @@ import { useEquipmentList } from '../hooks/useEquipmentList';
 import { isAnomalous } from '../data/fuel-benchmarks';
 import { mexicoDateInput, mexicoTimeInput } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { queueSubmission, flushQueue } from '../lib/offline-queue';
 import { useAuthStore } from '../stores/auth-store';
 import ConfirmModal from '../components/ui/ConfirmModal';
 import SuccessToast from '../components/ui/SuccessToast';
@@ -37,6 +39,13 @@ export default function DieselPage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
   const equipment = useEquipmentList();
+  const isOnline = useOnlineStatus();
+
+  useEffect(() => {
+    if (isOnline) {
+      flushQueue().catch(() => {});
+    }
+  }, [isOnline]);
 
   const [fecha, setFecha] = useState(mexicoDateInput());
   const [hora, setHora] = useState(mexicoTimeInput());
@@ -102,13 +111,21 @@ export default function DieselPage() {
       observaciones,
     ];
 
-    // Show success immediately — write happens in background
-    setToastMessage('Combustible registrado ✓');
-    setToastVisible(true);
+    if (isOnline) {
+      // Show success immediately — write happens in background
+      setToastMessage('Combustible registrado ✓');
+      setToastVisible(true);
 
-    appendRow(SHEET_TABS.COMBUSTIBLE, row).catch((err: unknown) => {
-      console.error('Background write failed (Combustible):', err);
-    });
+      appendRow(SHEET_TABS.COMBUSTIBLE, row).catch((err: unknown) => {
+        console.error('Background write failed (Combustible):', err);
+        queueSubmission({ type: 'fuel', data: { tab: SHEET_TABS.COMBUSTIBLE, values: row }, timestamp: new Date().toISOString() }).catch(() => {});
+      });
+    } else {
+      queueSubmission({ type: 'fuel', data: { tab: SHEET_TABS.COMBUSTIBLE, values: row }, timestamp: new Date().toISOString() })
+        .catch((err: unknown) => console.error('Queue failed:', err));
+      setToastMessage('Combustible guardado — se sincronizará al reconectarse ✓');
+      setToastVisible(true);
+    }
   }
 
   function handleToastDismiss() {

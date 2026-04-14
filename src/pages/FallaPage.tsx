@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { z } from 'zod';
@@ -9,6 +9,8 @@ import { mexicoDate, mexicoTime } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
 import { tryUploadPhotos } from '../lib/photo-upload-safe';
 import { sendPushEvent } from '../lib/push-notifications';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { queueSubmission, flushQueue } from '../lib/offline-queue';
 import { useAuthStore } from '../stores/auth-store';
 import AutoPriorityIndicator from '../components/falla/AutoPriorityIndicator';
 import PhotoCapture from '../components/ui/PhotoCapture';
@@ -44,6 +46,13 @@ export default function FallaPage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
   const equipment = useEquipmentList();
+  const isOnline = useOnlineStatus();
+
+  useEffect(() => {
+    if (isOnline) {
+      flushQueue().catch(() => {});
+    }
+  }, [isOnline]);
 
   const [unidad, setUnidad] = useState('');
   const [tipoFalla, setTipoFalla] = useState('');
@@ -142,23 +151,35 @@ export default function FallaPage() {
       '',
     ];
 
-    // Show success immediately — both sheet writes fire in parallel in background
-    setToastMessage(`${otId} creada — Jefe de Taller notificado`);
-    setToastVisible(true);
+    if (isOnline) {
+      // Show success immediately — both sheet writes fire in parallel in background
+      setToastMessage(`${otId} creada — Jefe de Taller notificado`);
+      setToastVisible(true);
 
-    // Push notification to fleet manager / workshop
-    sendPushEvent('nueva_falla', { ot_id: otId, unidad, tipo: tipoFalla, prioridad: priorityValue });
+      // Push notification to fleet manager / workshop
+      sendPushEvent('nueva_falla', { ot_id: otId, unidad, tipo: tipoFalla, prioridad: priorityValue });
 
-    Promise.allSettled([
-      appendRow(SHEET_TABS.AVERIAS, averiaRow),
-      appendRow(SHEET_TABS.ORDENES_TRABAJO, otRow),
-    ]).then((results) => {
-      results.forEach((r, i) => {
-        if (r.status === 'rejected') {
-          console.error(`Background write failed (Falla row ${i}):`, r.reason);
-        }
+      Promise.allSettled([
+        appendRow(SHEET_TABS.AVERIAS, averiaRow),
+        appendRow(SHEET_TABS.ORDENES_TRABAJO, otRow),
+      ]).then((results) => {
+        results.forEach((r, i) => {
+          if (r.status === 'rejected') {
+            console.error(`Background write failed (Falla row ${i}):`, r.reason);
+            const tab = i === 0 ? SHEET_TABS.AVERIAS : SHEET_TABS.ORDENES_TRABAJO;
+            const values = i === 0 ? averiaRow : otRow;
+            queueSubmission({ type: 'falla', data: { tab, values }, timestamp: new Date().toISOString() }).catch(() => {});
+          }
+        });
       });
-    });
+    } else {
+      queueSubmission({ type: 'falla', data: { tab: SHEET_TABS.AVERIAS, values: averiaRow }, timestamp: new Date().toISOString() })
+        .catch((err: unknown) => console.error('Queue failed (averias):', err));
+      queueSubmission({ type: 'falla', data: { tab: SHEET_TABS.ORDENES_TRABAJO, values: otRow }, timestamp: new Date().toISOString() })
+        .catch((err: unknown) => console.error('Queue failed (ordenes_trabajo):', err));
+      setToastMessage('Avería guardada — se sincronizará al reconectarse ✓');
+      setToastVisible(true);
+    }
   }
 
   function handleToastDismiss() {

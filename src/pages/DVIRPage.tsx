@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { z } from 'zod';
@@ -10,6 +10,8 @@ import { mexicoDateInput, mexicoTimeInput, mexicoDateCompact, mexicoTimeCompact 
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
 import { tryUploadPhotos } from '../lib/photo-upload-safe';
 import { sendPushEvent } from '../lib/push-notifications';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { queueSubmission, flushQueue } from '../lib/offline-queue';
 import { useAuthStore } from '../stores/auth-store';
 import SystemCheckRow from '../components/dvir/SystemCheckRow';
 import DVIRResultBanner from '../components/dvir/DVIRResultBanner';
@@ -43,6 +45,13 @@ export default function DVIRPage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
   const equipment = useEquipmentList();
+  const isOnline = useOnlineStatus();
+
+  useEffect(() => {
+    if (isOnline) {
+      flushQueue().catch(() => {});
+    }
+  }, [isOnline]);
   const [fecha, setFecha] = useState(mexicoDateInput());
   const [hora, setHora] = useState(mexicoTimeInput());
   const [unit_id, setUnitId] = useState('');
@@ -148,22 +157,34 @@ export default function DVIRPage() {
       userName,                              // FIRMA_OPERADOR
     ];
 
-    // Show success immediately — sheet write happens in background
-    if (otId) {
-      setToastMessage(`Inspección registrada — OT ${otId} generada`);
+    if (isOnline) {
+      // Show success immediately — sheet write happens in background
+      if (otId) {
+        setToastMessage(`Inspección registrada — OT ${otId} generada`);
+      } else {
+        setToastMessage(`Inspección registrada — Score: ${okCount}/12`);
+      }
+      setToastVisible(true);
+
+      // Push notification to supervisor when DVIR is deficient
+      if (result === 'reprobado') {
+        sendPushEvent('dvir_deficiente', { unidad: unit_id, score: `${okCount}/12`, ot_id: otId ?? '' });
+      }
+
+      appendRow(SHEET_TABS.INSPECCIONES, row).catch((err: unknown) => {
+        console.error('Background write failed (DVIR):', err);
+        queueSubmission({ type: 'dvir', data: { tab: SHEET_TABS.INSPECCIONES, values: row }, timestamp: new Date().toISOString() }).catch(() => {});
+      });
     } else {
-      setToastMessage(`Inspección registrada — Score: ${okCount}/12`);
+      queueSubmission({ type: 'dvir', data: { tab: SHEET_TABS.INSPECCIONES, values: row }, timestamp: new Date().toISOString() })
+        .catch((err: unknown) => console.error('Queue failed:', err));
+      if (otId) {
+        setToastMessage(`Inspección guardada — OT ${otId} se sincronizará al reconectarse ✓`);
+      } else {
+        setToastMessage(`Inspección guardada — se sincronizará al reconectarse ✓`);
+      }
+      setToastVisible(true);
     }
-    setToastVisible(true);
-
-    // Push notification to supervisor when DVIR is deficient
-    if (result === 'reprobado') {
-      sendPushEvent('dvir_deficiente', { unidad: unit_id, score: `${okCount}/12`, ot_id: otId ?? '' });
-    }
-
-    appendRow(SHEET_TABS.INSPECCIONES, row).catch((err: unknown) => {
-      console.error('Background write failed (DVIR):', err);
-    });
   }
 
   function handleToastDismiss() {

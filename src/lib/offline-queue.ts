@@ -1,3 +1,6 @@
+// Offline queue replays pending submissions through the fleet data API.
+// appendRow calls the VPS gateway which routes to PocketBase (or Sheets
+// in rollback mode) — no changes needed here when switching backends.
 import { appendRow } from './sheets-api';
 
 const DB_NAME = 'hermes-offline';

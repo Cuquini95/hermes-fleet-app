@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Clock } from 'lucide-react';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { getNextPM } from '../data/pm-rules';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { queueSubmission, flushQueue } from '../lib/offline-queue';
 import { useAuthStore } from '../stores/auth-store';
 import ConfirmModal from '../components/ui/ConfirmModal';
 import SuccessToast from '../components/ui/SuccessToast';
@@ -15,6 +17,13 @@ export default function HorometroPage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
   const equipment = useEquipmentList();
+  const isOnline = useOnlineStatus();
+
+  useEffect(() => {
+    if (isOnline) {
+      flushQueue().catch(() => {});
+    }
+  }, [isOnline]);
 
   const [turno, setTurno] = useState<TurnoType>('inicio');
   const [unidad, setUnidad] = useState('');
@@ -59,24 +68,34 @@ export default function HorometroPage() {
   async function handleConfirm() {
     setShowConfirm(false);
 
-    try {
-      await appendRow(SHEET_TABS.HOROMETROS, [
-        mexicoDate(),          // FECHA
-        mexicoTime(),          // HORA
-        unidad,                                   // UNIDAD
-        selectedEquipment?.model || '',           // MODELO
-        userName,                                 // OPERADOR
-        turno,                                    // TURNO (inicio/final)
-        String(horometro),                        // HORÓMETRO
-        pmInfo ? pmInfo.level : '',               // PRÓXIMO PM
-        pmInfo ? String(pmInfo.hours_remaining) : '', // FALTAN
-      ]);
-    } catch (err) {
-      console.error('Sheets append failed (Horometros):', err);
-    }
+    const row = [
+      mexicoDate(),          // FECHA
+      mexicoTime(),          // HORA
+      unidad,                                   // UNIDAD
+      selectedEquipment?.model || '',           // MODELO
+      userName,                                 // OPERADOR
+      turno,                                    // TURNO (inicio/final)
+      String(horometro),                        // HORÓMETRO
+      pmInfo ? pmInfo.level : '',               // PRÓXIMO PM
+      pmInfo ? String(pmInfo.hours_remaining) : '', // FALTAN
+    ];
 
     const label = turno === 'inicio' ? 'Inicio' : 'Final';
-    setToastMessage(`Horómetro ${label} de Turno registrado ✓`);
+
+    if (isOnline) {
+      try {
+        await appendRow(SHEET_TABS.HOROMETROS, row);
+      } catch (err) {
+        console.error('Sheets append failed (Horometros):', err);
+        queueSubmission({ type: 'horometro', data: { tab: SHEET_TABS.HOROMETROS, values: row }, timestamp: new Date().toISOString() }).catch(() => {});
+      }
+      setToastMessage(`Horómetro ${label} de Turno registrado ✓`);
+    } else {
+      queueSubmission({ type: 'horometro', data: { tab: SHEET_TABS.HOROMETROS, values: row }, timestamp: new Date().toISOString() })
+        .catch((err: unknown) => console.error('Queue failed:', err));
+      setToastMessage('Horómetro guardado — se sincronizará al reconectarse ✓');
+    }
+
     setToastVisible(true);
   }
 
