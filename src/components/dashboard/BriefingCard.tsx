@@ -201,7 +201,6 @@ function buildBriefingFromSheets(
   for (const row of inspeccionesRows) {
     const dateStr = (row[2] ?? '').trim();
     const unit = (row[4] ?? '').trim().toUpperCase();
-    const operator = (row[6] ?? '').trim();
     if (!unit) continue;
     const date = parseSheetDate(dateStr);
     if (!date) continue;
