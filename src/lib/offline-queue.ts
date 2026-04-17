@@ -59,6 +59,8 @@ export async function getPendingCount(): Promise<number> {
   return submissions.length;
 }
 
+let flushing = false;
+
 /**
  * Replay all pending submissions against the Sheets API.
  * Each entry must have been queued with data: { tab: string, values: string[] }.
@@ -66,27 +68,34 @@ export async function getPendingCount(): Promise<number> {
  * Returns { succeeded, failed } counts.
  */
 export async function flushQueue(): Promise<{ succeeded: number; failed: number }> {
-  const pending = await getPendingSubmissions();
-  if (pending.length === 0) return { succeeded: 0, failed: 0 };
+  if (!navigator.onLine) return { succeeded: 0, failed: 0 };
+  if (flushing) return { succeeded: 0, failed: 0 };
+  flushing = true;
+  try {
+    const pending = await getPendingSubmissions();
+    if (pending.length === 0) return { succeeded: 0, failed: 0 };
 
-  let succeeded = 0;
-  let failed = 0;
+    let succeeded = 0;
+    let failed = 0;
 
-  for (const submission of pending) {
-    const { tab, values } = submission.data as { tab?: string; values?: string[] };
-    if (!tab || !Array.isArray(values)) {
-      // Malformed entry — remove it rather than retry forever
-      if (submission.id !== undefined) await clearSubmission(submission.id);
-      continue;
+    for (const submission of pending) {
+      const { tab, values } = submission.data as { tab?: string; values?: string[] };
+      if (!tab || !Array.isArray(values)) {
+        // Malformed entry — remove it rather than retry forever
+        if (submission.id !== undefined) await clearSubmission(submission.id);
+        continue;
+      }
+      try {
+        await appendRow(tab, values);
+        if (submission.id !== undefined) await clearSubmission(submission.id);
+        succeeded++;
+      } catch {
+        failed++;
+      }
     }
-    try {
-      await appendRow(tab, values);
-      if (submission.id !== undefined) await clearSubmission(submission.id);
-      succeeded++;
-    } catch {
-      failed++;
-    }
+
+    return { succeeded, failed };
+  } finally {
+    flushing = false;
   }
-
-  return { succeeded, failed };
 }

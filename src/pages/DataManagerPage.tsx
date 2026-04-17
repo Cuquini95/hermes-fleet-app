@@ -69,27 +69,28 @@ const COLLECTIONS: Collection[] = [
     label: 'Combustible',
     tab: 'Combustible',
     emptyMessage: 'Aún no hay cargas de combustible registradas',
+    // Sheet cols: #(0) FECHA(1) HORA(2) UNIDAD(3) OPERADOR(4) TIPO(5) LITROS(6)
+    //             COSTO(7) HOROMETRO(8) KM(9) RENDIMIENTO(10) ESTACION(11) OBSERVACIONES(12)
     columns: [
-      { label: 'Fecha',     index: 0, sticky: true, minWidth: '110px' },
-      { label: 'Hora',      index: 1, mono: true, hideOnMobile: true, minWidth: '70px' },
-      { label: 'Tipo',      index: 2, hideOnMobile: true },
-      { label: 'Unidad',    index: 3, mono: true, minWidth: '90px' },
-      { label: 'Operador',  index: 4, minWidth: '140px' },
-      { label: 'Comb',      index: 5, hideOnMobile: true },
-      { label: 'Litros',    index: 6, align: 'right', mono: true },
-      { label: 'Costo',     index: 7, align: 'right', mono: true, currency: true },
-      { label: 'P.Unit',    index: 8, align: 'right', mono: true, currency: true, hideOnMobile: true },
-      { label: 'Horóm',     index: 9, align: 'right', mono: true, hideOnMobile: true },
-      { label: 'KM',        index: 10, align: 'right', mono: true, hideOnMobile: true },
-      { label: 'Estación',  index: 11, hideOnMobile: true, minWidth: '130px' },
-      { label: 'Folio',     index: 12, mono: true, hideOnMobile: true },
+      { label: 'Fecha',        index: 1, sticky: true, minWidth: '110px' },
+      { label: 'Hora',         index: 2, mono: true, hideOnMobile: true, minWidth: '70px' },
+      { label: 'Unidad',       index: 3, mono: true, minWidth: '90px' },
+      { label: 'Operador',     index: 4, minWidth: '140px' },
+      { label: 'Tipo Comb',    index: 5, hideOnMobile: true },
+      { label: 'Litros',       index: 6, align: 'right', mono: true },
+      { label: 'Costo',        index: 7, align: 'right', mono: true, currency: true },
+      { label: 'Horóm',        index: 8, align: 'right', mono: true, hideOnMobile: true },
+      { label: 'KM',           index: 9, align: 'right', mono: true, hideOnMobile: true },
+      { label: 'Rendimiento',  index: 10, align: 'right', mono: true, hideOnMobile: true },
+      { label: 'Estación',     index: 11, hideOnMobile: true, minWidth: '130px' },
+      { label: 'Observaciones',index: 12, hideOnMobile: true, minWidth: '160px' },
     ],
   },
   {
     id: 'gastos',
     icon: '💰',
     label: 'Gastos',
-    tab: 'Gastos',
+    tab: '02 Gastos',
     emptyMessage: 'Aún no hay gastos registrados',
     columns: [
       { label: 'Fecha',       index: 0, sticky: true, minWidth: '110px' },
@@ -113,7 +114,7 @@ const COLLECTIONS: Collection[] = [
     id: 'averias',
     icon: '⚠️',
     label: 'Averías',
-    tab: 'Averias',
+    tab: 'Averías',
     emptyMessage: 'No hay averías reportadas',
     columns: [
       { label: 'Fecha',       index: 0, sticky: true, minWidth: '110px' },
@@ -168,16 +169,22 @@ const COLLECTIONS: Collection[] = [
     label: 'Viajes Peña',
     tab: 'Reporte_Viajes_Peña',
     emptyMessage: 'Aún no hay viajes a Peña registrados',
+    // Sheet cols: #(0) FECHA(1) HORA(2) CAMION(3) CONDUCTOR(4) RUTA ORIGEN(5)
+    //             RUTA DESTINO(6) KM CARGADO(7) KM VACIO(8) KM TOTAL(9)
+    //             MATERIAL(10) TONELAJE(11) OBSERVACIONES(12)
     columns: [
-      { label: 'Fecha',         index: 0, sticky: true, minWidth: '110px' },
-      { label: 'Hora',          index: 1, mono: true, hideOnMobile: true },
-      { label: 'Unidad',        index: 2, mono: true, minWidth: '90px' },
-      { label: 'Operador',      index: 3, minWidth: '140px' },
-      { label: 'Origen',        index: 4, hideOnMobile: true, minWidth: '130px' },
-      { label: 'Destino',       index: 5, minWidth: '130px' },
-      { label: 'Viajes',        index: 6, align: 'right', mono: true },
-      { label: 'M³',            index: 7, align: 'right', mono: true },
-      { label: 'Observaciones', index: 8, hideOnMobile: true, minWidth: '200px' },
+      { label: 'Fecha',         index: 1, sticky: true, minWidth: '110px' },
+      { label: 'Hora',          index: 2, mono: true, hideOnMobile: true },
+      { label: 'Unidad',        index: 3, mono: true, minWidth: '90px' },
+      { label: 'Conductor',     index: 4, minWidth: '140px' },
+      { label: 'Origen',        index: 5, hideOnMobile: true, minWidth: '130px' },
+      { label: 'Destino',       index: 6, minWidth: '130px' },
+      { label: 'KM Carg',       index: 7, align: 'right', mono: true, hideOnMobile: true },
+      { label: 'KM Vac',        index: 8, align: 'right', mono: true, hideOnMobile: true },
+      { label: 'KM Total',      index: 9, align: 'right', mono: true },
+      { label: 'Material',      index: 10, hideOnMobile: true },
+      { label: 'Tonelaje',      index: 11, align: 'right', mono: true },
+      { label: 'Observaciones', index: 12, hideOnMobile: true, minWidth: '200px' },
     ],
   },
   {
@@ -186,17 +193,17 @@ const COLLECTIONS: Collection[] = [
     label: 'Inspecciones',
     tab: '14 Inspecciones',
     emptyMessage: 'Aún no hay inspecciones registradas',
+    // Sheet cols: #(0) INSP_ID(1) FECHA(2) HORA(3) CODIGO UNIDAD(4) MODELO(5)
+    //             OPERADOR(6) TIPO(7) HOROMETRO(8) ...checks... SCORE(N-3) RESULTADO(N-2)
     columns: [
-      { label: 'Fecha',     index: 0, sticky: true, minWidth: '110px' },
-      { label: 'Hora',      index: 1, mono: true, hideOnMobile: true },
-      { label: 'Folio',     index: 2, mono: true, hideOnMobile: true },
-      { label: 'Tipo',      index: 3, hideOnMobile: true },
+      { label: 'Fecha',     index: 2, sticky: true, minWidth: '110px' },
+      { label: 'Hora',      index: 3, mono: true, hideOnMobile: true },
+      { label: 'Folio',     index: 1, mono: true, hideOnMobile: true },
       { label: 'Unidad',    index: 4, mono: true, minWidth: '90px' },
       { label: 'Modelo',    index: 5, hideOnMobile: true, minWidth: '130px' },
       { label: 'Operador',  index: 6, minWidth: '140px' },
       { label: 'Tipo Insp', index: 7, hideOnMobile: true },
-      { label: 'Score',     index: 8, align: 'right', mono: true },
-      { label: 'Resultado', index: 9, badge: 'resultado' },
+      { label: 'Horómetro', index: 8, align: 'right', mono: true, hideOnMobile: true },
     ],
   },
 ];
@@ -370,28 +377,6 @@ export default function DataManagerPage() {
     setDisplayLimit(PAGE_SIZE);
   }, [search]);
 
-  // IntersectionObserver: load next page when sentinel enters viewport.
-  // Re-attach after each page load so the new sentinel position is observed.
-  useEffect(() => {
-    const sentinel = sentinelRef.current;
-    if (!sentinel) return undefined;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) {
-          setDisplayLimit((prev) => prev + PAGE_SIZE);
-        }
-      },
-      { rootMargin: '100px' },
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [displayLimit, activeId, search]);
-
-  // Pre-fetch analytics data on mount
-  useEffect(() => {
-    useAnalyticsStore.getState().fetch();
-  }, []);
-
   // Clean rows: drop empties and any header row
   const cleanRows = useMemo(() => {
     const raw = cache[active.id];
@@ -418,6 +403,30 @@ export default function DataManagerPage() {
     [visibleRows, displayLimit],
   );
   const hasMore = visibleRows.length > displayLimit;
+
+  // IntersectionObserver: load next page when sentinel enters viewport.
+  // hasMore is included in deps so the observer is (re-)attached the moment the
+  // sentinel first renders after data loads (the mount run sees sentinel=null and
+  // returns early; without hasMore in deps the effect would never re-run for it).
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return undefined;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setDisplayLimit((prev) => prev + PAGE_SIZE);
+        }
+      },
+      { rootMargin: '100px' },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [displayLimit, activeId, search, hasMore]);
+
+  // Pre-fetch analytics data on mount
+  useEffect(() => {
+    useAnalyticsStore.getState().fetch();
+  }, []);
 
   const isLoading = !!loadingTabs[active.id];
   const error = errors[active.id];

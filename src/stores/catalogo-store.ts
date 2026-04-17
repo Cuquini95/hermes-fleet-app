@@ -1,7 +1,11 @@
 import { create } from 'zustand';
-import { readRange, upsertRow, SHEET_TABS } from '../lib/sheets-api';
 import { mexicoDate } from '../lib/date-utils';
 import type { OcrLineItem } from '../lib/sheets-api';
+
+// NOTE: Catalogo_Precios tab was removed — the sheet doesn't exist in production.
+// Catalog sync is a local no-op: local entries track per-session price history,
+// but no remote sync happens. Restore by re-adding SHEET_TABS.CATALOGO_PRECIOS
+// and uncommenting the readRange/upsertRow blocks below if the tab is recreated.
 
 // ── Catalog schema ────────────────────────────────────────────────────────────
 // Catalogo_Precios sheet columns:
@@ -42,23 +46,23 @@ export function catalogKey(partNumber: string, description: string): string {
   return description.trim().toUpperCase().replace(/\s+/g, '_').slice(0, 40);
 }
 
-function parseNum(v: string | undefined): number {
-  return Number(String(v ?? '').replace(/[$,\s]/g, '')) || 0;
-}
-
-function parseRow(row: string[]): CatalogoEntry | null {
-  if (!row[0] || row[0] === 'Clave') return null;
-  return {
-    clave:         row[0] ?? '',
-    descripcion:   row[1] ?? '',
-    precio:        parseNum(row[2]),
-    precioMin:     parseNum(row[3]),
-    precioMax:     parseNum(row[4]),
-    proveedor:     row[5] ?? '',
-    fechaActual:   row[6] ?? '',
-    vecesComprado: parseInt(row[7] ?? '0') || 0,
-  };
-}
+// Kept for reference — restore parseNum/parseRow if Catalogo_Precios tab is recreated.
+// function parseNum(v: string | undefined): number {
+//   return Number(String(v ?? '').replace(/[$,\s]/g, '')) || 0;
+// }
+// function parseRow(row: string[]): CatalogoEntry | null {
+//   if (!row[0] || row[0] === 'Clave') return null;
+//   return {
+//     clave:         row[0] ?? '',
+//     descripcion:   row[1] ?? '',
+//     precio:        parseNum(row[2]),
+//     precioMin:     parseNum(row[3]),
+//     precioMax:     parseNum(row[4]),
+//     proveedor:     row[5] ?? '',
+//     fechaActual:   row[6] ?? '',
+//     vecesComprado: parseInt(row[7] ?? '0') || 0,
+//   };
+// }
 
 // ── Store ─────────────────────────────────────────────────────────────────────
 
@@ -68,19 +72,8 @@ export const useCatalogoStore = create<CatalogoState>((set, get) => ({
   loading: false,
 
   fetchCatalogo: async () => {
-    if (get().loading) return;
-    set({ loading: true });
-    try {
-      const rows = await readRange(SHEET_TABS.CATALOGO_PRECIOS);
-      const entries: CatalogoEntry[] = [];
-      for (const row of rows) {
-        const e = parseRow(row);
-        if (e) entries.push(e);
-      }
-      set({ entries, fetched: true, loading: false });
-    } catch {
-      set({ loading: false, fetched: true });
-    }
+    // No-op: Catalogo_Precios tab does not exist. Mark fetched to avoid retries.
+    set({ entries: [], fetched: true, loading: false });
   },
 
   /**
@@ -114,10 +107,10 @@ export const useCatalogoStore = create<CatalogoState>((set, get) => ({
         String(veces),
       ];
 
-      // Fire-and-forget — catalog sync failure must not block gasto save
-      upsertRow(SHEET_TABS.CATALOGO_PRECIOS, clave, row).catch((err) => {
-        console.warn('Catalog sync failed for', clave, err);
-      });
+      // Remote catalog sync disabled — Catalogo_Precios tab does not exist.
+      // Local-only tracking via the set() call below.
+      void row;
+      void clave;
     }
 
     // Optimistically update local cache

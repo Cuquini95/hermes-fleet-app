@@ -36,14 +36,14 @@ interface AnalyticsState {
 
   // UI filter state
   period: Period
-  unitFilter: string  // 'all' or a unit name like 'CV103'
-  dateFrom: string    // 'YYYY-MM-DD' or '' when not set
-  dateTo: string      // 'YYYY-MM-DD' or '' when not set
+  unitFilter: string[]  // empty = all units; otherwise an array of selected unit names
+  dateFrom: string      // 'YYYY-MM-DD' or '' when not set
+  dateTo: string        // 'YYYY-MM-DD' or '' when not set
 
   // actions
   fetch: () => Promise<void>
   setPeriod: (p: Period) => void
-  setUnitFilter: (u: string) => void
+  setUnitFilter: (u: string[]) => void
   setDateRange: (from: string, to: string) => void
 
   // derived selectors (computed on read)
@@ -60,7 +60,7 @@ export const useAnalyticsStore = create<AnalyticsState>((set, get) => ({
   lastFetched: null,
   fetchErrors: [],
   period: 'month',
-  unitFilter: 'all',
+  unitFilter: [],
   dateFrom: '',
   dateTo: '',
 
@@ -96,7 +96,7 @@ export const useAnalyticsStore = create<AnalyticsState>((set, get) => ({
   },
 
   setPeriod: (p) => set({ period: p, ...(p !== 'custom' ? { dateFrom: '', dateTo: '' } : {}) }),
-  setUnitFilter: (unitFilter) => set({ unitFilter }),
+  setUnitFilter: (unitFilter: string[]) => set({ unitFilter }),
   setDateRange: (from, to) => set({ dateFrom: from, dateTo: to, period: 'custom' }),
 
   getFilteredRows: () => {
@@ -108,9 +108,9 @@ export const useAnalyticsStore = create<AnalyticsState>((set, get) => ({
         ? isInDateRange(row, dateColIndex, dateFrom, dateTo)
         : isInPeriod(row, period)
       if (!inPeriod) return false
-      // Unit filter
-      if (unitFilter !== 'all') {
-        if ((row[unitColIndex] ?? '').trim() !== unitFilter) return false
+      // Unit filter — empty array means "all units"
+      if (unitFilter.length > 0) {
+        if (!unitFilter.includes((row[unitColIndex] ?? '').trim())) return false
       }
       return true
     }

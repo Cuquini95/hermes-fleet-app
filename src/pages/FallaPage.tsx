@@ -112,9 +112,13 @@ export default function FallaPage() {
     const photoUrls = photos.length > 0
       ? await tryUploadPhotos(photos.map((p) => p.file), 'falla-photos')
       : [];
-    const observaciones = `Ubicación: ${ubicacion}. Cliente: ${clienteAfectado}. Puede moverse: ${puedeMoverse ? 'Sí' : 'No'}`;
+    const observacionesBase = `Ubicación: ${ubicacion}. Cliente: ${clienteAfectado}. Puede moverse: ${puedeMoverse ? 'Sí' : 'No'}`;
+    // Append OT reference into OBSERVACIONES so total stays at 14 values matching sheet headers
+    const observaciones = otId ? `${observacionesBase} | OT: ${otId}` : observacionesBase;
     const fotoUrl = photoUrls[0] ?? '';
 
+    // Sheet has 14 cols: FECHA HORA UNIDAD TIPO_AVERIA DESCRIPCION SEVERIDAD TECNICO
+    //   TIEMPO_PARO COSTO_ESTIMADO ESTADO SOLUCION OBSERVACIONES PROVEEDOR_PIEZA Foto_URL
     const averiaRow = [
       mexicoDate(),      // FECHA
       mexicoTime(),      // HORA
@@ -127,10 +131,9 @@ export default function FallaPage() {
       '',                // COSTO ESTIMADO
       'Abierta',         // ESTADO
       '',                // SOLUCIÓN
-      observaciones,     // OBSERVACIONES
+      observaciones,     // OBSERVACIONES (includes OT ref)
       '',                // PROVEEDOR PIEZA
-      otId,              // OT_ID
-      fotoUrl,           // FOTO_URL (hyperlink)
+      fotoUrl,           // Foto_URL
     ];
 
     const otRow = [

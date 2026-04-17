@@ -374,7 +374,7 @@ export default function BulkBoletasPage() {
               <option value="">Seleccionar unidad...</option>
               {TRANSPORT_UNITS.map((u) => (
                 <option key={u.unit_id} value={u.unit_id}>
-                  {u.unit_id} — {u.type}
+                  {u.unit_id}{u.plates ? ` — ${u.plates}` : ''}
                 </option>
               ))}
             </select>

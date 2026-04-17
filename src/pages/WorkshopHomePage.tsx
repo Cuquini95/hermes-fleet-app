@@ -23,6 +23,8 @@ import KPICard from '../components/ui/KPICard';
 import EquipmentCard from '../components/ui/EquipmentCard';
 import OTCard from '../components/ui/OTCard';
 
+// TODO: Move this to a constants file or fetch from a personnel sheet.
+// Currently hardcoded — update when headcount changes.
 const MECANICOS_HEADCOUNT = 12;
 
 interface ActionCard {

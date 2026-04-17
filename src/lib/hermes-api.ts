@@ -6,6 +6,7 @@ async function hermesPost<T>(endpoint: string, body: Record<string, unknown>): P
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30000),
   });
   if (!response.ok) {
     const text = await response.text();
@@ -16,7 +17,9 @@ async function hermesPost<T>(endpoint: string, body: Record<string, unknown>): P
 
 async function hermesGet<T>(endpoint: string, params?: Record<string, string>): Promise<T> {
   const qs = params ? '?' + new URLSearchParams(params).toString() : '';
-  const response = await fetch(`${HERMES_BASE}${endpoint}${qs}`);
+  const response = await fetch(`${HERMES_BASE}${endpoint}${qs}`, {
+    signal: AbortSignal.timeout(30000),
+  });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`Hermes API error ${response.status}: ${text}`);

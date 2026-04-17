@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Truck,
@@ -37,6 +37,43 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const login = useAuthStore((s) => s.login);
 
+  const handleKeyPress = useCallback((key: string) => {
+    if (key === 'del') {
+      setPin((prev) => prev.slice(0, -1));
+      return;
+    }
+    if (key === '') return;
+    setPin((prev) => {
+      if (prev.length >= 4) return prev;
+      const newPin = prev + key;
+      if (newPin.length === 4 && selectedRole) {
+        const success = login(selectedRole, newPin);
+        if (success) {
+          // Navigate after state update settles
+          setTimeout(() => navigate(ROLE_HOME[selectedRole]), 0);
+        } else {
+          setPinError(true);
+          setTimeout(() => {
+            setPin('');
+            setPinError(false);
+          }, 800);
+          return newPin;
+        }
+      }
+      return newPin;
+    });
+  }, [selectedRole, login, navigate]);
+
+  useEffect(() => {
+    if (!selectedRole) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key >= '0' && e.key <= '9') handleKeyPress(e.key);
+      else if (e.key === 'Backspace') handleKeyPress('del');
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedRole, handleKeyPress]);
+
   const handleRoleSelect = (role: AppRole) => {
     setSelectedRole(role);
     setPin('');
@@ -45,31 +82,6 @@ export default function LoginPage() {
   const handleBack = () => {
     setSelectedRole(null);
     setPin('');
-  };
-
-  const handleKeyPress = (key: string) => {
-    if (key === 'del') {
-      setPin((prev) => prev.slice(0, -1));
-      return;
-    }
-    if (key === '') return;
-    if (pin.length >= 4) return;
-
-    const newPin = pin + key;
-    setPin(newPin);
-
-    if (newPin.length === 4 && selectedRole) {
-      const success = login(selectedRole, newPin);
-      if (success) {
-        navigate(ROLE_HOME[selectedRole]);
-      } else {
-        setPinError(true);
-        setTimeout(() => {
-          setPin('');
-          setPinError(false);
-        }, 800);
-      }
-    }
   };
 
   return (

@@ -211,8 +211,9 @@ export default function NeumaticosPage() {
       autoEstado,                 // S  ESTADO
     ];
 
-    // Append observaciones as extra col if needed
-    if (llanta.observaciones) values.push(llanta.observaciones);
+    // Pad cols T→Y (6 empty strings) so observaciones lands in col Z (index 25)
+    // Sheet has 26 cols (A=0 through Z=25); values above fills A→S (indices 0-18)
+    values.push('', '', '', '', '', '', llanta.observaciones);
 
     try {
       await appendRow(SHEET_TABS.NEUMATICOS, values);

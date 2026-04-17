@@ -50,7 +50,7 @@ export default function PerfilPage() {
   const assignedUnits = useAuthStore((s) => s.assignedUnits);
 
   const roleLabel = role ? ROLE_LABELS[role] : 'Sin rol';
-  const initials = userName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+  const initials = (userName || '').split(' ').map(n => n[0] ?? '').join('').slice(0, 2).toUpperCase() || '?';
   const unitLabel = assignedUnits.length > 0 ? assignedUnits[0] : '';
 
   const overallPct = Math.round((totalScore / totalMax) * 100);

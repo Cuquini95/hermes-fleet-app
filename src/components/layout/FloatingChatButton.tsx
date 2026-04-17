@@ -6,7 +6,7 @@ export default function FloatingChatButton() {
   const location = useLocation()
   const role = useAuthStore(s => s.role)
 
-  const ALLOWED_ROLES = ['mecanico', 'coordinador', 'jefe_taller']
+  const ALLOWED_ROLES = ['mecanico', 'coordinador', 'jefe_taller', 'supervisor', 'gerencia']
   if (!role || !ALLOWED_ROLES.includes(role)) return null
 
   if (location.pathname === '/chat') return null

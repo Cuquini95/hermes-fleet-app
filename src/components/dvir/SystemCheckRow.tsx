@@ -72,33 +72,36 @@ export default function SystemCheckRow({
           <button
             type="button"
             onClick={() => onChange('ok')}
-            className={`text-xs px-2 py-1 rounded-full font-medium transition-colors ${
+            className={`text-xs px-3 rounded-full font-medium transition-colors flex items-center justify-center ${
               value === 'ok'
                 ? 'bg-success text-white'
                 : 'bg-gray-100 text-text-secondary'
             }`}
+            style={{ minHeight: 44, minWidth: 44 }}
           >
             OK
           </button>
           <button
             type="button"
             onClick={() => onChange('alerta')}
-            className={`text-xs px-2 py-1 rounded-full font-medium transition-colors ${
+            className={`text-xs px-3 rounded-full font-medium transition-colors flex items-center justify-center ${
               value === 'alerta'
                 ? 'bg-warning text-white'
                 : 'bg-gray-100 text-text-secondary'
             }`}
+            style={{ minHeight: 44, minWidth: 44 }}
           >
             Alerta
           </button>
           <button
             type="button"
             onClick={() => onChange('falla')}
-            className={`text-xs px-2 py-1 rounded-full font-medium transition-colors ${
+            className={`text-xs px-3 rounded-full font-medium transition-colors flex items-center justify-center ${
               value === 'falla'
                 ? 'bg-critical text-white'
                 : 'bg-gray-100 text-text-secondary'
             }`}
+            style={{ minHeight: 44, minWidth: 44 }}
           >
             Falla
           </button>

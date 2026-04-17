@@ -1,5 +1,4 @@
-import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import type { jsPDF as JsPDFType } from 'jspdf';
 import type { GastoCompra, GastoTipo } from '../stores/gastos-store';
 
 // ── Logo loader ───────────────────────────────────────────────────────────────
@@ -117,14 +116,25 @@ const PAGE = {
   margin: 40,
 };
 
+// ── Internal type alias ───────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AutoTableFn = (doc: JsPDFType, options: Record<string, any>) => void;
+
 // ── Main generator ────────────────────────────────────────────────────────────
 
 /**
  * Generates a Gastos PDF report and returns it as a Blob.
- * Async because it loads the logo SVG on first call (then caches it).
+ * Async because it dynamically loads jspdf/jspdf-autotable on first call.
  */
 export async function generateGastosPDF(data: GastoReportData): Promise<Blob> {
-  const logoDataUrl = await loadLogoDataUrl();
+  const [{ jsPDF }, autoTableMod, logoDataUrl] = await Promise.all([
+    import('jspdf'),
+    import('jspdf-autotable'),
+    loadLogoDataUrl(),
+  ]);
+  const autoTable = autoTableMod.default as AutoTableFn;
+
   const doc = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
 
   drawHeader(doc, data, logoDataUrl);
@@ -132,7 +142,7 @@ export async function generateGastosPDF(data: GastoReportData): Promise<Blob> {
 
   y = drawHeroKpi(doc, data, y);
   y = drawTypeBreakdown(doc, data, y + 16);
-  y = drawUnitDetails(doc, data, y + 20, logoDataUrl);
+  y = drawUnitDetails(doc, data, y + 20, logoDataUrl, autoTable);
 
   drawFooters(doc);
 
@@ -141,7 +151,7 @@ export async function generateGastosPDF(data: GastoReportData): Promise<Blob> {
 
 // ── Header (drawn on every page via event) ────────────────────────────────────
 
-function drawHeader(doc: jsPDF, data: GastoReportData, logoDataUrl: string | null): void {
+function drawHeader(doc: JsPDFType, data: GastoReportData, logoDataUrl: string | null): void {
   const m = PAGE.margin;
 
   // Logo — use real image if available, else fallback to text placeholder
@@ -212,7 +222,7 @@ function drawHeader(doc: jsPDF, data: GastoReportData, logoDataUrl: string | nul
 
 // ── Hero KPI card ─────────────────────────────────────────────────────────────
 
-function drawHeroKpi(doc: jsPDF, data: GastoReportData, y: number): number {
+function drawHeroKpi(doc: JsPDFType, data: GastoReportData, y: number): number {
   const m = PAGE.margin;
   const w = PAGE.width - m * 2;
   const h = 70;
@@ -257,7 +267,7 @@ function drawHeroKpi(doc: jsPDF, data: GastoReportData, y: number): number {
 
 // ── Type breakdown (4-column grid) ────────────────────────────────────────────
 
-function drawTypeBreakdown(doc: jsPDF, data: GastoReportData, y: number): number {
+function drawTypeBreakdown(doc: JsPDFType, data: GastoReportData, y: number): number {
   const m = PAGE.margin;
   const w = PAGE.width - m * 2;
 
@@ -313,10 +323,11 @@ function drawTypeBreakdown(doc: jsPDF, data: GastoReportData, y: number): number
 // ── Unit detail tables ────────────────────────────────────────────────────────
 
 function drawUnitDetails(
-  doc: jsPDF,
+  doc: JsPDFType,
   data: GastoReportData,
   y: number,
   logoDataUrl: string | null,
+  autoTable: AutoTableFn,
 ): number {
   const m = PAGE.margin;
   const w = PAGE.width - m * 2;
@@ -419,7 +430,7 @@ function drawUnitDetails(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function drawSectionHeader(doc: jsPDF, label: string, y: number): void {
+function drawSectionHeader(doc: JsPDFType, label: string, y: number): void {
   const m = PAGE.margin;
   doc.setTextColor(...COLORS.navy);
   doc.setFont('helvetica', 'bold');
@@ -430,7 +441,7 @@ function drawSectionHeader(doc: jsPDF, label: string, y: number): void {
   doc.line(m, y + 4, PAGE.width - m, y + 4);
 }
 
-function drawFooters(doc: jsPDF): void {
+function drawFooters(doc: JsPDFType): void {
   const pageCount = doc.getNumberOfPages();
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);

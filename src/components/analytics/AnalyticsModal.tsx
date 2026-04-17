@@ -1,5 +1,5 @@
 // src/components/analytics/AnalyticsModal.tsx
-import { useEffect } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useAnalyticsStore } from '../../stores/analyticsStore'
 import type { Period } from '../../stores/analyticsStore'
 import KpiCards from './KpiCards'
@@ -23,6 +23,14 @@ const PERIOD_OPTIONS: { value: Period; label: string }[] = [
 export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
   const store = useAnalyticsStore()
   const { status, fetchErrors, period, unitFilter, raw, dateFrom, dateTo } = store
+  const [unitsOpen, setUnitsOpen] = useState(false)
+  const unitDropdownRef = useRef<HTMLDivElement>(null)
+  const [sections, setSections] = useState({
+    gastos: true,
+    combustible: true,
+    fletes: true,
+    averias: true,
+  })
 
   // ESC key handler
   useEffect(() => {
@@ -41,6 +49,18 @@ export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
     return () => document.body.classList.remove('overflow-hidden')
   }, [open])
 
+  // Close unit dropdown when clicking outside
+  useEffect(() => {
+    if (!unitsOpen) return
+    function handleClick(e: MouseEvent) {
+      if (unitDropdownRef.current && !unitDropdownRef.current.contains(e.target as Node)) {
+        setUnitsOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [unitsOpen])
+
   if (!open) return null
 
   const isLoading = status === 'loading'
@@ -51,10 +71,27 @@ export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
     raw.averias.length === 0
   const units = store.getUnits()
 
+  function toggleUnit(unit: string) {
+    const current = unitFilter
+    if (current.includes(unit)) {
+      store.setUnitFilter(current.filter((u) => u !== unit))
+    } else {
+      store.setUnitFilter([...current, unit])
+    }
+  }
+
+  const unitLabel =
+    unitFilter.length === 0
+      ? 'Todas las unidades'
+      : unitFilter.length <= 2
+        ? unitFilter.join(', ')
+        : `${unitFilter[0]}, ${unitFilter[1]} +${unitFilter.length - 2}`
+
   function handlePdfClick() {
     const { period: p, unitFilter: uf, dateFrom: df, dateTo: dt, getFilteredRows, getKpiTotals, getUnitMetrics } =
       useAnalyticsStore.getState()
-    generateReport(p, uf, getFilteredRows(), getKpiTotals(), getUnitMetrics(), df, dt)
+    const unitLabel = uf.length === 0 ? 'all' : uf.join(', ')
+    generateReport(p, unitLabel, getFilteredRows(), getKpiTotals(), getUnitMetrics(), df, dt).catch(console.error)
   }
 
   return (
@@ -73,17 +110,62 @@ export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
               📊 Analítica
             </span>
             <div className="flex-1" />
-            {/* Unit filter dropdown */}
-            <select
-              value={unitFilter}
-              onChange={(e) => store.setUnitFilter(e.target.value)}
-              className="bg-slate-800 text-slate-300 border border-slate-700 rounded px-2 py-1 text-xs max-w-[140px]"
-            >
-              <option value="all">Todas las unidades</option>
-              {units.map((u) => (
-                <option key={u} value={u}>{u}</option>
-              ))}
-            </select>
+            {/* Multi-unit filter */}
+            <div ref={unitDropdownRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setUnitsOpen((o) => !o)}
+                className="bg-slate-800 text-slate-300 border border-slate-700 rounded px-2 py-1 text-xs max-w-[160px] truncate flex items-center gap-1"
+              >
+                <span className="truncate">{unitLabel}</span>
+                <span className="text-slate-500 shrink-0">▾</span>
+              </button>
+              {unitsOpen && (
+                <div className="absolute right-0 top-full mt-1 w-48 bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-50 overflow-hidden">
+                  {/* All / None quick actions */}
+                  <div className="flex border-b border-slate-700">
+                    <button
+                      type="button"
+                      onClick={() => store.setUnitFilter([])}
+                      className="flex-1 text-xs text-slate-400 hover:text-white py-1.5 hover:bg-slate-800 transition-colors"
+                    >
+                      Todas
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => store.setUnitFilter([...units])}
+                      className="flex-1 text-xs text-slate-400 hover:text-white py-1.5 hover:bg-slate-800 transition-colors border-l border-slate-700"
+                    >
+                      Ninguna
+                    </button>
+                  </div>
+                  {/* Unit checkboxes */}
+                  <div className="max-h-48 overflow-y-auto">
+                    {units.map((u) => (
+                      <label
+                        key={u}
+                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-800 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={unitFilter.length === 0 || unitFilter.includes(u)}
+                          onChange={() => {
+                            // If currently "all", clicking one unit deselects all others
+                            if (unitFilter.length === 0) {
+                              store.setUnitFilter(units.filter((x) => x !== u))
+                            } else {
+                              toggleUnit(u)
+                            }
+                          }}
+                          className="accent-violet-500 shrink-0"
+                        />
+                        <span className="text-xs text-slate-300">{u}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
             {/* PDF button */}
             <button
               onClick={handlePdfClick}
@@ -149,6 +231,35 @@ export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
               />
             </div>
           )}
+
+          {/* Row 4: PDF section toggles */}
+          <div className="flex flex-wrap items-center gap-1.5 px-4 pb-2.5 border-t border-slate-800 pt-2">
+            <span className="text-[10px] text-slate-500 uppercase tracking-wide shrink-0 mr-1">PDF incluye:</span>
+            {(
+              [
+                { key: 'gastos',      label: 'Gastos',      color: 'bg-blue-600/20 text-blue-300 border-blue-700'    },
+                { key: 'combustible', label: 'Combustible', color: 'bg-green-600/20 text-green-300 border-green-700' },
+                { key: 'fletes',      label: 'Fletes',      color: 'bg-orange-600/20 text-orange-300 border-orange-700' },
+                { key: 'averias',     label: 'Averías',     color: 'bg-red-600/20 text-red-300 border-red-700'       },
+              ] as const
+            ).map(({ key, label, color }) => {
+              const active = sections[key]
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setSections((s) => ({ ...s, [key]: !s[key] }))}
+                  className={`px-2 py-0.5 rounded border text-[11px] font-medium transition-all ${
+                    active
+                      ? color
+                      : 'bg-transparent text-slate-600 border-slate-700 line-through'
+                  }`}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
         </div>
 
         {/* Body */}

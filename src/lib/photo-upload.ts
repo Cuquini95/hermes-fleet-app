@@ -1,9 +1,6 @@
-import { supabase } from './supabase';
+import { supabase, isSupabaseConfigured } from './supabase';
 
-export function isSupabaseConfigured(): boolean {
-  const url = import.meta.env.VITE_SUPABASE_URL;
-  return !!url && url !== 'https://placeholder.supabase.co' && url !== '';
-}
+export { isSupabaseConfigured };
 
 export async function compressImage(file: File, maxWidth = 1200): Promise<Blob> {
   return new Promise((resolve, reject) => {
@@ -12,6 +9,7 @@ export async function compressImage(file: File, maxWidth = 1200): Promise<Blob> 
     if (!ctx) { reject(new Error('Canvas not supported')); return; }
     const img = new Image();
     img.onload = () => {
+      URL.revokeObjectURL(img.src);
       const scale = Math.min(1, maxWidth / img.width);
       canvas.width = img.width * scale;
       canvas.height = img.height * scale;
@@ -28,11 +26,12 @@ export async function compressImage(file: File, maxWidth = 1200): Promise<Blob> 
 }
 
 export async function uploadPhoto(file: File, bucket: string, path?: string): Promise<string> {
+  if (!supabase) throw new Error('Supabase is not configured');
   const isPdf = file.type === 'application/pdf';
 
   if (isPdf) {
     // Upload PDF as-is — no canvas compression
-    const fileName = path ? `${path}.pdf` : `${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`;
+    const fileName = path ? `${path}.pdf` : `${crypto.randomUUID()}.pdf`;
     const { data, error } = await supabase.storage.from(bucket).upload(fileName, file, {
       contentType: 'application/pdf',
     });
@@ -42,7 +41,7 @@ export async function uploadPhoto(file: File, bucket: string, path?: string): Pr
   }
 
   const compressed = await compressImage(file);
-  const fileName = path ? `${path}.jpg` : `${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`;
+  const fileName = path ? `${path}.jpg` : `${crypto.randomUUID()}.jpg`;
   const { data, error } = await supabase.storage.from(bucket).upload(fileName, compressed, {
     contentType: 'image/jpeg',
   });

@@ -147,8 +147,8 @@ export default function DVIRPage() {
       userName,                              // OPERADOR
       type,                                  // TIPO
       String(horometro),                     // HORÓMETRO
-      ...checks.map((c) => c.status || 'N/A'), // MOTOR through TREN RODAJE (12 cols)
-      `${okCount}/12`,                       // SCORE TOTAL
+      ...checks.map((c) => c.status || 'N/A'), // MOTOR through TREN RODAJE (dynamic cols)
+      `${okCount}/${checks.length}`,         // SCORE TOTAL
       result,                                // RESULTADO
       observations,                          // DEFECTOS ENCONTRADOS
       photoUrlStr,                           // FOTO_URL
@@ -162,13 +162,13 @@ export default function DVIRPage() {
       if (otId) {
         setToastMessage(`Inspección registrada — OT ${otId} generada`);
       } else {
-        setToastMessage(`Inspección registrada — Score: ${okCount}/12`);
+        setToastMessage(`Inspección registrada — Score: ${okCount}/${checks.length}`);
       }
       setToastVisible(true);
 
       // Push notification to supervisor when DVIR is deficient
       if (result === 'reprobado') {
-        sendPushEvent('dvir_deficiente', { unidad: unit_id, score: `${okCount}/12`, ot_id: otId ?? '' });
+        sendPushEvent('dvir_deficiente', { unidad: unit_id, score: `${okCount}/${checks.length}`, ot_id: otId ?? '' });
       }
 
       appendRow(SHEET_TABS.INSPECCIONES, row).catch((err: unknown) => {

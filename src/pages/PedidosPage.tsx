@@ -22,6 +22,7 @@ import { useCartStore, type CartItem } from '../stores/cart-store';
 import { appendRow, readRange, updateCell, SHEET_TABS } from '../lib/sheets-api';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
+import { useCatalogoStore } from '../stores/catalogo-store';
 
 // ── Sheet columns for Cotizaciones_Pendientes (matching actual Sheet headers) ─
 // A(0)  Fecha
@@ -104,6 +105,8 @@ export default function PedidosPage() {
 
   const isJT = role === 'jefe_taller';
   const isGerencia = role === 'gerencia';
+
+  const { fetchCatalogo, fetched: catalogFetched } = useCatalogoStore();
 
   const [tab, setTab] = useState<Tab>(isGerencia ? 'historial' : 'carrito');
   const [showManual, setShowManual] = useState(false);
@@ -204,6 +207,7 @@ export default function PedidosPage() {
   // Auto-load historial on mount (Gerencia starts on historial tab directly)
   useEffect(() => {
     loadHistorial();
+    if (!catalogFetched) fetchCatalogo();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -698,8 +702,31 @@ function ManualPartForm({
   onCancel: () => void;
   unitIds: string[];
 }) {
+  const { search: searchCatalog } = useCatalogoStore();
+  const [suggestions, setSuggestions] = useState<ReturnType<typeof searchCatalog>>([]);
+
   const f = (field: keyof ManualForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     onChange({ ...form, [field]: e.target.value });
+
+  function handleSearchInput(value: string) {
+    onChange({ ...form, description: value });
+    setSuggestions(value.length >= 2 ? searchCatalog(value) : []);
+  }
+
+  function handlePartNumberInput(value: string) {
+    onChange({ ...form, part_number: value });
+    setSuggestions(value.length >= 2 ? searchCatalog(value) : []);
+  }
+
+  function applySuggestion(s: ReturnType<typeof searchCatalog>[0]) {
+    onChange({
+      ...form,
+      part_number: s.clave.includes('_') ? '' : s.clave, // clave is PN if no underscores
+      description: s.descripcion,
+      unit_price:  s.precio > 0 ? String(s.precio) : form.unit_price,
+    });
+    setSuggestions([]);
+  }
 
   return (
     <div
@@ -716,7 +743,7 @@ function ManualPartForm({
           <input
             type="text"
             value={form.part_number}
-            onChange={f('part_number')}
+            onChange={(e) => handlePartNumberInput(e.target.value)}
             placeholder="Ej: 6745-11-3102"
             className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-white text-text"
           />
@@ -735,16 +762,48 @@ function ManualPartForm({
         </div>
       </div>
 
-      <div>
+      <div className="relative">
         <label className="block text-xs font-semibold text-text-secondary mb-1">Descripción *</label>
         <input
           type="text"
           value={form.description}
-          onChange={f('description')}
+          onChange={(e) => handleSearchInput(e.target.value)}
           placeholder="Nombre o descripción de la parte"
           className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-white text-text"
+          autoComplete="off"
         />
         {errors.description && <p className="text-xs text-red-500 mt-0.5">{errors.description}</p>}
+
+        {/* Catalog suggestions dropdown */}
+        {suggestions.length > 0 && (
+          <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-border rounded-xl shadow-lg overflow-hidden">
+            {suggestions.map((s) => (
+              <button
+                key={s.clave}
+                type="button"
+                onMouseDown={() => applySuggestion(s)}
+                className="w-full text-left px-3 py-2.5 hover:bg-blue-50 border-b border-gray-50 last:border-0"
+              >
+                <div className="flex justify-between items-start gap-2">
+                  <div>
+                    <p className="text-xs font-semibold text-text leading-tight">{s.descripcion}</p>
+                    {!s.clave.includes('_') && (
+                      <p className="text-xs text-blue-600 font-mono">{s.clave}</p>
+                    )}
+                    <p className="text-xs text-text-secondary">{s.proveedor}</p>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <p className="text-xs font-bold text-green-600">${s.precio.toFixed(2)}</p>
+                    {s.precioMin !== s.precioMax && (
+                      <p className="text-xs text-gray-400">${s.precioMin.toFixed(0)}–${s.precioMax.toFixed(0)}</p>
+                    )}
+                    <p className="text-xs text-gray-400">×{s.vecesComprado}</p>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-3">

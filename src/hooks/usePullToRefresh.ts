@@ -29,6 +29,7 @@ export function usePullToRefresh({ onRefresh, threshold = 80 }: UsePullToRefresh
 
   const onTouchEnd = useCallback(async () => {
     if (!pulling) return;
+    if (refreshing) return;
     setPulling(false);
 
     if (pullDistance >= threshold) {

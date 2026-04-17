@@ -82,6 +82,7 @@ export default function WorkOrderDetailPage() {
   const [editCosto, setEditCosto] = useState('');
   const [editNotas, setEditNotas] = useState('');
   const [saving, setSaving] = useState<OTStatusField | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!fetched) {
@@ -109,8 +110,16 @@ export default function WorkOrderDetailPage() {
   async function handleSave(field: OTStatusField, value: string) {
     if (!otId || !wo) return;
     setSaving(field);
-    await updateOTField(otId, field, value, userName, role ?? '');
-    setSaving(null);
+    setSaveError(null);
+    try {
+      await updateOTField(otId, field, value, userName, role ?? '');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error al guardar';
+      setSaveError(msg);
+      setTimeout(() => setSaveError(null), 4000);
+    } finally {
+      setSaving(null);
+    }
   }
 
   if (loading && !fetched) {
@@ -144,6 +153,11 @@ export default function WorkOrderDetailPage() {
 
   return (
     <div className="flex flex-col gap-4 pb-6 animate-fade-up">
+      {saveError && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-red-600 text-white text-xs px-4 py-2.5 rounded-xl shadow-lg max-w-xs text-center">
+          {saveError}
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center gap-3">
         <button type="button" onClick={() => navigate(-1)} className="p-2 rounded-xl bg-white border border-border shadow-sm">

@@ -1,10 +1,14 @@
 // src/components/analytics/reportGenerator.ts
 // 5-page jsPDF fleet management report — professional dark-accented design
 
-import jsPDF from 'jspdf'
-import autoTable from 'jspdf-autotable'
+import type { jsPDF as JsPDFType } from 'jspdf'
 import type { KpiTotals, UnitMetrics } from './analyticsUtils'
 import { formatPeso, formatLitros } from './analyticsUtils'
+
+// ── Internal type alias ───────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AutoTableFn = (doc: JsPDFType, options: Record<string, any>) => void
 
 // ── Design System ─────────────────────────────────────────────────────────────
 
@@ -82,7 +86,7 @@ function buildDateStr(): string {
   return `${y}${m}${d}`
 }
 
-function addFooters(doc: jsPDF, timestamp: string): void {
+function addFooters(doc: JsPDFType, timestamp: string): void {
   const pageCount = doc.getNumberOfPages()
   const pageH = doc.internal.pageSize.height
   const pageW = doc.internal.pageSize.width
@@ -109,7 +113,7 @@ function addFooters(doc: jsPDF, timestamp: string): void {
  * Returns the Y coordinate where content should begin.
  */
 function addDetailPageHeader(
-  doc: jsPDF,
+  doc: JsPDFType,
   sectionLabel: string,
   periodLabel: string
 ): number {
@@ -154,7 +158,7 @@ interface KpiCardConfig {
 }
 
 function drawKpiCard(
-  doc: jsPDF,
+  doc: JsPDFType,
   x: number,
   y: number,
   w: number,
@@ -201,7 +205,8 @@ function drawKpiCard(
 // ── Page 1: Executive Summary ─────────────────────────────────────────────────
 
 function buildExecutiveSummary(
-  doc: jsPDF,
+  doc: JsPDFType,
+  autoTable: AutoTableFn,
   period: string,
   unitFilter: string,
   kpiTotals: KpiTotals,
@@ -346,7 +351,8 @@ function buildExecutiveSummary(
 // ── Page 2: Gastos Detail ─────────────────────────────────────────────────────
 
 function buildGastosPage(
-  doc: jsPDF,
+  doc: JsPDFType,
+  autoTable: AutoTableFn,
   periodLabel: string,
   gastosRows: string[][]
 ): void {
@@ -384,7 +390,8 @@ function buildGastosPage(
 // ── Page 3: Combustible Detail ────────────────────────────────────────────────
 
 function buildCombustiblePage(
-  doc: jsPDF,
+  doc: JsPDFType,
+  autoTable: AutoTableFn,
   periodLabel: string,
   combustibleRows: string[][]
 ): void {
@@ -423,7 +430,8 @@ function buildCombustiblePage(
 // ── Page 4: Fletes Detail ─────────────────────────────────────────────────────
 
 function buildFletesPage(
-  doc: jsPDF,
+  doc: JsPDFType,
+  autoTable: AutoTableFn,
   periodLabel: string,
   fletesRows: string[][]
 ): void {
@@ -474,7 +482,8 @@ function buildFletesPage(
 // ── Page 5: Averías Detail ────────────────────────────────────────────────────
 
 function buildAveriasPage(
-  doc: jsPDF,
+  doc: JsPDFType,
+  autoTable: AutoTableFn,
   periodLabel: string,
   averiasRows: string[][]
 ): void {
@@ -511,7 +520,7 @@ function buildAveriasPage(
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-export function generateReport(
+export async function generateReport(
   period: 'week' | 'month' | 'year' | 'custom',
   unitFilter: string,
   filteredRows: {
@@ -524,29 +533,35 @@ export function generateReport(
   unitMetrics: UnitMetrics[],
   dateFrom?: string,
   dateTo?: string
-): void {
+): Promise<void> {
+  const [{ default: jsPDF }, autoTableMod] = await Promise.all([
+    import('jspdf'),
+    import('jspdf-autotable'),
+  ])
+  const autoTable = autoTableMod.default as AutoTableFn
+
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
   const timestamp = buildTimestamp()
   const periodLabel = getPeriodLabel(period, dateFrom, dateTo)
 
   // Page 1 — Executive Summary
-  buildExecutiveSummary(doc, period, unitFilter, kpiTotals, unitMetrics, timestamp, dateFrom, dateTo)
+  buildExecutiveSummary(doc, autoTable, period, unitFilter, kpiTotals, unitMetrics, timestamp, dateFrom, dateTo)
 
   // Page 2 — Gastos
   doc.addPage()
-  buildGastosPage(doc, periodLabel, filteredRows.gastos)
+  buildGastosPage(doc, autoTable, periodLabel, filteredRows.gastos)
 
   // Page 3 — Combustible
   doc.addPage()
-  buildCombustiblePage(doc, periodLabel, filteredRows.combustible)
+  buildCombustiblePage(doc, autoTable, periodLabel, filteredRows.combustible)
 
   // Page 4 — Fletes
   doc.addPage()
-  buildFletesPage(doc, periodLabel, filteredRows.fletes)
+  buildFletesPage(doc, autoTable, periodLabel, filteredRows.fletes)
 
   // Page 5 — Averías
   doc.addPage()
-  buildAveriasPage(doc, periodLabel, filteredRows.averias)
+  buildAveriasPage(doc, autoTable, periodLabel, filteredRows.averias)
 
   // Footers on all pages (must be last)
   addFooters(doc, timestamp)

@@ -52,18 +52,18 @@ export default function BottomNav() {
               <LucideIcon
                 name={item.icon}
                 size={22}
-                color={active ? '#2563EB' : 'rgba(255,255,255,0.6)'}
+                color={active ? '#FFFFFF' : 'rgba(255,255,255,0.6)'}
               />
               <span
                 className="text-xs leading-none"
-                style={{ color: active ? '#2563EB' : 'rgba(255,255,255,0.6)' }}
+                style={{ color: active ? '#FFFFFF' : 'rgba(255,255,255,0.6)' }}
               >
                 {item.label}
               </span>
               {active && (
                 <span
                   className="w-1 h-1 rounded-full"
-                  style={{ backgroundColor: '#2563EB' }}
+                  style={{ backgroundColor: '#FFFFFF' }}
                 />
               )}
             </button>

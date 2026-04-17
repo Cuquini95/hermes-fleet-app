@@ -26,3 +26,13 @@ dist-ssr
 .vercel
 
 .superpowers/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Local build archives and VPS scratch files
+*.tar.gz
+*_vps.py
+fleet-dist.*

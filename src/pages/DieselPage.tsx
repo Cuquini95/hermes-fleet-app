@@ -242,7 +242,7 @@ export default function DieselPage() {
           <input
             type="number"
             value={litros}
-            onChange={(e) => setLitros(e.target.value)}
+            onChange={(e) => { setLitros(e.target.value); setAnomalyWarning(false); }}
             placeholder="0"
             className="w-full rounded-xl border border-border p-4 text-3xl font-semibold text-text bg-white text-center"
           />

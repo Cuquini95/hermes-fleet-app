@@ -1,12 +1,13 @@
 import { create } from 'zustand';
-import { readRange, appendRow, SHEET_TABS } from '../lib/sheets-api';
+import { readRange, appendRow, updateCell, SHEET_TABS } from '../lib/sheets-api';
+import { useCatalogoStore } from './catalogo-store';
 import type { OcrLineItem } from '../lib/sheets-api';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type GastoTipo = 'Refaccion' | 'Combustible' | 'Servicio' | 'Otro';
-export type GastoStatus = 'Borrador' | 'Aprobado' | 'Rechazado';
+export type GastoStatus = 'Borrador' | 'Aprobado' | 'Rechazado' | 'Eliminado';
 export type MetodoPago = 'Efectivo' | 'Transferencia' | 'Tarjeta';
 
 // Single flat row per receipt — stored in the "Gastos" tab
@@ -59,9 +60,16 @@ interface GastosState {
   fetched: boolean;
   fetchGastos: () => Promise<void>;
   saveGasto: (payload: NuevoGastoPayload) => Promise<string>;
+  deleteGasto: (gastoId: string) => Promise<void>;
 }
 
 // ── Row parser ────────────────────────────────────────────────────────────────
+
+/** Strip currency symbols, commas, and whitespace before parsing — gspread
+ *  returns FORMATTED_VALUE by default (e.g. "$3,356.00"). */
+function parseNum(v: string | undefined): number {
+  return Number(String(v ?? '').replace(/[$,\s]/g, '')) || 0;
+}
 
 function parseGastoRow(row: string[]): GastoCompra | null {
   if (!row[0] || row[0] === 'Gasto_ID') return null;
@@ -73,9 +81,9 @@ function parseGastoRow(row: string[]): GastoCompra | null {
     proveedor:     row[4] ?? '',
     rfc_proveedor: row[5] ?? '',
     folio_factura: row[6] ?? '',
-    subtotal:      Number(row[7]) || 0,
-    iva:           Number(row[8]) || 0,
-    total:         Number(row[9]) || 0,
+    subtotal:      parseNum(row[7]),
+    iva:           parseNum(row[8]),
+    total:         parseNum(row[9]),
     unidad:        row[10] ?? '',
     ot_id:         row[11] ?? '',
     solicitante:   row[12] ?? '',
@@ -187,11 +195,33 @@ export const useGastosStore = create<GastosState>((set, get) => ({
         saving: false,
       }));
 
+      // Sync line items to price catalog (non-blocking)
+      const itemsWithPrice = payload.line_items.filter(
+        (i) => i.description.trim() && (i.unit_price > 0 || i.subtotal > 0)
+      );
+      if (itemsWithPrice.length > 0) {
+        useCatalogoStore.getState().syncLineItems(itemsWithPrice, payload.proveedor);
+      }
+
       return gastoId;
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error al guardar gasto';
       set({ error: message, saving: false });
       throw err;
+    }
+  },
+
+  deleteGasto: async (gastoId: string): Promise<void> => {
+    // Optimistically remove from local state
+    set((state) => ({
+      gastos: state.gastos.filter((g) => g.gasto_id !== gastoId),
+    }));
+    try {
+      // Mark as "Eliminado" in the sheet (col 0 = Gasto_ID, col 16 = Status)
+      await updateCell(SHEET_TABS.GASTOS, 0, gastoId, 16, 'Eliminado');
+    } catch (err: unknown) {
+      // If sheet update fails, restore the row on next fetch — not critical
+      console.error('Failed to mark gasto as Eliminado in sheet:', err);
     }
   },
 }));

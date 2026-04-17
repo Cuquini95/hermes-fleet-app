@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { Camera, X } from 'lucide-react';
+import { Camera, Upload, X } from 'lucide-react';
 
 interface PhotoItem {
   file: File;
@@ -14,35 +14,57 @@ interface PhotoCaptureProps {
 }
 
 export default function PhotoCapture({ onCapture, photos, onRemove, multiple = false }: PhotoCaptureProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const uploadRef = useRef<HTMLInputElement>(null);
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-    const file = files[0];
-    onCapture(file);
+    for (let i = 0; i < files.length; i++) {
+      onCapture(files[i]);
+    }
     e.target.value = '';
   }
 
-  const showButton = multiple || photos.length === 0;
+  const showButtons = multiple || photos.length === 0;
 
   return (
     <div className="flex flex-col gap-2">
-      {showButton && (
-        <button
-          type="button"
-          onClick={() => inputRef.current?.click()}
-          className="flex items-center gap-2 border border-amber text-amber rounded-xl px-4 py-2 font-medium text-sm w-fit"
-        >
-          <Camera size={18} />
-          Agregar foto
-        </button>
+      {showButtons && (
+        <div className="flex gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => cameraRef.current?.click()}
+            className="flex items-center gap-2 border border-amber text-amber rounded-xl px-4 font-medium text-sm w-fit"
+            style={{ minHeight: 44 }}
+          >
+            <Camera size={18} />
+            Agregar foto
+          </button>
+          <button
+            type="button"
+            onClick={() => uploadRef.current?.click()}
+            className="flex items-center gap-2 border border-amber text-amber rounded-xl px-4 font-medium text-sm w-fit"
+            style={{ minHeight: 44 }}
+          >
+            <Upload size={18} />
+            Subir archivo
+          </button>
+        </div>
       )}
       <input
-        ref={inputRef}
+        ref={cameraRef}
         type="file"
         accept="image/*"
         capture="environment"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+      <input
+        ref={uploadRef}
+        type="file"
+        accept="image/*"
+        multiple={multiple}
         className="hidden"
         onChange={handleFileChange}
       />
@@ -58,9 +80,11 @@ export default function PhotoCapture({ onCapture, photos, onRemove, multiple = f
               <button
                 type="button"
                 onClick={() => onRemove(index)}
-                className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center"
+                className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-8 h-8 flex items-center justify-center"
+                style={{ minWidth: 44, minHeight: 44, margin: '-8px -8px 0 0' }}
+                aria-label="Eliminar foto"
               >
-                <X size={12} />
+                <X size={16} />
               </button>
             </div>
           ))}

@@ -18,6 +18,7 @@ export default function Header() {
   );
 
   const canSeeCart = role === 'jefe_taller' || role === 'gerencia';
+  const canSeeAlerts = role === 'jefe_taller' || role === 'coordinador' || role === 'supervisor' || role === 'gerencia';
 
   const handleLogout = () => {
     logout();
@@ -65,21 +66,23 @@ export default function Header() {
           </button>
         )}
 
-        <button
-          onClick={() => navigate('/alerts')}
-          className="relative text-white/80 hover:text-white transition-colors"
-          aria-label="Alertas"
-        >
-          <Bell size={22} />
-          {alertCount > 0 && (
-            <span
-              className="absolute -top-1 -right-1 flex items-center justify-center rounded-full text-white"
-              style={{ width: 16, height: 16, fontSize: 9, backgroundColor: '#DC2626' }}
-            >
-              {alertCount > 9 ? '9+' : alertCount}
-            </span>
-          )}
-        </button>
+        {canSeeAlerts && (
+          <button
+            onClick={() => navigate('/alerts')}
+            className="relative text-white/80 hover:text-white transition-colors"
+            aria-label="Alertas"
+          >
+            <Bell size={22} />
+            {alertCount > 0 && (
+              <span
+                className="absolute -top-1 -right-1 flex items-center justify-center rounded-full text-white"
+                style={{ width: 16, height: 16, fontSize: 9, backgroundColor: '#DC2626' }}
+              >
+                {alertCount > 9 ? '9+' : alertCount}
+              </span>
+            )}
+          </button>
+        )}
 
         <button
           onClick={handleLogout}

@@ -431,6 +431,5 @@ export const SHEET_TABS = {
   COTIZACIONES: 'Cotizaciones_Pendientes',
   NEUMATICOS: '13 Neumáticos',
   GASTOS: '02 Gastos',
-  GASTOS_PRESUPUESTO: 'Gastos_Presupuesto',
-  CATALOGO_PRECIOS: 'Catalogo_Precios',
+  WORKSHOP_SCHEDULE: 'WORKSHOP_SCHEDULE',
 } as const;

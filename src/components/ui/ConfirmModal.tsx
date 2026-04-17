@@ -1,13 +1,30 @@
+import { useState } from 'react';
+
 interface ConfirmModalProps {
   open: boolean;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<void>;
   onCancel: () => void;
   title: string;
   message: string;
+  loading?: boolean;
 }
 
-export default function ConfirmModal({ open, onConfirm, onCancel, title, message }: ConfirmModalProps) {
+export default function ConfirmModal({ open, onConfirm, onCancel, title, message, loading: externalLoading }: ConfirmModalProps) {
+  const [internalSubmitting, setInternalSubmitting] = useState(false);
+
   if (!open) return null;
+
+  const isDisabled = externalLoading || internalSubmitting;
+
+  const handleConfirm = async () => {
+    if (isDisabled) return;
+    setInternalSubmitting(true);
+    try {
+      await onConfirm();
+    } finally {
+      setInternalSubmitting(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
@@ -18,16 +35,18 @@ export default function ConfirmModal({ open, onConfirm, onCancel, title, message
           <button
             type="button"
             onClick={onCancel}
-            className="flex-1 border border-border rounded-xl px-6 py-3 font-medium text-text"
+            disabled={isDisabled}
+            className="flex-1 border border-border rounded-xl px-6 py-3 font-medium text-text disabled:opacity-50"
           >
             Cancelar
           </button>
           <button
             type="button"
-            onClick={onConfirm}
-            className="flex-1 bg-amber text-white rounded-xl px-6 py-3 font-medium"
+            onClick={handleConfirm}
+            disabled={isDisabled}
+            className="flex-1 bg-amber text-white rounded-xl px-6 py-3 font-medium disabled:opacity-50 flex items-center justify-center gap-2"
           >
-            Confirmar
+            {isDisabled ? 'Enviando...' : 'Confirmar'}
           </button>
         </div>
       </div>

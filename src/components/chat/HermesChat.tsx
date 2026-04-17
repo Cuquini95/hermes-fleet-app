@@ -59,16 +59,25 @@ function formatDiagnose(result: DiagnoseResult, equipo: string): string {
   const checklist = result.checklist_diagnostico
     .map((c, i) => `${i + 1}. ${c}`)
     .join('\n');
-  const partes = result.partes_probables.map((p) => {
-    if (typeof p === 'object' && p !== null) {
-      const obj = p as Record<string, unknown>;
-      const oem = obj.oem || obj.part_number || '';
-      const desc = obj.descripcion || obj.description || '';
-      const precio = obj.precio_estimado || '';
-      return `• ${oem} — ${desc}${precio ? ` | ${precio}` : ''}`;
-    }
-    return `• ${p}`;
-  }).join('\n');
+  const seenOem = new Set<string>();
+  const partes = result.partes_probables
+    .filter((p) => {
+      const obj = (typeof p === 'object' && p !== null) ? p as Record<string, unknown> : null;
+      const oem = String(obj?.oem || obj?.part_number || p || '');
+      if (!oem || seenOem.has(oem)) return false;
+      seenOem.add(oem);
+      return true;
+    })
+    .map((p) => {
+      if (typeof p === 'object' && p !== null) {
+        const obj = p as Record<string, unknown>;
+        const oem = obj.oem || obj.part_number || '';
+        const desc = obj.descripcion || obj.description || '';
+        const precio = obj.precio_estimado || '';
+        return `• ${oem} — ${desc}${precio ? ` | ${precio}` : ''}`;
+      }
+      return `• ${p}`;
+    }).join('\n');
 
   return `🔍 **Diagnóstico para ${equipo}**\n\n**Causas probables:**\n${causas}\n\n**Checklist:**\n${checklist}\n\n**Partes sugeridas:**\n${partes}\n\n**Prioridad:** ${result.prioridad}`;
 }
@@ -235,6 +244,9 @@ export default function HermesChat() {
   // Track the last fault code context so "ver manual" can look up pages
   const lastFaultCodeRef = useRef<{ code: string; equipo: string } | null>(null);
 
+  // Track the last parts search so bare "diagrama" can use context
+  const lastPartsSearchRef = useRef<{ equipo: string; description: string; part_number: string } | null>(null);
+
   function scrollToBottom() {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }
@@ -350,10 +362,23 @@ export default function HermesChat() {
             else if (/^\d{8}$/.test(pn)) equipUnit = 'Mack GR84B 8x4';
           }
 
+          // Final fallback: use last parts search context (e.g. "7861-93-1812 diagrama" after "7861-93-1812 on HM400-3")
+          if (equipUnit === 'General' && lastPartsSearchRef.current?.equipo) {
+            equipUnit = lastPartsSearchRef.current.equipo;
+          }
+
           try {
             const results = await searchParts(pn, equipUnit !== 'General' ? equipUnit : undefined);
             if (results.length > 0) {
               responseText = formatSearchParts(results, pn);
+              // Store context so a follow-up "diagrama" knows what to look for
+              const diagEquipForRef = equipUnit !== 'General' ? equipUnit
+                : (results[0].compatible_units?.[0] ?? '');
+              lastPartsSearchRef.current = {
+                equipo: diagEquipForRef,
+                description: results[0].description ?? pn,
+                part_number: pn,
+              };
               if (wantsDiagram) {
                 let diagEquip = equipUnit;
                 if (diagEquip === 'General' && results[0].compatible_units?.length > 0) {
@@ -432,10 +457,18 @@ export default function HermesChat() {
             ? `${selectedUnit} / ${selectedEquip?.model ?? selectedUnit}`
             : detectEquipmentFromText(text);
           const subject = extractDiagramSubject(text);
-          const searchTerm = subject || equipForDiagram;
+
+          // If user typed bare "diagrama" (no subject, General unit), fall back to last parts search context
+          const ctx = lastPartsSearchRef.current;
+          const resolvedEquip = (equipForDiagram !== 'General' ? equipForDiagram : null)
+            ?? (subject === '' && ctx ? ctx.equipo : null)
+            ?? equipForDiagram;
+          const searchTerm = subject
+            || (ctx ? ctx.description : '')
+            || resolvedEquip;
 
           try {
-            const diag = await findDiagram(equipForDiagram !== 'General' ? equipForDiagram : '', searchTerm);
+            const diag = await findDiagram(resolvedEquip !== 'General' ? resolvedEquip : '', searchTerm);
             if (diag.found && diag.image_url && diag.page !== undefined) {
               const nextPage = diag.page + 1;
               responseText =
@@ -445,9 +478,9 @@ export default function HermesChat() {
             } else if (diag.found && diag.image_url) {
               responseText = `📐 **Diagrama**\n\n![Diagrama](/hermes-api${diag.image_url})`;
             } else {
-              const unitInfo = selectedUnit !== 'General' ? ` para ${selectedUnit}` : '';
+              const unitInfo = resolvedEquip !== 'General' ? ` para ${resolvedEquip.split('/')[0].trim()}` : '';
               responseText =
-                `📐 **Diagramas${unitInfo}**\n\nNo encontré un diagrama específico para _${subject || 'ese sistema'}_.\n\n` +
+                `📐 **Diagramas${unitInfo}**\n\nNo encontré un diagrama específico para _${searchTerm || 'ese sistema'}_.\n\n` +
                 `Prueba con términos como: _hidráulico_, _motor_, _transmisión_, _tren de rodaje_.\n\n` +
                 `O ve a **Más → Diagramas** para ver todos los planos disponibles.`;
             }

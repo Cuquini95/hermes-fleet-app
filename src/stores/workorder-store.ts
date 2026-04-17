@@ -1,9 +1,30 @@
 import { create } from 'zustand';
+import { z } from 'zod';
 import { readRange, appendRow, updateCell, SHEET_TABS } from '../lib/sheets-api';
 import { OT_COL, OT_LOG_COL, OT_FIELD_COLUMN, AVERIA_COL } from '../lib/data-adapter';
 import { supabase } from '../lib/supabase';
 import type { WorkOrder, StatusLogEntry, OTStatusField, OTEstado, OTPriority } from '../types/workorder';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
+
+// ── Zod schema for Realtime payloads ─────────────────────────────────────────
+const WorkOrderSchema = z.object({
+  ot_id:             z.string(),
+  fecha:             z.string().optional().default(''),
+  unidad:            z.string().optional().default(''),
+  tipo_averia:       z.string().optional().default(''),
+  descripcion:       z.string().optional().default(''),
+  severidad:         z.string().optional().default(''),
+  prioridad:         z.string().optional().default('MEDIA'),
+  mecanico_asignado: z.string().optional().default(''),
+  estado:            z.string().optional().default('Abierta'),
+  foto_url:          z.string().optional().default(''),
+  averia_ref:        z.string().optional().default(''),
+  partes_necesarias: z.string().optional().default(''),
+  costo_estimado:    z.union([z.number(), z.string()]).optional().default(0),
+  fecha_cierre:      z.string().optional().default(''),
+  observaciones:     z.string().optional().default(''),
+  progreso:          z.union([z.number(), z.string()]).optional().default(0),
+}).passthrough();
 
 /** Wrap a promise with a timeout. Rejects if not resolved in ms. */
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -30,6 +51,7 @@ interface WorkOrderState {
     role: string,
   ) => Promise<void>;
   getWorkOrderById: (otId: string) => WorkOrder | undefined;
+  initRealtime: () => () => void;
 }
 
 function parseWorkOrderRow(row: string[]): WorkOrder | null {
@@ -225,37 +247,52 @@ export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
   getWorkOrderById: (otId) => {
     return get().workorders.find((w) => w.ot_id === otId);
   },
+
+  initRealtime: () => {
+    if (!supabase) {
+      console.info('[Realtime] Supabase not configured, skipping');
+      return () => {};
+    }
+
+    const channel = supabase
+      .channel('workorders')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'workorders' },
+        (payload) => {
+          if (!get().fetched) return;
+          try {
+            if (payload.eventType === 'INSERT') {
+              const validated = WorkOrderSchema.parse(payload.new);
+              set((s) => {
+                if (s.workorders.some((w) => w.ot_id === validated.ot_id)) return s;
+                return { workorders: [...s.workorders, validated as WorkOrder] };
+              });
+            } else if (payload.eventType === 'UPDATE') {
+              const validated = WorkOrderSchema.parse(payload.new);
+              set((s) => ({
+                workorders: s.workorders.map((w) =>
+                  w.ot_id === validated.ot_id ? ({ ...w, ...validated } as WorkOrder) : w
+                ),
+              }));
+            } else if (payload.eventType === 'DELETE') {
+              const otId = (payload.old as { ot_id?: string })?.ot_id;
+              if (otId) {
+                set((s) => ({
+                  workorders: s.workorders.filter((w) => w.ot_id !== otId),
+                }));
+              }
+            }
+          } catch (err) {
+            console.warn('[Realtime] Invalid payload:', err);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      channel.unsubscribe();
+    };
+  },
 }));
 
-// ── Supabase Realtime subscription ────────────────────────────────────────────
-// Activates only when real Supabase credentials are configured (T1-4).
-// When credentials are placeholders, the subscription silently no-ops.
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? '';
-if (supabaseUrl && !supabaseUrl.includes('placeholder')) {
-  supabase
-    .channel('workorders-realtime')
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'workorders' },
-      (payload) => {
-        const store = useWorkOrderStore.getState();
-        if (!store.fetched) return;
-
-        if (payload.eventType === 'INSERT') {
-          const newWO = payload.new as WorkOrder;
-          useWorkOrderStore.setState((s) => ({
-            workorders: [...s.workorders, newWO],
-          }));
-        } else if (payload.eventType === 'UPDATE') {
-          const updated = payload.new as WorkOrder;
-          useWorkOrderStore.setState((s) => ({
-            workorders: s.workorders.map((w) =>
-              w.ot_id === updated.ot_id ? { ...w, ...updated } : w
-            ),
-          }));
-        }
-      }
-    )
-    .subscribe();
-}

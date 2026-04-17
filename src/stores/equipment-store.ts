@@ -49,6 +49,7 @@ interface EquipmentState {
   loading: boolean;
   error: string | null;
   fetchEquipment: () => Promise<void>;
+  refetch: () => Promise<void>;
 }
 
 export const useEquipmentStore = create<EquipmentState>((set, get) => ({
@@ -56,6 +57,11 @@ export const useEquipmentStore = create<EquipmentState>((set, get) => ({
   fetched: false,
   loading: false,
   error: null,
+
+  refetch: async () => {
+    set({ fetched: false });
+    await get().fetchEquipment();
+  },
 
   fetchEquipment: async () => {
     if (get().fetched || get().loading) return;
