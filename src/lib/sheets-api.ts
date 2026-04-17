@@ -104,6 +104,7 @@ function invalidateCachedTab(tab: string): void {
 
 // ── API functions ─────────────────────────────────────────────────────────────
 
+/** Append a new row to the given sheet tab. Invalidates the local cache for that tab on success. */
 export async function appendRow(tab: string, values: string[]): Promise<void> {
   invalidateCachedTab(tab);
   const response = await fetchWithRetry(`${HERMES_API}/api/sheets/append`, {
@@ -163,6 +164,10 @@ export async function readRange(
   return rows;
 }
 
+/**
+ * Update a single cell by row lookup: find the row where column searchColumn == searchValue,
+ * then write updateValue into updateColumn. Throws if no matching row is found.
+ */
 export async function updateCell(
   tab: string,
   searchColumn: number,
@@ -192,6 +197,10 @@ export async function updateCell(
   }
 }
 
+/**
+ * Insert or update a row keyed by the first column value. Returns 'updated' if an existing row
+ * matched the key, or 'inserted' if a new row was appended.
+ */
 export async function upsertRow(
   tab: string,
   key: string,
@@ -264,7 +273,9 @@ async function compressToBase64(file: File): Promise<string> {
         if (!ctx) { reject(new Error('Canvas unavailable')); return; }
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/jpeg', quality);
-        resolve(dataUrl.split(',')[1]); // strip "data:image/jpeg;base64,"
+        const payload = dataUrl.split(',')[1]; // strip "data:image/jpeg;base64,"
+        if (payload === undefined) { reject(new Error('Invalid data URL')); return; }
+        resolve(payload);
       };
       img.onerror = reject;
       img.src = e.target?.result as string;
@@ -318,7 +329,9 @@ async function fileToBase64Raw(file: File): Promise<string> {
     const reader = new FileReader();
     reader.onload = (e) => {
       const dataUrl = e.target?.result as string;
-      resolve(dataUrl.split(',')[1]); // strip "data:application/pdf;base64,"
+      const payload = dataUrl.split(',')[1]; // strip "data:application/pdf;base64,"
+      if (payload === undefined) { reject(new Error('Invalid data URL')); return; }
+      resolve(payload);
     };
     reader.onerror = reject;
     reader.readAsDataURL(file);
@@ -426,6 +439,10 @@ export async function importPartsFromQuote(
   }
 }
 
+/**
+ * Delete a row matching all key-value criteria (column-index → expected value). Returns true
+ * if a row was deleted. Throws when the backend reports the row was not found.
+ */
 export async function deleteRow(
   tab: string,
   match: Record<string, string>  // { "0": "11/04/2026", "1": "14:00", "2": "CV103" }
@@ -449,6 +466,7 @@ export async function deleteRow(
 
 // ── Sheet tab names ───────────────────────────────────────────────────────────
 
+/** Canonical tab names in the fleet Google Sheet. Use these constants instead of hardcoded strings. */
 export const SHEET_TABS = {
   FLOTA: '01 Inventario',
   INSPECCIONES: '14 Inspecciones',

@@ -119,6 +119,10 @@ function serializeItems(items: OcrLineItem[]): string {
 
 // ── Store ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Expenses (gastos) store: list plus create/update/delete actions backed by the sheets API.
+ * Tracks loading/saving/error states and an initial-fetched flag for first-paint cache hits.
+ */
 export const useGastosStore = create<GastosState>((set, get) => ({
   gastos: [],
   loading: false,

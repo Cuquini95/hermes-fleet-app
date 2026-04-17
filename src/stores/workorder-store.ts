@@ -55,7 +55,8 @@ interface WorkOrderState {
 }
 
 function parseWorkOrderRow(row: string[]): WorkOrder | null {
-  if (!row[OT_COL.OT_ID] || !row[OT_COL.OT_ID].startsWith('OT-')) return null;
+  const otId = row[OT_COL.OT_ID];
+  if (!otId || !otId.startsWith('OT-')) return null;
   return {
     ot_id:             row[OT_COL.OT_ID]          ?? '',
     fecha:             row[OT_COL.FECHA]           ?? '',
@@ -77,7 +78,8 @@ function parseWorkOrderRow(row: string[]): WorkOrder | null {
 }
 
 function parseStatusLogRow(row: string[]): StatusLogEntry | null {
-  if (!row[OT_LOG_COL.OT_ID] || !row[OT_LOG_COL.OT_ID].startsWith('OT-')) return null;
+  const otId = row[OT_LOG_COL.OT_ID];
+  if (!otId || !otId.startsWith('OT-')) return null;
   return {
     timestamp:   row[OT_LOG_COL.TIMESTAMP]   ?? '',
     ot_id:       row[OT_LOG_COL.OT_ID]       ?? '',
@@ -123,6 +125,10 @@ function applyStatusLog(workorders: WorkOrder[], log: StatusLogEntry[]): WorkOrd
   return Array.from(woMap.values());
 }
 
+/**
+ * Work-orders store: merges ORDENES_TRABAJO rows with OT_STATUS_LOG to produce the latest state
+ * per ot_id. Exposes fetch/create/update actions and loading/error flags.
+ */
 export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
   workorders: [],
   statusLog: [],

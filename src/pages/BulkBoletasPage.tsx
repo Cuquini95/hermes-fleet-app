@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Monolithic by design (> 400 LOC).
+ * Bulk-receipt import page — upload, parse, review, commit flow kept together for atomic rollback semantics.
+ */
 import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -121,6 +125,7 @@ export default function BulkBoletasPage() {
       await Promise.allSettled(
         batchFiles.map(async (file, j) => {
           const item = batchItems[j];
+          if (!item) return;
           try {
             const ocr = await ocrBoleta(file);
             applySharedFromOcr(ocr);

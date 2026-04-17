@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Monolithic by design (> 400 LOC).
+ * Trip entry with multi-leg support, fuel tie-in, and live distance calc. Cohesive per-trip state.
+ */
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Trash2, Plus, ScanLine } from 'lucide-react';

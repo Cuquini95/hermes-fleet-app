@@ -21,7 +21,8 @@ export default function PhotoCapture({ onCapture, photos, onRemove, multiple = f
     const files = e.target.files;
     if (!files || files.length === 0) return;
     for (let i = 0; i < files.length; i++) {
-      onCapture(files[i]);
+      const file = files[i];
+      if (file) onCapture(file);
     }
     e.target.value = '';
   }

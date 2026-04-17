@@ -15,6 +15,7 @@ interface PrintPMOrderData {
   parts: PMPart[];
 }
 
+/** Open a print dialog with a formatted preventive-maintenance work order (HTML) ready to print or save as PDF. */
 export function printPMOrder(data: PrintPMOrderData): void {
   const partsRows = data.parts
     .map(

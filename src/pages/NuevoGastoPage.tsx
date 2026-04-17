@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Monolithic by design (> 400 LOC).
+ * Expense entry form with OCR, multi-unit allocation, and photo capture. Shared form state across steps — splitting creates prop-drill burden without reuse upside.
+ */
 import { useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -203,8 +207,9 @@ export default function NuevoGastoPage() {
 
     // If OCR didn't upload a photo but user manually captured one, upload it now
     let finalImageUrl = imageUrl;
-    if (!finalImageUrl && receiptPhotos.length > 0) {
-      const urls = await tryUploadPhotos([receiptPhotos[0].file], 'receipts');
+    const firstReceipt = receiptPhotos[0];
+    if (!finalImageUrl && firstReceipt) {
+      const urls = await tryUploadPhotos([firstReceipt.file], 'receipts');
       finalImageUrl = urls[0] ?? '';
     }
 

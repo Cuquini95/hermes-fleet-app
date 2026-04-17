@@ -22,6 +22,7 @@ interface CartStore {
   clearCart: () => void;
 }
 
+/** Persisted shopping-cart store for parts orders: add/remove/update items and clear the cart. */
 export const useCartStore = create<CartStore>()(
   persist(
     (set) => ({

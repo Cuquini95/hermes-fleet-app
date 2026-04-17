@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Monolithic by design (> 400 LOC).
+ * jsPDF report generator for expense PDFs. Procedural layout code that reads top-to-bottom; breaking into small helpers would obscure page flow.
+ */
 import type { jsPDF as JsPDFType } from 'jspdf';
 import type { GastoCompra, GastoTipo } from '../stores/gastos-store';
 
@@ -282,6 +286,7 @@ function drawTypeBreakdown(doc: JsPDFType, data: GastoReportData, y: number): nu
 
   for (let i = 0; i < types.length; i++) {
     const tipo = types[i];
+    if (tipo === undefined) continue;
     const entry = data.byType.find((t) => t.tipo === tipo);
     const total = entry?.total ?? 0;
     const count = entry?.count ?? 0;
@@ -295,14 +300,14 @@ function drawTypeBreakdown(doc: JsPDFType, data: GastoReportData, y: number): nu
     doc.roundedRect(x, y, cellW, cellH, 4, 4, 'F');
 
     // Left color border
-    doc.setFillColor(...color);
+    doc.setFillColor(...(color as [number, number, number]));
     doc.rect(x, y, 3, cellH, 'F');
 
     // Label
     doc.setTextColor(...COLORS.textMuted);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
-    doc.text(TYPE_LABELS[tipo].toUpperCase(), x + 10, y + 14);
+    doc.text((TYPE_LABELS[tipo] ?? tipo).toUpperCase(), x + 10, y + 14);
 
     // Amount
     doc.setTextColor(...COLORS.textPrimary);

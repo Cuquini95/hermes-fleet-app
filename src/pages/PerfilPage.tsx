@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Monolithic by design (> 400 LOC).
+ * Profile/settings surface with multiple independent sections sharing auth-store state.
+ */
 import { useNavigate, Link } from 'react-router-dom';
 import { useState, useCallback } from 'react';
 import {

@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Monolithic by design (> 400 LOC).
+ * Scanner UI + OCR + confirmation flow — tightly coupled state machine.
+ */
 import { useRef, useState } from 'react';
 import { Camera, Upload, CheckCircle, X, Loader2, AlertCircle } from 'lucide-react';
 import { useEquipmentList } from '../../hooks/useEquipmentList';

@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Monolithic by design (> 400 LOC).
+ * Multi-tab data management surface (equipment, operators, customers, trips). Kept monolithic: tabs share filter/search state and CRUD handlers; splitting would require lifting state and prop-drilling through 4+ child views with no independent reuse.
+ */
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Search,
@@ -40,7 +44,7 @@ interface Collection {
   columns: ColumnDef[];
 }
 
-const COLLECTIONS: Collection[] = [
+const COLLECTIONS: [Collection, ...Collection[]] = [
   {
     id: 'fletes',
     icon: '🚛',
@@ -336,7 +340,7 @@ export default function DataManagerPage() {
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
-  const active = useMemo(
+  const active: Collection = useMemo(
     () => COLLECTIONS.find((c) => c.id === activeId) ?? COLLECTIONS[0],
     [activeId]
   );
@@ -382,7 +386,8 @@ export default function DataManagerPage() {
     const raw = cache[active.id];
     if (!raw) return [];
     const filtered = raw.filter((row) => !isRowEmpty(row));
-    if (filtered.length > 0 && looksLikeHeaderRow(filtered[0], active.columns)) {
+    const firstRow = filtered[0];
+    if (firstRow && looksLikeHeaderRow(firstRow, active.columns)) {
       return filtered.slice(1);
     }
     return filtered;
@@ -434,9 +439,10 @@ export default function DataManagerPage() {
     const raw = cache[id];
     if (!raw) return null;
     const filtered = raw.filter((r) => !isRowEmpty(r));
+    const firstRow = filtered[0];
+    const coll = COLLECTIONS.find((c) => c.id === id);
     const body =
-      filtered.length > 0 &&
-      looksLikeHeaderRow(filtered[0], COLLECTIONS.find((c) => c.id === id)!.columns)
+      firstRow && coll && looksLikeHeaderRow(firstRow, coll.columns)
         ? filtered.slice(1)
         : filtered;
     return body.length;
@@ -474,11 +480,13 @@ export default function DataManagerPage() {
     if (!sourceRow) { setEditingCell(null); return; }
 
     const targetCol = active.columns[colIndex];
+    if (!targetCol) { setEditingCell(null); return; }
     const originalValue = sourceRow[targetCol.index] ?? '';
     if (newValue === originalValue) { setEditingCell(null); return; }
 
     // Use the sticky (first) column as search key
     const keyCol = active.columns.find((c) => c.sticky) ?? active.columns[0];
+    if (!keyCol) { setEditingCell(null); return; }
     const keyValue = sourceRow[keyCol.index];
     if (!keyValue) { setEditingCell(null); return; }
 

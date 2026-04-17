@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Monolithic by design (> 400 LOC).
+ * Tire management view: inventory, rotation, and per-equipment assignment in one interactive surface.
+ */
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -156,7 +160,9 @@ export default function NeumaticosPage() {
   const [toastType, setToastType]       = useState<'success' | 'error'>('success');
 
   const equipment       = equipmentList.find((e) => e.unit_id === selectedUnit);
-  const positions       = equipment ? (POSITIONS_BY_TYPE[equipment.type] ?? POSITIONS_BY_TYPE.default) : [];
+  const positions: string[] = equipment
+    ? (POSITIONS_BY_TYPE[equipment.type] ?? POSITIONS_BY_TYPE.default ?? [])
+    : [];
   const available       = positions.filter((p) => !registradas.includes(p));
   const autoEstado      = calcEstado(llanta.condicion, llanta.profundidad, llanta.presion);
   const estadoMeta      = CONDICIONES.find((c) => c.value === llanta.condicion);

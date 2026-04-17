@@ -14,14 +14,18 @@ export function usePullToRefresh({ onRefresh, threshold = 80 }: UsePullToRefresh
 
   const onTouchStart = useCallback((e: React.TouchEvent) => {
     if (scrollRef.current && scrollRef.current.scrollTop <= 0) {
-      startY.current = e.touches[0].clientY;
+      const touch = e.touches[0];
+      if (!touch) return;
+      startY.current = touch.clientY;
       setPulling(true);
     }
   }, []);
 
   const onTouchMove = useCallback((e: React.TouchEvent) => {
     if (!pulling) return;
-    const diff = e.touches[0].clientY - startY.current;
+    const touch = e.touches[0];
+    if (!touch) return;
+    const diff = touch.clientY - startY.current;
     if (diff > 0) {
       setPullDistance(Math.min(diff * 0.5, threshold * 1.5));
     }

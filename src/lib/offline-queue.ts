@@ -24,6 +24,7 @@ export interface PendingSubmission {
   timestamp: string;
 }
 
+/** Persist a new submission to IndexedDB for later replay. */
 export async function queueSubmission(submission: Omit<PendingSubmission, 'id'>): Promise<void> {
   const db = await openDB();
   const tx = db.transaction(STORE_NAME, 'readwrite');
@@ -34,6 +35,7 @@ export async function queueSubmission(submission: Omit<PendingSubmission, 'id'>)
   });
 }
 
+/** Return all queued submissions that have not yet been successfully replayed. */
 export async function getPendingSubmissions(): Promise<PendingSubmission[]> {
   const db = await openDB();
   const tx = db.transaction(STORE_NAME, 'readonly');
@@ -44,6 +46,7 @@ export async function getPendingSubmissions(): Promise<PendingSubmission[]> {
   });
 }
 
+/** Remove a successfully-replayed submission from IndexedDB by its auto-increment id. */
 export async function clearSubmission(id: number): Promise<void> {
   const db = await openDB();
   const tx = db.transaction(STORE_NAME, 'readwrite');
@@ -54,6 +57,7 @@ export async function clearSubmission(id: number): Promise<void> {
   });
 }
 
+/** Return the number of submissions waiting to be replayed. */
 export async function getPendingCount(): Promise<number> {
   const submissions = await getPendingSubmissions();
   return submissions.length;

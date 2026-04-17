@@ -44,6 +44,7 @@ export default function OperatorHomePage() {
 
       for (let i = 1; i < rows.length; i++) {
         const row = rows[i];
+        if (!row) continue;
         const rowDate = (row[2] ?? '').trim();  // FECHA column (index 2)
         const rowOperator = (row[6] ?? '').trim(); // OPERADOR column (index 6)
 

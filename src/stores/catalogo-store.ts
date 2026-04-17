@@ -40,6 +40,10 @@ interface CatalogoState {
 
 // ── Row key: part_number if available, otherwise normalised description ────────
 
+/**
+ * Produce the canonical catalog key for a row: uppercased part number when present,
+ * otherwise a slugified 40-char snippet of the description (used as fallback identity).
+ */
 export function catalogKey(partNumber: string, description: string): string {
   const pn = partNumber.trim().toUpperCase();
   if (pn) return pn;
@@ -66,6 +70,7 @@ export function catalogKey(partNumber: string, description: string): string {
 
 // ── Store ─────────────────────────────────────────────────────────────────────
 
+/** Parts-pricing catalog store: caches entries keyed by catalogKey() with fetch/search helpers. */
 export const useCatalogoStore = create<CatalogoState>((set, get) => ({
   entries: [],
   fetched: false,
@@ -121,15 +126,16 @@ export const useCatalogoStore = create<CatalogoState>((set, get) => ({
         const clave  = catalogKey(item.part_number, item.description);
         const precio = item.unit_price > 0 ? item.unit_price : item.subtotal / Math.max(item.qty, 1);
         const idx    = updated.findIndex((e) => e.clave === clave);
+        const existing = idx >= 0 ? updated[idx] : undefined;
         const entry: CatalogoEntry = {
           clave,
           descripcion:   item.description.trim(),
           precio,
-          precioMin:     idx >= 0 ? Math.min(updated[idx].precioMin || precio, precio) : precio,
-          precioMax:     idx >= 0 ? Math.max(updated[idx].precioMax || precio, precio) : precio,
+          precioMin:     existing ? Math.min(existing.precioMin || precio, precio) : precio,
+          precioMax:     existing ? Math.max(existing.precioMax || precio, precio) : precio,
           proveedor,
           fechaActual:   today,
-          vecesComprado: (idx >= 0 ? updated[idx].vecesComprado : 0) + 1,
+          vecesComprado: (existing?.vecesComprado ?? 0) + 1,
         };
         if (idx >= 0) updated[idx] = entry;
         else updated.push(entry);

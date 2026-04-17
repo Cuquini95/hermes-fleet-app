@@ -60,8 +60,8 @@ describe('useEquipmentStore — fetchEquipment', () => {
 
     const { equipment } = useEquipmentStore.getState();
     expect(equipment).toHaveLength(1);
-    expect(equipment[0].unit_id).toBe('CA20');
-    expect(equipment[0].model).toBe('Caterpillar 745');
+    expect(equipment[0]!.unit_id).toBe('CA20');
+    expect(equipment[0]!.model).toBe('Caterpillar 745');
   });
 
   it('skips rows with empty unit_id (col 1)', async () => {
@@ -73,37 +73,37 @@ describe('useEquipmentStore — fetchEquipment', () => {
   it('normalizes status: "Operativo" → "operativo"', async () => {
     vi.mocked(readRange).mockResolvedValueOnce(withHeaders([buildRow({ 9: 'Operativo' })]));
     await useEquipmentStore.getState().fetchEquipment();
-    expect(useEquipmentStore.getState().equipment[0].status).toBe('operativo');
+    expect(useEquipmentStore.getState().equipment[0]!.status).toBe('operativo');
   });
 
   it('normalizes status: contains "reparac" → "taller"', async () => {
     vi.mocked(readRange).mockResolvedValueOnce(withHeaders([buildRow({ 9: 'En Reparación' })]));
     await useEquipmentStore.getState().fetchEquipment();
-    expect(useEquipmentStore.getState().equipment[0].status).toBe('taller');
+    expect(useEquipmentStore.getState().equipment[0]!.status).toBe('taller');
   });
 
   it('normalizes status: contains "taller" → "taller"', async () => {
     vi.mocked(readRange).mockResolvedValueOnce(withHeaders([buildRow({ 9: 'En taller' })]));
     await useEquipmentStore.getState().fetchEquipment();
-    expect(useEquipmentStore.getState().equipment[0].status).toBe('taller');
+    expect(useEquipmentStore.getState().equipment[0]!.status).toBe('taller');
   });
 
   it('normalizes status: contains "alerta" → "alerta"', async () => {
     vi.mocked(readRange).mockResolvedValueOnce(withHeaders([buildRow({ 9: 'Alerta mecánica' })]));
     await useEquipmentStore.getState().fetchEquipment();
-    expect(useEquipmentStore.getState().equipment[0].status).toBe('alerta');
+    expect(useEquipmentStore.getState().equipment[0]!.status).toBe('alerta');
   });
 
   it('normalizes status: unknown → "inactivo"', async () => {
     vi.mocked(readRange).mockResolvedValueOnce(withHeaders([buildRow({ 9: 'Baja definitiva' })]));
     await useEquipmentStore.getState().fetchEquipment();
-    expect(useEquipmentStore.getState().equipment[0].status).toBe('inactivo');
+    expect(useEquipmentStore.getState().equipment[0]!.status).toBe('inactivo');
   });
 
   it('parses horometro removing commas', async () => {
     vi.mocked(readRange).mockResolvedValueOnce(withHeaders([buildRow({ 10: '12,500' })]));
     await useEquipmentStore.getState().fetchEquipment();
-    expect(useEquipmentStore.getState().equipment[0].current_horometro).toBe(12500);
+    expect(useEquipmentStore.getState().equipment[0]!.current_horometro).toBe(12500);
   });
 
   it('sets fetched=true after a successful load', async () => {

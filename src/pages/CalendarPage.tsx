@@ -106,7 +106,7 @@ function parseScheduleRow(row: string[]): ScheduleEntry | null {
     ot_id: otId,
     unidad: row[3]?.trim() ?? '',
     mecanico: row[4]?.trim() ?? 'Sin asignar',
-    horas_estimadas: parseFloat(row[5]) || 0,
+    horas_estimadas: parseFloat(row[5] ?? '0') || 0,
     prioridad: (row[6]?.trim() as OTPriority) || 'MEDIA',
     estado: row[7]?.trim() || 'Programado',
     notas: row[8]?.trim() ?? '',
@@ -131,7 +131,7 @@ function buildConflicts(entries: ScheduleEntry[]): ConflictItem[] {
   for (const [key, hours] of hourMap.entries()) {
     if (hours > DAILY_HOUR_CAP) {
       const [mechanic, date] = key.split('||');
-      conflicts.push({ mechanic, date, hours });
+      conflicts.push({ mechanic: mechanic ?? '', date: date ?? '', hours });
     }
   }
   return conflicts.sort((a, b) => b.hours - a.hours);

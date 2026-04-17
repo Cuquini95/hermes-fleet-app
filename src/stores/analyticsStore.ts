@@ -54,6 +54,10 @@ interface AnalyticsState {
   getTrend: () => WeekPoint[]
 }
 
+/**
+ * Zustand store for fleet analytics: raw cross-tab sheet data, selected period/unit/date filters,
+ * and derived KPIs (unit metrics, totals, trends). Prefer selectors over consuming the whole store.
+ */
 export const useAnalyticsStore = create<AnalyticsState>((set, get) => ({
   raw: { gastos: [], combustible: [], fletes: [], averias: [] },
   status: 'idle',

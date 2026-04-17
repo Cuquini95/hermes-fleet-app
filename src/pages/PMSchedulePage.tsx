@@ -29,6 +29,7 @@ async function fetchLatestHorometros(): Promise<Record<string, number>> {
 
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
+    if (!row) continue;
     const unidad = (row[2] ?? '').trim();   // UNIDAD column
     const fecha = (row[0] ?? '').trim();     // FECHA column
     const horoStr = (row[6] ?? '').trim();   // HORÓMETRO column
@@ -94,10 +95,8 @@ export default function PMSchedulePage() {
 
       const pmEntries: PMEntry[] = equipment.map((eq) => {
         // Use sheet horómetro if available, otherwise catalog
-        const hasSheetData = sheetHorometros[eq.unit_id] !== undefined;
-        const currentHours = hasSheetData
-          ? sheetHorometros[eq.unit_id]
-          : eq.current_horometro;
+        const sheetHours = sheetHorometros[eq.unit_id];
+        const currentHours: number = sheetHours ?? eq.current_horometro;
 
         const pm = getNextPM(eq.model, currentHours);
 
@@ -109,7 +108,7 @@ export default function PMSchedulePage() {
           pmLevel: pm.level,
           dueAt: pm.due_at,
           hoursRemaining: pm.hours_remaining,
-          source: (hasSheetData ? 'sheets' : 'catalog') as 'sheets' | 'catalog',
+          source: (sheetHours !== undefined ? 'sheets' : 'catalog') as 'sheets' | 'catalog',
         };
       })
         // Only show units within less than 50 hours of a PM (or overdue)

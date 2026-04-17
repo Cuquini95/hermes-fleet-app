@@ -38,7 +38,7 @@ describe('cart-store', () => {
     it('adds a new item to an empty cart', () => {
       getStore().addItem(SAMPLE_PART);
       expect(getStore().items).toHaveLength(1);
-      expect(getStore().items[0].part_number).toBe('F001-123');
+      expect(getStore().items[0]!.part_number).toBe('F001-123');
     });
 
     it('assigns a unique cartId to each item', () => {
@@ -53,7 +53,7 @@ describe('cart-store', () => {
       getStore().addItem(SAMPLE_PART); // same part_number, isManual=false
       const items = getStore().items;
       expect(items).toHaveLength(1);
-      expect(items[0].quantity).toBe(2);
+      expect(items[0]!.quantity).toBe(2);
     });
 
     it('adds a second line for the same part_number when isManual=true', () => {
@@ -73,7 +73,7 @@ describe('cart-store', () => {
   describe('removeItem', () => {
     it('removes the item with the given cartId', () => {
       getStore().addItem(SAMPLE_PART);
-      const id = getStore().items[0].cartId;
+      const id = getStore().items[0]!.cartId;
       getStore().removeItem(id);
       expect(getStore().items).toHaveLength(0);
     });
@@ -82,9 +82,9 @@ describe('cart-store', () => {
       getStore().addItem(SAMPLE_PART);
       getStore().addItem({ ...SAMPLE_PART, part_number: 'F002-999' });
       const [first] = getStore().items;
-      getStore().removeItem(first.cartId);
+      getStore().removeItem(first!.cartId);
       expect(getStore().items).toHaveLength(1);
-      expect(getStore().items[0].part_number).toBe('F002-999');
+      expect(getStore().items[0]!.part_number).toBe('F002-999');
     });
 
     it('is a no-op when cartId does not exist', () => {
@@ -98,32 +98,32 @@ describe('cart-store', () => {
   describe('updateItem', () => {
     it('updates the quantity of a specific item', () => {
       getStore().addItem(SAMPLE_PART);
-      const id = getStore().items[0].cartId;
+      const id = getStore().items[0]!.cartId;
       getStore().updateItem(id, { quantity: 5 });
-      expect(getStore().items[0].quantity).toBe(5);
+      expect(getStore().items[0]!.quantity).toBe(5);
     });
 
     it('updates multiple fields at once', () => {
       getStore().addItem(SAMPLE_PART);
-      const id = getStore().items[0].cartId;
+      const id = getStore().items[0]!.cartId;
       getStore().updateItem(id, { quantity: 3, notes: 'Urgente hoy' });
-      expect(getStore().items[0].quantity).toBe(3);
-      expect(getStore().items[0].notes).toBe('Urgente hoy');
+      expect(getStore().items[0]!.quantity).toBe(3);
+      expect(getStore().items[0]!.notes).toBe('Urgente hoy');
     });
 
     it('does not affect other items when updating one', () => {
       getStore().addItem(SAMPLE_PART);
       getStore().addItem({ ...SAMPLE_PART, part_number: 'F002-999' });
       const [, second] = getStore().items;
-      getStore().updateItem(second.cartId, { quantity: 10 });
-      expect(getStore().items[0].quantity).toBe(1); // unchanged
-      expect(getStore().items[1].quantity).toBe(10);
+      getStore().updateItem(second!.cartId, { quantity: 10 });
+      expect(getStore().items[0]!.quantity).toBe(1); // unchanged
+      expect(getStore().items[1]!.quantity).toBe(10);
     });
 
     it('is a no-op when cartId does not exist', () => {
       getStore().addItem(SAMPLE_PART);
       getStore().updateItem('ghost-id', { quantity: 99 });
-      expect(getStore().items[0].quantity).toBe(1); // unchanged
+      expect(getStore().items[0]!.quantity).toBe(1); // unchanged
     });
   });
 

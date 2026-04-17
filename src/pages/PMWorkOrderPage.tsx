@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Monolithic by design (> 400 LOC).
+ * PM work-order creation with templated task list and equipment binding.
+ */
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Wrench, Package, Clock, CheckCircle, AlertTriangle } from 'lucide-react';
@@ -26,8 +30,9 @@ const CATEGORY_ORDER: string[] = ['Filtro', 'Aceite', 'Grasa', 'Correa', 'Refrig
 function groupByCategory(parts: PMPart[]): Record<string, PMPart[]> {
   const groups: Record<string, PMPart[]> = {};
   for (const part of parts) {
-    if (!groups[part.category]) groups[part.category] = [];
-    groups[part.category].push(part);
+    const bucket = groups[part.category] ?? [];
+    bucket.push(part);
+    groups[part.category] = bucket;
   }
   return groups;
 }
@@ -312,7 +317,7 @@ export default function PMWorkOrderPage() {
                   {category}
                 </span>
               </div>
-              {groupedParts[category].map((part, idx) => (
+              {(groupedParts[category] ?? []).map((part, idx) => (
                 <div
                   key={`${part.partNumber}-${idx}`}
                   className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg mb-1 last:mb-0"

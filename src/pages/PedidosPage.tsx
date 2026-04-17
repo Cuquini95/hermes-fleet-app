@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Monolithic by design (> 400 LOC).
+ * Parts-orders workflow page — one cohesive list+detail flow with shared inventory lookup state.
+ */
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -134,7 +138,7 @@ export default function PedidosPage() {
       if (rows.length === 0) { setHistorial([]); setHistorialLoaded(true); return; }
 
       // ── Discover column positions from the header row ──────────────────
-      const headers = rows[0].map((h) => (h ?? '').toLowerCase().trim());
+      const headers = (rows[0] ?? []).map((h) => (h ?? '').toLowerCase().trim());
       const col = (keys: string[]): number =>
         keys.reduce((found, k) => found !== -1 ? found : headers.findIndex((h) => h.includes(k)), -1);
 
@@ -906,7 +910,7 @@ function PedidoRowCard({
 }) {
   const [updating, setUpdating] = useState(false);
   const urgCfg = (URGENCIA_CONFIG as Record<string, { color: string; bg: string }>)[row.urgencia] ?? URGENCIA_CONFIG.Normal;
-  const sCfg = STATUS_STYLE[row.estado] ?? STATUS_STYLE.Pendiente;
+  const sCfg = STATUS_STYLE[row.estado] ?? STATUS_STYLE.Pendiente ?? { color: '#000', bg: '#fff', border: '#ccc' };
   const nextStatus = STATUS_NEXT[row.estado] ?? null;
 
   async function handleAdvance() {

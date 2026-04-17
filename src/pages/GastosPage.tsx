@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Monolithic by design (> 400 LOC).
+ * Expense list/filter/report page. Shared filter state across tabs; monolith keeps filter serialization in one place.
+ */
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -78,7 +82,7 @@ function filterByMonth(gastos: GastoCompra[], year: number, month: number): Gast
     if (g.status === 'Eliminado') return false;
     const parts = g.fecha.split('/');
     if (parts.length !== 3) return false;
-    return parseInt(parts[1]) === month && parseInt(parts[2]) === year;
+    return parseInt(parts[1] ?? '0') === month && parseInt(parts[2] ?? '0') === year;
   });
 }
 
@@ -98,9 +102,10 @@ function byUnit(gastos: GastoCompra[]) {
 function byType(gastos: GastoCompra[]) {
   const map: Record<string, { total: number; count: number }> = {};
   for (const g of gastos) {
-    if (!map[g.tipo]) map[g.tipo] = { total: 0, count: 0 };
-    map[g.tipo].total += g.total;
-    map[g.tipo].count += 1;
+    const bucket = map[g.tipo] ?? { total: 0, count: 0 };
+    bucket.total += g.total;
+    bucket.count += 1;
+    map[g.tipo] = bucket;
   }
   return map;
 }

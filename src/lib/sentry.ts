@@ -5,6 +5,7 @@
  */
 import * as Sentry from '@sentry/react';
 
+/** Record a navigation breadcrumb for Sentry (route-change context). */
 export function breadcrumbNavigation(to: string) {
   Sentry.addBreadcrumb({
     category: 'navigation',
@@ -13,6 +14,7 @@ export function breadcrumbNavigation(to: string) {
   });
 }
 
+/** Record a form-submission breadcrumb for Sentry, optionally attaching redacted form data. */
 export function breadcrumbFormSubmit(formName: string, data?: Record<string, unknown>) {
   Sentry.addBreadcrumb({
     category: 'ui.form',
@@ -22,6 +24,7 @@ export function breadcrumbFormSubmit(formName: string, data?: Record<string, unk
   });
 }
 
+/** Record an outbound API call breadcrumb for Sentry. Default method is POST. */
 export function breadcrumbApiCall(endpoint: string, method = 'POST') {
   Sentry.addBreadcrumb({
     category: 'http',
@@ -30,6 +33,7 @@ export function breadcrumbApiCall(endpoint: string, method = 'POST') {
   });
 }
 
+/** Record an API-failure breadcrumb at error level with HTTP status and optional message. */
 export function breadcrumbApiFailure(endpoint: string, status: number | string, message?: string) {
   Sentry.addBreadcrumb({
     category: 'http',
@@ -39,6 +43,7 @@ export function breadcrumbApiFailure(endpoint: string, status: number | string, 
   });
 }
 
+/** Record an OCR lifecycle breadcrumb. Failures are logged at warning level. */
 export function breadcrumbOcr(action: 'start' | 'success' | 'failure') {
   Sentry.addBreadcrumb({
     category: 'ocr',

@@ -52,6 +52,7 @@ interface EquipmentState {
   refetch: () => Promise<void>;
 }
 
+/** Equipment (unidades) store: fetch-from-sheet list plus fetched/loading/error flags and refetch helper. */
 export const useEquipmentStore = create<EquipmentState>((set, get) => ({
   equipment: [],
   fetched: false,

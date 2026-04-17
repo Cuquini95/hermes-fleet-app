@@ -57,7 +57,7 @@ describe('mexicoTime', () => {
   it('uses 24-hour format (hour is always 0-23, never 24)', () => {
     const d = new Date('2026-07-01T18:00:00.000Z'); // noon or later in Mexico
     const result = mexicoTime(d);
-    const hour = parseInt(result.split(':')[0], 10);
+    const hour = parseInt(result.split(':')[0]!, 10);
     expect(hour).toBeGreaterThanOrEqual(0);
     expect(hour).toBeLessThan(24);
   });
@@ -66,7 +66,7 @@ describe('mexicoTime', () => {
     // 2026-04-06T00:00:00Z = 18:00 CST (UTC-6) — well before midnight
     const d = new Date('2026-04-06T00:00:00.000Z');
     const result = mexicoTime(d);
-    const hour = parseInt(result.split(':')[0], 10);
+    const hour = parseInt(result.split(':')[0]!, 10);
     // Should be 18:xx or 19:xx depending on DST — either way, evening
     expect(hour).toBeGreaterThanOrEqual(17);
     expect(hour).toBeLessThan(24);

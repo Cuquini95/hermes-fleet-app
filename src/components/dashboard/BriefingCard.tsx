@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Monolithic by design (> 400 LOC).
+ * Dashboard briefing card — fetches multiple ranges, computes KPIs, and renders them in one pass; extraction would create thin wrappers.
+ */
 import { useEffect, useRef, useState } from 'react';
 import { readRange, SHEET_TABS } from '../../lib/sheets-api';
 import { useEquipmentList } from '../../hooks/useEquipmentList';

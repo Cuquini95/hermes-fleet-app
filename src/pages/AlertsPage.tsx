@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Monolithic by design (> 400 LOC).
+ * Alerts inbox: fetch, group, acknowledge in one surface.
+ */
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Bell, RefreshCw, AlertTriangle, ClipboardX, Package, Wrench, CheckCircle } from 'lucide-react';

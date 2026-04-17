@@ -63,8 +63,11 @@ export function AutocompleteInput({
       setActiveIndex((prev) => (prev > 0 ? prev - 1 : 0));
     } else if (e.key === 'Enter') {
       if (activeIndex >= 0 && activeIndex < filtered.length) {
-        e.preventDefault();
-        selectSuggestion(filtered[activeIndex]);
+        const suggestion = filtered[activeIndex];
+        if (suggestion !== undefined) {
+          e.preventDefault();
+          selectSuggestion(suggestion);
+        }
       }
     } else if (e.key === 'Escape') {
       setOpen(false);

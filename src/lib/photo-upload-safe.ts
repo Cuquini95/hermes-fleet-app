@@ -19,6 +19,10 @@ export async function tryUploadPhoto(file: File, bucket: string, path?: string):
   }
 }
 
+/**
+ * Upload multiple photos in parallel, filtering out any that failed or where Supabase is unconfigured.
+ * Returns only the successful public URLs.
+ */
 export async function tryUploadPhotos(files: File[], bucket: string): Promise<string[]> {
   const results = await Promise.all(
     files.map((f, i) => tryUploadPhoto(f, bucket, `${Date.now()}-${i}`))

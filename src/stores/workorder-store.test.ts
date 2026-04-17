@@ -93,9 +93,9 @@ describe('useWorkOrderStore — fetchWorkOrders', () => {
 
     const { workorders } = useWorkOrderStore.getState();
     expect(workorders).toHaveLength(1);
-    expect(workorders[0].ot_id).toBe('OT-20260405-1030-ab12');
-    expect(workorders[0].unidad).toBe('CA20');
-    expect(workorders[0].estado).toBe('Abierta');
+    expect(workorders[0]!.ot_id).toBe('OT-20260405-1030-ab12');
+    expect(workorders[0]!.unidad).toBe('CA20');
+    expect(workorders[0]!.estado).toBe('Abierta');
   });
 
   it('skips rows whose OT_ID does not start with "OT-"', async () => {
@@ -150,7 +150,7 @@ describe('applyStatusLog — via fetchWorkOrders', () => {
       .mockResolvedValueOnce([buildLogRow(otId, 'estado', 'Abierta', 'En Reparación')]);
 
     await useWorkOrderStore.getState().fetchWorkOrders();
-    const wo = useWorkOrderStore.getState().workorders[0];
+    const wo = useWorkOrderStore.getState().workorders[0]!;
     expect(wo.estado).toBe('En Reparación');
   });
 
@@ -161,7 +161,7 @@ describe('applyStatusLog — via fetchWorkOrders', () => {
       .mockResolvedValueOnce([buildLogRow(otId, 'mecanico_asignado', 'Juan', 'Pedro')]);
 
     await useWorkOrderStore.getState().fetchWorkOrders();
-    expect(useWorkOrderStore.getState().workorders[0].mecanico_asignado).toBe('Pedro');
+    expect(useWorkOrderStore.getState().workorders[0]!.mecanico_asignado).toBe('Pedro');
   });
 
   it('applies progreso change from log (numeric)', async () => {
@@ -171,7 +171,7 @@ describe('applyStatusLog — via fetchWorkOrders', () => {
       .mockResolvedValueOnce([buildLogRow(otId, 'progreso', '0', '75')]);
 
     await useWorkOrderStore.getState().fetchWorkOrders();
-    expect(useWorkOrderStore.getState().workorders[0].progreso).toBe(75);
+    expect(useWorkOrderStore.getState().workorders[0]!.progreso).toBe(75);
   });
 
   it('applies prioridad change from log', async () => {
@@ -181,7 +181,7 @@ describe('applyStatusLog — via fetchWorkOrders', () => {
       .mockResolvedValueOnce([buildLogRow(otId, 'prioridad', 'MEDIA', 'CRITICA')]);
 
     await useWorkOrderStore.getState().fetchWorkOrders();
-    expect(useWorkOrderStore.getState().workorders[0].prioridad).toBe('CRITICA');
+    expect(useWorkOrderStore.getState().workorders[0]!.prioridad).toBe('CRITICA');
   });
 
   it('applies costo_estimado change from log (numeric)', async () => {
@@ -191,7 +191,7 @@ describe('applyStatusLog — via fetchWorkOrders', () => {
       .mockResolvedValueOnce([buildLogRow(otId, 'costo_estimado', '0', '15000')]);
 
     await useWorkOrderStore.getState().fetchWorkOrders();
-    expect(useWorkOrderStore.getState().workorders[0].costo_estimado).toBe(15000);
+    expect(useWorkOrderStore.getState().workorders[0]!.costo_estimado).toBe(15000);
   });
 
   it('applies log entries in timestamp order (earliest first)', async () => {
@@ -206,7 +206,7 @@ describe('applyStatusLog — via fetchWorkOrders', () => {
 
     await useWorkOrderStore.getState().fetchWorkOrders();
     // Final state should be "Resuelta" (last in timestamp order)
-    expect(useWorkOrderStore.getState().workorders[0].estado).toBe('Resuelta');
+    expect(useWorkOrderStore.getState().workorders[0]!.estado).toBe('Resuelta');
   });
 
   it('ignores log entries for unknown OT IDs', async () => {
@@ -218,7 +218,7 @@ describe('applyStatusLog — via fetchWorkOrders', () => {
       ]);
 
     await useWorkOrderStore.getState().fetchWorkOrders();
-    expect(useWorkOrderStore.getState().workorders[0].estado).toBe('Abierta');
+    expect(useWorkOrderStore.getState().workorders[0]!.estado).toBe('Abierta');
   });
 });
 
@@ -289,7 +289,7 @@ describe('useWorkOrderStore — updateOTField (optimistic)', () => {
       .getState()
       .updateOTField('OT-20260405-1030-ab12', 'estado', 'En Reparación', 'testUser', 'mecanico');
 
-    expect(useWorkOrderStore.getState().workorders[0].estado).toBe('En Reparación');
+    expect(useWorkOrderStore.getState().workorders[0]!.estado).toBe('En Reparación');
   });
 
   it('adds a new statusLog entry after update', async () => {
@@ -319,7 +319,7 @@ describe('useWorkOrderStore — updateOTField (optimistic)', () => {
 
     const log = useWorkOrderStore.getState().statusLog;
     expect(log).toHaveLength(1);
-    const entry: StatusLogEntry = log[0];
+    const entry: StatusLogEntry = log[0]!;
     expect(entry.ot_id).toBe('OT-20260405-1030-ab12');
     expect(entry.field).toBe('estado');
     expect(entry.new_value).toBe('Resuelta');

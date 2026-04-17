@@ -77,7 +77,7 @@ describe('useEquipmentList', () => {
 describe('useEquipmentById', () => {
   it('returns the equipment with the given unit_id', () => {
     const list = useEquipmentList();
-    const firstId = list[0].unit_id;
+    const firstId = list[0]!.unit_id;
     const found = useEquipmentById(firstId);
     expect(found).toBeDefined();
     expect(found?.unit_id).toBe(firstId);
@@ -91,7 +91,7 @@ describe('useEquipmentById', () => {
   it('returns the correct item when multiple units exist', () => {
     const list = useEquipmentList();
     if (list.length < 2) return; // guard for small catalogs
-    const target = list[list.length - 1];
+    const target = list[list.length - 1]!;
     const found = useEquipmentById(target.unit_id);
     expect(found?.unit_id).toBe(target.unit_id);
     expect(found?.model).toBe(target.model);

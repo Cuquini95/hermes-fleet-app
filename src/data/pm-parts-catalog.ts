@@ -321,6 +321,7 @@ export function getCumulativePMParts(model: string, targetLevel: string): {
 
   for (let i = 0; i <= targetIndex; i++) {
     const kit = kits[i];
+    if (!kit) continue;
     levelsIncluded.push(kit.level);
     totalHours += kit.estimatedHours;
     accumulated.push(...kit.parts);

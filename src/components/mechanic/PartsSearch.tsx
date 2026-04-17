@@ -61,7 +61,7 @@ export default function PartsSearch() {
         setResults(merged);
 
         // Show bilingual indicator only when translation actually added extra results
-        if (isBilingual && merged.length > allResults[0].length) {
+        if (isBilingual && merged.length > (allResults[0]?.length ?? 0)) {
           setBilingualHit(true);
         }
       } catch {

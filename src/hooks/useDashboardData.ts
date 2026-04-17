@@ -18,6 +18,7 @@ async function fetchCriticalOTs(signal?: AbortSignal): Promise<number> {
   let count = 0;
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
+    if (!row) continue;
     const priority = (row[7] ?? '').toLowerCase();
     const status = (row[9] ?? '').toLowerCase();
     if (
@@ -35,7 +36,7 @@ async function fetchAvgConsumption(signal?: AbortSignal): Promise<string> {
   let total = 0;
   let count = 0;
   for (let i = 2; i < rows.length; i++) {
-    const raw = rows[i][6] ?? '';
+    const raw = rows[i]?.[6] ?? '';
     const litros = parseFloat(raw.replace(',', '.'));
     if (!isNaN(litros) && litros > 0) {
       total += litros;
@@ -51,7 +52,7 @@ async function fetchAlertsToday(signal?: AbortSignal): Promise<number> {
   const today = mexicoDate();
   let count = 0;
   for (let i = 1; i < rows.length; i++) {
-    const dateCell = (rows[i][0] ?? '').trim();
+    const dateCell = (rows[i]?.[0] ?? '').trim();
     if (dateCell === today) {
       count++;
     }

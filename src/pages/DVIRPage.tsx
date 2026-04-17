@@ -302,19 +302,23 @@ export default function DVIRPage() {
 
       {/* Systems */}
       <div className="flex flex-col">
-        {DVIR_SYSTEMS.map((system, index) => (
-          <SystemCheckRow
-            key={system.id}
-            system={system}
-            value={checks[index].status}
-            onChange={(status) => updateCheck(index, status)}
-            photos={checks[index].photos}
-            onPhotoCapture={(file) => handlePhotoCapture(index, file)}
-            onPhotoRemove={(photoIndex) => handlePhotoRemove(index, photoIndex)}
-            notes={checks[index].notes ?? ''}
-            onNotesChange={(notes) => updateNotes(index, notes)}
-          />
-        ))}
+        {DVIR_SYSTEMS.map((system, index) => {
+          const check = checks[index];
+          if (!check) return null;
+          return (
+            <SystemCheckRow
+              key={system.id}
+              system={system}
+              value={check.status}
+              onChange={(status) => updateCheck(index, status)}
+              photos={check.photos}
+              onPhotoCapture={(file) => handlePhotoCapture(index, file)}
+              onPhotoRemove={(photoIndex) => handlePhotoRemove(index, photoIndex)}
+              notes={check.notes ?? ''}
+              onNotesChange={(notes) => updateNotes(index, notes)}
+            />
+          );
+        })}
       </div>
 
       {/* Observations */}

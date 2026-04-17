@@ -58,7 +58,7 @@ describe('generateOTId', () => {
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
     const id = generateOTId();
     const timePart = id.split('-')[2];
-    const hour = parseInt(timePart.slice(0, 2), 10);
+    const hour = parseInt(timePart!.slice(0, 2), 10);
     expect(hour).toBeGreaterThanOrEqual(0);
     expect(hour).toBeLessThan(24);
   });

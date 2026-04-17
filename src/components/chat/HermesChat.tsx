@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Monolithic by design (> 400 LOC).
+ * Chat UI + streaming + tool-call rendering. Stateful message list + input + scroll behavior that do not split cleanly; helper hooks extracted where they made sense.
+ */
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuthStore } from '../../stores/auth-store';
 import { useEquipmentList } from '../../hooks/useEquipmentList';
@@ -157,19 +161,19 @@ function extractDiagramSubject(text: string): string {
 function extractFaultCode(text: string): string | null {
   // Komatsu HM400 transmission codes: 15K0MW, 25K0MW, 1AK0LW (digit + letter + digit + 2 letters)
   const komatsuTM = text.match(/\b(\d{1,2}[A-Z]\d[A-Z]{1,3})\b/i);
-  if (komatsuTM) return komatsuTM[1].toUpperCase();
+  if (komatsuTM?.[1]) return komatsuTM[1].toUpperCase();
 
   // All-letter controller codes: AETMKX, AEBRKX, AEBPKX (6 uppercase letters)
   const allLetter = text.match(/\b([A-Z]{6})\b/);
-  if (allLetter) return allLetter[1].toUpperCase();
+  if (allLetter?.[1]) return allLetter[1].toUpperCase();
 
   // Standard letter-prefix codes: E328, F001, P0420, U0001, B0001, C-123, A-456
   const standard = text.match(/\b([EFPUBCA][A-Z]?[-]?\d{3,5}[A-Z]?\d*)\b/i);
-  if (standard) return standard[1].toUpperCase();
+  if (standard?.[1]) return standard[1].toUpperCase();
 
   // Komatsu dash format: E-28, F-100
   const dashCode = text.match(/\b([EF]-\d{2,4})\b/i);
-  if (dashCode) return dashCode[1].toUpperCase();
+  if (dashCode?.[1]) return dashCode[1].toUpperCase();
 
   return null;
 }
@@ -184,7 +188,7 @@ function isFaultCodeQuery(text: string): boolean {
 function extractPartNumber(text: string): string | null {
   // Extract the part number from mixed text like "223-1335 diagrama"
   const match = text.match(/([A-Z]?\d{2,}-\d{2,}[-\d]*|\d{7,}|[A-Z]\d{3,}-\d{3,}[\w]*|\d{2,}\.\d{4,}[-\w]*)/i);
-  return match ? match[1] : null;
+  return match?.[1] ?? null;
 }
 
 /** Detect equipment model from user message text when selector is "General" */
@@ -231,8 +235,8 @@ export default function HermesChat() {
   const assignedUnits = useAuthStore((s) => s.assignedUnits);
   const equipment = useEquipmentList();
 
-  const defaultUnit =
-    assignedUnits.length > 0 ? assignedUnits[0] : 'General';
+  const defaultUnit: string =
+    assignedUnits.length > 0 ? (assignedUnits[0] ?? 'General') : 'General';
 
   const [messages, setMessages] = useState<ChatMessage[]>(() => [
     buildGreeting(userName || 'Operador'),
@@ -369,24 +373,26 @@ export default function HermesChat() {
 
           try {
             const results = await searchParts(pn, equipUnit !== 'General' ? equipUnit : undefined);
-            if (results.length > 0) {
+            const first = results[0];
+            if (first) {
               responseText = formatSearchParts(results, pn);
               // Store context so a follow-up "diagrama" knows what to look for
               const diagEquipForRef = equipUnit !== 'General' ? equipUnit
-                : (results[0].compatible_units?.[0] ?? '');
+                : (first.compatible_units?.[0] ?? '');
               lastPartsSearchRef.current = {
                 equipo: diagEquipForRef,
-                description: results[0].description ?? pn,
+                description: first.description ?? pn,
                 part_number: pn,
               };
               if (wantsDiagram) {
                 let diagEquip = equipUnit;
-                if (diagEquip === 'General' && results[0].compatible_units?.length > 0) {
-                  diagEquip = results[0].compatible_units[0];
+                const firstCompatible = first.compatible_units?.[0];
+                if (diagEquip === 'General' && firstCompatible) {
+                  diagEquip = firstCompatible;
                 }
                 // Use description as search term (e.g. "Injector") — far more reliable
                 // than the raw part number which may not exist in the local index files
-                const diagSearchTerm = results[0].description ?? pn;
+                const diagSearchTerm = first.description ?? pn;
                 try {
                   const diag = await findDiagram(diagEquip, diagSearchTerm);
                   if (diag.found && diag.image_url && diag.page !== undefined) {
@@ -478,7 +484,7 @@ export default function HermesChat() {
             } else if (diag.found && diag.image_url) {
               responseText = `📐 **Diagrama**\n\n![Diagrama](/hermes-api${diag.image_url})`;
             } else {
-              const unitInfo = resolvedEquip !== 'General' ? ` para ${resolvedEquip.split('/')[0].trim()}` : '';
+              const unitInfo = resolvedEquip !== 'General' ? ` para ${(resolvedEquip.split('/')[0] ?? resolvedEquip).trim()}` : '';
               responseText =
                 `📐 **Diagramas${unitInfo}**\n\nNo encontré un diagrama específico para _${searchTerm || 'ese sistema'}_.\n\n` +
                 `Prueba con términos como: _hidráulico_, _motor_, _transmisión_, _tren de rodaje_.\n\n` +

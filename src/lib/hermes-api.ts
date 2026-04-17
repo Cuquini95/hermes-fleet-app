@@ -103,6 +103,7 @@ export interface DiagnoseResult {
   prioridad: string;
 }
 
+/** Run AI diagnosis on a failure description and return probable causes, checklist, and parts. */
 export async function diagnose(params: DiagnoseParams, signal?: AbortSignal): Promise<DiagnoseResult> {
   return hermesPost('/ai/diagnose', params as unknown as Record<string, unknown>, signal);
 }
@@ -120,6 +121,7 @@ export interface PhotoAnalysisResult {
   recomendacion_inicial: string;
 }
 
+/** Analyze a photo (base64 JPEG/PNG) and return probable component, damage type, and initial recommendation. */
 export async function photoToFailure(params: PhotoAnalysisParams, signal?: AbortSignal): Promise<PhotoAnalysisResult> {
   return hermesPost('/ai/photo_to_failure', params as unknown as Record<string, unknown>, signal);
 }
@@ -137,6 +139,7 @@ export interface ManualLookupResult {
   torque_specs?: string;
 }
 
+/** Retrieve a relevant manual excerpt plus technical steps and torque specs for a given equipment/topic. */
 export async function manualLookup(params: ManualLookupParams, signal?: AbortSignal): Promise<ManualLookupResult> {
   return hermesPost('/ai/manual_lookup', params as unknown as Record<string, unknown>, signal);
 }
@@ -153,6 +156,7 @@ export interface PartResult {
   alternatives: string[];
 }
 
+/** Search the parts catalog by free-text query, optionally filtered by equipment model. */
 export async function searchParts(query: string, equipo?: string, signal?: AbortSignal): Promise<PartResult[]> {
   const params: Record<string, string> = { q: query };
   if (equipo) params.equipo = equipo;
@@ -168,6 +172,7 @@ export interface DiagramResult {
   message?: string;
 }
 
+/** Locate a diagram (PDF page or extracted image) matching the given equipment and search term. */
 export async function findDiagram(equipo: string, search: string, signal?: AbortSignal): Promise<DiagramResult> {
   return hermesGet('/diagrams/find', { equipo, search }, signal);
 }
@@ -181,6 +186,7 @@ export interface FaultCodePagesResult {
   message?: string;
 }
 
+/** Return the PDF page range in the equipment manual where the given fault code is documented. */
 export async function getFaultCodePages(equipo: string, codigo_falla: string, signal?: AbortSignal): Promise<FaultCodePagesResult> {
   return hermesGet('/ai/fault_code_pages', { equipo, codigo_falla }, signal);
 }

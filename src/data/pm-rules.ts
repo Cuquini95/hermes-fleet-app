@@ -35,11 +35,12 @@ export function getNextPM(
 ): { level: string; due_at: number; hours_remaining: number } {
   const thresholds = getBrandThresholds(model);
   const levels = Object.keys(thresholds).sort(
-    (a, b) => thresholds[a] - thresholds[b]
+    (a, b) => (thresholds[a] ?? 0) - (thresholds[b] ?? 0)
   );
 
   for (const level of levels) {
     const interval = thresholds[level];
+    if (interval === undefined) continue;
     const cyclePosition = currentHours % interval;
     const due_at = currentHours - cyclePosition + interval;
     const hours_remaining = due_at - currentHours;
@@ -49,8 +50,8 @@ export function getNextPM(
     }
   }
 
-  const lastLevel = levels[levels.length - 1];
-  const interval = thresholds[lastLevel];
+  const lastLevel = levels[levels.length - 1] ?? '';
+  const interval = thresholds[lastLevel] ?? 250;
   const cyclePosition = currentHours % interval;
   const due_at = currentHours - cyclePosition + interval;
   const hours_remaining = due_at - currentHours;

@@ -2,6 +2,7 @@ import { supabase, isSupabaseConfigured } from './supabase';
 
 export { isSupabaseConfigured };
 
+/** Compress an image File into a JPEG Blob, scaling down to maxWidth while preserving aspect ratio. */
 export async function compressImage(file: File, maxWidth = 1200): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const canvas = document.createElement('canvas');
@@ -25,6 +26,10 @@ export async function compressImage(file: File, maxWidth = 1200): Promise<Blob> 
   });
 }
 
+/**
+ * Upload a photo (image/JPEG/PNG) or PDF to a Supabase Storage bucket and return its public URL.
+ * Images are compressed first; PDFs are uploaded as-is. Throws if Supabase is not configured.
+ */
 export async function uploadPhoto(file: File, bucket: string, path?: string): Promise<string> {
   if (!supabase) throw new Error('Supabase is not configured');
   const isPdf = file.type === 'application/pdf';
@@ -50,12 +55,18 @@ export async function uploadPhoto(file: File, bucket: string, path?: string): Pr
   return urlData.publicUrl;
 }
 
+/** Read a File and resolve to its base64-encoded payload (without the data: prefix). */
 export function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
       const result = reader.result as string;
-      resolve(result.split(',')[1]);
+      const payload = result.split(',')[1];
+      if (payload === undefined) {
+        reject(new Error('Invalid data URL'));
+        return;
+      }
+      resolve(payload);
     };
     reader.onerror = () => reject(new Error('File read failed'));
     reader.readAsDataURL(file);
