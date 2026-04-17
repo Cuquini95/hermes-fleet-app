@@ -1,9 +1,10 @@
 import { useNavigate } from 'react-router-dom';
-import * as Icons from 'lucide-react';
+import type { LucideProps } from 'lucide-react';
+import { NAV_ICONS } from '../../lib/nav-icons';
 import type { NavItem } from '../../types/roles';
 
-function LucideIcon({ name, ...props }: { name: string } & Icons.LucideProps) {
-  const Icon = (Icons as unknown as Record<string, Icons.LucideIcon | undefined>)[name];
+function LucideIcon({ name, ...props }: { name: string } & LucideProps) {
+  const Icon = NAV_ICONS[name];
   return Icon ? <Icon {...props} /> : null;
 }
 
