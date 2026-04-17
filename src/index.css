@@ -1,5 +1,7 @@
 @import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Inter is preloaded via <link> in index.html (non-blocking).
+   JetBrains Mono is used for code blocks only — load it lazily here. */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 @theme {
   /* NOTE: --color-teal is actually navy blue (#162252), kept as 'teal' for backwards compat */
