@@ -347,6 +347,42 @@ export async function ocrReceipt(file: File): Promise<OcrReceiptResult> {
   return response.json() as Promise<OcrReceiptResult>;
 }
 
+// ── Fuel dispatch OCR ─────────────────────────────────────────────────────────
+
+export interface OcrFuelRow {
+  equipo: string;
+  no_economico: string;
+  modelo: string;
+  horometro: number | null;
+  litros: number | null;
+  hora: string | null;
+  confidence: number;
+}
+
+export interface OcrFuelResult {
+  fecha_hoja: string;
+  rows: OcrFuelRow[];
+}
+
+/**
+ * Send a handwritten fuel dispatch sheet image to the VPS OCR endpoint.
+ * VPS exposes: POST /api/ocr/fuel-dispatch  { image_base64, media_type }
+ * Returns structured dispatch data with one row per vehicle.
+ */
+export async function ocrFuelDispatch(file: File): Promise<OcrFuelResult> {
+  const image_base64 = await compressToBase64(file);
+  const response = await fetchWithRetry(`${HERMES_API}/api/ocr/fuel-dispatch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image_base64, media_type: 'image/jpeg' }),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`OCR fuel dispatch error ${response.status}: ${text}`);
+  }
+  return response.json() as Promise<OcrFuelResult>;
+}
+
 // ── Parts catalog import ──────────────────────────────────────────────────────
 
 export interface PartImportEntry {

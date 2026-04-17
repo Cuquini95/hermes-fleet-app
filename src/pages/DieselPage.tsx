@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, ScanLine } from 'lucide-react';
 import { z } from 'zod';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { isAnomalous } from '../data/fuel-benchmarks';
@@ -11,6 +11,7 @@ import { queueSubmission, flushQueue } from '../lib/offline-queue';
 import { useAuthStore } from '../stores/auth-store';
 import ConfirmModal from '../components/ui/ConfirmModal';
 import SuccessToast from '../components/ui/SuccessToast';
+import FuelDispatchScanner from '../components/fuel/FuelDispatchScanner';
 
 const dieselSchema = z.object({
   unidad: z.string().min(1, 'Selecciona una unidad'),
@@ -61,6 +62,7 @@ export default function DieselPage() {
   const [toastMessage, setToastMessage] = useState('');
   const [toastVisible, setToastVisible] = useState(false);
   const [anomalyWarning, setAnomalyWarning] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
 
   const selectedEquipment = equipment.find((eq) => eq.unit_id === unidad);
   const isTruck = selectedEquipment?.type === 'Camión Pesado';
@@ -170,6 +172,24 @@ export default function DieselPage() {
           </span>
         </div>
       )}
+
+      {/* Scanner — replaces the manual form when active */}
+      {showScanner ? (
+        <FuelDispatchScanner onClose={() => setShowScanner(false)} />
+      ) : (
+        <>
+          {/* OCR scan button */}
+          <button
+            type="button"
+            onClick={() => setShowScanner(true)}
+            className="w-full mb-4 p-4 border-2 border-dashed border-amber rounded-xl flex items-center justify-center gap-3 bg-amber/5 hover:bg-amber/10 transition-colors"
+          >
+            <ScanLine className="text-amber" size={24} />
+            <div className="text-left">
+              <div className="font-semibold text-amber">Escanear hoja de despacho</div>
+              <div className="text-xs text-text-secondary">Captura varios registros a la vez</div>
+            </div>
+          </button>
 
       {/* Form card */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-border flex flex-col gap-4">
@@ -327,6 +347,8 @@ export default function DieselPage() {
       >
         Registrar Combustible
       </button>
+        </>
+      )}
     </div>
   );
 }
