@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef, useId } from 'react';
 
 interface ConfirmModalProps {
   open: boolean;
@@ -11,6 +11,35 @@ interface ConfirmModalProps {
 
 export default function ConfirmModal({ open, onConfirm, onCancel, title, message, loading: externalLoading }: ConfirmModalProps) {
   const [internalSubmitting, setInternalSubmitting] = useState(false);
+  const confirmBtnRef = useRef<HTMLButtonElement>(null);
+  const previouslyFocused = useRef<Element | null>(null);
+  const titleId = useId();
+  const messageId = useId();
+
+  // Store the previously focused element on open and focus the confirm button
+  useEffect(() => {
+    if (open) {
+      previouslyFocused.current = document.activeElement;
+      confirmBtnRef.current?.focus();
+    } else {
+      // Return focus when modal closes
+      if (previouslyFocused.current instanceof HTMLElement) {
+        previouslyFocused.current.focus();
+      }
+    }
+  }, [open]);
+
+  // Close on Escape key
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onCancel();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [open, onCancel]);
 
   if (!open) return null;
 
@@ -27,10 +56,16 @@ export default function ConfirmModal({ open, onConfirm, onCancel, title, message
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+    <div
+      className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      aria-describedby={messageId}
+    >
       <div className="bg-white rounded-2xl p-6 mx-4 max-w-sm w-full">
-        <h2 className="font-semibold text-lg text-text">{title}</h2>
-        <p className="text-text-secondary mt-2">{message}</p>
+        <h2 id={titleId} className="font-semibold text-lg text-text">{title}</h2>
+        <p id={messageId} className="text-text-secondary mt-2">{message}</p>
         <div className="mt-6 flex gap-3">
           <button
             type="button"
@@ -41,6 +76,7 @@ export default function ConfirmModal({ open, onConfirm, onCancel, title, message
             Cancelar
           </button>
           <button
+            ref={confirmBtnRef}
             type="button"
             onClick={handleConfirm}
             disabled={isDisabled}

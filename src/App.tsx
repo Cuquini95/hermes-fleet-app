@@ -27,6 +27,15 @@ import WorkshopHomePage from './pages/WorkshopHomePage';
 import NuevoGastoPage from './pages/NuevoGastoPage';
 import ErrorBoundary from './components/ErrorBoundary';
 
+/** Wrap a page element in an inline ErrorBoundary so one page crash doesn't kill others */
+function PageBoundary({ role, children }: { role?: AppRole; children: React.ReactNode }) {
+  return (
+    <ErrorBoundary role={role} inline>
+      {children}
+    </ErrorBoundary>
+  );
+}
+
 // ── Lazy-loaded heavy pages ───────────────────────────────────────────────────
 
 const DashboardPage      = lazy(() => import('./pages/DashboardPage'));
@@ -50,8 +59,9 @@ const CalendarPage       = lazy(() => import('./pages/CalendarPage'));
 // ── Shared loading fallback ───────────────────────────────────────────────────
 
 const PageLoader = () => (
-  <div className="flex items-center justify-center min-h-screen text-slate-400 text-sm">
-    Cargando...
+  <div role="status" aria-live="polite" className="flex items-center justify-center min-h-screen text-slate-400 text-sm">
+    <span className="sr-only">Cargando</span>
+    <span aria-hidden="true">Cargando...</span>
   </div>
 );
 
@@ -77,6 +87,7 @@ function RootRedirect() {
 
 export default function App() {
   const initRealtime = useWorkOrderStore((s) => s.initRealtime);
+  const role = useAuthStore((s) => s.role) ?? undefined;
 
   // Flush queued offline submissions when the device reconnects
   useEffect(() => {
@@ -110,160 +121,196 @@ export default function App() {
       <Route
         element={
           <RequireRole roles={ALL}>
-            <ErrorBoundary>
+            <ErrorBoundary role={role}>
               <AppShell />
             </ErrorBoundary>
           </RequireRole>
         }
       >
         {/* ── Role-specific home pages ──────────────────────────────────── */}
-        <Route path="/operator"   element={<RequireRole roles={['operador']}><OperatorHomePage /></RequireRole>} />
-        <Route path="/mechanic"   element={<RequireRole roles={['mecanico']}><MechanicPage /></RequireRole>} />
-        <Route path="/workshop"   element={<RequireRole roles={['jefe_taller', 'gerencia', 'supervisor']}><WorkshopHomePage /></RequireRole>} />
-        <Route path="/coordinator" element={<RequireRole roles={['coordinador', 'gerencia']}><CoordinatorHomePage /></RequireRole>} />
-        <Route path="/supervisor" element={<RequireRole roles={['supervisor', 'gerencia']}><SupervisorHomePage /></RequireRole>} />
+        <Route path="/operator"   element={<RequireRole roles={['operador']}><PageBoundary role={role}><OperatorHomePage /></PageBoundary></RequireRole>} />
+        <Route path="/mechanic"   element={<RequireRole roles={['mecanico']}><PageBoundary role={role}><MechanicPage /></PageBoundary></RequireRole>} />
+        <Route path="/workshop"   element={<RequireRole roles={['jefe_taller', 'gerencia', 'supervisor']}><PageBoundary role={role}><WorkshopHomePage /></PageBoundary></RequireRole>} />
+        <Route path="/coordinator" element={<RequireRole roles={['coordinador', 'gerencia']}><PageBoundary role={role}><CoordinatorHomePage /></PageBoundary></RequireRole>} />
+        <Route path="/supervisor" element={<RequireRole roles={['supervisor', 'gerencia']}><PageBoundary role={role}><SupervisorHomePage /></PageBoundary></RequireRole>} />
         <Route path="/dashboard"  element={
           <RequireRole roles={['gerencia', 'supervisor']}>
-            <Suspense fallback={<PageLoader />}>
-              <DashboardPage />
-            </Suspense>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <DashboardPage />
+              </Suspense>
+            </PageBoundary>
           </RequireRole>
         } />
 
         {/* ── Shared operational routes ─────────────────────────────────── */}
         <Route path="/workorders/:otId" element={
           <RequireRole roles={WORKSHOP}>
-            <Suspense fallback={<PageLoader />}>
-              <WorkOrderDetailPage />
-            </Suspense>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <WorkOrderDetailPage />
+              </Suspense>
+            </PageBoundary>
           </RequireRole>
         } />
         <Route path="/workorders" element={
           <RequireRole roles={WORKSHOP}>
-            <Suspense fallback={<PageLoader />}>
-              <WorkOrdersPage />
-            </Suspense>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <WorkOrdersPage />
+              </Suspense>
+            </PageBoundary>
           </RequireRole>
         } />
         <Route path="/pm" element={
           <RequireRole roles={ADMIN}>
-            <Suspense fallback={<PageLoader />}>
-              <PMSchedulePage />
-            </Suspense>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <PMSchedulePage />
+              </Suspense>
+            </PageBoundary>
           </RequireRole>
         } />
         <Route path="/pm-order" element={
           <RequireRole roles={ADMIN}>
-            <Suspense fallback={<PageLoader />}>
-              <PMWorkOrderPage />
-            </Suspense>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <PMWorkOrderPage />
+              </Suspense>
+            </PageBoundary>
           </RequireRole>
         } />
         <Route path="/calendar" element={
           <RequireRole roles={CALENDAR_ACCESS}>
-            <Suspense fallback={<PageLoader />}>
-              <CalendarPage />
-            </Suspense>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <CalendarPage />
+              </Suspense>
+            </PageBoundary>
           </RequireRole>
         } />
-        <Route path="/parts"        element={<RequireRole roles={WORKSHOP}><PartsSearch /></RequireRole>} />
+        <Route path="/parts"        element={<RequireRole roles={WORKSHOP}><PageBoundary role={role}><PartsSearch /></PageBoundary></RequireRole>} />
         <Route path="/parts/import" element={
           <RequireRole roles={ADMIN}>
-            <Suspense fallback={<PageLoader />}>
-              <CatalogoImportPage />
-            </Suspense>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <CatalogoImportPage />
+              </Suspense>
+            </PageBoundary>
           </RequireRole>
         } />
-        <Route path="/manuals"  element={<RequireRole roles={WORKSHOP}><ManualSearch /></RequireRole>} />
-        <Route path="/diagrams" element={<RequireRole roles={WORKSHOP}><DiagramViewer /></RequireRole>} />
+        <Route path="/manuals"  element={<RequireRole roles={WORKSHOP}><PageBoundary role={role}><ManualSearch /></PageBoundary></RequireRole>} />
+        <Route path="/diagrams" element={<RequireRole roles={WORKSHOP}><PageBoundary role={role}><DiagramViewer /></PageBoundary></RequireRole>} />
         <Route path="/inventory" element={
           <RequireRole roles={ADMIN}>
-            <Suspense fallback={<PageLoader />}>
-              <InventoryPage />
-            </Suspense>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <InventoryPage />
+              </Suspense>
+            </PageBoundary>
           </RequireRole>
         } />
         <Route path="/pedidos" element={
           <RequireRole roles={ADMIN}>
-            <Suspense fallback={<PageLoader />}>
-              <PedidosPage />
-            </Suspense>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <PedidosPage />
+              </Suspense>
+            </PageBoundary>
           </RequireRole>
         } />
         <Route path="/neumaticos" element={
           <RequireRole roles={ADMIN}>
-            <Suspense fallback={<PageLoader />}>
-              <NeumaticosPage />
-            </Suspense>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <NeumaticosPage />
+              </Suspense>
+            </PageBoundary>
           </RequireRole>
         } />
 
         {/* ── Gastos ───────────────────────────────────────────────────── */}
         <Route path="/gastos" element={
           <RequireRole roles={MANAGEMENT}>
-            <Suspense fallback={<PageLoader />}>
-              <GastosPage />
-            </Suspense>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <GastosPage />
+              </Suspense>
+            </PageBoundary>
           </RequireRole>
         } />
-        <Route path="/gastos/nuevo" element={<RequireRole roles={GASTOS_WRITE}><NuevoGastoPage /></RequireRole>} />
+        <Route path="/gastos/nuevo" element={<RequireRole roles={GASTOS_WRITE}><PageBoundary role={role}><NuevoGastoPage /></PageBoundary></RequireRole>} />
 
         {/* ── Operator-specific routes ──────────────────────────────────── */}
-        <Route path="/dvir"            element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><DVIRPage /></RequireRole>} />
-        <Route path="/dvir-compliance" element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><DVIRPage /></RequireRole>} />
-        <Route path="/falla"           element={<RequireRole roles={ALL}><FallaPage /></RequireRole>} />
-        <Route path="/fleet"           element={<RequireRole roles={['supervisor', 'gerencia', 'coordinador']}><FleetPage /></RequireRole>} />
+        <Route path="/dvir"            element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><PageBoundary role={role}><DVIRPage /></PageBoundary></RequireRole>} />
+        <Route path="/dvir-compliance" element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><PageBoundary role={role}><DVIRPage /></PageBoundary></RequireRole>} />
+        <Route path="/falla"           element={<RequireRole roles={ALL}><PageBoundary role={role}><FallaPage /></PageBoundary></RequireRole>} />
+        <Route path="/fleet"           element={<RequireRole roles={['supervisor', 'gerencia', 'coordinador']}><PageBoundary role={role}><FleetPage /></PageBoundary></RequireRole>} />
         <Route path="/alerts" element={
           <RequireRole roles={ADMIN}>
-            <Suspense fallback={<PageLoader />}>
-              <AlertsPage />
-            </Suspense>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <AlertsPage />
+              </Suspense>
+            </PageBoundary>
           </RequireRole>
         } />
         <Route path="/data" element={
           <RequireRole roles={ADMIN}>
-            <Suspense fallback={<PageLoader />}>
-              <DataManagerPage />
-            </Suspense>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <DataManagerPage />
+              </Suspense>
+            </PageBoundary>
           </RequireRole>
         } />
-        <Route path="/diesel"    element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><DieselPage /></RequireRole>} />
-        <Route path="/horometro" element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><HorometroPage /></RequireRole>} />
-        <Route path="/viaje"     element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><ViajePage /></RequireRole>} />
-        <Route path="/flete"     element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><ViajePage /></RequireRole>} />
+        <Route path="/diesel"    element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><PageBoundary role={role}><DieselPage /></PageBoundary></RequireRole>} />
+        <Route path="/horometro" element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><PageBoundary role={role}><HorometroPage /></PageBoundary></RequireRole>} />
+        <Route path="/viaje"     element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><PageBoundary role={role}><ViajePage /></PageBoundary></RequireRole>} />
+        <Route path="/flete"     element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><PageBoundary role={role}><ViajePage /></PageBoundary></RequireRole>} />
         <Route path="/bulk-boletas" element={
           <RequireRole roles={['operador', 'coordinador', 'supervisor', 'gerencia']}>
-            <Suspense fallback={<PageLoader />}>
-              <BulkBoletasPage />
-            </Suspense>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <BulkBoletasPage />
+              </Suspense>
+            </PageBoundary>
           </RequireRole>
         } />
         <Route path="/viajes-pena" element={
           <RequireRole roles={['supervisor', 'gerencia']}>
-            <Suspense fallback={<PageLoader />}>
-              <ViajesPenaPage />
-            </Suspense>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <ViajesPenaPage />
+              </Suspense>
+            </PageBoundary>
           </RequireRole>
         } />
         <Route path="/briefing" element={
           <RequireRole roles={MANAGEMENT}>
-            <Suspense fallback={<PageLoader />}>
-              <BriefingCard />
-            </Suspense>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <BriefingCard />
+              </Suspense>
+            </PageBoundary>
           </RequireRole>
         } />
         <Route path="/perfil" element={
           <RequireRole roles={ALL}>
-            <Suspense fallback={<PageLoader />}>
-              <PerfilPage />
-            </Suspense>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <PerfilPage />
+              </Suspense>
+            </PageBoundary>
           </RequireRole>
         } />
         <Route path="/my-reports" element={
           <RequireRole roles={ALL}>
-            <Suspense fallback={<PageLoader />}>
-              <MyReportsPage />
-            </Suspense>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <MyReportsPage />
+              </Suspense>
+            </PageBoundary>
           </RequireRole>
         } />
       </Route>

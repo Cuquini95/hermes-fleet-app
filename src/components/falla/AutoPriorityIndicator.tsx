@@ -14,6 +14,7 @@ export default function AutoPriorityIndicator({ priority }: AutoPriorityIndicato
         className="rounded-full px-4 py-2 font-semibold text-sm w-fit"
         style={{ backgroundColor: config.bg, color: config.color }}
       >
+        <span className="sr-only">Prioridad: </span>
         {config.label}
       </span>
       <span className="text-sm text-text-secondary">

@@ -2,6 +2,12 @@
 <html lang="es-MX">
   <head>
     <meta charset="UTF-8" />
+
+    <!-- Content Security Policy (fallback; primary CSP via Vercel/nginx headers) -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https://*.supabase.co https://lh3.googleusercontent.com; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://hermes-fleet-app.vercel.app https://5.78.204.80:8000 http://5.78.204.80:8000; font-src 'self' https://fonts.gstatic.com; frame-ancestors 'none';">
+    <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon-180x180.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
@@ -14,8 +20,16 @@
     <meta name="apple-mobile-web-app-title" content="Hermes GTP" />
 
     <!-- SEO / share -->
-    <meta name="description" content="Gestión de flota, diagnóstico IA y control de mantenimiento GTP" />
+    <meta name="description" content="Hermes Fleet App — Sistema de gestión de flota" />
     <meta name="application-name" content="Hermes Fleet GTP" />
+
+    <!-- Resource hints: warm up API and font connections early -->
+    <link rel="preconnect" href="https://5.78.204.80:8000" crossorigin />
+    <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
+    <link rel="dns-prefetch" href="https://fonts.gstatic.com" />
+
+    <!-- Preload critical above-the-fold SVG logo -->
+    <link rel="preload" href="/logo-transplus.svg" as="image" type="image/svg+xml" />
 
     <title>Hermes Fleet — GTP</title>
   </head>

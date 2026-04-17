@@ -51,6 +51,7 @@ export default function OTCard({ workorder, onClick }: OTCardProps) {
             className="text-xs font-semibold px-2 py-0.5 rounded-full"
             style={{ color: priorityConfig.color, backgroundColor: priorityConfig.bg }}
           >
+            <span className="sr-only">Prioridad: </span>
             {priorityConfig.label}
           </span>
           <span

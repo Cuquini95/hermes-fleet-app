@@ -4,6 +4,7 @@ import { useAuthStore } from '../../stores/auth-store';
 import { useCartStore } from '../../stores/cart-store';
 import { useWorkOrderStore } from '../../stores/workorder-store';
 import { ROLE_LABELS } from '../../types/roles';
+import ApiHealthDot from '../ui/ApiHealthDot';
 
 export default function Header() {
   const navigate = useNavigate();
@@ -46,12 +47,13 @@ export default function Header() {
         </div>
       </div>
 
-      {/* Right: cart (JT only) + bell + logout */}
-      <div className="flex items-center gap-4">
+      {/* Right: health + cart (JT only) + bell + logout */}
+      <div className="flex items-center gap-2">
+        <ApiHealthDot />
         {canSeeCart && (
           <button
             onClick={() => navigate('/pedidos')}
-            className="relative text-white/80 hover:text-white transition-colors"
+            className="relative text-white/80 hover:text-white transition-colors ml-2 focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-navy rounded"
             aria-label="Pedidos"
           >
             <ShoppingCart size={22} />
@@ -60,7 +62,8 @@ export default function Header() {
                 className="absolute -top-1 -right-1 flex items-center justify-center rounded-full text-white font-bold"
                 style={{ width: 16, height: 16, fontSize: 9, backgroundColor: '#F59E0B' }}
               >
-                {cartCount > 9 ? '9+' : cartCount}
+                <span aria-hidden="true">{cartCount > 9 ? '9+' : cartCount}</span>
+                <span className="sr-only">{cartCount} pedidos en carrito</span>
               </span>
             )}
           </button>
@@ -69,7 +72,7 @@ export default function Header() {
         {canSeeAlerts && (
           <button
             onClick={() => navigate('/alerts')}
-            className="relative text-white/80 hover:text-white transition-colors"
+            className="relative text-white/80 hover:text-white transition-colors focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-navy rounded"
             aria-label="Alertas"
           >
             <Bell size={22} />
@@ -78,7 +81,8 @@ export default function Header() {
                 className="absolute -top-1 -right-1 flex items-center justify-center rounded-full text-white"
                 style={{ width: 16, height: 16, fontSize: 9, backgroundColor: '#DC2626' }}
               >
-                {alertCount > 9 ? '9+' : alertCount}
+                <span aria-hidden="true">{alertCount > 9 ? '9+' : alertCount}</span>
+                <span className="sr-only">{alertCount} alertas nuevas</span>
               </span>
             )}
           </button>
@@ -86,7 +90,7 @@ export default function Header() {
 
         <button
           onClick={handleLogout}
-          className="text-white/80 hover:text-white transition-colors"
+          className="text-white/80 hover:text-white transition-colors focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-navy rounded"
           aria-label="Cerrar sesión"
         >
           <LogOut size={22} />
