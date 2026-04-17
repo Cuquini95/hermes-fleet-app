@@ -4,6 +4,8 @@ import { useEquipmentList } from '../../hooks/useEquipmentList';
 import { useAuthStore } from '../../stores/auth-store';
 import { ocrFuelDispatch, appendRow, SHEET_TABS, type OcrFuelRow } from '../../lib/sheets-api';
 import { queueSubmission } from '../../lib/offline-queue';
+import { getNextPM } from '../../data/pm-rules';
+import { mexicoTime } from '../../lib/date-utils';
 import type { Equipment } from '../../types/equipment';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -149,7 +151,8 @@ export default function FuelDispatchScanner({ onClose }: FuelDispatchScannerProp
 
     let sent = 0;
     for (const row of validRows) {
-      const sheetRow = [
+      // ── Combustible row (existing, 13 cols) ──────────────────────────────────
+      const combRow = [
         String(Date.now() + sent),
         row.fecha ? isoToDDMMYYYY(row.fecha) : formatDateDDMMYYYY(new Date()),
         row.hora ? `${row.hora}:00` : '00:00:00',
@@ -164,15 +167,50 @@ export default function FuelDispatchScanner({ onClose }: FuelDispatchScannerProp
         '',
         'Despacho OCR',
       ];
-      try {
-        await appendRow(SHEET_TABS.COMBUSTIBLE, sheetRow);
-      } catch {
-        await queueSubmission({
+
+      // ── Horómetro row (new, 9 cols) ──────────────────────────────────────────
+      const matchedEquipment = equipment.find((e) => e.unit_id === row.unidad);
+      const model = matchedEquipment?.model ?? '';
+      const horometroNum = parseFloat(row.horometro) || 0;
+      const pmInfo =
+        matchedEquipment && horometroNum > 0
+          ? getNextPM(model, horometroNum)
+          : null;
+
+      const horomRow = [
+        row.fecha ? isoToDDMMYYYY(row.fecha) : formatDateDDMMYYYY(new Date()),
+        row.hora ? `${row.hora}:00` : mexicoTime(),
+        row.unidad,
+        model,
+        userName,
+        '',                                         // TURNO — OCR no captura turno
+        String(horometroNum),
+        pmInfo ? pmInfo.level : '',
+        pmInfo ? String(pmInfo.hours_remaining) : '',
+      ];
+
+      // ── Parallel writes — one failure must not block the other ───────────────
+      const results = await Promise.allSettled([
+        appendRow(SHEET_TABS.COMBUSTIBLE, combRow),
+        appendRow(SHEET_TABS.HOROMETROS, horomRow),
+      ]);
+
+      // Queue whichever write(s) failed for offline retry
+      if (results[0].status === 'rejected') {
+        queueSubmission({
           type: 'fuel',
-          data: { tab: SHEET_TABS.COMBUSTIBLE, values: sheetRow },
+          data: { tab: SHEET_TABS.COMBUSTIBLE, values: combRow },
           timestamp: new Date().toISOString(),
         }).catch(() => {});
       }
+      if (results[1].status === 'rejected') {
+        queueSubmission({
+          type: 'horometro',
+          data: { tab: SHEET_TABS.HOROMETROS, values: horomRow },
+          timestamp: new Date().toISOString(),
+        }).catch(() => {});
+      }
+
       sent++;
       setProgress({ sent, total: validRows.length });
     }
