@@ -28,6 +28,9 @@
     "zod": "^4.3.6",
     "zustand": "^5.0.12"
   },
+  "overrides": {
+    "serialize-javascript": "^7.0.5"
+  },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@tailwindcss/vite": "^4.2.2",
