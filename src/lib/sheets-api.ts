@@ -13,7 +13,7 @@ const HERMES_API = '/hermes-api';
 
 // ── Retry + timeout helper ────────────────────────────────────────────────────
 
-const RETRY_DELAYS_MS = [1000, 2000, 4000];
+const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000];
 const REQUEST_TIMEOUT_MS = 15_000;
 
 async function fetchWithRetry(

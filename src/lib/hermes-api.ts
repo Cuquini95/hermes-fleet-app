@@ -1,30 +1,91 @@
 // Always proxy through /hermes-api — Vite dev server and Vercel both rewrite to VPS
 const HERMES_BASE = '/hermes-api';
 
-async function hermesPost<T>(endpoint: string, body: Record<string, unknown>): Promise<T> {
-  const response = await fetch(`${HERMES_BASE}${endpoint}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30000),
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Hermes API error ${response.status}: ${text}`);
+/** Backoff delays: 1s, 2s, 4s, 8s */
+const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000];
+const REQUEST_TIMEOUT_MS = 15_000;
+
+async function hermesPost<T>(
+  endpoint: string,
+  body: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<T> {
+  let lastError: Error = new Error('Unknown error');
+
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
+    const timeoutCtrl = new AbortController();
+    const timeoutId = setTimeout(() => timeoutCtrl.abort(), REQUEST_TIMEOUT_MS);
+    const combined = signal ? combineSignals(signal, timeoutCtrl.signal) : timeoutCtrl.signal;
+
+    try {
+      const res = await fetch(`${HERMES_BASE}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: combined,
+      });
+      clearTimeout(timeoutId);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Hermes API error ${res.status}: ${text}`);
+      }
+      return res.json();
+    } catch (err: unknown) {
+      clearTimeout(timeoutId);
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt < RETRY_DELAYS_MS.length) {
+        await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+      }
+    }
   }
-  return response.json();
+  throw lastError;
 }
 
-async function hermesGet<T>(endpoint: string, params?: Record<string, string>): Promise<T> {
+async function hermesGet<T>(
+  endpoint: string,
+  params?: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<T> {
   const qs = params ? '?' + new URLSearchParams(params).toString() : '';
-  const response = await fetch(`${HERMES_BASE}${endpoint}${qs}`, {
-    signal: AbortSignal.timeout(30000),
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Hermes API error ${response.status}: ${text}`);
+  let lastError: Error = new Error('Unknown error');
+
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
+    const timeoutCtrl = new AbortController();
+    const timeoutId = setTimeout(() => timeoutCtrl.abort(), REQUEST_TIMEOUT_MS);
+    const combined = signal ? combineSignals(signal, timeoutCtrl.signal) : timeoutCtrl.signal;
+
+    try {
+      const res = await fetch(`${HERMES_BASE}${endpoint}${qs}`, { signal: combined });
+      clearTimeout(timeoutId);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Hermes API error ${res.status}: ${text}`);
+      }
+      return res.json();
+    } catch (err: unknown) {
+      clearTimeout(timeoutId);
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt < RETRY_DELAYS_MS.length) {
+        await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+      }
+    }
   }
-  return response.json();
+  throw lastError;
+}
+
+function combineSignals(...signals: AbortSignal[]): AbortSignal {
+  const ctrl = new AbortController();
+  for (const sig of signals) {
+    if (sig.aborted) { ctrl.abort(); break; }
+    sig.addEventListener('abort', () => ctrl.abort(), { once: true });
+  }
+  return ctrl.signal;
 }
 
 export interface DiagnoseParams {
@@ -42,8 +103,8 @@ export interface DiagnoseResult {
   prioridad: string;
 }
 
-export async function diagnose(params: DiagnoseParams): Promise<DiagnoseResult> {
-  return hermesPost('/ai/diagnose', params as unknown as Record<string, unknown>);
+export async function diagnose(params: DiagnoseParams, signal?: AbortSignal): Promise<DiagnoseResult> {
+  return hermesPost('/ai/diagnose', params as unknown as Record<string, unknown>, signal);
 }
 
 export interface PhotoAnalysisParams {
@@ -59,8 +120,8 @@ export interface PhotoAnalysisResult {
   recomendacion_inicial: string;
 }
 
-export async function photoToFailure(params: PhotoAnalysisParams): Promise<PhotoAnalysisResult> {
-  return hermesPost('/ai/photo_to_failure', params as unknown as Record<string, unknown>);
+export async function photoToFailure(params: PhotoAnalysisParams, signal?: AbortSignal): Promise<PhotoAnalysisResult> {
+  return hermesPost('/ai/photo_to_failure', params as unknown as Record<string, unknown>, signal);
 }
 
 export interface ManualLookupParams {
@@ -76,8 +137,8 @@ export interface ManualLookupResult {
   torque_specs?: string;
 }
 
-export async function manualLookup(params: ManualLookupParams): Promise<ManualLookupResult> {
-  return hermesPost('/ai/manual_lookup', params as unknown as Record<string, unknown>);
+export async function manualLookup(params: ManualLookupParams, signal?: AbortSignal): Promise<ManualLookupResult> {
+  return hermesPost('/ai/manual_lookup', params as unknown as Record<string, unknown>, signal);
 }
 
 export interface PartResult {
@@ -92,10 +153,10 @@ export interface PartResult {
   alternatives: string[];
 }
 
-export async function searchParts(query: string, equipo?: string): Promise<PartResult[]> {
+export async function searchParts(query: string, equipo?: string, signal?: AbortSignal): Promise<PartResult[]> {
   const params: Record<string, string> = { q: query };
   if (equipo) params.equipo = equipo;
-  return hermesGet('/parts', params);
+  return hermesGet('/parts', params, signal);
 }
 
 export interface DiagramResult {
@@ -107,8 +168,8 @@ export interface DiagramResult {
   message?: string;
 }
 
-export async function findDiagram(equipo: string, search: string): Promise<DiagramResult> {
-  return hermesGet('/diagrams/find', { equipo, search });
+export async function findDiagram(equipo: string, search: string, signal?: AbortSignal): Promise<DiagramResult> {
+  return hermesGet('/diagrams/find', { equipo, search }, signal);
 }
 
 export interface FaultCodePagesResult {
@@ -120,6 +181,6 @@ export interface FaultCodePagesResult {
   message?: string;
 }
 
-export async function getFaultCodePages(equipo: string, codigo_falla: string): Promise<FaultCodePagesResult> {
-  return hermesGet('/ai/fault_code_pages', { equipo, codigo_falla });
+export async function getFaultCodePages(equipo: string, codigo_falla: string, signal?: AbortSignal): Promise<FaultCodePagesResult> {
+  return hermesGet('/ai/fault_code_pages', { equipo, codigo_falla }, signal);
 }
