@@ -55,6 +55,8 @@ const BulkBoletasPage    = lazy(() => import('./pages/BulkBoletasPage'));
 const CatalogoImportPage = lazy(() => import('./pages/CatalogoImportPage'));
 const DataManagerPage    = lazy(() => import('./pages/DataManagerPage'));
 const CalendarPage       = lazy(() => import('./pages/CalendarPage'));
+const PrivacyPolicyPage  = lazy(() => import('./pages/PrivacyPolicyPage'));
+const TermsPage          = lazy(() => import('./pages/TermsPage'));
 
 // ── Shared loading fallback ───────────────────────────────────────────────────
 
@@ -107,6 +109,24 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+
+      {/* Public legal pages — no auth required */}
+      <Route
+        path="/privacy"
+        element={
+          <Suspense fallback={<PageLoader />}>
+            <PrivacyPolicyPage />
+          </Suspense>
+        }
+      />
+      <Route
+        path="/terms"
+        element={
+          <Suspense fallback={<PageLoader />}>
+            <TermsPage />
+          </Suspense>
+        }
+      />
 
       {/* Chat is accessible to any authenticated user */}
       <Route

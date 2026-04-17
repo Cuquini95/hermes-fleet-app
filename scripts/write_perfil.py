@@ -1,3 +1,7 @@
+"""One-shot script to write the updated PerfilPage.tsx."""
+import pathlib
+
+content = '''\
 import { useNavigate, Link } from 'react-router-dom';
 import { useState, useCallback } from 'react';
 import {
@@ -404,7 +408,7 @@ export default function PerfilPage() {
                         </span>
                         <div className="flex-1 min-w-0">
                           <p className="text-xs text-text truncate">
-                            {entry.detail || '—'}
+                            {entry.detail || '\u2014'}
                           </p>
                           <p className="text-xs text-text-secondary mt-0.5">{entry.date}</p>
                         </div>
@@ -437,3 +441,8 @@ export default function PerfilPage() {
     </div>
   );
 }
+'''
+
+p = pathlib.Path('C:/Users/Cuki/Desktop/Dani/hermes-fleet-app/src/pages/PerfilPage.tsx')
+p.write_text(content, encoding='utf-8')
+print(f"Written {len(content)} chars / {content.count(chr(10))} lines")
