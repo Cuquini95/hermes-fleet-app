@@ -48,6 +48,8 @@ const InventoryPage      = lazy(() => import('./pages/InventoryPage'));
 const PMSchedulePage     = lazy(() => import('./pages/PMSchedulePage'));
 const PMWorkOrderPage    = lazy(() => import('./pages/PMWorkOrderPage'));
 const BriefingCard       = lazy(() => import('./components/dashboard/BriefingCard'));
+const AdminActivosPage         = lazy(() => import('./pages/AdminActivosPage'));
+const AdminOrdenesCompraPage   = lazy(() => import('./pages/AdminOrdenesCompraPage'));
 const WorkOrdersPage     = lazy(() => import('./pages/WorkOrdersPage'));
 const NeumaticosPage     = lazy(() => import('./pages/NeumaticosPage'));
 const PedidosPage        = lazy(() => import('./pages/PedidosPage'));
@@ -329,6 +331,26 @@ export default function App() {
             <PageBoundary role={role}>
               <Suspense fallback={<PageLoader />}>
                 <MyReportsPage />
+              </Suspense>
+            </PageBoundary>
+          </RequireRole>
+        } />
+
+        {/* ── Admin (Gerencia only) — feeds Power-GTP dashboards ─────── */}
+        <Route path="/admin/activos" element={
+          <RequireRole roles={['gerencia']}>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <AdminActivosPage />
+              </Suspense>
+            </PageBoundary>
+          </RequireRole>
+        } />
+        <Route path="/admin/ordenes-compra" element={
+          <RequireRole roles={['gerencia']}>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <AdminOrdenesCompraPage />
               </Suspense>
             </PageBoundary>
           </RequireRole>

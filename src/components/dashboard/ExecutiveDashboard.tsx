@@ -1,8 +1,9 @@
 import { useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Activity, AlertTriangle, Fuel, Bell, RefreshCw } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Activity, AlertTriangle, Fuel, Bell, RefreshCw, Package, ShoppingCart } from 'lucide-react';
 import { useEquipmentList } from '../../hooks/useEquipmentList';
 import { useDashboardData } from '../../hooks/useDashboardData';
+import { useAuthStore } from '../../stores/auth-store';
 import KPICard from '../ui/KPICard';
 import { SkeletonKPI } from '../ui/Skeleton';
 import FleetGrid from './FleetGrid';
@@ -26,6 +27,7 @@ export default function ExecutiveDashboard() {
   const navigate = useNavigate();
   const equipment = useEquipmentList();
   const data = useDashboardData();
+  const role = useAuthStore((s) => s.role);
 
   const handleRefresh = useCallback(async () => {
     data.refresh();
@@ -122,6 +124,45 @@ export default function ExecutiveDashboard() {
 
           {/* Daily actions */}
           <AccionesDelDia />
+
+          {/* Admin shortcuts — feeds Power-GTP dashboards (Gerencia only) */}
+          {role === 'gerencia' && (
+            <div className="mt-2">
+              <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide mb-2">
+                Admin — datos para Power-GTP
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <Link
+                  to="/admin/activos"
+                  className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 hover:border-blue-400 transition-colors"
+                >
+                  <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
+                    <Package size={20} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-text">Activos</p>
+                    <p className="text-xs text-text-secondary truncate">
+                      Ciclo de vida y depreciación
+                    </p>
+                  </div>
+                </Link>
+                <Link
+                  to="/admin/ordenes-compra"
+                  className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 hover:border-blue-400 transition-colors"
+                >
+                  <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
+                    <ShoppingCart size={20} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-text">Órdenes de Compra</p>
+                    <p className="text-xs text-text-secondary truncate">
+                      Crear y aprobar OCs
+                    </p>
+                  </div>
+                </Link>
+              </div>
+            </div>
+          )}
 
         </div>
       )}

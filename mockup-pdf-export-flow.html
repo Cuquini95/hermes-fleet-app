@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mockup — Flujo de Exportar PDF (3 opciones)</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', system-ui, sans-serif; background: #0F172A; padding: 32px 16px; color: #111827; }
+
+.intro { text-align: center; margin-bottom: 36px; max-width: 680px; margin-left: auto; margin-right: auto; color: #E2E8F0; }
+.intro h1 { font-size: 22px; font-weight: 800; margin-bottom: 6px; }
+.intro p { font-size: 13px; color: #94A3B8; }
+
+.options { display: flex; gap: 28px; justify-content: center; flex-wrap: wrap; align-items: flex-start; }
+
+.version-block { width: 340px; }
+.version-title { text-align: center; margin-bottom: 14px; }
+.version-badge { display: inline-block; background: #1E3A8A; color: #93C5FD; border-radius: 6px; padding: 3px 12px; font-size: 11px; font-weight: 800; letter-spacing: .05em; margin-bottom: 4px; }
+.version-label { color: #E2E8F0; font-size: 13px; font-weight: 600; display: block; }
+
+.phone {
+  width: 340px;
+  background: #F3F4F6;
+  border-radius: 26px;
+  padding: 16px;
+  box-shadow: 0 25px 60px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.05);
+  min-height: 640px;
+}
+
+/* Top bar */
+.top-bar { background: #162252; border-radius: 14px 14px 0 0; padding: 10px 14px; display: flex; align-items: center; gap: 10px; margin: -16px -16px 14px; }
+.back { width: 26px; height: 26px; background: rgba(255,255,255,.1); border-radius: 7px; display: flex; align-items: center; justify-content: center; color: white; font-size: 14px; }
+.top-title { font-size: 14px; font-weight: 700; color: white; }
+
+/* ── A: Solo descargar — shows gastos page with toast overlay ── */
+.gastos-bg {
+  background: white;
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+  opacity: .55;
+  filter: blur(.3px);
+}
+.gastos-bg .t1 { font-size: 15px; font-weight: 800; color: #111827; }
+.gastos-bg .t2 { font-size: 9px; color: #9CA3AF; }
+.gastos-bg .total { font-size: 22px; font-weight: 800; color: #111827; margin-top: 10px; }
+.gastos-bg .kpi-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+.gastos-bg .kpi-mini { background: #F9FAFB; border-radius: 8px; padding: 6px 8px; }
+.gastos-bg .kpi-mini .n { font-size: 10px; font-weight: 700; color: #111827; }
+.gastos-bg .kpi-mini .l { font-size: 7px; color: #9CA3AF; }
+
+.toast {
+  position: relative;
+  background: #16A34A;
+  color: white;
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  box-shadow: 0 8px 20px rgba(22,163,74,.3);
+}
+.toast .icon { width: 28px; height: 28px; background: rgba(255,255,255,.2); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+.toast .text { flex: 1; }
+.toast .title { font-size: 12px; font-weight: 700; }
+.toast .sub { font-size: 10px; opacity: .85; margin-top: 1px; }
+
+.explanation {
+  background: #1E293B;
+  color: #CBD5E1;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 10px;
+  margin-top: 12px;
+  line-height: 1.5;
+}
+.explanation b { color: #93C5FD; }
+
+/* ── B: Preview screen ── */
+.preview-card {
+  background: white;
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+.preview-title { font-size: 13px; font-weight: 700; color: #111827; margin-bottom: 2px; }
+.preview-sub { font-size: 10px; color: #6B7280; margin-bottom: 12px; }
+
+/* Miniature PDF preview */
+.mini-pdf {
+  background: #F9FAFB;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  padding: 14px 12px;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  position: relative;
+}
+.mini-pdf .m-header { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 8px; border-bottom: 1.5px solid #162252; margin-bottom: 8px; }
+.mini-pdf .m-logo { width: 22px; height: 22px; background: #162252; color: white; font-size: 7px; font-weight: 800; display: flex; align-items: center; justify-content: center; border-radius: 4px; }
+.mini-pdf .m-title { font-size: 9px; font-weight: 800; color: #111827; text-align: right; }
+.mini-pdf .m-sub { font-size: 6px; color: #9CA3AF; text-align: right; }
+
+.mini-hero { background: linear-gradient(135deg, #162252, #1E3A8A); color: white; border-radius: 5px; padding: 8px; margin-bottom: 8px; }
+.mini-hero .l { font-size: 5px; opacity: .7; text-transform: uppercase; }
+.mini-hero .v { font-size: 14px; font-weight: 800; }
+.mini-hero .m { font-size: 6px; opacity: .7; }
+
+.mini-section-hdr { font-size: 6px; font-weight: 800; color: #162252; text-transform: uppercase; letter-spacing: .05em; margin: 6px 0 4px; padding-bottom: 2px; border-bottom: .5px solid #E5E7EB; }
+
+.mini-types { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 3px; }
+.mini-type { background: #F9FAFB; border-left: 2px solid; padding: 3px 4px; border-radius: 0 3px 3px 0; }
+.mini-type .n { font-size: 4px; color: #6B7280; }
+.mini-type .a { font-size: 6px; font-weight: 800; color: #111827; }
+.mini-type.c-combustible { border-left-color: #3B82F6; }
+.mini-type.c-refaccion   { border-left-color: #F59E0B; }
+.mini-type.c-servicio    { border-left-color: #8B5CF6; }
+.mini-type.c-otro        { border-left-color: #6B7280; }
+
+.mini-table-row {
+  font-size: 5.5px;
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+  border-bottom: .5px solid #F3F4F6;
+}
+
+.mini-unit-hdr {
+  background: #EFF6FF;
+  border-left: 2px solid #1D4ED8;
+  padding: 3px 5px;
+  border-radius: 0 3px 3px 0;
+  margin: 5px 0 3px;
+  display: flex;
+  justify-content: space-between;
+}
+.mini-unit-hdr .u { font-size: 7px; font-weight: 800; color: #1E3A8A; }
+.mini-unit-hdr .t { font-size: 7px; font-weight: 800; color: #059669; }
+
+/* Action buttons in B */
+.action-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 12px; }
+.action-btn {
+  background: white;
+  border: 1px solid #E5E7EB;
+  border-radius: 10px;
+  padding: 10px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.action-btn .icon { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+.action-btn .label { font-size: 10px; font-weight: 700; color: #111827; }
+.action-btn.primary { background: #F59E0B; border-color: #F59E0B; color: white; }
+.action-btn.primary .icon { background: rgba(255,255,255,.2); color: white; }
+.action-btn.primary .label { color: white; }
+.action-btn.blue .icon    { background: #DBEAFE; color: #1D4ED8; }
+.action-btn.green .icon   { background: #D1FAE5; color: #059669; }
+
+/* ── C: Browser tab preview ── */
+.browser-bar {
+  background: #E5E7EB;
+  border-radius: 10px 10px 0 0;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: -1px;
+}
+.browser-dots { display: flex; gap: 3px; }
+.browser-dots div { width: 8px; height: 8px; border-radius: 50%; }
+.browser-url {
+  flex: 1;
+  background: white;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 8px;
+  color: #6B7280;
+  font-family: monospace;
+}
+
+.browser-toolbar {
+  background: #374151;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 9px;
+  color: white;
+}
+.browser-toolbar .file-name { flex: 1; font-weight: 600; }
+.browser-toolbar .icons { display: flex; gap: 8px; opacity: .75; }
+
+.pdf-viewer {
+  background: #525252;
+  padding: 16px 10px;
+  border-radius: 0 0 10px 10px;
+  min-height: 420px;
+}
+
+.pdf-mini-page {
+  background: white;
+  padding: 12px 10px;
+  border-radius: 2px;
+  box-shadow: 0 4px 12px rgba(0,0,0,.3);
+  font-size: 7px;
+  color: #1F2937;
+}
+</style>
+</head>
+<body>
+
+<div class="intro">
+  <h1>Flujo de Exportar PDF — 3 Opciones</h1>
+  <p>Qué ve el usuario después de tocar "Generar PDF" en la pantalla de Gastos.</p>
+</div>
+
+<div class="options">
+
+<!-- ═══════════════════════════════ OPCIÓN A ═══════════════════════════════ -->
+<div class="version-block">
+  <div class="version-title">
+    <span class="version-badge">A</span>
+    <span class="version-label">Descarga Directa</span>
+  </div>
+  <div class="phone">
+    <div class="top-bar">
+      <div class="back">←</div>
+      <div class="top-title">Gastos</div>
+    </div>
+
+    <!-- Background (gastos page behind toast) -->
+    <div class="gastos-bg">
+      <div class="t1">Gastos</div>
+      <div class="t2">Abril 2026</div>
+      <div class="total">$30,644</div>
+      <div class="kpi-row">
+        <div class="kpi-mini"><div class="n">$24,878</div><div class="l">Combustible · 81%</div></div>
+        <div class="kpi-mini"><div class="n">$5,766</div><div class="l">Servicio · 19%</div></div>
+      </div>
+    </div>
+
+    <!-- Success toast -->
+    <div class="toast">
+      <div class="icon">✓</div>
+      <div class="text">
+        <div class="title">PDF descargado</div>
+        <div class="sub">Gastos-Abril-2026-CV102.pdf</div>
+      </div>
+    </div>
+
+    <div class="explanation">
+      <b>Qué pasa:</b> Tocas "Generar PDF", el archivo se descarga directo a /Descargas del teléfono, aparece un toast verde de confirmación. <b>1 tap, 0 pantallas extra.</b>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════ OPCIÓN B ═══════════════════════════════ -->
+<div class="version-block">
+  <div class="version-title">
+    <span class="version-badge">B</span>
+    <span class="version-label">Vista previa + Opciones ⭐</span>
+  </div>
+  <div class="phone">
+    <div class="top-bar">
+      <div class="back">←</div>
+      <div class="top-title">Vista previa del reporte</div>
+    </div>
+
+    <div class="preview-card">
+      <div class="preview-title">Gastos — Abril 2026</div>
+      <div class="preview-sub">3 unidades seleccionadas · 6 registros · $20,265</div>
+
+      <!-- Mini PDF preview -->
+      <div class="mini-pdf">
+        <div class="m-header">
+          <div class="m-logo">GTP</div>
+          <div>
+            <div class="m-title">Reporte de Gastos</div>
+            <div class="m-sub">Abril 2026</div>
+          </div>
+        </div>
+
+        <div class="mini-hero">
+          <div class="l">Total del período</div>
+          <div class="v">$20,265.00</div>
+          <div class="m">6 registros · 3 unidades</div>
+        </div>
+
+        <div class="mini-section-hdr">Gasto por tipo</div>
+        <div class="mini-types">
+          <div class="mini-type c-combustible"><div class="n">COMB</div><div class="a">$14k</div></div>
+          <div class="mini-type c-refaccion"><div class="n">REF</div><div class="a">$0</div></div>
+          <div class="mini-type c-servicio"><div class="n">SERV</div><div class="a">$5.7k</div></div>
+          <div class="mini-type c-otro"><div class="n">OTRO</div><div class="a">$0</div></div>
+        </div>
+
+        <div class="mini-unit-hdr"><span class="u">CV102</span><span class="t">$11,143</span></div>
+        <div class="mini-table-row"><span>05/04 Los Olivos</span><span>$5,377</span></div>
+        <div class="mini-table-row"><span>11/04 Pemex</span><span>$5,766</span></div>
+
+        <div class="mini-unit-hdr"><span class="u">CV108</span><span class="t">$5,766</span></div>
+        <div class="mini-table-row"><span>08/04 Taller Robles</span><span>$5,766</span></div>
+
+        <div class="mini-unit-hdr"><span class="u">CV109</span><span class="t">$3,356</span></div>
+        <div class="mini-table-row"><span>03/04 Pemex</span><span>$1,200</span></div>
+      </div>
+    </div>
+
+    <!-- 3 action buttons -->
+    <div class="action-grid">
+      <div class="action-btn primary">
+        <div class="icon">⬇</div>
+        <div class="label">Descargar</div>
+      </div>
+      <div class="action-btn blue">
+        <div class="icon">🖨</div>
+        <div class="label">Imprimir</div>
+      </div>
+      <div class="action-btn green">
+        <div class="icon">↗</div>
+        <div class="label">Compartir</div>
+      </div>
+    </div>
+
+    <div class="explanation">
+      <b>Qué pasa:</b> Ves el PDF completo antes de enviarlo. 3 acciones: <b>Descargar</b> guarda el archivo, <b>Imprimir</b> abre el diálogo nativo, <b>Compartir</b> abre el share sheet del teléfono (WhatsApp, Email, Drive).
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════ OPCIÓN C ═══════════════════════════════ -->
+<div class="version-block">
+  <div class="version-title">
+    <span class="version-badge">C</span>
+    <span class="version-label">Nueva pestaña del navegador</span>
+  </div>
+  <div class="phone">
+    <div class="top-bar">
+      <div class="back">←</div>
+      <div class="top-title">Nueva pestaña</div>
+    </div>
+
+    <!-- Browser simulation -->
+    <div class="browser-bar">
+      <div class="browser-dots"><div style="background:#EF4444;"></div><div style="background:#F59E0B;"></div><div style="background:#10B981;"></div></div>
+      <div class="browser-url">blob:hermes-fleet.../gastos.pdf</div>
+    </div>
+
+    <div class="browser-toolbar">
+      <span>📄</span>
+      <span class="file-name">Gastos-Abril-2026.pdf</span>
+      <span class="icons">⬇ 🖨 ⋮</span>
+    </div>
+
+    <div class="pdf-viewer">
+      <div class="pdf-mini-page">
+        <div style="display:flex;justify-content:space-between;padding-bottom:5px;border-bottom:1px solid #162252;margin-bottom:6px;">
+          <div style="background:#162252;color:white;font-size:5px;font-weight:800;padding:2px 4px;border-radius:2px;">GTP</div>
+          <div style="text-align:right;">
+            <div style="font-size:7px;font-weight:800;">Reporte de Gastos</div>
+            <div style="font-size:5px;color:#9CA3AF;">Abril 2026</div>
+          </div>
+        </div>
+
+        <div style="background:linear-gradient(135deg,#162252,#1E3A8A);color:white;padding:6px;border-radius:4px;margin-bottom:6px;">
+          <div style="font-size:4px;opacity:.7;text-transform:uppercase;">Total del período</div>
+          <div style="font-size:11px;font-weight:800;">$30,644.00</div>
+          <div style="font-size:5px;opacity:.7;">9 registros · 8 unidades</div>
+        </div>
+
+        <div style="font-size:5px;font-weight:800;color:#162252;text-transform:uppercase;margin:4px 0 2px;padding-bottom:2px;border-bottom:.5px solid #E5E7EB;">Gasto por tipo</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:2px;">
+          <div style="background:#F9FAFB;border-left:1.5px solid #3B82F6;padding:2px 3px;"><div style="font-size:3px;color:#6B7280;">COMB</div><div style="font-size:5px;font-weight:800;">$24,878</div></div>
+          <div style="background:#F9FAFB;border-left:1.5px solid #F59E0B;padding:2px 3px;"><div style="font-size:3px;color:#6B7280;">REF</div><div style="font-size:5px;font-weight:800;">$0</div></div>
+          <div style="background:#F9FAFB;border-left:1.5px solid #8B5CF6;padding:2px 3px;"><div style="font-size:3px;color:#6B7280;">SERV</div><div style="font-size:5px;font-weight:800;">$5,766</div></div>
+          <div style="background:#F9FAFB;border-left:1.5px solid #6B7280;padding:2px 3px;"><div style="font-size:3px;color:#6B7280;">OTRO</div><div style="font-size:5px;font-weight:800;">$0</div></div>
+        </div>
+
+        <div style="font-size:5px;font-weight:800;color:#162252;text-transform:uppercase;margin:5px 0 2px;padding-bottom:2px;border-bottom:.5px solid #E5E7EB;">Detalle por unidad</div>
+        <div style="font-size:5px;color:#6B7280;">CV102 · $11,143 · 2 gastos</div>
+        <div style="font-size:5px;color:#6B7280;">CV108 · $5,766 · 1 gasto</div>
+        <div style="font-size:5px;color:#6B7280;">CV109 · $3,356 · 3 gastos</div>
+      </div>
+    </div>
+
+    <div class="explanation">
+      <b>Qué pasa:</b> El PDF se abre en una pestaña nueva con el visor del navegador. Los controles de descargar/imprimir/compartir son los nativos del navegador (flechita ⬇ y 🖨 arriba). <b>Cero UI custom pero menos integrado.</b>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<div style="text-align:center;margin-top:40px;color:#475569;font-size:12px;max-width:660px;margin-left:auto;margin-right:auto;padding-bottom:20px;">
+  <p><b style="color:#E2E8F0;">Comparativa:</b></p>
+  <table style="margin:12px auto 0;background:#1E293B;border-radius:8px;color:#CBD5E1;font-size:11px;border-collapse:separate;border-spacing:0;">
+    <tr style="color:#94A3B8;font-weight:700;"><td style="padding:6px 12px;">Modo</td><td style="padding:6px 12px;">Taps</td><td style="padding:6px 12px;">Preview</td><td style="padding:6px 12px;">Compartir</td></tr>
+    <tr><td style="padding:6px 12px;">A Descarga directa</td><td style="padding:6px 12px;">1</td><td style="padding:6px 12px;">No</td><td style="padding:6px 12px;">No</td></tr>
+    <tr><td style="padding:6px 12px;color:#FDE68A;">B Vista previa ⭐</td><td style="padding:6px 12px;color:#FDE68A;">2</td><td style="padding:6px 12px;color:#FDE68A;">Sí</td><td style="padding:6px 12px;color:#FDE68A;">WhatsApp/Email</td></tr>
+    <tr><td style="padding:6px 12px;">C Nueva pestaña</td><td style="padding:6px 12px;">1</td><td style="padding:6px 12px;">Sí (nativo)</td><td style="padding:6px 12px;">Controles browser</td></tr>
+  </table>
+</div>
+
+</body>
+</html>

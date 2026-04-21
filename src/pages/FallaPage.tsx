@@ -115,7 +115,7 @@ export default function FallaPage() {
     const observacionesBase = `Ubicación: ${ubicacion}. Cliente: ${clienteAfectado}. Puede moverse: ${puedeMoverse ? 'Sí' : 'No'}`;
     // Append OT reference into OBSERVACIONES so total stays at 14 values matching sheet headers
     const observaciones = otId ? `${observacionesBase} | OT: ${otId}` : observacionesBase;
-    const fotoUrl = photoUrls[0] ?? '';
+    const fotoUrl = photoUrls.join(', ');
 
     // Sheet has 14 cols: FECHA HORA UNIDAD TIPO_AVERIA DESCRIPCION SEVERIDAD TECNICO
     //   TIEMPO_PARO COSTO_ESTIMADO ESTADO SOLUCION OBSERVACIONES PROVEEDOR_PIEZA Foto_URL

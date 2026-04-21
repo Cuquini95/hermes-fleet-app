@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mockup — Gasto Multi-Unidad</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Inter', system-ui, sans-serif; background: #F3F4F6; min-height: 100vh; display: flex; justify-content: center; padding: 24px 16px; }
+  .phone { width: 390px; display: flex; flex-direction: column; gap: 14px; }
+
+  .header { display: flex; align-items: center; gap: 12px; }
+  .back-btn { width: 38px; height: 38px; background: white; border: 1px solid #E5E7EB; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 18px; cursor: pointer; flex-shrink: 0; }
+  .header-title { font-weight: 700; font-size: 18px; color: #111827; }
+  .header-sub { font-size: 11px; color: #6B7280; margin-top: 1px; }
+
+  .card { background: white; border-radius: 16px; border: 1px solid #E5E7EB; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+  .field label { display: block; font-size: 12px; font-weight: 500; color: #6B7280; margin-bottom: 5px; }
+  .field select, .field input[type=text], .field input[type=number] {
+    width: 100%; border: 1px solid #E5E7EB; border-radius: 12px; padding: 10px 12px;
+    font-size: 14px; color: #111827; background: white; outline: none;
+  }
+  .field input.big { font-size: 24px; font-weight: 700; text-align: center; padding: 12px; }
+
+  /* Toggle */
+  .toggle { display: flex; gap: 6px; margin-bottom: 8px; }
+  .toggle-btn { flex: 1; text-align: center; padding: 8px; border-radius: 10px; font-size: 12px; font-weight: 600; cursor: pointer; border: none; }
+  .toggle-btn.active { background: #F59E0B; color: white; }
+  .toggle-btn.inactive { background: white; border: 1px solid #E5E7EB; color: #6B7280; }
+
+  /* Split card */
+  .split-card { background: #FFFBEB; border: 1.5px solid #F59E0B; border-radius: 16px; padding: 16px; }
+  .split-title { font-size: 12px; font-weight: 600; color: #92400E; margin-bottom: 12px; }
+  .split-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .unit-tag { flex: 1; background: white; border: 1px solid #E5E7EB; border-radius: 10px; padding: 8px 10px; font-size: 13px; font-weight: 600; color: #111827; }
+  .unit-amount { width: 90px; border: 1px solid #E5E7EB; border-radius: 10px; padding: 8px; font-size: 13px; font-weight: 600; color: #111827; text-align: right; outline: none; }
+  .remove-btn { width: 26px; height: 26px; border-radius: 50%; background: #FEE2E2; border: none; display: flex; align-items: center; justify-content: center; font-size: 15px; color: #EF4444; cursor: pointer; flex-shrink: 0; }
+  .add-unit { width: 100%; border: 1px dashed #D1D5DB; border-radius: 10px; padding: 9px 12px; font-size: 13px; color: #6B7280; background: white; outline: none; margin-top: 4px; }
+  .split-footer { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #FCD34D; display: flex; justify-content: space-between; align-items: center; }
+  .split-footer span { font-size: 12px; color: #92400E; }
+  .split-total { font-size: 13px; font-weight: 700; color: #059669; }
+  .split-total.over { color: #EF4444; }
+
+  /* FLOTA badge */
+  .flota-badge { display: inline-block; background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 8px; padding: 3px 8px; font-size: 11px; font-weight: 600; color: #1D4ED8; margin-left: 6px; }
+
+  /* Submit */
+  .submit-btn { width: 100%; background: #F59E0B; color: white; border: none; border-radius: 14px; padding: 16px; font-size: 16px; font-weight: 700; cursor: pointer; }
+  .submit-note { text-align: center; font-size: 11px; color: #9CA3AF; margin-top: -6px; }
+
+  /* Two-column layout for the two states */
+  .two-col { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; align-items: flex-start; }
+  .col-label { text-align: center; font-size: 11px; font-weight: 600; color: #6B7280; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 10px; }
+  .col-label span { background: #F59E0B; color: white; border-radius: 6px; padding: 2px 8px; }
+</style>
+</head>
+<body>
+<div class="two-col">
+
+  <!-- ── STATE A: Una unidad ── -->
+  <div>
+    <div class="col-label"><span>Modo: Una Unidad</span></div>
+    <div class="phone">
+      <div class="header">
+        <div class="back-btn">←</div>
+        <div>
+          <div class="header-title">Nuevo Gasto</div>
+          <div class="header-sub">Registro de compra / factura</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="field">
+          <label>Tipo de gasto</label>
+          <select><option>Combustible</option><option>Refacción</option><option>Servicio</option><option>Otro</option></select>
+        </div>
+
+        <div class="field">
+          <label>Unidad(es)</label>
+          <div class="toggle">
+            <button class="toggle-btn active">Una unidad</button>
+            <button class="toggle-btn inactive">Múltiples / Flota</button>
+          </div>
+          <select>
+            <option>CV109</option><option>CV110</option><option>CV111</option>
+            <option>EPAK-09</option><option>── FLOTA (global) ──</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Proveedor</label>
+          <input type="text" value="GASOLINERA LOS OLIVOS SA DE CV" />
+        </div>
+
+        <div class="field">
+          <label>Total</label>
+          <input type="number" class="big" value="3356" />
+        </div>
+      </div>
+
+      <button class="submit-btn">Registrar gasto</button>
+      <div class="submit-note">Se creará 1 registro en Google Sheets</div>
+    </div>
+  </div>
+
+  <!-- ── STATE B: Múltiples unidades ── -->
+  <div>
+    <div class="col-label"><span>Modo: Múltiples Unidades</span></div>
+    <div class="phone">
+      <div class="header">
+        <div class="back-btn">←</div>
+        <div>
+          <div class="header-title">Nuevo Gasto</div>
+          <div class="header-sub">Registro de compra / factura</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="field">
+          <label>Tipo de gasto</label>
+          <select><option>Combustible</option><option>Refacción</option><option>Servicio</option><option>Otro</option></select>
+        </div>
+
+        <div class="field">
+          <label>Unidad(es)</label>
+          <div class="toggle">
+            <button class="toggle-btn inactive">Una unidad</button>
+            <button class="toggle-btn active">Múltiples / Flota</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Proveedor</label>
+          <input type="text" value="PEMEX MAYOREO" />
+        </div>
+
+        <div class="field">
+          <label>Total a distribuir</label>
+          <input type="number" class="big" value="6000" />
+        </div>
+      </div>
+
+      <!-- Split distribution card -->
+      <div class="split-card">
+        <div class="split-title">🔀 Distribución entre unidades — Total: $6,000</div>
+
+        <div class="split-row">
+          <div class="unit-tag">CV109</div>
+          <input type="number" class="unit-amount" value="2000" />
+          <button class="remove-btn">×</button>
+        </div>
+        <div class="split-row">
+          <div class="unit-tag">CV110</div>
+          <input type="number" class="unit-amount" value="2000" />
+          <button class="remove-btn">×</button>
+        </div>
+        <div class="split-row">
+          <div class="unit-tag">CV111</div>
+          <input type="number" class="unit-amount" value="2000" />
+          <button class="remove-btn">×</button>
+        </div>
+
+        <select class="add-unit">
+          <option>+ Agregar unidad...</option>
+          <option>EPAK-09</option>
+          <option>EPTK-08</option>
+          <option>── FLOTA (global) ──</option>
+        </select>
+
+        <div class="split-footer">
+          <span>Distribuido</span>
+          <div class="split-total">$6,000 ✓ completo</div>
+        </div>
+      </div>
+
+      <button class="submit-btn">Registrar 3 gastos</button>
+      <div class="submit-note">Se crearán 3 registros en Google Sheets</div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

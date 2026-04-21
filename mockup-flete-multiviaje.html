@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mockup — Registro Flete Multi-Viaje</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', system-ui, sans-serif; background: #0F172A; padding: 32px 16px; color: #111827; }
+
+.section-label { display: inline-block; background: #1E3A8A; color: #93C5FD; border-radius: 6px; padding: 3px 10px; font-size: 11px; font-weight: 700; margin-bottom: 14px; }
+
+.options { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; align-items: flex-start; margin-bottom: 32px; }
+.phone { width: 390px; background: #F3F4F6; border-radius: 24px; padding: 16px; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+
+/* Top bar */
+.top-bar { background: #162252; border-radius: 14px 14px 0 0; padding: 12px 14px; display: flex; align-items: center; gap: 10px; margin: -16px -16px 14px; }
+.back { width: 28px; height: 28px; background: rgba(255,255,255,.1); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 16px; }
+.top-title { font-size: 16px; font-weight: 700; color: white; }
+
+/* Card */
+.card { background: white; border-radius: 14px; padding: 14px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 10px; }
+.field label { display: block; font-size: 11px; font-weight: 500; color: #6B7280; margin-bottom: 4px; }
+.field input, .field select { width: 100%; border: 1px solid #E5E7EB; border-radius: 10px; padding: 9px 11px; font-size: 13px; color: #111827; background: white; outline: none; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+
+/* Toggle */
+.toggle { display: flex; gap: 6px; margin-bottom: 4px; }
+.toggle-btn { flex: 1; text-align: center; padding: 9px; border-radius: 10px; font-size: 12px; font-weight: 600; cursor: pointer; border: none; }
+.toggle-btn.active { background: #F59E0B; color: white; }
+.toggle-btn.inactive { background: white; border: 1px solid #E5E7EB; color: #6B7280; }
+
+/* Multi-trip card */
+.multi-card { background: #FFFBEB; border: 1.5px solid #F59E0B; border-radius: 14px; padding: 14px; margin-bottom: 12px; }
+.multi-title { font-size: 12px; font-weight: 700; color: #92400E; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+.trip-row { background: white; border-radius: 10px; padding: 10px; margin-bottom: 8px; border: 1px solid #FDE68A; }
+.trip-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.trip-label { font-size: 11px; font-weight: 700; color: #92400E; }
+.remove-x { width: 22px; height: 22px; border-radius: 50%; background: #FEE2E2; color: #EF4444; border: none; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.trip-fields { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.trip-fields label { font-size: 10px; color: #9CA3AF; display: block; margin-bottom: 2px; }
+.trip-fields input { width: 100%; border: 1px solid #FDE68A; border-radius: 8px; padding: 6px 8px; font-size: 12px; font-weight: 600; text-align: center; }
+.add-trip { width: 100%; background: white; border: 1px dashed #F59E0B; border-radius: 10px; padding: 9px; font-size: 12px; font-weight: 600; color: #D97706; cursor: pointer; }
+
+.totals-strip { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #FCD34D; display: flex; justify-content: space-between; align-items: center; font-size: 11px; }
+.totals-strip .label { color: #92400E; }
+.totals-strip .val { font-weight: 700; color: #059669; }
+
+/* Submit */
+.submit { width: 100%; background: #F59E0B; color: white; border: none; border-radius: 12px; padding: 15px; font-size: 15px; font-weight: 700; cursor: pointer; }
+.submit-note { text-align: center; font-size: 10px; color: #9CA3AF; margin-top: 6px; }
+
+.common-badge { display: inline-block; font-size: 9px; font-weight: 700; color: #1D4ED8; background: #DBEAFE; border-radius: 4px; padding: 2px 6px; margin-left: 4px; text-transform: uppercase; letter-spacing: .04em; }
+</style>
+</head>
+<body>
+
+<div style="text-align:center;margin-bottom:32px;">
+  <div style="font-size:13px;color:#64748B;margin-bottom:4px;">Hermes Fleet · Registro de Flete</div>
+  <div style="font-size:22px;font-weight:800;color:white;">Modo Múltiples Viajes del Día</div>
+  <div style="font-size:12px;color:#94A3B8;margin-top:6px;max-width:640px;margin-left:auto;margin-right:auto;">
+    Llena los datos comunes una sola vez (camión, ruta, cliente, tipo de carga, km).<br/>
+    Captura cada viaje abajo con solo hora y tonelaje — lo demás se hereda.
+  </div>
+</div>
+
+<div class="options">
+
+  <!-- ══ SINGLE MODE (reference) ══ -->
+  <div>
+    <div class="section-label">Antes — Un Viaje a la Vez</div>
+    <div class="phone">
+      <div class="top-bar">
+        <div class="back">←</div>
+        <div class="top-title">Registro de Flete</div>
+      </div>
+
+      <div class="card">
+        <div class="field"><label>Modo</label>
+          <div class="toggle">
+            <button class="toggle-btn active">Un viaje</button>
+            <button class="toggle-btn inactive">Varios viajes</button>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="field"><label>Fecha</label><input value="04/10/2026"/></div>
+          <div class="field"><label>Hora</label><input value="07:30 AM"/></div>
+        </div>
+        <div class="field"><label>Camión</label><input value="CV103 — Volteo"/></div>
+        <div class="grid-2">
+          <div class="field"><label>Origen</label><input value="Frente 3"/></div>
+          <div class="field"><label>Destino</label><input value="Patio Acopio"/></div>
+        </div>
+        <div class="field"><label>Tonelaje</label><input value="27" style="font-size:18px;font-weight:700;text-align:center;"/></div>
+        <div class="field"><label>Flete ($)</label><input value="1200.00"/></div>
+      </div>
+
+      <button class="submit">Registrar Flete</button>
+      <div class="submit-note">1 registro a la vez</div>
+    </div>
+  </div>
+
+  <!-- ══ MULTI MODE ══ -->
+  <div>
+    <div class="section-label">Nuevo — Varios Viajes del Día</div>
+    <div class="phone">
+      <div class="top-bar">
+        <div class="back">←</div>
+        <div class="top-title">Registro de Flete</div>
+      </div>
+
+      <!-- Mode toggle -->
+      <div class="card" style="padding:10px 14px;">
+        <div class="field" style="margin:0;">
+          <label>Modo</label>
+          <div class="toggle">
+            <button class="toggle-btn inactive">Un viaje</button>
+            <button class="toggle-btn active">Varios viajes</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Common fields -->
+      <div class="card">
+        <div style="font-size:12px;font-weight:700;color:#1E3A8A;">Datos comunes <span class="common-badge">aplica a todos</span></div>
+
+        <div class="field"><label>Fecha</label><input value="04/10/2026"/></div>
+        <div class="field"><label>Camión</label><input value="CV103 — Camion Volteo"/></div>
+        <div class="grid-2">
+          <div class="field"><label>Origen</label><input value="Frente 3"/></div>
+          <div class="field"><label>Destino</label><input value="Patio Acopio"/></div>
+        </div>
+        <div class="grid-2">
+          <div class="field"><label>Tipo de Carga</label><input value="Material pétreo"/></div>
+          <div class="field"><label>Cliente</label><input value="GTP"/></div>
+        </div>
+        <div class="grid-3">
+          <div class="field"><label>KM Cargado</label><input value="18"/></div>
+          <div class="field"><label>KM Vacío</label><input value="18"/></div>
+          <div class="field"><label>KM Total</label><input value="36" style="background:#F9FAFB;"/></div>
+        </div>
+      </div>
+
+      <!-- Per-trip rows -->
+      <div class="multi-card">
+        <div class="multi-title">
+          <span>🚚 Viajes del día</span>
+          <span style="font-size:10px;color:#92400E;">4 viajes</span>
+        </div>
+
+        ${[
+          ['Viaje 1','07:30','27','1,200'],
+          ['Viaje 2','10:15','26','1,200'],
+          ['Viaje 3','13:00','28','1,200'],
+          ['Viaje 4','16:20','25','1,200'],
+        ].map(([label, hora, ton, flete]) => `
+        <div class="trip-row">
+          <div class="trip-header">
+            <span class="trip-label">${label}</span>
+            <button class="remove-x">×</button>
+          </div>
+          <div class="trip-fields">
+            <div><label>Hora</label><input value="${hora}"/></div>
+            <div><label>Tonelaje</label><input value="${ton}" style="color:#D97706"/></div>
+            <div><label>Flete $</label><input value="${flete}"/></div>
+          </div>
+        </div>`).join('')}
+
+        <button class="add-trip">+ Agregar otro viaje</button>
+
+        <div class="totals-strip">
+          <span class="label">Total tonelaje</span>
+          <span class="val">106 ton · $4,800</span>
+        </div>
+      </div>
+
+      <!-- Observations (shared) -->
+      <div class="card">
+        <div class="field"><label>Observaciones del día (opcional)</label><input value="" placeholder="Ej: una llanta baja en viaje 3"/></div>
+      </div>
+
+      <button class="submit">Registrar 4 Viajes</button>
+      <div class="submit-note">Se crearán 4 filas en Reporte_Fletes_Transporte</div>
+    </div>
+  </div>
+
+</div>
+
+<div style="text-align:center;color:#475569;font-size:12px;padding-bottom:16px;max-width:680px;margin:0 auto;">
+  <b style="color:#E2E8F0;">Cómo funciona:</b>
+  El operador llega a casa en la noche, abre el form, pone el camión y la ruta una vez,
+  y captura cada viaje con 3 campos (hora, tonelaje, flete). Un tap en "Registrar 4 viajes"
+  crea 4 filas en el Google Sheet — cada una con los datos comunes más su propio tonelaje y hora.
+</div>
+
+</body>
+</html>

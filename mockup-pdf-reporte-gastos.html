@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mockup — Reporte PDF Gastos (4 versiones)</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', system-ui, sans-serif; background: #0F172A; padding: 32px 16px; color: #111827; }
+
+.intro { text-align: center; margin-bottom: 32px; max-width: 700px; margin-left: auto; margin-right: auto; color: #E2E8F0; }
+.intro h1 { font-size: 22px; font-weight: 800; margin-bottom: 6px; }
+.intro p { font-size: 13px; color: #94A3B8; }
+
+.options { display: flex; flex-direction: column; gap: 40px; align-items: center; }
+
+.version-block { width: 100%; max-width: 900px; }
+.version-title { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; justify-content: center; }
+.version-badge { background: #1E3A8A; color: #93C5FD; border-radius: 6px; padding: 3px 12px; font-size: 11px; font-weight: 800; letter-spacing: .05em; }
+.version-label { color: #E2E8F0; font-size: 14px; font-weight: 600; }
+
+/* A4-ish page */
+.page {
+  background: white;
+  width: 100%;
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 44px 48px;
+  box-shadow: 0 25px 80px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.05);
+  border-radius: 2px;
+  font-size: 11px;
+  color: #1F2937;
+}
+
+/* ── PDF Header ─────────────────────────────────────────────── */
+.pdf-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding-bottom: 18px;
+  border-bottom: 2px solid #162252;
+  margin-bottom: 20px;
+}
+.pdf-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.pdf-logo {
+  width: 42px; height: 42px;
+  background: #162252;
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  color: white; font-weight: 800; font-size: 12px;
+}
+.pdf-brand-text { font-size: 10px; color: #6B7280; }
+.pdf-brand-name { font-size: 15px; font-weight: 800; color: #111827; }
+.pdf-title-block { text-align: right; }
+.pdf-title { font-size: 18px; font-weight: 800; color: #111827; }
+.pdf-subtitle { font-size: 10px; color: #6B7280; margin-top: 2px; }
+.pdf-period { font-size: 10px; color: #F59E0B; font-weight: 700; margin-top: 3px; text-transform: uppercase; letter-spacing: .05em; }
+
+/* ── KPI block ──────────────────────────────────────────────── */
+.kpi-hero {
+  background: linear-gradient(135deg, #162252, #1E3A8A);
+  color: white;
+  padding: 18px 22px;
+  border-radius: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 18px;
+}
+.kpi-hero-left .label { font-size: 10px; opacity: .7; text-transform: uppercase; letter-spacing: .05em; }
+.kpi-hero-left .value { font-size: 30px; font-weight: 800; margin-top: 4px; }
+.kpi-hero-left .meta { font-size: 10px; opacity: .7; margin-top: 2px; }
+.kpi-hero-right { text-align: right; font-size: 10px; opacity: .85; }
+.kpi-hero-right .big { font-size: 15px; font-weight: 700; opacity: 1; }
+
+/* ── Section headers ────────────────────────────────────────── */
+.section-hdr {
+  font-size: 10px;
+  font-weight: 800;
+  color: #162252;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  margin: 18px 0 10px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #E5E7EB;
+}
+
+/* ── Type breakdown ─────────────────────────────────────────── */
+.type-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 10px; margin-bottom: 4px; }
+.type-cell { background: #F9FAFB; border-left: 3px solid; padding: 10px 12px; border-radius: 0 6px 6px 0; }
+.type-cell .name { font-size: 9px; color: #6B7280; text-transform: uppercase; letter-spacing: .04em; }
+.type-cell .amt  { font-size: 14px; font-weight: 800; color: #111827; margin-top: 2px; }
+.type-cell .pct  { font-size: 9px; color: #6B7280; }
+
+/* ── Unit ranking table ─────────────────────────────────────── */
+table { width: 100%; border-collapse: collapse; font-size: 10px; }
+table th {
+  background: #F3F4F6;
+  padding: 7px 10px;
+  text-align: left;
+  font-size: 9px;
+  font-weight: 700;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  border-bottom: 1px solid #D1D5DB;
+}
+table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid #F3F4F6;
+}
+table td.num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+table td.rank { color: #9CA3AF; font-weight: 700; width: 24px; }
+table td.bar-cell { width: 140px; }
+.bar-wrap { background: #F3F4F6; border-radius: 3px; height: 7px; overflow: hidden; }
+.bar-fill { height: 100%; background: #F59E0B; border-radius: 3px; }
+
+/* ── Detail per unit (B/C/D) ────────────────────────────────── */
+.unit-block { margin-top: 16px; }
+.unit-block-hdr {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  background: #EFF6FF;
+  border-left: 4px solid #1D4ED8;
+  padding: 8px 12px;
+  border-radius: 0 6px 6px 0;
+  margin-bottom: 6px;
+}
+.unit-block-hdr .unit-id { font-size: 12px; font-weight: 800; color: #1E3A8A; }
+.unit-block-hdr .unit-tot { font-size: 12px; font-weight: 800; color: #059669; }
+.unit-block-hdr .unit-meta { font-size: 9px; color: #6B7280; }
+
+/* ── Line item sub-row (C) ──────────────────────────────────── */
+.line-items-sub {
+  font-size: 9px;
+  color: #6B7280;
+  padding: 4px 10px 6px 34px;
+  background: #FAFAFA;
+  border-bottom: 1px solid #F3F4F6;
+  font-style: italic;
+}
+
+/* ── Receipt thumbnails (D) ─────────────────────────────────── */
+.receipts-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 8px; }
+.receipt-thumb {
+  aspect-ratio: 3 / 4;
+  background: #F3F4F6;
+  border: 1px dashed #D1D5DB;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  color: #9CA3AF;
+  font-size: 8px;
+  padding: 4px;
+  text-align: center;
+}
+.receipt-thumb .emoji { font-size: 20px; margin-bottom: 4px; }
+
+/* ── Footer ─────────────────────────────────────────────────── */
+.pdf-footer {
+  margin-top: 24px;
+  padding-top: 10px;
+  border-top: 1px solid #E5E7EB;
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: #9CA3AF;
+}
+
+/* Tipo bar colors */
+.c-combustible { border-left-color: #3B82F6; }
+.c-refaccion   { border-left-color: #F59E0B; }
+.c-servicio    { border-left-color: #8B5CF6; }
+.c-otro        { border-left-color: #6B7280; }
+
+/* Tipo chip in detail table */
+.chip { display: inline-block; font-size: 8px; font-weight: 700; padding: 2px 6px; border-radius: 3px; text-transform: uppercase; letter-spacing: .03em; }
+.chip.combustible { background: #DBEAFE; color: #1D4ED8; }
+.chip.refaccion   { background: #FEF3C7; color: #B45309; }
+.chip.servicio    { background: #EDE9FE; color: #6D28D9; }
+.chip.otro        { background: #F3F4F6; color: #374151; }
+
+.divider-label {
+  text-align: center;
+  color: #475569;
+  font-size: 11px;
+  margin: 14px 0;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  font-weight: 700;
+}
+</style>
+</head>
+<body>
+
+<div class="intro">
+  <h1>Reporte PDF de Gastos — 4 Versiones</h1>
+  <p>Mismos datos base ($30,644 · 9 registros · Abril 2026), diferente nivel de detalle en cada versión.<br/>
+  Elige cuál quieres que implemente primero. Todas comparten el mismo encabezado y resumen ejecutivo.</p>
+</div>
+
+<div class="options">
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- VERSION A — RESUMEN EJECUTIVO                                -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="version-block">
+  <div class="version-title">
+    <span class="version-badge">A</span>
+    <span class="version-label">Resumen Ejecutivo — 1 página, ligero</span>
+  </div>
+  <div class="page">
+    <div class="pdf-header">
+      <div class="pdf-brand">
+        <div class="pdf-logo">GTP</div>
+        <div>
+          <div class="pdf-brand-text">Hermes Fleet</div>
+          <div class="pdf-brand-name">GTP Transportes</div>
+        </div>
+      </div>
+      <div class="pdf-title-block">
+        <div class="pdf-title">Reporte de Gastos</div>
+        <div class="pdf-subtitle">Generado 2026-04-10 · por Gerencia</div>
+        <div class="pdf-period">Abril 2026</div>
+      </div>
+    </div>
+
+    <div class="kpi-hero">
+      <div class="kpi-hero-left">
+        <div class="label">Total del período</div>
+        <div class="value">$30,644.00</div>
+        <div class="meta">9 registros · 8 unidades</div>
+      </div>
+      <div class="kpi-hero-right">
+        <div>Promedio / registro</div>
+        <div class="big">$3,404.89</div>
+      </div>
+    </div>
+
+    <div class="section-hdr">Gasto por tipo</div>
+    <div class="type-grid">
+      <div class="type-cell c-combustible"><div class="name">Combustible</div><div class="amt">$24,878</div><div class="pct">81.2% · 8 reg</div></div>
+      <div class="type-cell c-refaccion"><div class="name">Refacciones</div><div class="amt">$0</div><div class="pct">0% · 0 reg</div></div>
+      <div class="type-cell c-servicio"><div class="name">Servicio</div><div class="amt">$5,766</div><div class="pct">18.8% · 1 reg</div></div>
+      <div class="type-cell c-otro"><div class="name">Otros</div><div class="amt">$0</div><div class="pct">0% · 0 reg</div></div>
+    </div>
+
+    <div class="section-hdr">Gasto por unidad (ranking)</div>
+    <table>
+      <thead>
+        <tr><th style="width:26px;">#</th><th>Unidad</th><th>Distribución</th><th class="num">Total</th><th class="num" style="width:60px;">%</th></tr>
+      </thead>
+      <tbody>
+        ${[
+          [1,'CV102','11,143',100, 36.4],
+          [2,'CV108','5,766', 52, 18.8],
+          [3,'CV104','5,766', 52, 18.8],
+          [4,'CV109','3,356', 30, 10.9],
+          [5,'CV100','1,153', 10,  3.8],
+          [6,'CV107','1,153', 10,  3.8],
+          [7,'CV106','1,153', 10,  3.8],
+          [8,'CV101','1,153', 10,  3.8],
+        ].map(([r,u,a,p,pct]) => `
+        <tr>
+          <td class="rank">${r}</td>
+          <td style="font-weight:700;">${u}</td>
+          <td class="bar-cell"><div class="bar-wrap"><div class="bar-fill" style="width:${p}%"></div></div></td>
+          <td class="num">$${a}</td>
+          <td class="num">${pct}%</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+
+    <div class="pdf-footer">
+      <span>Hermes Fleet · Reporte automático</span>
+      <span>Página 1 de 1</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- VERSION B — RESUMEN + DETALLE POR UNIDAD                     -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="version-block">
+  <div class="version-title">
+    <span class="version-badge">B</span>
+    <span class="version-label">+ Detalle por unidad (RECOMENDADA)</span>
+  </div>
+  <div class="page">
+    <div class="pdf-header">
+      <div class="pdf-brand">
+        <div class="pdf-logo">GTP</div>
+        <div>
+          <div class="pdf-brand-text">Hermes Fleet</div>
+          <div class="pdf-brand-name">GTP Transportes</div>
+        </div>
+      </div>
+      <div class="pdf-title-block">
+        <div class="pdf-title">Reporte de Gastos</div>
+        <div class="pdf-subtitle">Generado 2026-04-10 · por Gerencia</div>
+        <div class="pdf-period">Abril 2026 · 3 unidades</div>
+      </div>
+    </div>
+
+    <div class="kpi-hero">
+      <div class="kpi-hero-left">
+        <div class="label">Total filtrado (CV102 · CV108 · CV109)</div>
+        <div class="value">$20,265.00</div>
+        <div class="meta">6 registros · 3 unidades seleccionadas</div>
+      </div>
+      <div class="kpi-hero-right">
+        <div>Promedio / unidad</div>
+        <div class="big">$6,755.00</div>
+      </div>
+    </div>
+
+    <div class="section-hdr">Gasto por tipo</div>
+    <div class="type-grid">
+      <div class="type-cell c-combustible"><div class="name">Combustible</div><div class="amt">$14,499</div><div class="pct">71.5%</div></div>
+      <div class="type-cell c-refaccion"><div class="name">Refacciones</div><div class="amt">$0</div><div class="pct">0%</div></div>
+      <div class="type-cell c-servicio"><div class="name">Servicio</div><div class="amt">$5,766</div><div class="pct">28.5%</div></div>
+      <div class="type-cell c-otro"><div class="name">Otros</div><div class="amt">$0</div><div class="pct">0%</div></div>
+    </div>
+
+    <!-- CV102 detail -->
+    <div class="unit-block">
+      <div class="unit-block-hdr">
+        <div>
+          <div class="unit-id">CV102</div>
+          <div class="unit-meta">2 gastos · Camion Volteo</div>
+        </div>
+        <div class="unit-tot">$11,143.00</div>
+      </div>
+      <table>
+        <thead><tr><th>Fecha</th><th>Proveedor</th><th>Tipo</th><th>Folio</th><th class="num">Total</th></tr></thead>
+        <tbody>
+          <tr><td>05/04/2026</td><td>GASOLINERA LOS OLIVOS</td><td><span class="chip combustible">Combustible</span></td><td>A-0421</td><td class="num">$5,377.00</td></tr>
+          <tr><td>11/04/2026</td><td>PEMEX TUXTLA</td><td><span class="chip combustible">Combustible</span></td><td>B-1102</td><td class="num">$5,766.00</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- CV108 detail -->
+    <div class="unit-block">
+      <div class="unit-block-hdr">
+        <div>
+          <div class="unit-id">CV108</div>
+          <div class="unit-meta">1 gasto · Camion Volteo</div>
+        </div>
+        <div class="unit-tot">$5,766.00</div>
+      </div>
+      <table>
+        <thead><tr><th>Fecha</th><th>Proveedor</th><th>Tipo</th><th>Folio</th><th class="num">Total</th></tr></thead>
+        <tbody>
+          <tr><td>08/04/2026</td><td>TALLER ROBLES</td><td><span class="chip servicio">Servicio</span></td><td>S-0089</td><td class="num">$5,766.00</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- CV109 detail -->
+    <div class="unit-block">
+      <div class="unit-block-hdr">
+        <div>
+          <div class="unit-id">CV109</div>
+          <div class="unit-meta">3 gastos · Camion Volteo</div>
+        </div>
+        <div class="unit-tot">$3,356.00</div>
+      </div>
+      <table>
+        <thead><tr><th>Fecha</th><th>Proveedor</th><th>Tipo</th><th>Folio</th><th class="num">Total</th></tr></thead>
+        <tbody>
+          <tr><td>03/04/2026</td><td>PEMEX TUXTLA</td><td><span class="chip combustible">Combustible</span></td><td>B-0987</td><td class="num">$1,200.00</td></tr>
+          <tr><td>06/04/2026</td><td>PEMEX LOS OLIVOS</td><td><span class="chip combustible">Combustible</span></td><td>A-0456</td><td class="num">$1,156.00</td></tr>
+          <tr><td>09/04/2026</td><td>GASOLINERA LA RIVIERA</td><td><span class="chip combustible">Combustible</span></td><td>C-2001</td><td class="num">$1,000.00</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="pdf-footer">
+      <span>Hermes Fleet · Reporte automático</span>
+      <span>Página 1 de 1</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- VERSION C — RESUMEN + DETALLE + LINE ITEMS                   -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="version-block">
+  <div class="version-title">
+    <span class="version-badge">C</span>
+    <span class="version-label">+ Line items (partes, cantidades) desglose completo</span>
+  </div>
+  <div class="page">
+    <div class="pdf-header">
+      <div class="pdf-brand">
+        <div class="pdf-logo">GTP</div>
+        <div>
+          <div class="pdf-brand-text">Hermes Fleet</div>
+          <div class="pdf-brand-name">GTP Transportes</div>
+        </div>
+      </div>
+      <div class="pdf-title-block">
+        <div class="pdf-title">Reporte Detallado de Gastos</div>
+        <div class="pdf-subtitle">Generado 2026-04-10 · por Gerencia</div>
+        <div class="pdf-period">Abril 2026 · con line items</div>
+      </div>
+    </div>
+
+    <div class="kpi-hero">
+      <div class="kpi-hero-left">
+        <div class="label">Total filtrado</div>
+        <div class="value">$11,143.00</div>
+        <div class="meta">2 registros · CV102</div>
+      </div>
+      <div class="kpi-hero-right">
+        <div>Unidad</div>
+        <div class="big">CV102</div>
+      </div>
+    </div>
+
+    <div class="section-hdr">Por tipo</div>
+    <div class="type-grid">
+      <div class="type-cell c-combustible"><div class="name">Combustible</div><div class="amt">$11,143</div><div class="pct">100%</div></div>
+      <div class="type-cell c-refaccion"><div class="name">Refacciones</div><div class="amt">$0</div><div class="pct">0%</div></div>
+      <div class="type-cell c-servicio"><div class="name">Servicio</div><div class="amt">$0</div><div class="pct">0%</div></div>
+      <div class="type-cell c-otro"><div class="name">Otros</div><div class="amt">$0</div><div class="pct">0%</div></div>
+    </div>
+
+    <div class="unit-block">
+      <div class="unit-block-hdr">
+        <div>
+          <div class="unit-id">CV102</div>
+          <div class="unit-meta">2 gastos · Camion Volteo</div>
+        </div>
+        <div class="unit-tot">$11,143.00</div>
+      </div>
+      <table>
+        <thead><tr><th>Fecha</th><th>Proveedor</th><th>Tipo</th><th class="num">Total</th></tr></thead>
+        <tbody>
+          <tr><td>05/04/2026</td><td>GASOLINERA LOS OLIVOS</td><td><span class="chip combustible">Combustible</span></td><td class="num">$5,377.00</td></tr>
+          <tr><td colspan="4" class="line-items-sub">↳ Diesel UBA 150 lt × $35.00 = $5,250.00 · Aditivo Shell 2 lt × $63.50 = $127.00</td></tr>
+
+          <tr><td>11/04/2026</td><td>PEMEX TUXTLA</td><td><span class="chip combustible">Combustible</span></td><td class="num">$5,766.00</td></tr>
+          <tr><td colspan="4" class="line-items-sub">↳ Diesel 160 lt × $36.04 = $5,766.00</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="pdf-footer">
+      <span>Hermes Fleet · Reporte con line items</span>
+      <span>Página 1 de 1</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- VERSION D — COMPLETO CON RECIBOS                             -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="version-block">
+  <div class="version-title">
+    <span class="version-badge">D</span>
+    <span class="version-label">+ Miniaturas de recibos (completo, más pesado)</span>
+  </div>
+  <div class="page">
+    <div class="pdf-header">
+      <div class="pdf-brand">
+        <div class="pdf-logo">GTP</div>
+        <div>
+          <div class="pdf-brand-text">Hermes Fleet</div>
+          <div class="pdf-brand-name">GTP Transportes</div>
+        </div>
+      </div>
+      <div class="pdf-title-block">
+        <div class="pdf-title">Reporte Completo con Recibos</div>
+        <div class="pdf-subtitle">Generado 2026-04-10 · por Gerencia</div>
+        <div class="pdf-period">Abril 2026 · auditoría completa</div>
+      </div>
+    </div>
+
+    <div class="kpi-hero">
+      <div class="kpi-hero-left">
+        <div class="label">Total auditado</div>
+        <div class="value">$11,143.00</div>
+        <div class="meta">2 registros · CV102 · 2 recibos adjuntos</div>
+      </div>
+      <div class="kpi-hero-right">
+        <div>Unidad</div>
+        <div class="big">CV102</div>
+      </div>
+    </div>
+
+    <div class="unit-block">
+      <div class="unit-block-hdr">
+        <div>
+          <div class="unit-id">CV102</div>
+          <div class="unit-meta">2 gastos · Camion Volteo</div>
+        </div>
+        <div class="unit-tot">$11,143.00</div>
+      </div>
+      <table>
+        <thead><tr><th>Fecha</th><th>Proveedor</th><th>Tipo</th><th class="num">Total</th></tr></thead>
+        <tbody>
+          <tr><td>05/04/2026</td><td>GASOLINERA LOS OLIVOS</td><td><span class="chip combustible">Combustible</span></td><td class="num">$5,377.00</td></tr>
+          <tr><td colspan="4" class="line-items-sub">↳ Diesel UBA 150 lt × $35.00 = $5,250.00 · Aditivo Shell 2 lt × $63.50 = $127.00</td></tr>
+
+          <tr><td>11/04/2026</td><td>PEMEX TUXTLA</td><td><span class="chip combustible">Combustible</span></td><td class="num">$5,766.00</td></tr>
+          <tr><td colspan="4" class="line-items-sub">↳ Diesel 160 lt × $36.04 = $5,766.00</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section-hdr">Recibos adjuntos (imagen por gasto)</div>
+    <div class="receipts-grid">
+      <div class="receipt-thumb"><div class="emoji">🧾</div>Recibo<br/>GAS-0421</div>
+      <div class="receipt-thumb"><div class="emoji">🧾</div>Recibo<br/>PEM-1102</div>
+      <div class="receipt-thumb" style="background:#FAFAFA;border-style:solid;color:#D1D5DB;">&nbsp;</div>
+      <div class="receipt-thumb" style="background:#FAFAFA;border-style:solid;color:#D1D5DB;">&nbsp;</div>
+    </div>
+
+    <div class="pdf-footer">
+      <span>Hermes Fleet · Reporte completo con recibos</span>
+      <span>Página 1 de 2+</span>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<div style="text-align:center;margin-top:40px;color:#475569;font-size:12px;max-width:700px;margin-left:auto;margin-right:auto;padding-bottom:20px;">
+  <p style="margin-bottom:8px;"><b style="color:#E2E8F0;">Comparativa rápida:</b></p>
+  <table style="margin:0 auto;background:#1E293B;border-radius:8px;padding:12px;color:#CBD5E1;font-size:11px;">
+    <tr style="color:#94A3B8;"><td style="padding:4px 12px;">Versión</td><td style="padding:4px 12px;">Páginas</td><td style="padding:4px 12px;">Peso aprox</td><td style="padding:4px 12px;">Para</td></tr>
+    <tr><td style="padding:4px 12px;">A</td><td style="padding:4px 12px;">1</td><td style="padding:4px 12px;">~40 KB</td><td style="padding:4px 12px;">Dueño / vista rápida</td></tr>
+    <tr><td style="padding:4px 12px;">B</td><td style="padding:4px 12px;">1–3</td><td style="padding:4px 12px;">~80 KB</td><td style="padding:4px 12px;">Contabilidad mensual</td></tr>
+    <tr><td style="padding:4px 12px;">C</td><td style="padding:4px 12px;">2–5</td><td style="padding:4px 12px;">~120 KB</td><td style="padding:4px 12px;">Auditoría de partes</td></tr>
+    <tr><td style="padding:4px 12px;">D</td><td style="padding:4px 12px;">3–10+</td><td style="padding:4px 12px;">~500 KB – 5 MB</td><td style="padding:4px 12px;">Auditoría completa</td></tr>
+  </table>
+</div>
+
+</body>
+</html>
