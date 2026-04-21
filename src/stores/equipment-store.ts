@@ -31,7 +31,7 @@ function parseEquipmentRow(row: string[]): Equipment | null {
     model: [marca, modelo].filter(Boolean).join(' ') || unit_id,
     type: (row[3] ?? '').trim() || 'Equipo',
     client: 'GTP',
-    status: normalizeStatus(row[9] ?? ''),
+    status: normalizeStatus(row[8] ?? ''),
     current_horometro: parseFloat((row[10] ?? '').replace(/,/g, '')) || 0,
     next_pm_level: '',
     next_pm_horometro: 0,
