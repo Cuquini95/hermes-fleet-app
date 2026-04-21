@@ -4,38 +4,40 @@ import type { Equipment } from '../types/equipment';
 
 // ── Status normalization ───────────────────────────────────────────────────────
 
-function normalizeStatus(raw: string): string {
-  const s = (raw ?? '').toLowerCase().trim();
-  if (s === 'operativo') return 'operativo';
-  if (s.includes('reparac')) return 'taller';
-  if (s.includes('traslado')) return 'alerta';
-  if (s.includes('alerta')) return 'alerta';
-  if (s.includes('taller')) return 'taller';
+function normalizeStatus(raw: string): Equipment['status'] {
+  const s = (raw ?? '')
+    .toLowerCase()
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, ''); // strip accents
+  if (s === 'operativo' || s.startsWith('en operac') || s === 'disponible') return 'operativo';
+  if (s.includes('reparac') || s.includes('falla') || s.startsWith('en pm') || s === 'pm' || s.includes('mantenimiento') || s.startsWith('taller')) return 'taller';
+  if (s.includes('traslado') || s.includes('alerta')) return 'alerta';
   return 'inactivo';
 }
 
 // ── Row parser ─────────────────────────────────────────────────────────────────
-// Sheet columns (0-indexed):
-//  0=#  1=COD1  2=COD2  3=Descripción  4=Marca  5=Modelo  6=Año
-//  7=Serie  8=Ubicación  9=Estado  10=Lectura Actual Hr/Km  11=Fecha Lectura
+// Sheet "01 Inventario" columns (0-indexed) — verified live 2026-04-21:
+//  0=#  1=COD1  2=Descripción  3=Marca  4=Modelo  5=Año
+//  6=Serie  7=Ubicación  8=Estado  9=Lectura Hr/Km  10=Fecha Lectura  11=Últ Cambio
 
 function parseEquipmentRow(row: string[]): Equipment | null {
   const unit_id = (row[1] ?? '').trim();
-  if (!unit_id) return null; // skip empty rows
+  if (!unit_id) return null;
 
-  const marca = (row[4] ?? '').trim();
-  const modelo = (row[5] ?? '').trim();
+  const marca = (row[3] ?? '').trim();
+  const modelo = (row[4] ?? '').trim();
 
   return {
     unit_id,
     model: [marca, modelo].filter(Boolean).join(' ') || unit_id,
-    type: (row[3] ?? '').trim() || 'Equipo',
+    type: (row[2] ?? '').trim() || 'Equipo',
     client: 'GTP',
     status: normalizeStatus(row[8] ?? ''),
-    current_horometro: parseFloat((row[10] ?? '').replace(/,/g, '')) || 0,
+    current_horometro: parseFloat((row[9] ?? '').replace(/,/g, '')) || 0,
     next_pm_level: '',
     next_pm_horometro: 0,
-    last_inspection_date: (row[11] ?? '').trim(),
+    last_inspection_date: (row[10] ?? '').trim(),
     last_inspection_result: '',
     assigned_operator: '',
   };
@@ -69,8 +71,9 @@ export const useEquipmentStore = create<EquipmentState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const rows = await readRange(SHEET_TABS.FLOTA);
-      // Rows 0–4 are branding/headers; real data starts at row 5 (index 5)
-      const DATA_START = 5;
+      // Sheet layout: rows 0-1 = title/section headers, row 2 = column headers,
+      // data starts at row 3.
+      const DATA_START = 3;
       const parsed = rows
         .slice(DATA_START)
         .map(parseEquipmentRow)
