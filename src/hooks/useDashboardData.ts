@@ -13,6 +13,21 @@ export interface DashboardData {
   refresh: () => void;
 }
 
+// ── Module-level TTL session cache ────────────────────────────────────────────
+// Survives component unmounts (e.g. navigating away and back).
+// Cleared on explicit refresh() or after CACHE_TTL_MS.
+interface CacheEntry {
+  criticalOTs: number;
+  avgConsumption: string;
+  alertsToday: number;
+  ts: number;
+}
+
+const CACHE_TTL_MS = 30_000; // 30 seconds
+let _cache: CacheEntry | null = null;
+
+// ── Sheets fetchers ───────────────────────────────────────────────────────────
+
 async function fetchCriticalOTs(signal?: AbortSignal): Promise<number> {
   const rows = await readRange(SHEET_TABS.ORDENES_TRABAJO, signal);
   let count = 0;
@@ -60,6 +75,8 @@ async function fetchAlertsToday(signal?: AbortSignal): Promise<number> {
   return count;
 }
 
+// ── Hook ──────────────────────────────────────────────────────────────────────
+
 export function useDashboardData(): DashboardData {
   const [criticalOTs, setCriticalOTs] = useState(0);
   const [avgConsumption, setAvgConsumption] = useState('--');
@@ -77,6 +94,18 @@ export function useDashboardData(): DashboardData {
     : 0;
 
   const fetchAll = useCallback(async (signal?: AbortSignal) => {
+    // Serve from cache if still fresh — avoids redundant Sheets API calls
+    // when the user navigates away and back within the TTL window.
+    const now = Date.now();
+    if (_cache !== null && now - _cache.ts < CACHE_TTL_MS) {
+      setCriticalOTs(_cache.criticalOTs);
+      setAvgConsumption(_cache.avgConsumption);
+      setAlertsToday(_cache.alertsToday);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
@@ -90,28 +119,19 @@ export function useDashboardData(): DashboardData {
 
     const [otsResult, consumptionResult, alertsResult] = results;
 
-    if (otsResult.status === 'fulfilled') {
-      setCriticalOTs(otsResult.value);
-    } else {
-      setCriticalOTs(0);
-    }
+    const newOTs          = otsResult.status          === 'fulfilled' ? otsResult.value          : 0;
+    const newConsumption  = consumptionResult.status   === 'fulfilled' ? consumptionResult.value   : '--';
+    const newAlerts       = alertsResult.status        === 'fulfilled' ? alertsResult.value        : 0;
 
-    if (consumptionResult.status === 'fulfilled') {
-      setAvgConsumption(consumptionResult.value);
-    } else {
-      setAvgConsumption('--');
-    }
-
-    if (alertsResult.status === 'fulfilled') {
-      setAlertsToday(alertsResult.value);
-    } else {
-      setAlertsToday(0);
-    }
+    setCriticalOTs(newOTs);
+    setAvgConsumption(newConsumption);
+    setAlertsToday(newAlerts);
 
     const anyFailed = results.some((r) => r.status === 'rejected');
-    if (anyFailed) {
-      setError('Algunos datos no pudieron cargarse');
-    }
+    setError(anyFailed ? 'Algunos datos no pudieron cargarse' : null);
+
+    // Populate cache so the next mount within TTL is instant.
+    _cache = { criticalOTs: newOTs, avgConsumption: newConsumption, alertsToday: newAlerts, ts: Date.now() };
 
     setLoading(false);
   }, []);
@@ -127,6 +147,7 @@ export function useDashboardData(): DashboardData {
   }, [fetchAll]);
 
   const refresh = useCallback(() => {
+    _cache = null; // invalidate so next fetch hits Sheets
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
