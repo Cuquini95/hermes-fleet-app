@@ -152,21 +152,26 @@ export default function OrdenCompraPrintPage() {
   return (
     <>
       <style>{`
+        /* Force background colors to render in PDF / printer output.
+           Without this, browsers strip red banners (ULTRATK logo, VENDEDOR
+           bar, items table header) and they print as outlines only. */
+        .po-page, .po-page * {
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+          color-adjust: exact !important;
+        }
+
         @media print {
           /* Use a 0 page margin so the .po-page's own padding controls the
              printable border — keeps proportions identical to screen. */
           @page { size: letter; margin: 0; }
           html, body { background: white !important; margin: 0 !important; padding: 0 !important; }
 
-          /* Hide everything except the PO page (navy header, bottom nav,
-             cookie banner, chat bubble, etc.). visibility: hidden keeps
-             layout space stable so absolute children don't shift. */
+          /* Hide everything except the PO page. */
           body * { visibility: hidden !important; }
           .po-page, .po-page * { visibility: visible !important; }
 
-          /* Pin the PO page to the top of the printable area, full width.
-             KEEP its padding (px-12 py-10) so the margin around content
-             matches the on-screen rendering pixel-for-pixel. */
+          /* Pin the PO page to the printable area at letter width. */
           .po-page {
             position: absolute !important;
             top: 0 !important;
@@ -179,9 +184,7 @@ export default function OrdenCompraPrintPage() {
             background: white !important;
           }
 
-          /* Avoid mid-row page breaks inside the items table */
           table, tr, .po-page { page-break-inside: avoid; }
-          /* Disable automatic font-size adjustment some browsers apply when printing */
           html { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
         }
       `}</style>
