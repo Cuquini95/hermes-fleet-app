@@ -23,7 +23,8 @@ import SuccessToast from '../components/ui/SuccessToast';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type BoletaStatus = 'extracting' | 'ready' | 'error' | 'saved';
+// 'ocr_failed' = OCR tried but returned an error; row stays editable/selectable
+type BoletaStatus = 'extracting' | 'ready' | 'ocr_failed' | 'saved';
 
 interface BoletaItem {
   id: string;
@@ -74,7 +75,8 @@ export default function BulkBoletasPage() {
   const [toastVisible, setToastVisible] = useState(false);
 
   // ── Derived ────────────────────────────────────────────────────────────────
-  const readyBoletas = boletas.filter((b) => b.status === 'ready');
+  // 'ocr_failed' boletas stay editable/selectable — user fills fields manually
+  const readyBoletas = boletas.filter((b) => b.status === 'ready' || b.status === 'ocr_failed');
   const selectedBoletas = readyBoletas.filter((b) => b.selected);
   const processingCount = boletas.filter((b) => b.status === 'extracting').length;
   const allDone = boletas.length > 0 && processingCount === 0;
@@ -145,9 +147,21 @@ export default function BulkBoletasPage() {
             );
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : 'Error OCR';
+            // Fall back to editable state so the user can still fill in fields
+            // manually and submit — OCR failure should never block the workflow.
             setBoletas((prev) =>
               prev.map((b) =>
-                b.id === item.id ? { ...b, status: 'error', errorMsg: msg } : b
+                b.id === item.id
+                  ? {
+                      ...b,
+                      status: 'ocr_failed',
+                      errorMsg: msg,
+                      folio: '',
+                      hora: '',
+                      fletero: '',
+                      capacidad_m3: '',
+                    }
+                  : b
               )
             );
           }
@@ -167,7 +181,11 @@ export default function BulkBoletasPage() {
   function toggleAll(): void {
     const allSelected = readyBoletas.every((b) => b.selected);
     setBoletas((prev) =>
-      prev.map((b) => (b.status === 'ready' ? { ...b, selected: !allSelected } : b))
+      prev.map((b) =>
+        b.status === 'ready' || b.status === 'ocr_failed'
+          ? { ...b, selected: !allSelected }
+          : b
+      )
     );
   }
 
@@ -318,8 +336,8 @@ export default function BulkBoletasPage() {
                   borderColor:
                     b.status === 'ready' || b.status === 'saved'
                       ? '#22C55E'
-                      : b.status === 'error'
-                      ? '#EF4444'
+                      : b.status === 'ocr_failed'
+                      ? '#D97706'
                       : '#F59E0B',
                 }}
               />
@@ -328,8 +346,8 @@ export default function BulkBoletasPage() {
                   <Loader2 size={16} className="text-white animate-spin" />
                 </div>
               )}
-              {b.status === 'error' && (
-                <div className="absolute inset-0 rounded-lg bg-red-500/50 flex items-center justify-center">
+              {b.status === 'ocr_failed' && (
+                <div className="absolute inset-0 rounded-lg bg-amber-500/60 flex items-center justify-center">
                   <AlertCircle size={14} className="text-white" />
                 </div>
               )}
@@ -504,17 +522,16 @@ export default function BulkBoletasPage() {
                     <Loader2 size={14} className="animate-spin flex-shrink-0" style={{ color: '#F59E0B' }} />
                     <span className="text-sm text-text-secondary">Extrayendo...</span>
                   </div>
-                ) : b.status === 'error' ? (
-                  <div className="flex items-center gap-2 py-1">
-                    <AlertCircle size={14} className="text-red-500 flex-shrink-0" />
-                    <span className="text-xs text-red-600 flex-1 truncate">
-                      {b.errorMsg?.slice(0, 55) ?? 'Error OCR'}
-                    </span>
-                    <button type="button" onClick={() => removeBoleta(b.id)}>
-                      <Trash2 size={14} className="text-red-400" />
-                    </button>
-                  </div>
                 ) : (
+                  <>
+                    {b.status === 'ocr_failed' && (
+                      <div className="flex items-center gap-1 mb-1">
+                        <AlertCircle size={11} className="flex-shrink-0" style={{ color: '#D97706' }} />
+                        <span className="text-[10px]" style={{ color: '#D97706' }}>
+                          OCR falló · llena los campos manualmente
+                        </span>
+                      </div>
+                    )}
                   <div
                     className="grid gap-1 items-center"
                     style={{ gridTemplateColumns: '20px 1fr 1fr 68px 68px 20px' }}
@@ -571,6 +588,7 @@ export default function BulkBoletasPage() {
                       <Trash2 size={13} className="text-red-400" />
                     </button>
                   </div>
+                  </>
                 )}
               </div>
             ))}
