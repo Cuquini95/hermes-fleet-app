@@ -25,7 +25,7 @@ const COMPANY = {
 }
 
 const RED = '#E2231A'
-const TABLE_MIN_ROWS = 14
+const TABLE_MIN_ROWS = 8
 
 interface OCHeader {
   oc_id: string
@@ -151,9 +151,30 @@ export default function OrdenCompraPrintPage() {
       <style>{`
         @media print {
           @page { size: letter; margin: 1.3cm; }
-          body { background: white !important; }
-          .no-print { display: none !important; }
-          .po-page { box-shadow: none !important; border: none !important; margin: 0 !important; padding: 0 !important; max-width: none !important; }
+          html, body { background: white !important; margin: 0 !important; padding: 0 !important; }
+
+          /* Hide EVERYTHING by default, then re-show only the PO page.
+             This guarantees the navy header, bottom nav, cookie banner,
+             chat bubble and any other AppShell chrome are stripped out. */
+          body * { visibility: hidden !important; }
+          .po-page, .po-page * { visibility: visible !important; }
+
+          /* Position the PO page at the top of the printable area */
+          .po-page {
+            position: absolute !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100% !important;
+            box-shadow: none !important;
+            border: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            max-width: none !important;
+          }
+
+          /* Avoid mid-row page breaks inside the items table */
+          table { page-break-inside: avoid; }
+          tr    { page-break-inside: avoid; page-break-after: auto; }
         }
       `}</style>
 
