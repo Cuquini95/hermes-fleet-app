@@ -50,6 +50,7 @@ const PMWorkOrderPage    = lazy(() => import('./pages/PMWorkOrderPage'));
 const BriefingCard       = lazy(() => import('./components/dashboard/BriefingCard'));
 const AdminActivosPage         = lazy(() => import('./pages/AdminActivosPage'));
 const AdminOrdenesCompraPage   = lazy(() => import('./pages/AdminOrdenesCompraPage'));
+const AdminProveedoresPage     = lazy(() => import('./pages/AdminProveedoresPage'));
 const WorkOrdersPage     = lazy(() => import('./pages/WorkOrdersPage'));
 const NeumaticosPage     = lazy(() => import('./pages/NeumaticosPage'));
 const PedidosPage        = lazy(() => import('./pages/PedidosPage'));
@@ -351,6 +352,15 @@ export default function App() {
             <PageBoundary role={role}>
               <Suspense fallback={<PageLoader />}>
                 <AdminOrdenesCompraPage />
+              </Suspense>
+            </PageBoundary>
+          </RequireRole>
+        } />
+        <Route path="/admin/proveedores" element={
+          <RequireRole roles={['gerencia']}>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <AdminProveedoresPage />
               </Suspense>
             </PageBoundary>
           </RequireRole>

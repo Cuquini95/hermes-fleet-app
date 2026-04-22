@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Activity, AlertTriangle, Fuel, Bell, RefreshCw, Package, ShoppingCart } from 'lucide-react';
+import { Activity, AlertTriangle, Fuel, Bell, RefreshCw, Package, ShoppingCart, Building2 } from 'lucide-react';
 import { useEquipmentList } from '../../hooks/useEquipmentList';
 import { useDashboardData } from '../../hooks/useDashboardData';
 import { useAuthStore } from '../../stores/auth-store';
@@ -125,13 +125,13 @@ export default function ExecutiveDashboard() {
           {/* Daily actions */}
           <AccionesDelDia />
 
-          {/* Admin shortcuts — feeds Power-GTP dashboards (Gerencia only) */}
+          {/* Admin shortcuts (Gerencia only) */}
           {role === 'gerencia' && (
             <div className="mt-2">
               <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide mb-2">
-                Admin — datos para Power-GTP
+                Admin
               </p>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <Link
                   to="/admin/activos"
                   className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 hover:border-blue-400 transition-colors"
@@ -141,9 +141,19 @@ export default function ExecutiveDashboard() {
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-text">Activos</p>
-                    <p className="text-xs text-text-secondary truncate">
-                      Ciclo de vida y depreciación
-                    </p>
+                    <p className="text-xs text-text-secondary truncate">Ciclo de vida</p>
+                  </div>
+                </Link>
+                <Link
+                  to="/admin/proveedores"
+                  className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 hover:border-blue-400 transition-colors"
+                >
+                  <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
+                    <Building2 size={20} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-text">Proveedores</p>
+                    <p className="text-xs text-text-secondary truncate">Catálogo</p>
                   </div>
                 </Link>
                 <Link
@@ -155,9 +165,7 @@ export default function ExecutiveDashboard() {
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-text">Órdenes de Compra</p>
-                    <p className="text-xs text-text-secondary truncate">
-                      Crear y aprobar OCs
-                    </p>
+                    <p className="text-xs text-text-secondary truncate">Crear OC</p>
                   </div>
                 </Link>
               </div>

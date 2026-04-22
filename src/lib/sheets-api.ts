@@ -486,4 +486,7 @@ export const SHEET_TABS = {
   NEUMATICOS: '13 Neumáticos',
   GASTOS: '02 Gastos',
   WORKSHOP_SCHEDULE: 'WORKSHOP_SCHEDULE',
+  PROVEEDORES: 'Proveedores',
+  ORDENES_COMPRA: 'Órdenes de Compra',
+  OC_LINEAS: 'OC_Lineas',
 } as const;
