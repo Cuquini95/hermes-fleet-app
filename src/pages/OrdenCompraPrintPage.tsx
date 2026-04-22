@@ -286,41 +286,47 @@ export default function OrdenCompraPrintPage() {
           )}
         </div>
 
-        {/* Items table */}
-        <table className="w-full border-collapse mb-2" style={{ fontSize: 11 }}>
+        {/* Items table — explicit 1px black borders that survive print engines.
+            Empty cells get a non-breaking space so their bottom border doesn't
+            collapse, and every row is locked at 26px height. */}
+        <table
+          className="w-full mb-2"
+          style={{ fontSize: 11, borderCollapse: 'collapse', border: '1px solid #000' }}
+        >
           <thead>
             <tr style={{ backgroundColor: RED, color: 'white' }}>
-              <th className="border border-white px-2 py-2 text-center font-bold" style={{ width: '8%' }}>ITEM #</th>
-              <th className="border border-white px-2 py-2 text-center font-bold" style={{ width: '38%' }}>DESCRIPCION</th>
-              <th className="border border-white px-2 py-2 text-center font-bold" style={{ width: '12%' }}>CANTIDAD</th>
-              <th className="border border-white px-2 py-2 text-center font-bold" style={{ width: '21%' }}>PRECIO UNITARIO</th>
-              <th className="border border-white px-2 py-2 text-center font-bold" style={{ width: '21%' }}>TOTAL</th>
+              <th style={{ ...thStyle, width: '8%' }}>ITEM #</th>
+              <th style={{ ...thStyle, width: '38%' }}>DESCRIPCION</th>
+              <th style={{ ...thStyle, width: '12%' }}>CANTIDAD</th>
+              <th style={{ ...thStyle, width: '21%' }}>PRECIO UNITARIO</th>
+              <th style={{ ...thStyle, width: '21%' }}>TOTAL</th>
             </tr>
           </thead>
           <tbody>
             {lines.map((l) => (
-              <tr key={l.numero}>
-                <td className="border border-gray-400 px-2 py-1 text-center" style={{ height: 22 }}>{l.numero}</td>
-                <td className="border border-gray-400 px-2 py-1">{l.descripcion}</td>
-                <td className="border border-gray-400 px-2 py-1 text-center">
+              <tr key={l.numero} style={{ height: 26 }}>
+                <td style={{ ...tdStyle, textAlign: 'center' }}>{l.numero}</td>
+                <td style={tdStyle}>{l.descripcion}</td>
+                <td style={{ ...tdStyle, textAlign: 'center' }}>
                   {l.cantidad > 0 ? l.cantidad.toLocaleString('es-MX') : '-'}
                 </td>
-                <td className="border border-gray-400 px-2 py-1 text-right tabular-nums">
+                <td style={{ ...tdStyle, textAlign: 'right' }} className="tabular-nums">
                   {l.precio_unitario > 0 ? fmt(l.precio_unitario) : '-'}
                 </td>
-                <td className="border border-gray-400 px-2 py-1 text-right tabular-nums" style={{ backgroundColor: '#F3F3F3' }}>
+                <td style={{ ...tdStyle, textAlign: 'right', backgroundColor: '#F3F3F3' }} className="tabular-nums">
                   {fmtOrDash(l.total)}
                 </td>
               </tr>
             ))}
-            {/* Padding rows so the grid keeps the Excel feel */}
             {Array.from({ length: blankRows }).map((_, i) => (
-              <tr key={`blank-${i}`}>
-                <td className="border border-gray-400 px-2 py-1" style={{ height: 22 }}>&nbsp;</td>
-                <td className="border border-gray-400 px-2 py-1"></td>
-                <td className="border border-gray-400 px-2 py-1"></td>
-                <td className="border border-gray-400 px-2 py-1"></td>
-                <td className="border border-gray-400 px-2 py-1 text-right tabular-nums" style={{ backgroundColor: '#F3F3F3' }}>-</td>
+              <tr key={`blank-${i}`} style={{ height: 26 }}>
+                <td style={tdStyle}>&nbsp;</td>
+                <td style={tdStyle}>&nbsp;</td>
+                <td style={tdStyle}>&nbsp;</td>
+                <td style={tdStyle}>&nbsp;</td>
+                <td style={{ ...tdStyle, textAlign: 'right', backgroundColor: '#F3F3F3' }} className="tabular-nums">
+                  -
+                </td>
               </tr>
             ))}
           </tbody>
@@ -387,6 +393,21 @@ export default function OrdenCompraPrintPage() {
       </div>
     </>
   )
+}
+
+// Inline style constants — explicit pixel borders that survive both screen
+// rendering and the browser print pipeline (some engines drop sub-pixel
+// borders or strip Tailwind's default border-color when going to PDF).
+const thStyle: React.CSSProperties = {
+  border: '1px solid #000',
+  padding: '6px 8px',
+  textAlign: 'center',
+  fontWeight: 700,
+}
+const tdStyle: React.CSSProperties = {
+  border: '1px solid #000',
+  padding: '4px 8px',
+  verticalAlign: 'middle',
 }
 
 function TotalRow({ label, value }: { label: string; value: string }) {
