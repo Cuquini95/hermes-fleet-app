@@ -14,7 +14,7 @@ import {
   AlertCircle,
   Upload,
 } from 'lucide-react';
-import { TRANSPORT_UNITS } from '../data/transport-units';
+import { TRANSPORT_UNITS, unitByMackNumber, unitByPlates } from '../data/transport-units';
 import { mexicoDateInput } from '../lib/date-utils';
 import { appendRow, ocrBoleta, SHEET_TABS, type OcrBoletaResult } from '../lib/sheets-api';
 import { useAuthStore } from '../stores/auth-store';
@@ -37,6 +37,8 @@ interface BoletaItem {
   fletero: string;
   capacidad_m3: string;
   flete: string;
+  /** Per-boleta truck unit pre-filled from OCR placas — overrides the shared unidad default */
+  unidad: string;
 }
 
 const MATERIAL_OPTIONS = [
@@ -81,9 +83,10 @@ export default function BulkBoletasPage() {
   const processingCount = boletas.filter((b) => b.status === 'extracting').length;
   const allDone = boletas.length > 0 && processingCount === 0;
 
+  // Every selected boleta must have a truck (per-boleta OR shared fallback)
   const canSubmit =
     selectedBoletas.length > 0 &&
-    unidad !== '' &&
+    selectedBoletas.every((b) => (b.unidad || unidad) !== '') &&
     rutaOrigen.trim() !== '' &&
     rutaDestino.trim() !== '';
 
@@ -114,6 +117,7 @@ export default function BulkBoletasPage() {
       fletero: '',
       capacidad_m3: '',
       flete: '',
+      unidad: '',
     }));
 
     setBoletas((prev) => [...prev, ...items]);
@@ -131,6 +135,10 @@ export default function BulkBoletasPage() {
           try {
             const ocr = await ocrBoleta(file);
             applySharedFromOcr(ocr);
+            // Resolve OCR's raw placas ("102", "CV102", "FJ7797A") → canonical unit_id
+            const resolvedUnit = ocr.placas
+              ? (unitByMackNumber(ocr.placas)?.unit_id ?? unitByPlates(ocr.placas)?.unit_id ?? '')
+              : '';
             setBoletas((prev) =>
               prev.map((b) =>
                 b.id === item.id
@@ -141,6 +149,7 @@ export default function BulkBoletasPage() {
                       hora: ocr.hora ?? '',
                       fletero: ocr.fletero ?? '',
                       capacidad_m3: ocr.capacidad_m3 ? String(ocr.capacidad_m3) : '',
+                      unidad: resolvedUnit,
                     }
                   : b
               )
@@ -204,10 +213,10 @@ export default function BulkBoletasPage() {
       try {
         const hora = b.hora.length === 5 ? `${b.hora}:00` : (b.hora || '00:00:00');
         await appendRow(SHEET_TABS.FLETES, [
-          fechaSheet,              // A  Fecha
-          hora,                    // B  Hora
-          unidad,                  // C  No. Unidad
-          b.fletero || userName,   // D  Conductor
+          fechaSheet,                 // A  Fecha
+          hora,                       // B  Hora
+          b.unidad || unidad,         // C  No. Unidad (per-boleta → shared fallback)
+          b.fletero || userName,      // D  Conductor
           kmTotal,                 // E  KM Cargado
           '0',                     // F  KM Vacío
           rutaOrigen,              // G  Origen
@@ -250,7 +259,11 @@ export default function BulkBoletasPage() {
       <ConfirmModal
         open={showConfirm}
         title={`Registrar ${selectedBoletas.length} boleta${selectedBoletas.length !== 1 ? 's' : ''}`}
-        message={`¿Confirmar ${selectedBoletas.length} boleta${selectedBoletas.length !== 1 ? 's' : ''} de ${rutaOrigen} → ${rutaDestino} para ${unidad || 'la unidad'}?`}
+        message={(() => {
+          const units = [...new Set(selectedBoletas.map((b) => b.unidad || unidad).filter(Boolean))];
+          const unitText = units.length === 1 ? units[0] : `${units.length} unidades (${units.join(', ')})`;
+          return `¿Confirmar ${selectedBoletas.length} boleta${selectedBoletas.length !== 1 ? 's' : ''} de ${rutaOrigen} → ${rutaDestino} · ${unitText}?`;
+        })()}
         onConfirm={handleConfirm}
         onCancel={() => setShowConfirm(false)}
       />
@@ -387,14 +400,17 @@ export default function BulkBoletasPage() {
 
           <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-text-secondary">
-              Unidad / Camión <span className="text-red-500">*</span>
+              Unidad default
+              <span className="ml-1 text-[10px] text-text-secondary font-normal">
+                (OCR detecta por boleta · esto es el respaldo)
+              </span>
             </label>
             <select
               value={unidad}
               onChange={(e) => setUnidad(e.target.value)}
               className="w-full rounded-xl border border-border p-2.5 bg-white text-text text-sm"
             >
-              <option value="">Seleccionar unidad...</option>
+              <option value="">Sin default — OCR detecta por boleta</option>
               {TRANSPORT_UNITS.map((u) => (
                 <option key={u.unit_id} value={u.unit_id}>
                   {u.unit_id}{u.plates ? ` — ${u.plates}` : ''}
@@ -587,6 +603,32 @@ export default function BulkBoletasPage() {
                     <button type="button" onClick={() => removeBoleta(b.id)}>
                       <Trash2 size={13} className="text-red-400" />
                     </button>
+                  </div>
+
+                  {/* Per-boleta truck selector — pre-filled from OCR placas */}
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <span className="text-[10px] font-semibold text-text-secondary whitespace-nowrap">
+                      Unidad:
+                    </span>
+                    <select
+                      value={b.unidad}
+                      onChange={(e) => updateBoleta(b.id, { unidad: e.target.value })}
+                      className="flex-1 rounded-lg text-xs bg-white px-1.5 py-1"
+                      style={{
+                        border: `1px solid ${b.unidad ? '#22C55E' : (unidad ? '#FDE68A' : '#F87171')}`,
+                        color: b.unidad ? '#15803D' : '#374151',
+                        fontWeight: b.unidad ? 600 : 400,
+                      }}
+                    >
+                      <option value="">
+                        {unidad ? `↳ usará default: ${unidad}` : '⚠ Seleccionar unidad'}
+                      </option>
+                      {TRANSPORT_UNITS.map((u) => (
+                        <option key={u.unit_id} value={u.unit_id}>
+                          {u.unit_id}{u.plates ? ` (${u.plates})` : ''}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   </>
                 )}
