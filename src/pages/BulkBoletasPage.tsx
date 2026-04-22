@@ -74,6 +74,7 @@ export default function BulkBoletasPage() {
   const [boletas, setBoletas] = useState<BoletaItem[]>([]);
 
   // ── UI state ───────────────────────────────────────────────────────────────
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitProgress, setSubmitProgress] = useState(0);
@@ -268,6 +269,31 @@ export default function BulkBoletasPage() {
         visible={toastVisible}
         onDismiss={() => { setToastVisible(false); navigate(-1); }}
       />
+      {/* ── Image lightbox ─────────────────────────────────────────────── */}
+      {previewUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.85)' }}
+          onClick={() => setPreviewUrl(null)}
+        >
+          <img
+            src={previewUrl}
+            alt="Boleta"
+            className="max-w-full max-h-full rounded-xl object-contain shadow-2xl"
+            style={{ maxHeight: '90dvh' }}
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            type="button"
+            onClick={() => setPreviewUrl(null)}
+            className="absolute top-4 right-4 w-9 h-9 rounded-full flex items-center justify-center text-white font-bold text-lg"
+            style={{ background: 'rgba(0,0,0,0.6)' }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       <ConfirmModal
         open={showConfirm}
         title={`Registrar ${selectedBoletas.length} boleta${selectedBoletas.length !== 1 ? 's' : ''}`}
@@ -356,7 +382,7 @@ export default function BulkBoletasPage() {
               <img
                 src={b.thumbUrl}
                 alt="boleta"
-                className="w-14 h-14 rounded-lg object-cover border-2"
+                className="w-14 h-14 rounded-lg object-cover border-2 cursor-zoom-in"
                 style={{
                   borderColor:
                     b.status === 'ready' || b.status === 'saved'
@@ -365,6 +391,7 @@ export default function BulkBoletasPage() {
                       ? '#D97706'
                       : '#F59E0B',
                 }}
+                onClick={() => setPreviewUrl(b.thumbUrl)}
               />
               {b.status === 'extracting' && (
                 <div className="absolute inset-0 rounded-lg bg-black/40 flex items-center justify-center">
@@ -625,6 +652,16 @@ export default function BulkBoletasPage() {
 
                   {/* Per-boleta truck selector — pre-filled from OCR placas */}
                   <div className="mt-1.5 flex items-center gap-1.5">
+                    {/* Mini thumbnail — tap to enlarge */}
+                    <button
+                      type="button"
+                      onClick={() => setPreviewUrl(b.thumbUrl)}
+                      className="flex-shrink-0 rounded-md overflow-hidden border-2 cursor-zoom-in"
+                      style={{ borderColor: '#FDE68A', width: 32, height: 32 }}
+                      title="Ver boleta"
+                    >
+                      <img src={b.thumbUrl} alt="" className="w-full h-full object-cover" />
+                    </button>
                     <span className="text-[10px] font-semibold text-text-secondary whitespace-nowrap">
                       Unidad:
                     </span>
