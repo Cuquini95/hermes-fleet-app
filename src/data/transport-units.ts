@@ -17,13 +17,13 @@ export const TRANSPORT_UNITS: TransportUnit[] = [
   { unit_id: 'CV100', mack_number: 100, type: 'Camion Volteo', plates: 'FJ7794A' },
   { unit_id: 'CV101', mack_number: 101, type: 'Camion Volteo', plates: 'FJ7796A' },
   { unit_id: 'CV102', mack_number: 102, type: 'Camion Volteo', plates: 'FJ7797A' },
-  { unit_id: 'CV103', mack_number: 103, type: 'Camion Volteo', plates: 'FJ7798A' },
+  { unit_id: 'CV103', mack_number: 103, type: 'Camion Volteo', plates: 'FJ7795A' },
   { unit_id: 'CV104', mack_number: 104, type: 'Camion Volteo', plates: 'FJ7793A' },
   { unit_id: 'CV105', mack_number: 105, type: 'Camion Volteo', plates: 'FJ7790A' },
-  { unit_id: 'CV106', mack_number: 106, type: 'Camion Volteo', plates: '' },
+  { unit_id: 'CV106', mack_number: 106, type: 'Camion Volteo', plates: 'FJ7798A' },
   { unit_id: 'CV107', mack_number: 107, type: 'Camion Volteo', plates: 'FJ7788A' },
   { unit_id: 'CV108', mack_number: 108, type: 'Camion Volteo', plates: 'FJ7791A' },
-  { unit_id: 'CV109', mack_number: 109, type: 'Camion Volteo', plates: '' },
+  { unit_id: 'CV109', mack_number: 109, type: 'Camion Volteo', plates: 'FJ7787A' },
   { unit_id: 'CV110', mack_number: 110, type: 'Camion Volteo', plates: 'FJ7792A' },
 ];
 

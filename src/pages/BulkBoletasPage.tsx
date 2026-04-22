@@ -14,7 +14,7 @@ import {
   AlertCircle,
   Upload,
 } from 'lucide-react';
-import { TRANSPORT_UNITS, unitByMackNumber } from '../data/transport-units';
+import { TRANSPORT_UNITS, unitByMackNumber, unitByPlates } from '../data/transport-units';
 import { appendRow, ocrBoleta, SHEET_TABS, type OcrBoletaResult } from '../lib/sheets-api';
 import { useAuthStore } from '../stores/auth-store';
 import ConfirmModal from '../components/ui/ConfirmModal';
@@ -144,11 +144,12 @@ export default function BulkBoletasPage() {
           try {
             const ocr = await ocrBoleta(file);
             applySharedFromOcr(ocr);
-            // Resolve OCR's raw placas ("102", "CV102") → canonical unit_id via Mack number only.
-            // Plate strings (e.g. "FJ7797A") are intentionally NOT auto-resolved — leave empty
-            // so the user picks the unit manually rather than risk a wrong auto-match.
+            // Resolve OCR placas → canonical unit_id:
+            //   1. Mack number ("100", "CV102") → CV100 / CV102
+            //   2. License plate ("FJ7794A")    → CV100
+            //   3. No match                     → '' (user selects manually)
             const resolvedUnit = ocr.placas
-              ? (unitByMackNumber(ocr.placas)?.unit_id ?? '')
+              ? (unitByMackNumber(ocr.placas)?.unit_id ?? unitByPlates(ocr.placas)?.unit_id ?? '')
               : '';
             setBoletas((prev) =>
               prev.map((b) =>
