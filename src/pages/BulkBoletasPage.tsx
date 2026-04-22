@@ -39,6 +39,10 @@ interface BoletaItem {
   flete: string;
   /** Per-boleta truck unit pre-filled from OCR placas — overrides the shared unidad default */
   unidad: string;
+  /** Per-boleta date (YYYY-MM-DD) pre-filled from OCR fecha — overrides shared fecha */
+  fecha: string;
+  /** Per-boleta material pre-filled from OCR — overrides shared material */
+  material: string;
 }
 
 const MATERIAL_OPTIONS = [
@@ -118,6 +122,8 @@ export default function BulkBoletasPage() {
       capacidad_m3: '',
       flete: '',
       unidad: '',
+      fecha: '',
+      material: '',
     }));
 
     setBoletas((prev) => [...prev, ...items]);
@@ -152,6 +158,8 @@ export default function BulkBoletasPage() {
                       fletero: ocr.fletero ?? '',
                       capacidad_m3: ocr.capacidad_m3 ? String(ocr.capacidad_m3) : '',
                       unidad: resolvedUnit,
+                      fecha: ocr.fecha ?? '',
+                      material: ocr.material ?? '',
                     }
                   : b
               )
@@ -206,7 +214,6 @@ export default function BulkBoletasPage() {
     setSubmitting(true);
     setSubmitProgress(0);
 
-    const fechaSheet = fecha.split('-').reverse().join('/'); // dd/MM/yyyy
     const ordered = [...selectedBoletas].sort((a, b) => a.hora.localeCompare(b.hora));
     let done = 0;
     let errors = 0;
@@ -214,22 +221,25 @@ export default function BulkBoletasPage() {
     for (const b of ordered) {
       try {
         const hora = b.hora.length === 5 ? `${b.hora}:00` : (b.hora || '00:00:00');
+        // Per-boleta date/material with shared-field fallback
+        const boletaFecha = (b.fecha || fecha).split('-').reverse().join('/'); // dd/MM/yyyy
+        const boletaMaterial = b.material || material;
         await appendRow(SHEET_TABS.FLETES, [
-          fechaSheet,                 // A  Fecha
+          boletaFecha,                // A  Fecha (per-boleta → shared fallback)
           hora,                       // B  Hora
           b.unidad || unidad,         // C  No. Unidad (per-boleta → shared fallback)
           b.fletero || userName,      // D  Conductor
-          kmTotal,                 // E  KM Cargado
-          '0',                     // F  KM Vacío
-          rutaOrigen,              // G  Origen
-          rutaDestino,             // H  Destino
-          kmTotal,                 // I  KM Total
-          cliente,                 // J  Cliente
-          material,                // K  Tipo Carga
-          b.capacidad_m3 || '0',   // L  Tonelaje
-          b.flete || '0',          // M  Flete $
-          '',                      // N  Observaciones
-          b.folio,                 // O  Ticket_Bascula (folio)
+          kmTotal,                    // E  KM Cargado
+          '0',                        // F  KM Vacío
+          rutaOrigen,                 // G  Origen
+          rutaDestino,                // H  Destino
+          kmTotal,                    // I  KM Total
+          cliente,                    // J  Cliente
+          boletaMaterial,             // K  Tipo Carga (per-boleta → shared fallback)
+          b.capacidad_m3 || '0',      // L  Tonelaje
+          b.flete || '0',             // M  Flete $
+          '',                         // N  Observaciones
+          b.folio,                    // O  Ticket_Bascula (folio)
         ]);
         done++;
         setSubmitProgress(Math.round((done / ordered.length) * 100));
@@ -380,7 +390,10 @@ export default function BulkBoletasPage() {
 
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-text-secondary">Fecha</label>
+              <label className="text-xs font-medium text-text-secondary">
+                Fecha default
+                <span className="ml-1 text-[10px] font-normal">(OCR detecta por boleta)</span>
+              </label>
               <input
                 type="date"
                 value={fecha}
@@ -450,13 +463,16 @@ export default function BulkBoletasPage() {
 
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-text-secondary">Material</label>
+              <label className="text-xs font-medium text-text-secondary">
+                Material default
+                <span className="ml-1 text-[10px] font-normal">(OCR detecta por boleta)</span>
+              </label>
               <select
                 value={material}
                 onChange={(e) => setMaterial(e.target.value)}
                 className="w-full rounded-xl border border-border p-2.5 bg-white text-text text-sm"
               >
-                <option value="">Seleccionar...</option>
+                <option value="">Sin default — OCR detecta por boleta</option>
                 {MATERIAL_OPTIONS.map((m) => (
                   <option key={m} value={m}>{m}</option>
                 ))}
@@ -631,6 +647,45 @@ export default function BulkBoletasPage() {
                         </option>
                       ))}
                     </select>
+                  </div>
+
+                  {/* Per-boleta fecha + material — pre-filled from OCR */}
+                  <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] font-semibold text-text-secondary whitespace-nowrap">
+                        Fecha:
+                      </span>
+                      <input
+                        type="date"
+                        value={b.fecha}
+                        onChange={(e) => updateBoleta(b.id, { fecha: e.target.value })}
+                        className="flex-1 min-w-0 rounded-lg text-xs bg-white px-1 py-1"
+                        style={{
+                          border: `1px solid ${b.fecha ? '#22C55E' : '#FDE68A'}`,
+                        }}
+                      />
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] font-semibold text-text-secondary whitespace-nowrap">
+                        Mat:
+                      </span>
+                      <select
+                        value={b.material}
+                        onChange={(e) => updateBoleta(b.id, { material: e.target.value })}
+                        className="flex-1 min-w-0 rounded-lg text-xs bg-white px-1 py-1"
+                        style={{
+                          border: `1px solid ${b.material ? '#22C55E' : '#FDE68A'}`,
+                          color: b.material ? '#15803D' : '#374151',
+                        }}
+                      >
+                        <option value="">
+                          {material || 'Material...'}
+                        </option>
+                        {MATERIAL_OPTIONS.map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                   </>
                 )}
