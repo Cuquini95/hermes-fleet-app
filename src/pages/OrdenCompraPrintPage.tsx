@@ -27,6 +27,9 @@ const COMPANY = {
 const RED = '#E2231A'
 const TABLE_MIN_ROWS = 8
 
+/** OC states where the buyer has authorized the document — overlay the signature image. */
+const SIGNED_STATES = new Set(['Aprobada', 'Recibida', 'Pagada'])
+
 interface OCHeader {
   oc_id: string
   fecha: string
@@ -351,10 +354,26 @@ export default function OrdenCompraPrintPage() {
           </div>
         </div>
 
-        {/* Signature */}
-        <div className="mt-16">
-          <div className="border-t border-gray-700 pt-1 inline-block" style={{ minWidth: 280 }}>
-            <p className="text-[11px] font-bold uppercase tracking-wide">{COMPANY.signer}</p>
+        {/* Signature — image overlays the line when the OC is signed-off */}
+        <div className="mt-12">
+          <div className="inline-block relative" style={{ minWidth: 280 }}>
+            {SIGNED_STATES.has(header.estado) && (
+              <img
+                src="/signature-tomas.png"
+                alt="Firma autorizada"
+                style={{
+                  position: 'absolute',
+                  bottom: 4,
+                  left: 20,
+                  height: 110,
+                  width: 'auto',
+                  pointerEvents: 'none',
+                }}
+              />
+            )}
+            <div className="border-t border-gray-700 pt-1" style={{ minWidth: 280 }}>
+              <p className="text-[11px] font-bold uppercase tracking-wide">{COMPANY.signer}</p>
+            </div>
           </div>
         </div>
       </div>
