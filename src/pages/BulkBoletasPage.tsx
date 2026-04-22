@@ -14,7 +14,7 @@ import {
   AlertCircle,
   Upload,
 } from 'lucide-react';
-import { TRANSPORT_UNITS, unitByMackNumber, unitByPlates } from '../data/transport-units';
+import { TRANSPORT_UNITS, unitByMackNumber } from '../data/transport-units';
 import { mexicoDateInput } from '../lib/date-utils';
 import { appendRow, ocrBoleta, SHEET_TABS, type OcrBoletaResult } from '../lib/sheets-api';
 import { useAuthStore } from '../stores/auth-store';
@@ -135,9 +135,11 @@ export default function BulkBoletasPage() {
           try {
             const ocr = await ocrBoleta(file);
             applySharedFromOcr(ocr);
-            // Resolve OCR's raw placas ("102", "CV102", "FJ7797A") → canonical unit_id
+            // Resolve OCR's raw placas ("102", "CV102") → canonical unit_id via Mack number only.
+            // Plate strings (e.g. "FJ7797A") are intentionally NOT auto-resolved — leave empty
+            // so the user picks the unit manually rather than risk a wrong auto-match.
             const resolvedUnit = ocr.placas
-              ? (unitByMackNumber(ocr.placas)?.unit_id ?? unitByPlates(ocr.placas)?.unit_id ?? '')
+              ? (unitByMackNumber(ocr.placas)?.unit_id ?? '')
               : '';
             setBoletas((prev) =>
               prev.map((b) =>
