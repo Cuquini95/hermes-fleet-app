@@ -36,3 +36,7 @@ dist-ssr
 *.tar.gz
 *_vps.py
 fleet-dist.*
+
+# Test coverage output
+coverage/
+lcov.info
