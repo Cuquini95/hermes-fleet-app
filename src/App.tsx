@@ -51,6 +51,7 @@ const BriefingCard       = lazy(() => import('./components/dashboard/BriefingCar
 const AdminActivosPage         = lazy(() => import('./pages/AdminActivosPage'));
 const AdminOrdenesCompraPage   = lazy(() => import('./pages/AdminOrdenesCompraPage'));
 const AdminProveedoresPage     = lazy(() => import('./pages/AdminProveedoresPage'));
+const OrdenCompraPrintPage     = lazy(() => import('./pages/OrdenCompraPrintPage'));
 const WorkOrdersPage     = lazy(() => import('./pages/WorkOrdersPage'));
 const NeumaticosPage     = lazy(() => import('./pages/NeumaticosPage'));
 const PedidosPage        = lazy(() => import('./pages/PedidosPage'));
@@ -361,6 +362,15 @@ export default function App() {
             <PageBoundary role={role}>
               <Suspense fallback={<PageLoader />}>
                 <AdminProveedoresPage />
+              </Suspense>
+            </PageBoundary>
+          </RequireRole>
+        } />
+        <Route path="/admin/ordenes-compra/:ocId" element={
+          <RequireRole roles={['gerencia']}>
+            <PageBoundary role={role}>
+              <Suspense fallback={<PageLoader />}>
+                <OrdenCompraPrintPage />
               </Suspense>
             </PageBoundary>
           </RequireRole>

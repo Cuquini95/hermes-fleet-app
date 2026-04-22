@@ -13,7 +13,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Plus, Trash2, FileText } from 'lucide-react'
+import { Plus, Trash2, FileText, Printer } from 'lucide-react'
 import { appendRow, readRange, SHEET_TABS } from '../lib/sheets-api'
 
 const COMPANY = {
@@ -459,6 +459,7 @@ export default function AdminOrdenesCompraPage() {
                 <th className="px-3 py-2 text-left font-semibold text-gray-600">Proveedor</th>
                 <th className="px-3 py-2 text-right font-semibold text-gray-600">Total</th>
                 <th className="px-3 py-2 text-left font-semibold text-gray-600">Estado</th>
+                <th className="px-3 py-2 text-right font-semibold text-gray-600">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -474,6 +475,14 @@ export default function AdminOrdenesCompraPage() {
                     ${parseFloat(o.total || '0').toLocaleString('es-MX', { minimumFractionDigits: 2 })}
                   </td>
                   <td className="px-3 py-2">{o.estado}</td>
+                  <td className="px-3 py-2 text-right">
+                    <Link
+                      to={`/admin/ordenes-compra/${encodeURIComponent(o.oc_id)}`}
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-800"
+                    >
+                      <Printer size={12} /> Ver / Imprimir
+                    </Link>
+                  </td>
                 </tr>
               ))}
             </tbody>
