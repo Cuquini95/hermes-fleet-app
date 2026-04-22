@@ -217,14 +217,15 @@ export default function AdminOrdenesCompraPage() {
     try {
       // Populate header fields from raw row
       // cols: 0=ocId 1=fecha 2=proveedor 3=rfc 4=dir 5=unidad 6=subtotal 7=iva 8=envio 9=otros 10=total 11=estado 12=comentarios 13='' 14=fechaEntrega
-      setOcId(raw[0] ?? targetId)
-      setFecha(ddToISO(raw[1] ?? ''))
-      setUnidad(raw[5] ?? 'FLOTA')
-      setEnvio(raw[8] ?? '0')
-      setOtros(raw[9] ?? '0')
-      setEstado((raw[11] ?? 'Borrador') as EstadoOC)
-      setComentarios(raw[12] ?? '')
-      setFechaEntrega(ddToISO(raw[14] ?? ''))
+      // ⚠️ Trim every value — trailing whitespace on the ocId would make upsert miss and duplicate the row.
+      setOcId((raw[0] ?? targetId).trim())
+      setFecha(ddToISO((raw[1] ?? '').trim()))
+      setUnidad((raw[5] ?? 'FLOTA').trim() || 'FLOTA')
+      setEnvio((raw[8] ?? '0').trim() || '0')
+      setOtros((raw[9] ?? '0').trim() || '0')
+      setEstado(((raw[11] ?? 'Borrador').trim() || 'Borrador') as EstadoOC)
+      setComentarios((raw[12] ?? '').trim())
+      setFechaEntrega(ddToISO((raw[14] ?? '').trim()))
 
       // Match vendor by name
       const vendorName = (raw[2] ?? '').trim()
@@ -267,8 +268,14 @@ export default function AdminOrdenesCompraPage() {
     setSubmitting(true)
     setError(null)
 
+    // In edit mode, ALWAYS key off editOcId (trimmed at load time). Using the ocId state
+    // here risked a whitespace mismatch with the sheet key → upsert would fall through
+    // to append and create a duplicate row. This is the root cause of the "adds a new
+    // one when editing" bug reported on 2026-04-22.
+    const keyId = (editOcId ?? ocId).trim()
+
     const headerValues = [
-      ocId,
+      keyId,
       toDDMMYYYY(fecha),
       selectedVendor.nombre,
       selectedVendor.rfc,
@@ -289,10 +296,13 @@ export default function AdminOrdenesCompraPage() {
     try {
       if (editOcId) {
         // ── UPDATE MODE ──
-        await upsertRow(SHEET_TABS.ORDENES_COMPRA, editOcId, headerValues)
-        // Delete all existing line items then rewrite
+        // Use the exact same trimmed key for both the match and the value.
+        await upsertRow(SHEET_TABS.ORDENES_COMPRA, keyId, headerValues)
+        // Delete all existing line items. deleteRow throws when no match is found
+        // (see sheets-api.ts line 468), so we break on first miss. Max call count
+        // is (lineCount + 1). Must stay sequential to avoid backend race conditions.
         for (let i = 0; i < 100; i++) {
-          try { await deleteRow(SHEET_TABS.OC_LINEAS, { '0': editOcId }) }
+          try { await deleteRow(SHEET_TABS.OC_LINEAS, { '0': keyId }) }
           catch { break }
         }
       } else {
@@ -300,26 +310,29 @@ export default function AdminOrdenesCompraPage() {
         await appendRow(SHEET_TABS.ORDENES_COMPRA, headerValues)
       }
 
-      // Write line items (shared by both modes)
-      for (let i = 0; i < validLines.length; i++) {
-        const l = validLines[i]!
-        const cantidad = parseFloat(l.cantidad) || 0
-        const precio   = parseFloat(l.precio_unitario) || 0
-        await appendRow(SHEET_TABS.OC_LINEAS, [
-          ocId,
-          String(i + 1),
-          l.descripcion.trim(),
-          String(cantidad),
-          precio.toFixed(2),
-          (cantidad * precio).toFixed(2),
-        ])
-      }
+      // Write line items in parallel — they're independent rows, safe to fan out.
+      // Previously this was a serial for-loop (N × 500ms round-trips) which was
+      // the main source of the edit-save lag. Now N appends complete in ~1 RTT.
+      await Promise.all(
+        validLines.map((l, i) => {
+          const cantidad = parseFloat(l.cantidad) || 0
+          const precio   = parseFloat(l.precio_unitario) || 0
+          return appendRow(SHEET_TABS.OC_LINEAS, [
+            keyId,
+            String(i + 1),
+            l.descripcion.trim(),
+            String(cantidad),
+            precio.toFixed(2),
+            (cantidad * precio).toFixed(2),
+          ])
+        }),
+      )
 
       const totalFmt = total.toLocaleString('es-MX', { minimumFractionDigits: 2 })
       setSuccess(
         editOcId
-          ? `OC ${ocId} actualizada — Total $${totalFmt}`
-          : `OC ${ocId} creada con ${validLines.length} línea(s) — Total $${totalFmt}`,
+          ? `OC ${keyId} actualizada — Total $${totalFmt}`
+          : `OC ${keyId} creada con ${validLines.length} línea(s) — Total $${totalFmt}`,
       )
       await load()
       resetForm()
@@ -369,17 +382,17 @@ export default function AdminOrdenesCompraPage() {
 
   // ── Render ───────────────────────────────────────────────────────────
   return (
-    <div className="p-4 max-w-5xl mx-auto">
-      <div className="flex items-start justify-between mb-1">
-        <h1 className="text-2xl font-bold">Órdenes de Compra</h1>
+    <div className="p-3 sm:p-4 max-w-5xl mx-auto">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 mb-1">
+        <h1 className="text-xl sm:text-2xl font-bold">Órdenes de Compra</h1>
         <Link
           to="/admin/proveedores"
-          className="text-sm rounded-lg border border-gray-300 px-3 py-1.5 hover:bg-gray-50"
+          className="self-start text-sm rounded-lg border border-gray-300 px-3 py-1.5 hover:bg-gray-50"
         >
           Gestionar proveedores →
         </Link>
       </div>
-      <p className="text-sm text-gray-600 mb-6">
+      <p className="text-sm text-gray-600 mb-4 sm:mb-6">
         Crea órdenes de compra con formato profesional. Selecciona un proveedor del catálogo
         y sus datos se llenan automáticamente.
       </p>
@@ -414,22 +427,22 @@ export default function AdminOrdenesCompraPage() {
       {/* ── PO-styled form ────────────────────────────────────────────── */}
       <form ref={formRef} onSubmit={handleSubmit} className="bg-white rounded-xl border shadow-sm overflow-hidden mb-8">
 
-        {/* PO header band */}
-        <div className="bg-[#162252] text-white px-5 py-4 flex items-start justify-between">
+        {/* PO header band — stacks on mobile, side-by-side ≥ sm */}
+        <div className="bg-[#162252] text-white px-4 sm:px-5 py-3 sm:py-4 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
           <div>
-            <p className="font-bold">{COMPANY.name}</p>
+            <p className="font-bold text-sm sm:text-base">{COMPANY.name}</p>
             <p className="text-xs opacity-80">{COMPANY.street}</p>
             <p className="text-xs opacity-80">{COMPANY.city} · {COMPANY.phone}</p>
           </div>
-          <div className="text-right">
+          <div className="sm:text-right">
             <p className="text-xs opacity-80">ORDEN DE COMPRA</p>
-            <p className="font-mono text-lg">{ocId}</p>
+            <p className="font-mono text-base sm:text-lg">{ocId}</p>
             <p className="text-xs opacity-80 mt-1">FECHA: {toDDMMYYYY(fecha) || '—'}</p>
           </div>
         </div>
 
-        {/* OC ID + Fecha + Unidad */}
-        <div className="grid grid-cols-3 gap-3 p-4 border-b bg-gray-50">
+        {/* OC ID + Fecha + Unidad — stack on mobile */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 sm:p-4 border-b bg-gray-50">
           <Input
             label="OC #"
             value={ocId}
@@ -480,8 +493,8 @@ export default function AdminOrdenesCompraPage() {
           )}
         </div>
 
-        {/* Líneas */}
-        <div className="p-4 border-b">
+        {/* Líneas — card layout on mobile, table layout ≥ md */}
+        <div className="p-3 sm:p-4 border-b">
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Items</p>
             <button type="button" onClick={addLine}
@@ -490,7 +503,62 @@ export default function AdminOrdenesCompraPage() {
             </button>
           </div>
 
-          <table className="w-full text-xs">
+          {/* ── Mobile: stacked cards ───────────────────────────────── */}
+          <div className="md:hidden space-y-3">
+            {lines.map((line, i) => {
+              const lineTotal = (parseFloat(line.cantidad) || 0) * (parseFloat(line.precio_unitario) || 0)
+              return (
+                <div key={i} className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold text-gray-500">Línea #{i + 1}</span>
+                    {lines.length > 1 && (
+                      <button type="button" onClick={() => removeLine(i)}
+                        className="text-gray-400 hover:text-red-600 active:text-red-700"
+                        aria-label={`Eliminar línea ${i + 1}`}>
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    value={line.descripcion}
+                    onChange={(e) => updateLine(i, { descripcion: e.target.value })}
+                    placeholder="Descripción del item"
+                    className="w-full border rounded px-2 py-2 text-sm mb-2 bg-white"
+                  />
+                  <div className="grid grid-cols-2 gap-2 mb-2">
+                    <label className="flex flex-col text-xs text-gray-600">
+                      <span className="mb-0.5">Cantidad</span>
+                      <input
+                        type="number" step="any" min="0" inputMode="decimal"
+                        value={line.cantidad}
+                        onChange={(e) => updateLine(i, { cantidad: e.target.value })}
+                        className="border rounded px-2 py-2 text-sm text-right bg-white"
+                      />
+                    </label>
+                    <label className="flex flex-col text-xs text-gray-600">
+                      <span className="mb-0.5">Precio Unit.</span>
+                      <input
+                        type="number" step="any" min="0" inputMode="decimal"
+                        value={line.precio_unitario}
+                        onChange={(e) => updateLine(i, { precio_unitario: e.target.value })}
+                        className="border rounded px-2 py-2 text-sm text-right bg-white"
+                      />
+                    </label>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-gray-200 pt-2">
+                    <span className="text-xs font-semibold text-gray-500 uppercase">Total línea</span>
+                    <span className="font-mono tabular-nums text-sm font-semibold">
+                      ${lineTotal.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* ── Desktop (≥ md): original table ───────────────────────── */}
+          <table className="hidden md:table w-full text-xs">
             <thead className="text-gray-500">
               <tr>
                 <th className="text-left font-semibold pb-1 w-8">#</th>
@@ -550,8 +618,8 @@ export default function AdminOrdenesCompraPage() {
           </table>
         </div>
 
-        {/* Totals + comments */}
-        <div className="grid grid-cols-2 gap-4 p-4 border-b">
+        {/* Totals + comments — stack on mobile */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-3 sm:p-4 border-b">
           <div>
             <label className="block text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">
               Comentarios
@@ -577,8 +645,8 @@ export default function AdminOrdenesCompraPage() {
           </div>
         </div>
 
-        {/* Estado + entrega */}
-        <div className="grid grid-cols-2 gap-3 p-4 border-b bg-gray-50">
+        {/* Estado + entrega — stack on mobile */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 sm:p-4 border-b bg-gray-50">
           <div>
             <label className="block text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Estado</label>
             <select
@@ -592,18 +660,18 @@ export default function AdminOrdenesCompraPage() {
           <Input label="Fecha entrega (opcional)" type="date" value={fechaEntrega} onChange={setFechaEntrega} />
         </div>
 
-        {/* Submit / Cancel */}
-        <div className="p-4 flex gap-3">
+        {/* Submit / Cancel — stack on mobile, side-by-side ≥ sm */}
+        <div className="p-3 sm:p-4 flex flex-col sm:flex-row gap-2 sm:gap-3">
           <button
             type="submit"
             disabled={submitting}
-            className="flex-1 rounded-lg bg-blue-600 text-white font-semibold py-2.5 hover:bg-blue-700 disabled:opacity-50"
+            className="flex-1 rounded-lg bg-blue-600 text-white font-semibold py-3 sm:py-2.5 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50"
           >
             {submitting
               ? (editOcId ? 'Guardando cambios…' : 'Guardando…')
               : editOcId
-                ? `Guardar cambios · Total $${total.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`
-                : `Crear OC · Total $${total.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`
+                ? `Guardar cambios · $${total.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`
+                : `Crear OC · $${total.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`
             }
           </button>
           {editOcId && (
@@ -611,7 +679,7 @@ export default function AdminOrdenesCompraPage() {
               type="button"
               onClick={() => resetForm()}
               disabled={submitting}
-              className="rounded-lg border border-gray-300 px-5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              className="rounded-lg border border-gray-300 px-5 py-3 sm:py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
             >
               Cancelar
             </button>
@@ -626,77 +694,138 @@ export default function AdminOrdenesCompraPage() {
         <p className="text-sm text-gray-500">Sin órdenes todavía.</p>
       )}
       {ocs !== null && ocs.length > 0 && (
-        <div className="overflow-x-auto bg-white border rounded-lg">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-3 py-2 text-left font-semibold text-gray-600">OC #</th>
-                <th className="px-3 py-2 text-left font-semibold text-gray-600">Fecha</th>
-                <th className="px-3 py-2 text-left font-semibold text-gray-600">Proveedor</th>
-                <th className="px-3 py-2 text-right font-semibold text-gray-600">Total</th>
-                <th className="px-3 py-2 text-left font-semibold text-gray-600">Estado</th>
-                <th className="px-3 py-2 text-right font-semibold text-gray-600">Acciones</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {ocs.map((o) => (
-                <tr key={o.oc_id} className={`hover:bg-gray-50 ${editOcId === o.oc_id ? 'bg-amber-50' : ''}`}>
-                  <td className="px-3 py-2 font-mono">
-                    <FileText size={12} className="inline mr-1 text-gray-400" />
+        <>
+          {/* ── Mobile: card list ──────────────────────────────────── */}
+          <div className="md:hidden space-y-2">
+            {ocs.map((o) => (
+              <div
+                key={o.oc_id}
+                className={`rounded-xl border bg-white p-3 shadow-sm ${editOcId === o.oc_id ? 'border-amber-400 bg-amber-50' : 'border-gray-200'}`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-mono text-sm font-semibold flex items-center gap-1">
+                    <FileText size={12} className="text-gray-400" />
                     {o.oc_id}
-                  </td>
-                  <td className="px-3 py-2 text-gray-600">{o.fecha}</td>
-                  <td className="px-3 py-2">{o.proveedor}</td>
-                  <td className="px-3 py-2 text-right font-mono tabular-nums">
+                  </span>
+                  <span className="font-mono tabular-nums text-sm font-semibold">
                     ${parseFloat(o.total || '0').toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-                  </td>
+                  </span>
+                </div>
+                <p className="text-sm text-gray-700 truncate">{o.proveedor}</p>
+                <p className="text-xs text-gray-500 mb-2">{o.fecha}</p>
 
-                  {/* Inline status dropdown */}
-                  <td className="px-3 py-2">
-                    <select
-                      value={o.estado}
-                      disabled={changingEstado === o.oc_id}
-                      onChange={(e) => void handleEstadoChange(o.oc_id, e.target.value)}
-                      className={`border rounded px-1.5 py-0.5 text-xs font-semibold bg-white cursor-pointer transition-opacity
-                        ${estadoColor(o.estado)}
-                        ${changingEstado === o.oc_id ? 'opacity-50' : ''}
-                      `}
-                    >
-                      {ESTADOS.map((s) => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </td>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <select
+                    value={o.estado}
+                    disabled={changingEstado === o.oc_id}
+                    onChange={(e) => void handleEstadoChange(o.oc_id, e.target.value)}
+                    className={`border rounded px-2 py-1 text-xs font-semibold bg-white cursor-pointer transition-opacity flex-1
+                      ${estadoColor(o.estado)}
+                      ${changingEstado === o.oc_id ? 'opacity-50' : ''}
+                    `}
+                  >
+                    {ESTADOS.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
 
-                  {/* Actions */}
-                  <td className="px-3 py-2 text-right">
-                    <div className="flex items-center justify-end gap-3">
-                      <Link
-                        to={`/admin/ordenes-compra/${encodeURIComponent(o.oc_id)}`}
-                        className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-800"
-                      >
-                        <Printer size={12} /> Ver / Imprimir
-                      </Link>
-                      <button
-                        onClick={() => void startEdit(o.oc_id)}
-                        disabled={loadingEdit}
-                        className="inline-flex items-center gap-1 text-xs font-semibold text-gray-500 hover:text-amber-700 transition-colors disabled:opacity-50"
-                        title={`Editar ${o.oc_id}`}
-                      >
-                        <Pencil size={13} /> Editar
-                      </button>
-                      <button
-                        onClick={() => setConfirmDelete(o.oc_id)}
-                        className="text-gray-400 hover:text-red-600 transition-colors"
-                        title={`Eliminar ${o.oc_id}`}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </td>
+                <div className="flex items-center justify-between gap-2 border-t border-gray-100 pt-2">
+                  <Link
+                    to={`/admin/ordenes-compra/${encodeURIComponent(o.oc_id)}`}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 active:text-blue-800"
+                  >
+                    <Printer size={13} /> Ver
+                  </Link>
+                  <button
+                    onClick={() => void startEdit(o.oc_id)}
+                    disabled={loadingEdit}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 active:text-amber-900 disabled:opacity-50"
+                  >
+                    <Pencil size={13} /> Editar
+                  </button>
+                  <button
+                    onClick={() => setConfirmDelete(o.oc_id)}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-red-600 active:text-red-800"
+                  >
+                    <Trash2 size={13} /> Eliminar
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* ── Desktop (≥ md): table ──────────────────────────────── */}
+          <div className="hidden md:block overflow-x-auto bg-white border rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 py-2 text-left font-semibold text-gray-600">OC #</th>
+                  <th className="px-3 py-2 text-left font-semibold text-gray-600">Fecha</th>
+                  <th className="px-3 py-2 text-left font-semibold text-gray-600">Proveedor</th>
+                  <th className="px-3 py-2 text-right font-semibold text-gray-600">Total</th>
+                  <th className="px-3 py-2 text-left font-semibold text-gray-600">Estado</th>
+                  <th className="px-3 py-2 text-right font-semibold text-gray-600">Acciones</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y">
+                {ocs.map((o) => (
+                  <tr key={o.oc_id} className={`hover:bg-gray-50 ${editOcId === o.oc_id ? 'bg-amber-50' : ''}`}>
+                    <td className="px-3 py-2 font-mono">
+                      <FileText size={12} className="inline mr-1 text-gray-400" />
+                      {o.oc_id}
+                    </td>
+                    <td className="px-3 py-2 text-gray-600">{o.fecha}</td>
+                    <td className="px-3 py-2">{o.proveedor}</td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums">
+                      ${parseFloat(o.total || '0').toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                    </td>
+
+                    {/* Inline status dropdown */}
+                    <td className="px-3 py-2">
+                      <select
+                        value={o.estado}
+                        disabled={changingEstado === o.oc_id}
+                        onChange={(e) => void handleEstadoChange(o.oc_id, e.target.value)}
+                        className={`border rounded px-1.5 py-0.5 text-xs font-semibold bg-white cursor-pointer transition-opacity
+                          ${estadoColor(o.estado)}
+                          ${changingEstado === o.oc_id ? 'opacity-50' : ''}
+                        `}
+                      >
+                        {ESTADOS.map((s) => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </td>
+
+                    {/* Actions */}
+                    <td className="px-3 py-2 text-right">
+                      <div className="flex items-center justify-end gap-3">
+                        <Link
+                          to={`/admin/ordenes-compra/${encodeURIComponent(o.oc_id)}`}
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-800"
+                        >
+                          <Printer size={12} /> Ver / Imprimir
+                        </Link>
+                        <button
+                          onClick={() => void startEdit(o.oc_id)}
+                          disabled={loadingEdit}
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-gray-500 hover:text-amber-700 transition-colors disabled:opacity-50"
+                          title={`Editar ${o.oc_id}`}
+                        >
+                          <Pencil size={13} /> Editar
+                        </button>
+                        <button
+                          onClick={() => setConfirmDelete(o.oc_id)}
+                          className="text-gray-400 hover:text-red-600 transition-colors"
+                          title={`Eliminar ${o.oc_id}`}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
       {/* ── Delete confirmation modal ─────────────────────────────────── */}
