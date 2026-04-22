@@ -153,31 +153,36 @@ export default function OrdenCompraPrintPage() {
     <>
       <style>{`
         @media print {
-          @page { size: letter; margin: 1.3cm; }
+          /* Use a 0 page margin so the .po-page's own padding controls the
+             printable border — keeps proportions identical to screen. */
+          @page { size: letter; margin: 0; }
           html, body { background: white !important; margin: 0 !important; padding: 0 !important; }
 
-          /* Hide EVERYTHING by default, then re-show only the PO page.
-             This guarantees the navy header, bottom nav, cookie banner,
-             chat bubble and any other AppShell chrome are stripped out. */
+          /* Hide everything except the PO page (navy header, bottom nav,
+             cookie banner, chat bubble, etc.). visibility: hidden keeps
+             layout space stable so absolute children don't shift. */
           body * { visibility: hidden !important; }
           .po-page, .po-page * { visibility: visible !important; }
 
-          /* Position the PO page at the top of the printable area */
+          /* Pin the PO page to the top of the printable area, full width.
+             KEEP its padding (px-12 py-10) so the margin around content
+             matches the on-screen rendering pixel-for-pixel. */
           .po-page {
             position: absolute !important;
             top: 0 !important;
             left: 0 !important;
-            width: 100% !important;
+            width: 8.5in !important;
+            max-width: 8.5in !important;
+            margin: 0 !important;
             box-shadow: none !important;
             border: none !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            max-width: none !important;
+            background: white !important;
           }
 
           /* Avoid mid-row page breaks inside the items table */
-          table { page-break-inside: avoid; }
-          tr    { page-break-inside: avoid; page-break-after: auto; }
+          table, tr, .po-page { page-break-inside: avoid; }
+          /* Disable automatic font-size adjustment some browsers apply when printing */
+          html { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
         }
       `}</style>
 
