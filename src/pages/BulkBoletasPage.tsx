@@ -15,7 +15,6 @@ import {
   Upload,
 } from 'lucide-react';
 import { TRANSPORT_UNITS, unitByMackNumber } from '../data/transport-units';
-import { mexicoDateInput } from '../lib/date-utils';
 import { appendRow, ocrBoleta, SHEET_TABS, type OcrBoletaResult } from '../lib/sheets-api';
 import { useAuthStore } from '../stores/auth-store';
 import ConfirmModal from '../components/ui/ConfirmModal';
