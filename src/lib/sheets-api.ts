@@ -303,12 +303,17 @@ export interface OcrBoletaResult {
 
 /**
  * Send a boleta (trip ticket) image to the VPS OCR endpoint.
- * VPS exposes: POST /api/ocr/boleta  { image_base64: string }
- * Returns structured boleta data.
+ *
+ * Handles two boleta formats automatically:
+ *   • PLACOSA SA DE CV  — extracts FOLIO N°XXXXX (large red number at bottom)
+ *   • OCH Mining/ENTOC  — extracts REMISIÓN N°XXXX, PESO NETO÷1000 for tons,
+ *                          "CV"+CAMIÓN No. for truck, CHOFER for driver
+ *
+ * VPS exposes: POST /ai/ocr/boleta  { image_base64: string }
  */
 export async function ocrBoleta(file: File): Promise<OcrBoletaResult> {
   const image_base64 = await compressToBase64(file);
-  const response = await fetchWithRetry(`${HERMES_API}/api/ocr/boleta`, {
+  const response = await fetchWithRetry(`${HERMES_API}/ai/ocr/boleta`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ image_base64 }),

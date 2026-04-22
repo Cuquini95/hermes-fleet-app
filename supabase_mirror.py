@@ -80,3 +80,14 @@ async def mirror_averia(averia: dict[str, Any]) -> None:
 async def mirror_combustible(row: dict[str, Any]) -> None:
     """Mirror a fuel entry to Supabase."""
     asyncio.ensure_future(_mirror_async("combustible", row))
+
+async def mirror_flete(row: dict[str, Any]) -> None:
+    """
+    Mirror a flete (freight trip) entry to Supabase.
+
+    Expected keys (snake_case, matches Reporte_Fletes_Transporte schema):
+        fecha, hora, unidad, conductor, km_cargado, km_vacio,
+        origen, destino, km_total, cliente, tipo_carga, tonelaje,
+        flete, observaciones, folio
+    """
+    asyncio.ensure_future(_mirror_async("fletes", row))
