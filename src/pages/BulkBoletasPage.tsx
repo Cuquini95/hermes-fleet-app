@@ -144,10 +144,6 @@ export default function BulkBoletasPage() {
           try {
             const ocr = await ocrBoleta(file);
             applySharedFromOcr(ocr);
-
-            // Detect format: OCH Mining outputs "CV100" in placas; PLACOSA outputs raw plate "FJ7794A"
-            const isOchMining = /^CV\d+$/i.test(ocr.placas ?? '');
-
             // Resolve OCR placas → canonical unit_id:
             //   1. Mack number ("100", "CV102") → CV100 / CV102
             //   2. License plate ("FJ7794A")    → CV100
@@ -155,17 +151,6 @@ export default function BulkBoletasPage() {
             const resolvedUnit = ocr.placas
               ? (unitByMackNumber(ocr.placas)?.unit_id ?? unitByPlates(ocr.placas)?.unit_id ?? '')
               : '';
-
-            // Normalize material:
-            //   OCH Mining        → always "Mineral"
-            //   PLACOSA "Blanco"  → "Caliza"
-            //   everything else   → use OCR value as-is
-            const rawMaterial = (ocr.material ?? '').trim();
-            const resolvedMaterial = isOchMining
-              ? 'Mineral'
-              : rawMaterial.toLowerCase() === 'blanco'
-              ? 'Caliza'
-              : rawMaterial;
             setBoletas((prev) =>
               prev.map((b) =>
                 b.id === item.id
@@ -178,7 +163,7 @@ export default function BulkBoletasPage() {
                       capacidad_m3: ocr.capacidad_m3 ? String(ocr.capacidad_m3) : '',
                       unidad: resolvedUnit,
                       fecha: ocr.fecha ?? '',
-                      material: resolvedMaterial,
+                      material: ocr.material ?? '',
                     }
                   : b
               )
