@@ -1,9 +1,14 @@
 /**
- * Printable Orden de Compra — laid out to match the ULTRATK PO template.
+ * Printable Orden de Compra — visual replica of ULTRATK's Excel template:
+ *   - Red ULTRATK logo block (top-left)
+ *   - Big red "ORDEN DE COMPRA" title (top-right)
+ *   - Red FECHA / OC # boxes
+ *   - Red VENDEDOR banner with white text
+ *   - Red items table header band
+ *   - Right-aligned totals stack (SUBTOTAL / IVA / ENVIO / OTROS / TOTAL)
+ *   - Grey "Comentarios" banner + signature line
  *
- * Renders one OC by ID: reads the header row from "Órdenes de Compra" and
- * the matching lines from "OC_Lineas", then exposes a window.print() button
- * that browsers convert to PDF (Save As PDF in the print dialog).
+ * Uses native window.print() — browsers offer "Save as PDF" in the dialog.
  */
 
 import { useEffect, useState } from 'react'
@@ -18,6 +23,9 @@ const COMPANY = {
   phone: 'Tel: 314-115-1515',
   signer: 'TOMAS EMMANUEL MORA SOTO',
 }
+
+const RED = '#E2231A'
+const TABLE_MIN_ROWS = 14
 
 interface OCHeader {
   oc_id: string
@@ -50,6 +58,9 @@ function num(v: string | undefined): number {
 }
 function fmt(n: number): string {
   return n.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+function fmtOrDash(n: number): string {
+  return n > 0 ? fmt(n) : '-'
 }
 
 export default function OrdenCompraPrintPage() {
@@ -120,16 +131,11 @@ export default function OrdenCompraPrintPage() {
     }
   }, [ocId])
 
-  if (!loaded) {
-    return <div className="p-8 text-sm text-gray-500">Cargando OC {ocId}…</div>
-  }
-
+  if (!loaded) return <div className="p-8 text-sm text-gray-500">Cargando OC {ocId}…</div>
   if (error || !header) {
     return (
       <div className="p-8">
-        <Link to="/admin/ordenes-compra" className="text-sm text-blue-600 hover:underline">
-          ← Volver
-        </Link>
+        <Link to="/admin/ordenes-compra" className="text-sm text-blue-600 hover:underline">← Volver</Link>
         <p className="mt-4 text-red-700 bg-red-50 border border-red-200 rounded p-3 text-sm">
           {error ?? 'OC no encontrada'}
         </p>
@@ -137,19 +143,21 @@ export default function OrdenCompraPrintPage() {
     )
   }
 
+  // Pad table to a minimum number of visual rows to mimic the Excel grid feel
+  const blankRows = Math.max(0, TABLE_MIN_ROWS - lines.length)
+
   return (
     <>
-      {/* Print styles */}
       <style>{`
         @media print {
-          @page { size: letter; margin: 1cm; }
+          @page { size: letter; margin: 1.3cm; }
           body { background: white !important; }
           .no-print { display: none !important; }
-          .po-page { box-shadow: none !important; border: none !important; margin: 0 !important; max-width: none !important; }
+          .po-page { box-shadow: none !important; border: none !important; margin: 0 !important; padding: 0 !important; max-width: none !important; }
         }
       `}</style>
 
-      {/* Toolbar (hidden when printing) */}
+      {/* Toolbar — hidden when printing */}
       <div className="no-print sticky top-0 z-10 bg-gray-100 border-b border-gray-200 px-4 py-3 flex items-center justify-between">
         <Link
           to="/admin/ordenes-compra"
@@ -166,157 +174,178 @@ export default function OrdenCompraPrintPage() {
         </button>
       </div>
 
-      {/* Printable page */}
-      <div className="po-page bg-white shadow-md max-w-4xl mx-auto my-6 px-12 py-10 text-sm text-gray-900 font-serif">
-        {/* Header band */}
-        <div className="flex items-start justify-between border-b-2 border-gray-900 pb-4 mb-6">
-          <div>
-            <p className="text-2xl font-extrabold tracking-tight">{COMPANY.name}</p>
-            <p className="text-xs text-gray-700">{COMPANY.street}</p>
-            <p className="text-xs text-gray-700">{COMPANY.city}</p>
-            <p className="text-xs text-gray-700">{COMPANY.phone}</p>
+      {/* PO page */}
+      <div
+        className="po-page bg-white shadow-md mx-auto my-6 px-12 py-10 text-[12px] text-gray-900"
+        style={{ maxWidth: '8.5in', fontFamily: 'Arial, Helvetica, sans-serif' }}
+      >
+        {/* Header row: logo (left) + title + boxes (right) */}
+        <div className="flex items-start justify-between mb-6">
+          {/* ULTRATK logo block */}
+          <div className="flex flex-col items-start" style={{ width: 200 }}>
+            <div
+              className="flex flex-col items-center justify-center text-white font-extrabold tracking-tight"
+              style={{ backgroundColor: RED, width: 200, height: 78, padding: '8px 4px' }}
+            >
+              <span style={{ fontSize: 30, lineHeight: 1 }}>ULTRATK</span>
+              <span style={{ fontSize: 8, letterSpacing: '0.15em', marginTop: 4 }}>
+                INGENIERIA·CONSTRUCCION
+              </span>
+            </div>
           </div>
-          <div className="text-right">
-            <p className="text-2xl font-extrabold tracking-widest text-gray-900">
+
+          {/* Title + boxes */}
+          <div className="flex-1 text-right ml-6">
+            <p
+              className="font-extrabold tracking-tight"
+              style={{ color: RED, fontSize: 38, lineHeight: 1 }}
+            >
               ORDEN DE COMPRA
             </p>
-            <table className="ml-auto mt-2 text-xs">
+            <table className="ml-auto mt-3 text-[11px]" style={{ borderCollapse: 'collapse' }}>
               <tbody>
                 <tr>
-                  <td className="font-semibold pr-3 text-gray-600 text-right">FECHA</td>
-                  <td className="font-mono">{header.fecha || '—'}</td>
+                  <td className="pr-3 font-semibold text-right">FECHA</td>
+                  <td>
+                    <span
+                      className="inline-block px-3 py-1 font-mono text-center"
+                      style={{ border: `1.5px solid ${RED}`, minWidth: 110 }}
+                    >
+                      {header.fecha || ''}
+                    </span>
+                  </td>
                 </tr>
                 <tr>
-                  <td className="font-semibold pr-3 text-gray-600 text-right">OC #</td>
-                  <td className="font-mono">{header.oc_id}</td>
+                  <td className="pr-3 font-semibold text-right pt-1">OC #</td>
+                  <td className="pt-1">
+                    <span
+                      className="inline-block px-3 py-1 font-mono text-center"
+                      style={{ border: `1.5px solid ${RED}`, minWidth: 110 }}
+                    >
+                      {header.oc_id}
+                    </span>
+                  </td>
                 </tr>
-                {header.unidad && (
-                  <tr>
-                    <td className="font-semibold pr-3 text-gray-600 text-right">UNIDAD</td>
-                    <td className="font-mono">{header.unidad}</td>
-                  </tr>
-                )}
               </tbody>
             </table>
           </div>
         </div>
 
-        {/* Vendedor */}
-        <div className="mb-6">
-          <p className="text-xs font-bold tracking-widest text-gray-600 mb-1">VENDEDOR</p>
-          <div className="border border-gray-300 rounded p-3 bg-gray-50">
-            <p className="font-bold text-base">{header.proveedor_nombre || '—'}</p>
-            {header.proveedor_rfc && (
-              <p className="text-xs text-gray-700">RFC: {header.proveedor_rfc}</p>
-            )}
-            {header.proveedor_direccion && (
-              <p className="text-xs text-gray-700 whitespace-pre-line">
-                {header.proveedor_direccion}
-              </p>
-            )}
-          </div>
+        {/* Buyer info block */}
+        <div className="mb-6 leading-tight">
+          <p className="font-semibold">{COMPANY.name}</p>
+          <p>{COMPANY.street}</p>
+          <p>{COMPANY.city}</p>
+          <p>{COMPANY.phone}</p>
         </div>
 
-        {/* Line items */}
-        <table className="w-full border-collapse mb-6 text-sm">
+        {/* VENDEDOR red banner */}
+        <div
+          className="text-white font-bold uppercase tracking-wide text-[11px] px-3 py-1 mb-2"
+          style={{ backgroundColor: RED, width: 280 }}
+        >
+          VENDEDOR
+        </div>
+        <div className="mb-6 leading-tight">
+          <p className="font-semibold">{header.proveedor_nombre || '—'}</p>
+          {header.proveedor_rfc && <p>{header.proveedor_rfc}</p>}
+          {header.proveedor_direccion && (
+            <p className="whitespace-pre-line">{header.proveedor_direccion}</p>
+          )}
+        </div>
+
+        {/* Items table */}
+        <table className="w-full border-collapse mb-2" style={{ fontSize: 11 }}>
           <thead>
-            <tr className="bg-gray-900 text-white">
-              <th className="border border-gray-900 px-2 py-2 text-left text-xs font-bold w-12">ITEM #</th>
-              <th className="border border-gray-900 px-2 py-2 text-left text-xs font-bold">DESCRIPCION</th>
-              <th className="border border-gray-900 px-2 py-2 text-right text-xs font-bold w-20">CANTIDAD</th>
-              <th className="border border-gray-900 px-2 py-2 text-right text-xs font-bold w-32">PRECIO UNITARIO</th>
-              <th className="border border-gray-900 px-2 py-2 text-right text-xs font-bold w-32">TOTAL</th>
+            <tr style={{ backgroundColor: RED, color: 'white' }}>
+              <th className="border border-white px-2 py-2 text-center font-bold" style={{ width: '8%' }}>ITEM #</th>
+              <th className="border border-white px-2 py-2 text-center font-bold" style={{ width: '38%' }}>DESCRIPCION</th>
+              <th className="border border-white px-2 py-2 text-center font-bold" style={{ width: '12%' }}>CANTIDAD</th>
+              <th className="border border-white px-2 py-2 text-center font-bold" style={{ width: '21%' }}>PRECIO UNITARIO</th>
+              <th className="border border-white px-2 py-2 text-center font-bold" style={{ width: '21%' }}>TOTAL</th>
             </tr>
           </thead>
           <tbody>
-            {lines.length === 0 && (
-              <tr>
-                <td colSpan={5} className="border border-gray-300 px-2 py-3 text-center text-xs text-gray-500">
-                  Sin líneas registradas
-                </td>
-              </tr>
-            )}
             {lines.map((l) => (
               <tr key={l.numero}>
-                <td className="border border-gray-300 px-2 py-1.5 text-center font-mono">{l.numero}</td>
-                <td className="border border-gray-300 px-2 py-1.5">{l.descripcion}</td>
-                <td className="border border-gray-300 px-2 py-1.5 text-right font-mono tabular-nums">
-                  {l.cantidad.toLocaleString('es-MX')}
+                <td className="border border-gray-400 px-2 py-1 text-center" style={{ height: 22 }}>{l.numero}</td>
+                <td className="border border-gray-400 px-2 py-1">{l.descripcion}</td>
+                <td className="border border-gray-400 px-2 py-1 text-center">
+                  {l.cantidad > 0 ? l.cantidad.toLocaleString('es-MX') : '-'}
                 </td>
-                <td className="border border-gray-300 px-2 py-1.5 text-right font-mono tabular-nums">
-                  ${fmt(l.precio_unitario)}
+                <td className="border border-gray-400 px-2 py-1 text-right tabular-nums">
+                  {l.precio_unitario > 0 ? fmt(l.precio_unitario) : '-'}
                 </td>
-                <td className="border border-gray-300 px-2 py-1.5 text-right font-mono tabular-nums">
-                  ${fmt(l.total)}
+                <td className="border border-gray-400 px-2 py-1 text-right tabular-nums" style={{ backgroundColor: '#F3F3F3' }}>
+                  {fmtOrDash(l.total)}
                 </td>
               </tr>
             ))}
-            {/* Totals rows */}
-            <tr>
-              <td colSpan={3}></td>
-              <td className="border border-gray-300 px-2 py-1.5 text-right text-xs font-bold text-gray-700">SUBTOTAL</td>
-              <td className="border border-gray-300 px-2 py-1.5 text-right font-mono tabular-nums">
-                ${fmt(header.subtotal)}
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={3}></td>
-              <td className="border border-gray-300 px-2 py-1.5 text-right text-xs font-bold text-gray-700">IVA (16%)</td>
-              <td className="border border-gray-300 px-2 py-1.5 text-right font-mono tabular-nums">
-                ${fmt(header.iva)}
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={3}></td>
-              <td className="border border-gray-300 px-2 py-1.5 text-right text-xs font-bold text-gray-700">ENVIO</td>
-              <td className="border border-gray-300 px-2 py-1.5 text-right font-mono tabular-nums">
-                ${fmt(header.envio)}
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={3}></td>
-              <td className="border border-gray-300 px-2 py-1.5 text-right text-xs font-bold text-gray-700">OTROS</td>
-              <td className="border border-gray-300 px-2 py-1.5 text-right font-mono tabular-nums">
-                ${fmt(header.otros)}
-              </td>
-            </tr>
-            <tr className="bg-gray-100">
-              <td colSpan={3}></td>
-              <td className="border border-gray-900 px-2 py-2 text-right text-sm font-extrabold">TOTAL</td>
-              <td className="border border-gray-900 px-2 py-2 text-right font-mono tabular-nums text-base font-extrabold">
-                ${fmt(header.total)}
-              </td>
-            </tr>
+            {/* Padding rows so the grid keeps the Excel feel */}
+            {Array.from({ length: blankRows }).map((_, i) => (
+              <tr key={`blank-${i}`}>
+                <td className="border border-gray-400 px-2 py-1" style={{ height: 22 }}>&nbsp;</td>
+                <td className="border border-gray-400 px-2 py-1"></td>
+                <td className="border border-gray-400 px-2 py-1"></td>
+                <td className="border border-gray-400 px-2 py-1"></td>
+                <td className="border border-gray-400 px-2 py-1 text-right tabular-nums" style={{ backgroundColor: '#F3F3F3' }}>-</td>
+              </tr>
+            ))}
           </tbody>
         </table>
 
-        {/* Comments + status */}
-        <div className="grid grid-cols-2 gap-6 mb-10">
+        {/* Comments + totals */}
+        <div className="grid mb-10" style={{ gridTemplateColumns: '55% 45%', gap: 0 }}>
           <div>
-            <p className="text-xs font-bold tracking-widest text-gray-600 mb-1">COMENTARIOS</p>
-            <p className="text-xs text-gray-800 whitespace-pre-line min-h-[3rem]">
+            <div
+              className="px-3 py-1 font-bold text-[11px]"
+              style={{ backgroundColor: '#D9D9D9', borderTop: '1px solid #888', borderLeft: '1px solid #888', borderRight: '1px solid #888' }}
+            >
+              Comentarios
+            </div>
+            <div
+              className="px-3 py-2 text-[11px] whitespace-pre-line"
+              style={{ minHeight: 80, border: '1px solid #888', borderTop: 'none' }}
+            >
               {header.comentarios || 'Precios en Pesos Mexicanos'}
-            </p>
+            </div>
           </div>
-          <div className="text-xs text-gray-700">
-            <p><span className="font-semibold text-gray-600">Estado:</span> {header.estado || '—'}</p>
-            {header.fecha_entrega && (
-              <p><span className="font-semibold text-gray-600">Fecha entrega:</span> {header.fecha_entrega}</p>
-            )}
-            {header.aprobada_por && (
-              <p><span className="font-semibold text-gray-600">Aprobada por:</span> {header.aprobada_por}</p>
-            )}
+          <div className="pl-6">
+            <table className="w-full text-[11px]" style={{ borderCollapse: 'collapse' }}>
+              <tbody>
+                <TotalRow label="SUBTOTAL" value={fmt(header.subtotal)} />
+                <TotalRow label="IVA" value={fmt(header.iva)} />
+                <TotalRow label="ENVIO" value={fmtOrDash(header.envio)} />
+                <TotalRow label="OTROS" value={fmtOrDash(header.otros)} />
+                <tr>
+                  <td className="px-2 py-2 text-right font-extrabold" style={{ borderTop: '2px solid #000' }}>
+                    TOTAL
+                  </td>
+                  <td className="px-2 py-2 text-right font-extrabold tabular-nums" style={{ borderTop: '2px solid #000' }}>
+                    $ {fmt(header.total)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
 
         {/* Signature */}
         <div className="mt-16">
-          <div className="w-72 border-t border-gray-900 pt-1">
-            <p className="text-xs font-bold uppercase tracking-wide">{COMPANY.signer}</p>
-            <p className="text-[10px] text-gray-500">Firma autorizada</p>
+          <div className="border-t border-gray-700 pt-1 inline-block" style={{ minWidth: 280 }}>
+            <p className="text-[11px] font-bold uppercase tracking-wide">{COMPANY.signer}</p>
           </div>
         </div>
       </div>
     </>
+  )
+}
+
+function TotalRow({ label, value }: { label: string; value: string }) {
+  return (
+    <tr>
+      <td className="px-2 py-1 text-right font-semibold text-gray-700">{label}</td>
+      <td className="px-2 py-1 text-right tabular-nums">{value}</td>
+    </tr>
   )
 }
