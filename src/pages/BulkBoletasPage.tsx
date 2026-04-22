@@ -62,7 +62,9 @@ export default function BulkBoletasPage() {
   const sharedPopulated = useRef(false);
 
   // ── Shared fields (common to all boletas in a batch) ──────────────────────
-  const [fecha, setFecha] = useState(mexicoDateInput());
+  // Shared fecha starts empty — each boleta gets its own date from OCR.
+  // This field only activates as a fallback when a boleta's OCR-detected date is blank.
+  const [fecha, setFecha] = useState('');
   const [unidad, setUnidad] = useState('');
   const [rutaOrigen, setRutaOrigen] = useState('');
   const [rutaDestino, setRutaDestino] = useState('');
@@ -96,14 +98,15 @@ export default function BulkBoletasPage() {
     rutaDestino.trim() !== '';
 
   // ── Auto-populate shared fields from first successful OCR ─────────────────
+  // fecha and material are intentionally excluded: each boleta now carries its
+  // own per-row value from OCR, so auto-filling the shared field would make it
+  // look like it "overrides" everything when it only serves as a blank fallback.
   function applySharedFromOcr(ocr: OcrBoletaResult): void {
     if (sharedPopulated.current) return;
     sharedPopulated.current = true;
-    if (ocr.fecha) setFecha(ocr.fecha);
     if (ocr.banco_carga) setRutaOrigen(ocr.banco_carga);
     if (ocr.banco_descarga) setRutaDestino(ocr.banco_descarga);
     if (ocr.distancia_km) setKmTotal(String(ocr.distancia_km));
-    if (ocr.material) setMaterial(ocr.material);
     if (ocr.obra) setCliente(ocr.obra);
   }
 
