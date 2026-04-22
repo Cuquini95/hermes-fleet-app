@@ -48,6 +48,39 @@ const MATERIAL_OPTIONS = [
   'Húmedo', 'Seco', 'Roca', 'Grava', 'Arena', 'Mineral', 'Caliza', 'Otro',
 ];
 
+/**
+ * Normalize OCR material output → MATERIAL_OPTIONS value.
+ *
+ * Problems solved:
+ *   1. OCR returns lowercase/unaccented ("humedo" → "Húmedo")
+ *   2. PLACOSA "Blanco" material → "Caliza"
+ *   3. OCH Mining boletas (placas starts with "CV<number>") → always "Mineral"
+ */
+function normalizeMaterial(raw: string, placasRaw: string): string {
+  // OCH Mining: OCR outputs "CV100" style for placas; PLACOSA outputs "FJ7794A"
+  if (/^CV\d+$/i.test(placasRaw)) return 'Mineral';
+
+  const key = raw
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, ''); // strip accents for comparison
+
+  const map: Record<string, string> = {
+    humedo:  'Húmedo',
+    seco:    'Seco',
+    roca:    'Roca',
+    grava:   'Grava',
+    arena:   'Arena',
+    mineral: 'Mineral',
+    caliza:  'Caliza',
+    blanco:  'Caliza',   // "Blanco" on PLACOSA boletas = Caliza
+    otro:    'Otro',
+  };
+
+  return map[key] ?? raw;
+}
+
 function makeId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
@@ -163,7 +196,7 @@ export default function BulkBoletasPage() {
                       capacidad_m3: ocr.capacidad_m3 ? String(ocr.capacidad_m3) : '',
                       unidad: resolvedUnit,
                       fecha: ocr.fecha ?? '',
-                      material: ocr.material ?? '',
+                      material: normalizeMaterial(ocr.material ?? '', ocr.placas ?? ''),
                     }
                   : b
               )
