@@ -1,7 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import {
   Truck,
-  MapPin,
   AlertTriangle,
   Activity,
   Wrench,
@@ -21,7 +20,6 @@ interface ActionCard {
 
 const ACTION_CARDS: ActionCard[] = [
   { label: 'Equipos', icon: <Truck size={32} className="text-amber" />, path: '/fleet' },
-  { label: 'Viajes Peña', icon: <MapPin size={32} className="text-amber" />, path: '/viajes-pena' },
   { label: 'Alertas', icon: <AlertTriangle size={32} className="text-amber" />, path: '/alerts' },
 ];
 

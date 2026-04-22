@@ -49,7 +49,6 @@ const DieselPage          = lazy(() => import('./pages/DieselPage'));
 const HorometroPage       = lazy(() => import('./pages/HorometroPage'));
 const ViajePage           = lazy(() => import('./pages/ViajePage'));
 const BulkBoletasPage     = lazy(() => import('./pages/BulkBoletasPage'));
-const ViajesPenaPage      = lazy(() => import('./pages/ViajesPenaPage'));
 const ChatPage            = lazy(() => import('./pages/ChatPage'));
 const BriefingCard        = lazy(() => import('./components/dashboard/BriefingCard'));
 const PerfilPage          = lazy(() => import('./pages/PerfilPage'));
@@ -182,7 +181,6 @@ export default function App() {
         <Route path="/viaje"           element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><PageBoundary role={role}><S><ViajePage /></S></PageBoundary></RequireRole>} />
         <Route path="/flete"           element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><PageBoundary role={role}><S><ViajePage /></S></PageBoundary></RequireRole>} />
         <Route path="/bulk-boletas"    element={<RequireRole roles={['operador', 'coordinador', 'supervisor', 'gerencia']}><PageBoundary role={role}><S><BulkBoletasPage /></S></PageBoundary></RequireRole>} />
-        <Route path="/viajes-pena"     element={<RequireRole roles={['supervisor', 'gerencia']}><PageBoundary role={role}><S><ViajesPenaPage /></S></PageBoundary></RequireRole>} />
         <Route path="/briefing"        element={<RequireRole roles={MANAGEMENT}><PageBoundary role={role}><S><BriefingCard /></S></PageBoundary></RequireRole>} />
         <Route path="/perfil"          element={<RequireRole roles={ALL}><PageBoundary role={role}><S><PerfilPage /></S></PageBoundary></RequireRole>} />
         <Route path="/my-reports"      element={<RequireRole roles={ALL}><PageBoundary role={role}><S><MyReportsPage /></S></PageBoundary></RequireRole>} />

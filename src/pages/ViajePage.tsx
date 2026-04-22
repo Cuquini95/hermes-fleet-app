@@ -70,12 +70,14 @@ interface TripEntry {
   hora:     string;
   tonelaje: string;
   flete:    string;
+  folio:    string;  // boleta / remisión reference
 }
 
 const emptyTrip = (hora: string = ''): TripEntry => ({
   hora,
   tonelaje: '',
   flete:    '',
+  folio:    '',
 });
 
 export default function ViajePage() {
@@ -100,6 +102,7 @@ export default function ViajePage() {
   // ── Single-mode fields ────────────────────────────────────────────────────
   const [tonelaje, setTonelaje] = useState<string>('');
   const [flete, setFlete] = useState<string>('');
+  const [folio, setFolio] = useState<string>('');
 
   // ── Multi-mode trips ──────────────────────────────────────────────────────
   const [trips, setTrips] = useState<TripEntry[]>([emptyTrip(mexicoTimeInput())]);
@@ -196,7 +199,7 @@ export default function ViajePage() {
     const last = trips[trips.length - 1];
     setTrips((prev) => [
       ...prev,
-      { hora: mexicoTimeInput(), tonelaje: '', flete: last?.flete ?? '' },
+      { hora: mexicoTimeInput(), tonelaje: '', flete: last?.flete ?? '', folio: '' },
     ]);
   }
 
@@ -224,7 +227,7 @@ export default function ViajePage() {
      * G:Origen H:Destino I:KM_Total J:Cliente K:Tipo_Carga L:Tonelaje
      * M:Flete N:Observaciones O:Ticket_Bascula
      */
-    const buildRow = (horaVal: string, tonelajeVal: string, fleteVal: string): string[] => {
+    const buildRow = (horaVal: string, tonelajeVal: string, fleteVal: string, folioVal: string): string[] => {
       const horaNormalised = horaVal.length === 5 ? `${horaVal}:00` : horaVal;
       return [
         fechaSheet,                                // A (0)  Fecha
@@ -241,7 +244,7 @@ export default function ViajePage() {
         String(parseFloat(tonelajeVal) || 0),      // L (11) TONELAJE
         String(parseFloat(fleteVal) || 0),         // M (12) FLETE ($)
         observaciones,                             // N (13) OBSERVACIONES
-        '',                                        // O (14) Ticket_Bascula
+        folioVal,                                  // O (14) Folio / Ticket_Bascula
       ];
     };
 
@@ -251,7 +254,7 @@ export default function ViajePage() {
       setToastVisible(true);
       setSubmitting(false);
 
-      appendRow(SHEET_TABS.FLETES, buildRow(hora, tonelaje, flete)).catch((err: unknown) => {
+      appendRow(SHEET_TABS.FLETES, buildRow(hora, tonelaje, flete, folio)).catch((err: unknown) => {
         console.error('Background write failed (Flete single):', err);
       });
     } else {
@@ -264,7 +267,7 @@ export default function ViajePage() {
       setSubmitting(false);
 
       Promise.allSettled(
-        orderedTrips.map((t) => appendRow(SHEET_TABS.FLETES, buildRow(t.hora, t.tonelaje, t.flete)))
+        orderedTrips.map((t) => appendRow(SHEET_TABS.FLETES, buildRow(t.hora, t.tonelaje, t.flete, t.folio)))
       ).then((results) => {
         const failed = results.filter((r) => r.status === 'rejected').length;
         if (failed > 0) {
@@ -525,6 +528,23 @@ export default function ViajePage() {
           </div>
         )}
 
+        {/* Folio (single mode) — boleta / remisión reference */}
+        {mode === 'single' && (
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-text-secondary flex items-center gap-1.5">
+              Folio
+              <span className="text-xs text-text-secondary font-normal">/ Remisión</span>
+            </label>
+            <input
+              type="text"
+              value={folio}
+              onChange={(e) => setFolio(e.target.value)}
+              placeholder="Ej: 24044 · 0031"
+              className="w-full rounded-xl border border-border p-3 text-text bg-white font-mono tracking-wide"
+            />
+          </div>
+        )}
+
         {/* Observaciones */}
         <div className="flex flex-col gap-1">
           <label className="text-sm font-medium text-text-secondary">
@@ -613,6 +633,18 @@ export default function ViajePage() {
                       style={{ borderColor: autoRate ? '#F59E0B' : '#FDE68A' }}
                     />
                   </div>
+                </div>
+                {/* Folio per trip */}
+                <div className="mt-2">
+                  <label className="text-xs text-text-secondary block mb-1">Folio / Remisión</label>
+                  <input
+                    type="text"
+                    value={t.folio}
+                    onChange={(e) => updateTrip(i, { folio: e.target.value })}
+                    placeholder="Ej: 24044"
+                    className="w-full rounded-lg border p-2 text-sm bg-white font-mono tracking-wide"
+                    style={{ borderColor: '#FDE68A' }}
+                  />
                 </div>
               </div>
             ))}
