@@ -42,6 +42,8 @@ interface BoletaItem {
   fecha: string;
   /** Per-boleta material pre-filled from OCR — overrides shared material */
   material: string;
+  /** Per-boleta distance (km) pre-filled from OCR distancia_km — overrides shared kmTotal */
+  kmTotal: string;
 }
 
 const MATERIAL_OPTIONS = [
@@ -160,6 +162,7 @@ export default function BulkBoletasPage() {
       unidad: '',
       fecha: '',
       material: '',
+      kmTotal: '',
     }));
 
     setBoletas((prev) => [...prev, ...items]);
@@ -197,6 +200,7 @@ export default function BulkBoletasPage() {
                       unidad: resolvedUnit,
                       fecha: ocr.fecha ?? '',
                       material: normalizeMaterial(ocr.material ?? '', ocr.placas ?? ''),
+                      kmTotal: ocr.distancia_km ? String(ocr.distancia_km) : '',
                     }
                   : b
               )
@@ -258,19 +262,20 @@ export default function BulkBoletasPage() {
     for (const b of ordered) {
       try {
         const hora = b.hora.length === 5 ? `${b.hora}:00` : (b.hora || '00:00:00');
-        // Per-boleta date/material with shared-field fallback
+        // Per-boleta fields with shared-field fallback
         const boletaFecha = (b.fecha || fecha).split('-').reverse().join('/'); // dd/MM/yyyy
         const boletaMaterial = b.material || material;
+        const boletaKm = b.kmTotal || kmTotal;
         await appendRow(SHEET_TABS.FLETES, [
           boletaFecha,                // A  Fecha (per-boleta → shared fallback)
           hora,                       // B  Hora
           b.unidad || unidad,         // C  No. Unidad (per-boleta → shared fallback)
           b.fletero || userName,      // D  Conductor
-          kmTotal,                    // E  KM Cargado
+          boletaKm,                   // E  KM Cargado (per-boleta → shared fallback)
           '0',                        // F  KM Vacío
           rutaOrigen,                 // G  Origen
           rutaDestino,                // H  Destino
-          kmTotal,                    // I  KM Total
+          boletaKm,                   // I  KM Total
           cliente,                    // J  Cliente
           boletaMaterial,             // K  Tipo Carga (per-boleta → shared fallback)
           b.capacidad_m3 || '0',      // L  Tonelaje
@@ -722,8 +727,8 @@ export default function BulkBoletasPage() {
                     </select>
                   </div>
 
-                  {/* Per-boleta fecha + material — pre-filled from OCR */}
-                  <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+                  {/* Per-boleta fecha + km + material — pre-filled from OCR */}
+                  <div className="mt-1.5 grid gap-1.5" style={{ gridTemplateColumns: '1fr 64px 1fr' }}>
                     <div className="flex items-center gap-1">
                       <span className="text-[10px] font-semibold text-text-secondary whitespace-nowrap">
                         Fecha:
@@ -733,9 +738,21 @@ export default function BulkBoletasPage() {
                         value={b.fecha}
                         onChange={(e) => updateBoleta(b.id, { fecha: e.target.value })}
                         className="flex-1 min-w-0 rounded-lg text-xs bg-white px-1 py-1"
-                        style={{
-                          border: `1px solid ${b.fecha ? '#22C55E' : '#FDE68A'}`,
-                        }}
+                        style={{ border: `1px solid ${b.fecha ? '#22C55E' : '#FDE68A'}` }}
+                      />
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] font-semibold text-text-secondary whitespace-nowrap">
+                        KM:
+                      </span>
+                      <input
+                        type="number"
+                        value={b.kmTotal}
+                        onChange={(e) => updateBoleta(b.id, { kmTotal: e.target.value })}
+                        placeholder={kmTotal || '0'}
+                        step="0.1"
+                        className="w-full rounded-lg text-xs bg-white px-1 py-1 text-center"
+                        style={{ border: `1px solid ${b.kmTotal ? '#22C55E' : '#FDE68A'}` }}
                       />
                     </div>
                     <div className="flex items-center gap-1">
@@ -751,9 +768,7 @@ export default function BulkBoletasPage() {
                           color: b.material ? '#15803D' : '#374151',
                         }}
                       >
-                        <option value="">
-                          {material || 'Material...'}
-                        </option>
+                        <option value="">{material || 'Material...'}</option>
                         {MATERIAL_OPTIONS.map((m) => (
                           <option key={m} value={m}>{m}</option>
                         ))}
