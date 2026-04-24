@@ -11,7 +11,7 @@ function normalizeStatus(raw: string): Equipment['status'] {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, ''); // strip accents
   if (s === 'operativo' || s.startsWith('en operac') || s === 'disponible') return 'operativo';
-  if (s.includes('reparac') || s.includes('falla') || s.startsWith('en pm') || s === 'pm' || s.includes('mantenimiento') || s.startsWith('taller')) return 'taller';
+  if (s.includes('reparac') || s.includes('falla') || s.startsWith('en pm') || s === 'pm' || s.includes('mantenimiento') || s.includes('taller')) return 'taller';
   if (s.includes('traslado') || s.includes('alerta')) return 'alerta';
   return 'inactivo';
 }
@@ -25,22 +25,31 @@ function parseEquipmentRow(row: string[]): Equipment | null {
   const unit_id = (row[1] ?? '').trim();
   if (!unit_id) return null;
 
-  const marca = (row[3] ?? '').trim();
-  const modelo = (row[4] ?? '').trim();
+  const usesCod2Column = Boolean((row[5] ?? '').trim());
+  const type = (row[usesCod2Column ? 3 : 2] ?? '').trim() || 'Equipo';
+  const marca = (row[usesCod2Column ? 4 : 3] ?? '').trim();
+  const modelo = (row[usesCod2Column ? 5 : 4] ?? '').trim();
+  const statusIndex = looksLikeMeter(row[9]) ? 8 : 9;
+  const meterIndex = statusIndex === 9 ? 10 : 9;
+  const dateIndex = statusIndex === 9 ? 11 : 10;
 
   return {
     unit_id,
     model: [marca, modelo].filter(Boolean).join(' ') || unit_id,
-    type: (row[2] ?? '').trim() || 'Equipo',
+    type,
     client: 'GTP',
-    status: normalizeStatus(row[8] ?? ''),
-    current_horometro: parseFloat((row[9] ?? '').replace(/,/g, '')) || 0,
+    status: normalizeStatus(row[statusIndex] ?? ''),
+    current_horometro: parseFloat((row[meterIndex] ?? '').replace(/,/g, '')) || 0,
     next_pm_level: '',
     next_pm_horometro: 0,
-    last_inspection_date: (row[10] ?? '').trim(),
+    last_inspection_date: (row[dateIndex] ?? '').trim(),
     last_inspection_result: '',
     assigned_operator: '',
   };
+}
+
+function looksLikeMeter(value: string | undefined): boolean {
+  return /^\s*[\d,.]+\s*$/.test(value ?? '');
 }
 
 // ── Store ──────────────────────────────────────────────────────────────────────
