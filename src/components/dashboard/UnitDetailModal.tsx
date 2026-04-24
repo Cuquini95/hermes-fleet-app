@@ -167,6 +167,24 @@ function AveriaCard({ averia, muted }: AveriaCardProps) {
   const sevClass =
     SEV_BADGE[averia.severidad] ?? 'bg-gray-100 text-gray-600 border-gray-200'
   const photoUrl = firstPhotoUrl(averia.foto_url)
+  const [photoOpen, setPhotoOpen] = useState(false)
+
+  useEffect(() => {
+    if (!photoOpen) return undefined
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPhotoOpen(false)
+    }
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    document.addEventListener('keydown', onKeyDown)
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [photoOpen])
+
   return (
     <div
       className={`rounded-lg border p-3 ${muted ? 'border-gray-200 bg-gray-50' : 'border-red-200 bg-red-50'}`}
@@ -191,12 +209,48 @@ function AveriaCard({ averia, muted }: AveriaCardProps) {
       )}
 
       {photoUrl && (
-        <img
-          src={photoUrl}
-          alt={`Foto averia ${averia.unidad}`}
-          className="mb-2 h-28 w-28 rounded-lg border border-gray-200 object-cover"
-          loading="lazy"
-        />
+        <>
+          <button
+            type="button"
+            onClick={() => setPhotoOpen(true)}
+            className="mb-2 block rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 cursor-zoom-in"
+            aria-label={`Ampliar foto averia ${averia.unidad}`}
+          >
+            <img
+              src={photoUrl}
+              alt={`Foto averia ${averia.unidad}`}
+              className="h-28 w-28 rounded-lg object-cover"
+              loading="lazy"
+            />
+          </button>
+
+          {photoOpen && (
+            <div
+              className="fixed inset-0 z-[70] flex items-center justify-center bg-black/85 p-3 sm:p-6"
+              role="dialog"
+              aria-modal="true"
+              onClick={() => setPhotoOpen(false)}
+            >
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setPhotoOpen(false)
+                }}
+                className="absolute right-4 top-4 rounded-full bg-white/95 p-2 text-gray-700 shadow-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                aria-label="Cerrar foto"
+              >
+                <X size={22} />
+              </button>
+              <img
+                src={photoUrl}
+                alt={`Foto averia ${averia.unidad}`}
+                className="max-h-[88vh] max-w-[96vw] rounded-xl object-contain shadow-2xl"
+                onClick={(event) => event.stopPropagation()}
+              />
+            </div>
+          )}
+        </>
       )}
 
       <div className="flex flex-wrap gap-3 text-xs text-gray-600">
