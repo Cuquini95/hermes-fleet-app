@@ -2,12 +2,15 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
 import { useEquipmentList } from './useEquipmentList';
 import { mexicoDate } from '../lib/date-utils';
+import { buildAvailabilityTrend, calculateAvailability, type AvailabilityPoint } from '../lib/availability';
+import { openAveriaUnitSet } from '../lib/averias';
 
 export interface DashboardData {
   availability: number;
   criticalOTs: number;
   avgConsumption: string;
   alertsToday: number;
+  availabilityTrend: AvailabilityPoint[];
   loading: boolean;
   error: string | null;
   refresh: () => void;
@@ -20,6 +23,7 @@ interface CacheEntry {
   criticalOTs: number;
   avgConsumption: string;
   alertsToday: number;
+  averiaRows: string[][];
   ts: number;
 }
 
@@ -62,8 +66,7 @@ async function fetchAvgConsumption(signal?: AbortSignal): Promise<string> {
   return `${(total / count).toFixed(2)} L/avg`;
 }
 
-async function fetchAlertsToday(signal?: AbortSignal): Promise<number> {
-  const rows = await readRange(SHEET_TABS.AVERIAS, signal);
+function countAlertsToday(rows: string[][]): number {
   const today = mexicoDate();
   let count = 0;
   for (let i = 1; i < rows.length; i++) {
@@ -81,17 +84,15 @@ export function useDashboardData(): DashboardData {
   const [criticalOTs, setCriticalOTs] = useState(0);
   const [avgConsumption, setAvgConsumption] = useState('--');
   const [alertsToday, setAlertsToday] = useState(0);
+  const [averiaRows, setAveriaRows] = useState<string[][]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const equipmentList = useEquipmentList();
-  const available = equipmentList.filter(
-    (e) => e.status === 'operativo' || e.status === 'alerta'
-  ).length;
-  const availability = equipmentList.length > 0
-    ? Math.round((available / equipmentList.length) * 100)
-    : 0;
+  const openAveriaUnits = openAveriaUnitSet(averiaRows);
+  const availability = calculateAvailability(equipmentList, openAveriaUnits);
+  const availabilityTrend = buildAvailabilityTrend(equipmentList, averiaRows);
 
   const fetchAll = useCallback(async (signal?: AbortSignal) => {
     // Serve from cache if still fresh — avoids redundant Sheets API calls
@@ -101,6 +102,7 @@ export function useDashboardData(): DashboardData {
       setCriticalOTs(_cache.criticalOTs);
       setAvgConsumption(_cache.avgConsumption);
       setAlertsToday(_cache.alertsToday);
+      setAveriaRows(_cache.averiaRows);
       setLoading(false);
       setError(null);
       return;
@@ -112,26 +114,34 @@ export function useDashboardData(): DashboardData {
     const results = await Promise.allSettled([
       fetchCriticalOTs(signal),
       fetchAvgConsumption(signal),
-      fetchAlertsToday(signal),
+      readRange(SHEET_TABS.AVERIAS, signal),
     ]);
 
     if (signal?.aborted) return;
 
-    const [otsResult, consumptionResult, alertsResult] = results;
+    const [otsResult, consumptionResult, averiasResult] = results;
 
     const newOTs          = otsResult.status          === 'fulfilled' ? otsResult.value          : 0;
     const newConsumption  = consumptionResult.status   === 'fulfilled' ? consumptionResult.value   : '--';
-    const newAlerts       = alertsResult.status        === 'fulfilled' ? alertsResult.value        : 0;
+    const newAveriaRows   = averiasResult.status       === 'fulfilled' ? averiasResult.value       : [];
+    const newAlerts       = countAlertsToday(newAveriaRows);
 
     setCriticalOTs(newOTs);
     setAvgConsumption(newConsumption);
     setAlertsToday(newAlerts);
+    setAveriaRows(newAveriaRows);
 
     const anyFailed = results.some((r) => r.status === 'rejected');
     setError(anyFailed ? 'Algunos datos no pudieron cargarse' : null);
 
     // Populate cache so the next mount within TTL is instant.
-    _cache = { criticalOTs: newOTs, avgConsumption: newConsumption, alertsToday: newAlerts, ts: Date.now() };
+    _cache = {
+      criticalOTs: newOTs,
+      avgConsumption: newConsumption,
+      alertsToday: newAlerts,
+      averiaRows: newAveriaRows,
+      ts: Date.now(),
+    };
 
     setLoading(false);
   }, []);
@@ -159,6 +169,7 @@ export function useDashboardData(): DashboardData {
     criticalOTs,
     avgConsumption,
     alertsToday,
+    availabilityTrend,
     loading,
     error,
     refresh,

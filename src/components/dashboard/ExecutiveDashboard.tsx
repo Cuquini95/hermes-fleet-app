@@ -120,7 +120,7 @@ export default function ExecutiveDashboard() {
           <FleetGrid equipment={equipment} />
 
           {/* Availability chart */}
-          <AvailabilityChart />
+          <AvailabilityChart data={data.availabilityTrend} />
 
           {/* Daily actions */}
           <AccionesDelDia />
