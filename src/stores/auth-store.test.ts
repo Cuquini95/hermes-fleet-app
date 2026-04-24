@@ -74,7 +74,7 @@ describe('auth-store — login success', () => {
 
   it('sets assignedUnits correctly for operador', () => {
     getStore().login('operador', '2026');
-    expect(getStore().assignedUnits).toEqual(['EPAK-09']);
+    expect(getStore().assignedUnits).toEqual(['CA22']);
   });
 
   it('returns true and sets state for mecanico with correct pin', () => {
@@ -90,7 +90,7 @@ describe('auth-store — login success', () => {
     expect(result).toBe(true);
     expect(getStore().role).toBe('supervisor');
     expect(getStore().userName).toBe('Supervisor');
-    expect(getStore().assignedUnits).toEqual(['EPAK-09', 'EPTK-08', 'EPCF-08']);
+    expect(getStore().assignedUnits).toEqual(['CA22', 'CA26', 'EH45']);
   });
 
   it('returns true and sets state for jefe_taller with correct pin', () => {
