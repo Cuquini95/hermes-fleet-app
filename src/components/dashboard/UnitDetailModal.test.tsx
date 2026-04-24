@@ -76,25 +76,25 @@ describe('UnitDetailModal — open/closed averia filtering', () => {
   });
 
   it('filters closed averias as the inverse of open', () => {
-    // Source uses !== 'abierta' for closed
-    expect(source).toContain("estado.toLowerCase() !== 'abierta'");
+    expect(source).toContain('!isOpenAveria');
   });
 });
 
 // ── parseAveriaRow helper ─────────────────────────────────────────────────────
 describe('UnitDetailModal — parseAveriaRow helper', () => {
-  it('declares a parseAveriaRow function', () => {
-    expect(source).toContain('function parseAveriaRow');
+  it('imports parseAveriaRow from the shared averias helper', () => {
+    expect(source).toContain('parseAveriaRow');
+    expect(source).toContain('../../lib/averias');
   });
 
-  it('maps row[0] to fecha field', () => {
-    expect(source).toContain('fecha:');
-    expect(source).toContain('row[0]');
+  it('filters out non-data rows that parse to null', () => {
+    expect(source).toContain('a is AveriaEntry');
+    expect(source).toContain('a !== null');
   });
 
-  it('maps row[4] to descripcion field', () => {
-    expect(source).toContain('descripcion:');
-    expect(source).toContain('row[4]');
+  it('uses shared image URL parsing for averia photos', () => {
+    expect(source).toContain('firstPhotoUrl');
+    expect(source).toContain('foto_url');
   });
 
   // Verify the helper logic in isolation

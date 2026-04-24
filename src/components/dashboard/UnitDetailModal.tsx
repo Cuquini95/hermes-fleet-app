@@ -9,20 +9,7 @@ import { X, AlertCircle, FileText, Clock, User as UserIcon, Wrench } from 'lucid
 import { readRange, SHEET_TABS } from '../../lib/sheets-api'
 import StatusDot from '../ui/StatusDot'
 import type { Equipment } from '../../types/equipment'
-
-interface AveriaEntry {
-  fecha: string
-  hora: string
-  tipo: string
-  descripcion: string
-  severidad: string
-  tecnico: string
-  tiempo_paro: string
-  costo: string
-  estado: string
-  solucion: string
-  observaciones: string
-}
+import { firstPhotoUrl, isOpenAveria, parseAveriaRow, type AveriaEntry } from '../../lib/averias'
 
 interface UnitDetailModalProps {
   unit: Equipment
@@ -43,22 +30,6 @@ const SEV_BADGE: Record<string, string> = {
   BAJA: 'bg-yellow-100 text-yellow-700 border-yellow-200',
 }
 
-function parseAveriaRow(row: string[]): AveriaEntry {
-  return {
-    fecha: (row[0] ?? '').trim(),
-    hora: (row[1] ?? '').trim(),
-    tipo: (row[3] ?? '').trim(),
-    descripcion: (row[4] ?? '').trim(),
-    severidad: (row[5] ?? '').trim().toUpperCase(),
-    tecnico: (row[6] ?? '').trim(),
-    tiempo_paro: (row[7] ?? '').trim(),
-    costo: (row[8] ?? '').trim(),
-    estado: (row[9] ?? '').trim(),
-    solucion: (row[10] ?? '').trim(),
-    observaciones: (row[11] ?? '').trim(),
-  }
-}
-
 export default function UnitDetailModal({ unit, onClose }: UnitDetailModalProps) {
   const [averias, setAverias] = useState<AveriaEntry[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -73,6 +44,7 @@ export default function UnitDetailModal({ unit, onClose }: UnitDetailModalProps)
           .slice(3)
           .filter((r) => (r[2] ?? '').trim().toUpperCase() === unit.unit_id.toUpperCase())
           .map(parseAveriaRow)
+          .filter((a): a is AveriaEntry => a !== null)
         if (!cancelled) setAverias(matches)
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err))
@@ -83,8 +55,9 @@ export default function UnitDetailModal({ unit, onClose }: UnitDetailModalProps)
     }
   }, [unit.unit_id])
 
-  const open = averias?.filter((a) => a.estado.toLowerCase() === 'abierta') ?? []
-  const closed = averias?.filter((a) => a.estado.toLowerCase() !== 'abierta') ?? []
+  const open = averias?.filter(isOpenAveria) ?? []
+  const closed = averias?.filter((a) => !isOpenAveria(a)) ?? []
+  const effectiveStatus: Equipment['status'] = open.length > 0 ? 'taller' : unit.status
 
   return (
     <div
@@ -98,7 +71,7 @@ export default function UnitDetailModal({ unit, onClose }: UnitDetailModalProps)
         {/* Header */}
         <div className="flex items-start justify-between p-5 border-b border-gray-100">
           <div className="flex items-center gap-3">
-            <StatusDot status={unit.status} />
+            <StatusDot status={effectiveStatus} />
             <div>
               <h2 className="text-lg font-bold text-gray-900 font-mono">{unit.unit_id}</h2>
               <p className="text-sm text-gray-500">{unit.model}</p>
@@ -118,7 +91,12 @@ export default function UnitDetailModal({ unit, onClose }: UnitDetailModalProps)
         <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-2 text-sm">
           <Wrench size={16} className="text-gray-500" />
           <span className="font-semibold text-gray-700">Estado:</span>
-          <span className="text-gray-900">{STATUS_LABEL[unit.status]}</span>
+          <span className="text-gray-900">{STATUS_LABEL[effectiveStatus]}</span>
+          {open.length > 0 && unit.status === 'operativo' && (
+            <span className="ml-auto rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700 border border-red-100">
+              Averia abierta
+            </span>
+          )}
         </div>
 
         {/* Body */}
@@ -188,6 +166,7 @@ interface AveriaCardProps {
 function AveriaCard({ averia, muted }: AveriaCardProps) {
   const sevClass =
     SEV_BADGE[averia.severidad] ?? 'bg-gray-100 text-gray-600 border-gray-200'
+  const photoUrl = firstPhotoUrl(averia.foto_url)
   return (
     <div
       className={`rounded-lg border p-3 ${muted ? 'border-gray-200 bg-gray-50' : 'border-red-200 bg-red-50'}`}
@@ -211,6 +190,15 @@ function AveriaCard({ averia, muted }: AveriaCardProps) {
         <p className="text-sm text-gray-900 mb-2">{averia.descripcion}</p>
       )}
 
+      {photoUrl && (
+        <img
+          src={photoUrl}
+          alt={`Foto averia ${averia.unidad}`}
+          className="mb-2 h-28 w-28 rounded-lg border border-gray-200 object-cover"
+          loading="lazy"
+        />
+      )}
+
       <div className="flex flex-wrap gap-3 text-xs text-gray-600">
         {averia.tecnico && (
           <span className="inline-flex items-center gap-1">
@@ -225,6 +213,11 @@ function AveriaCard({ averia, muted }: AveriaCardProps) {
         {averia.estado && (
           <span className={`inline-flex items-center gap-1 font-medium ${averia.estado.toLowerCase() === 'abierta' ? 'text-red-700' : 'text-gray-500'}`}>
             <FileText size={11} /> {averia.estado}
+          </span>
+        )}
+        {averia.ot_id && (
+          <span className="inline-flex items-center gap-1 font-mono text-gray-500">
+            OT: {averia.ot_id}
           </span>
         )}
       </div>

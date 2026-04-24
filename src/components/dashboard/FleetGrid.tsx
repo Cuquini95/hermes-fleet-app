@@ -1,7 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Equipment } from '../../types/equipment'
 import StatusDot from '../ui/StatusDot'
 import UnitDetailModal from './UnitDetailModal'
+import { readRange, SHEET_TABS } from '../../lib/sheets-api'
+import { openAveriaUnitSet } from '../../lib/averias'
 
 interface FleetGridProps {
   equipment: Equipment[]
@@ -11,8 +13,29 @@ const STATUS_ORDER: Equipment['status'][] = ['taller', 'alerta', 'operativo', 'i
 
 export default function FleetGrid({ equipment }: FleetGridProps) {
   const [selected, setSelected] = useState<Equipment | null>(null)
+  const [openAveriaUnits, setOpenAveriaUnits] = useState<Set<string>>(new Set())
 
-  const sorted = [...equipment].sort(
+  useEffect(() => {
+    let cancelled = false
+    void readRange(SHEET_TABS.AVERIAS)
+      .then((rows) => {
+        if (!cancelled) setOpenAveriaUnits(openAveriaUnitSet(rows))
+      })
+      .catch(() => {
+        if (!cancelled) setOpenAveriaUnits(new Set())
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const effectiveEquipment = equipment.map((unit) => (
+    openAveriaUnits.has(unit.unit_id.toUpperCase())
+      ? { ...unit, status: 'taller' as Equipment['status'] }
+      : unit
+  ))
+
+  const sorted = [...effectiveEquipment].sort(
     (a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status),
   )
 
