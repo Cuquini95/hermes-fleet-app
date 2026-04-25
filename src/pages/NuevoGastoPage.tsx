@@ -84,6 +84,7 @@ export default function NuevoGastoPage() {
   const [submitDone, setSubmitDone] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [priceChanges, setPriceChanges] = useState<PriceChange[]>([]);
+  const [telegramSent, setTelegramSent] = useState(false);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -244,7 +245,7 @@ export default function NuevoGastoPage() {
       // Auto-import parts into catalog when saving a Refaccion quote.
       // Returns any price changes so we can show an alert before navigating away.
       if (tipo === 'Refaccion' && commonFields.line_items.length > 0) {
-        const changes = await importPartsFromQuote(
+        const result = await importPartsFromQuote(
           proveedor,
           commonFields.line_items.map((l) => ({
             part_number: l.part_number,
@@ -252,8 +253,9 @@ export default function NuevoGastoPage() {
             unit_price: l.unit_price,
           }))
         );
-        if (changes.length > 0) {
-          setPriceChanges(changes);
+        if (result.price_changes.length > 0) {
+          setPriceChanges(result.price_changes);
+          setTelegramSent(result.telegram_sent);
           // Give the user time to read the alert before navigating
           setSubmitDone(true);
           setTimeout(() => navigate(-1), 6000);
@@ -315,7 +317,8 @@ export default function NuevoGastoPage() {
               })}
             </div>
             <p className="text-xs text-amber-600 mt-3 text-center">
-              Se envió una alerta por WhatsApp · Regresando en unos segundos…
+              {telegramSent ? 'Se envio una alerta por Telegram.' : 'Cambio detectado; Telegram no esta configurado en este despliegue.'}
+              {' '}Regresando en unos segundos...
             </p>
           </div>
         )}

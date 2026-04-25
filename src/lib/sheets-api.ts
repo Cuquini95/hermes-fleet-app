@@ -419,6 +419,12 @@ export interface PriceChange {
   supplier: string;
 }
 
+export interface PriceImportResult {
+  price_changes: PriceChange[];
+  telegram_sent: boolean;
+  telegram_reason?: string;
+}
+
 /**
  * Upsert parts from a supplier quote into the server-side supplier_catalog.json.
  * Returns any price changes detected (existing part with different price).
@@ -427,21 +433,25 @@ export interface PriceChange {
 export async function importPartsFromQuote(
   supplier: string,
   parts: PartImportEntry[]
-): Promise<PriceChange[]> {
+): Promise<PriceImportResult> {
   const partsWithNumbers = parts.filter((p) => p.part_number.trim() !== '');
-  if (partsWithNumbers.length === 0) return [];
+  if (partsWithNumbers.length === 0) return { price_changes: [], telegram_sent: false };
   try {
-    const res = await fetchWithRetry(`${HERMES_API}/api/parts/import`, {
+    const res = await fetchWithRetry('/api/parts/import', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ supplier, parts: partsWithNumbers }),
     });
-    if (!res.ok) return [];
+    if (!res.ok) return { price_changes: [], telegram_sent: false, telegram_reason: `http_${res.status}` };
     const data = await res.json();
-    return (data.price_changes as PriceChange[]) ?? [];
+    return {
+      price_changes: (data.price_changes as PriceChange[]) ?? [],
+      telegram_sent: data.telegram_sent === true,
+      telegram_reason: typeof data.telegram_reason === 'string' ? data.telegram_reason : undefined,
+    };
   } catch {
     // Non-critical — parts import failure should never block gasto save
-    return [];
+    return { price_changes: [], telegram_sent: false, telegram_reason: 'request_failed' };
   }
 }
 

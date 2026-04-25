@@ -147,6 +147,8 @@ export async function manualLookup(params: ManualLookupParams, signal?: AbortSig
 export interface PartResult {
   part_number: string;
   description: string;
+  supplier?: string;
+  last_updated?: string;
   oem_ref: string;
   compatible_units: string[];
   stock_quantity: number;
@@ -156,11 +158,42 @@ export interface PartResult {
   alternatives: string[];
 }
 
+type RawPartResult = Partial<PartResult> & {
+  supplier?: string;
+  last_updated?: string;
+};
+
+function toArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  if (typeof value === 'string' && value.trim()) return [value.trim()];
+  return [];
+}
+
+export function normalizePartResult(raw: RawPartResult): PartResult {
+  const supplier = String(raw.supplier ?? '').trim();
+  const location = String(raw.location ?? '').trim();
+
+  return {
+    part_number: String(raw.part_number ?? '').trim(),
+    description: String(raw.description ?? '').trim(),
+    supplier: supplier || undefined,
+    last_updated: raw.last_updated,
+    oem_ref: String(raw.oem_ref ?? supplier ?? '').trim(),
+    compatible_units: toArray(raw.compatible_units),
+    stock_quantity: Number.isFinite(Number(raw.stock_quantity)) ? Number(raw.stock_quantity) : 0,
+    stock_minimum: Number.isFinite(Number(raw.stock_minimum)) ? Number(raw.stock_minimum) : 1,
+    location: location || (supplier ? `Proveedor: ${supplier}` : 'Catalogo'),
+    unit_price: Number.isFinite(Number(raw.unit_price)) ? Number(raw.unit_price) : 0,
+    alternatives: toArray(raw.alternatives),
+  };
+}
+
 /** Search the parts catalog by free-text query, optionally filtered by equipment model. */
 export async function searchParts(query: string, equipo?: string, signal?: AbortSignal): Promise<PartResult[]> {
   const params: Record<string, string> = { q: query };
   if (equipo) params.equipo = equipo;
-  return hermesGet('/parts', params, signal);
+  const raw = await hermesGet<RawPartResult[]>('/parts', params, signal);
+  return raw.map(normalizePartResult).filter((part) => part.part_number);
 }
 
 export interface DiagramResult {

@@ -40,6 +40,7 @@ export default function CatalogoImportPage() {
   const [importDone, setImportDone] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [priceChanges, setPriceChanges] = useState<PriceChange[]>([]);
+  const [telegramSent, setTelegramSent] = useState(false);
   const [importedCount, setImportedCount] = useState(0);
 
   const fileRef   = useRef<HTMLInputElement>(null);
@@ -117,7 +118,7 @@ export default function CatalogoImportPage() {
 
     setImporting(true);
     try {
-      const changes = await importPartsFromQuote(
+      const result = await importPartsFromQuote(
         supplier.trim(),
         validLines.map((l) => ({
           part_number: l.part_number,
@@ -126,7 +127,8 @@ export default function CatalogoImportPage() {
         }))
       );
       setImportedCount(validLines.length);
-      setPriceChanges(changes);
+      setPriceChanges(result.price_changes);
+      setTelegramSent(result.telegram_sent);
       setImportDone(true);
     } catch {
       setImportError('Error al importar. Intenta de nuevo.');
@@ -147,6 +149,12 @@ export default function CatalogoImportPage() {
         <p className="text-sm text-text-secondary">
           Disponibles ahora en la búsqueda de Partes.
         </p>
+
+        {priceChanges.length > 0 && (
+          <p className={`text-xs ${telegramSent ? 'text-green-600' : 'text-amber-600'}`}>
+            {telegramSent ? 'Alerta enviada por Telegram.' : 'Cambio detectado; Telegram no esta configurado en este despliegue.'}
+          </p>
+        )}
 
         {/* Price change alert */}
         {priceChanges.length > 0 && (
@@ -191,6 +199,7 @@ export default function CatalogoImportPage() {
               setSupplier('');
               setLineItems([emptyLine()]);
               setPriceChanges([]);
+              setTelegramSent(false);
               setImportedCount(0);
             }}
             className="px-5 py-2.5 rounded-xl border border-border text-sm font-medium text-text"
