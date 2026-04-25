@@ -2,15 +2,9 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
+import { parseInventoryRows, type InventoryItem } from '../lib/inventory-rows';
 
-interface StockItem {
-  partNumber: string;
-  description: string;
-  oemRef: string;
-  stock: number;
-  minimum: number;
-  unit: string;
-  category: string;
+interface StockItem extends InventoryItem {
   status: 'critical' | 'low' | 'ok';
 }
 
@@ -41,26 +35,10 @@ function computeStatus(stock: number, minimum: number): StockItem['status'] {
 }
 
 function parseRows(rows: string[][]): StockItem[] {
-  return rows.reduce<StockItem[]>((acc, row) => {
-    const partNumber = row[0]?.trim() ?? '';
-    if (!partNumber || partNumber.startsWith('#')) return acc;
-
-    const stock = parseFloat(row[3] ?? '') || 0;
-    const minimum = parseFloat(row[4] ?? '') || 0;
-
-    acc.push({
-      partNumber,
-      description: row[1]?.trim() ?? '',
-      oemRef: row[2]?.trim() ?? '',
-      stock,
-      minimum,
-      unit: row[5]?.trim() ?? '',
-      category: row[6]?.trim() ?? '',
-      status: computeStatus(stock, minimum),
-    });
-
-    return acc;
-  }, []);
+  return parseInventoryRows(rows).map((item) => ({
+    ...item,
+    status: computeStatus(item.stock, item.minimum),
+  }));
 }
 
 function formatTimestamp(date: Date): string {

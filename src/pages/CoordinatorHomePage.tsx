@@ -19,6 +19,7 @@ import { useWorkOrderStore } from '../stores/workorder-store';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { getNextPM } from '../data/pm-rules';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
+import { countCriticalInventory } from '../lib/inventory-rows';
 import KPICard from '../components/ui/KPICard';
 import OTCard from '../components/ui/OTCard';
 
@@ -62,16 +63,7 @@ export default function CoordinatorHomePage() {
   useEffect(() => {
     readRange(SHEET_TABS.INVENTARIO)
       .then((rows) => {
-        // Skip header row; cols from AlertsPage pattern: partNumber(0) descripcion(1) ?(2) stock(3) minimo(4)
-        const count = rows.slice(1).filter((r) => {
-          if (!r || r.length < 5) return false;
-          const partNumber = (r[0] ?? '').trim();
-          if (!partNumber) return false;
-          const stock = parseInt(r[3] ?? '', 10);
-          const minimo = parseInt(r[4] ?? '', 10);
-          return !isNaN(stock) && !isNaN(minimo) && stock <= minimo;
-        }).length;
-        setStockCritico(count);
+        setStockCritico(countCriticalInventory(rows));
       })
       .catch(() => setStockCritico(0));
   }, []);

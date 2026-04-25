@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Bell, RefreshCw, AlertTriangle, ClipboardX, Package, Wrench, CheckCircle } from 'lucide-react';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
+import { parseInventoryRows } from '../lib/inventory-rows';
 import { SkeletonList } from '../components/ui/Skeleton';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -100,27 +101,16 @@ function computeDvir(rows: string[][]): DvirReprobadoAlert[] {
 }
 
 function computeStock(rows: string[][]): StockCriticoAlert[] {
-  const alerts: StockCriticoAlert[] = [];
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i];
-    if (!row || row.length < 5) continue;
-    const partNumber = (row[0] ?? '').trim();
-    const descripcion = (row[1] ?? '').trim();
-    if (!partNumber) continue;
-    const stock = parseInt(row[3] ?? '', 10);
-    const minimo = parseInt(row[4] ?? '', 10);
-    if (!isNaN(stock) && !isNaN(minimo) && stock <= minimo) {
-      alerts.push({
+  return parseInventoryRows(rows)
+    .filter((item) => item.stock <= item.minimum)
+    .map((item, i) => ({
         kind: 'stock',
-        id: `stock-${partNumber}-${i}`,
-        partNumber,
-        descripcion,
-        stock,
-        minimo,
-      });
-    }
-  }
-  return alerts;
+        id: `stock-${item.partNumber}-${i}`,
+        partNumber: item.partNumber,
+        descripcion: item.description,
+        stock: item.stock,
+        minimo: item.minimum,
+      }));
 }
 
 function computePm(historialRows: string[][], horometrosRows: string[][]): PmVencidoAlert[] {

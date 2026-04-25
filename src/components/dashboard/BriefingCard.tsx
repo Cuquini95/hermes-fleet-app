@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { readRange, SHEET_TABS } from '../../lib/sheets-api';
 import { useEquipmentList } from '../../hooks/useEquipmentList';
+import { parseInventoryRows } from '../../lib/inventory-rows';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -230,17 +231,14 @@ function buildBriefingFromSheets(
   const dvirCompliantCount = dvirExpectedCount - missingChecklists.length;
 
   // --- Critical parts ---
-  const criticalParts: CriticalPart[] = [];
-  for (const row of inventarioRows) {
-    const partNumber = (row[0] ?? '').trim();
-    const description = (row[1] ?? '').trim();
-    const stock = parseFloat((row[3] ?? '').replace(',', '.'));
-    const minimo = parseFloat((row[4] ?? '').replace(',', '.'));
-    if (!partNumber || isNaN(stock) || isNaN(minimo)) continue;
-    if (stock <= minimo) {
-      criticalParts.push({ partNumber, description, stock: Math.round(stock), minimo: Math.round(minimo) });
-    }
-  }
+  const criticalParts: CriticalPart[] = parseInventoryRows(inventarioRows)
+    .filter((item) => item.stock <= item.minimum)
+    .map((item) => ({
+      partNumber: item.partNumber,
+      description: item.description,
+      stock: Math.round(item.stock),
+      minimo: Math.round(item.minimum),
+    }));
 
   return {
     total,

@@ -11,22 +11,22 @@ vi.mock('../lib/sheets-api', () => ({
 const { readRange } = await import('../lib/sheets-api');
 const { useEquipmentStore } = await import('./equipment-store');
 
-// Minimal valid equipment row: 0=# 1=COD1 2=COD2 3=Desc 4=Marca 5=Modelo 6=Año
-// 7=Serie 8=Ubicación 9=Estado 10=Lectura 11=FechaLectura
+// Minimal valid equipment row for "01 Inventario":
+// 0=# 1=COD1 2=Descripción 3=Marca 4=Modelo 5=Año
+// 6=Serie 7=Ubicación 8=Estado 9=Lectura 10=FechaLectura
 function buildRow(overrides: Partial<Record<number, string>> = {}): string[] {
   const base = [
     '1',         // 0 #
     'CA20',      // 1 COD1
-    '',          // 2 COD2
-    'Camión Articulado', // 3 Descripción
-    'Caterpillar',       // 4 Marca
-    '745',               // 5 Modelo
-    '2015',              // 6 Año
-    '',                  // 7 Serie
-    'GTP',               // 8 Ubicación
-    'Operativo',         // 9 Estado
-    '8500',              // 10 Lectura
-    '05/04/2026',        // 11 Fecha Lectura
+    'Camión Articulado', // 2 Descripción
+    'Caterpillar',       // 3 Marca
+    '745',               // 4 Modelo
+    '2015',              // 5 Año
+    '',                  // 6 Serie
+    'GTP',               // 7 Ubicación
+    'Operativo',         // 8 Estado
+    '8500',              // 9 Lectura
+    '05/04/2026',        // 10 Fecha Lectura
   ];
   for (const [idx, val] of Object.entries(overrides)) {
     if (val !== undefined) base[Number(idx)] = val;
@@ -34,9 +34,9 @@ function buildRow(overrides: Partial<Record<number, string>> = {}): string[] {
   return base;
 }
 
-// DATA_START is 5 in the store, so we need 5 header rows + data rows
+// DATA_START is 3 in the store, so we need 3 header rows + data rows.
 function withHeaders(dataRows: string[][]): string[][] {
-  return [[], [], [], [], [], ...dataRows];
+  return [[], [], [], ...dataRows];
 }
 
 function resetStore() {
@@ -71,37 +71,37 @@ describe('useEquipmentStore — fetchEquipment', () => {
   });
 
   it('normalizes status: "Operativo" → "operativo"', async () => {
-    vi.mocked(readRange).mockResolvedValueOnce(withHeaders([buildRow({ 9: 'Operativo' })]));
+    vi.mocked(readRange).mockResolvedValueOnce(withHeaders([buildRow({ 8: 'Operativo' })]));
     await useEquipmentStore.getState().fetchEquipment();
     expect(useEquipmentStore.getState().equipment[0]!.status).toBe('operativo');
   });
 
   it('normalizes status: contains "reparac" → "taller"', async () => {
-    vi.mocked(readRange).mockResolvedValueOnce(withHeaders([buildRow({ 9: 'En Reparación' })]));
+    vi.mocked(readRange).mockResolvedValueOnce(withHeaders([buildRow({ 8: 'En Reparación' })]));
     await useEquipmentStore.getState().fetchEquipment();
     expect(useEquipmentStore.getState().equipment[0]!.status).toBe('taller');
   });
 
   it('normalizes status: contains "taller" → "taller"', async () => {
-    vi.mocked(readRange).mockResolvedValueOnce(withHeaders([buildRow({ 9: 'En taller' })]));
+    vi.mocked(readRange).mockResolvedValueOnce(withHeaders([buildRow({ 8: 'En taller' })]));
     await useEquipmentStore.getState().fetchEquipment();
     expect(useEquipmentStore.getState().equipment[0]!.status).toBe('taller');
   });
 
   it('normalizes status: contains "alerta" → "alerta"', async () => {
-    vi.mocked(readRange).mockResolvedValueOnce(withHeaders([buildRow({ 9: 'Alerta mecánica' })]));
+    vi.mocked(readRange).mockResolvedValueOnce(withHeaders([buildRow({ 8: 'Alerta mecánica' })]));
     await useEquipmentStore.getState().fetchEquipment();
     expect(useEquipmentStore.getState().equipment[0]!.status).toBe('alerta');
   });
 
   it('normalizes status: unknown → "inactivo"', async () => {
-    vi.mocked(readRange).mockResolvedValueOnce(withHeaders([buildRow({ 9: 'Baja definitiva' })]));
+    vi.mocked(readRange).mockResolvedValueOnce(withHeaders([buildRow({ 8: 'Baja definitiva' })]));
     await useEquipmentStore.getState().fetchEquipment();
     expect(useEquipmentStore.getState().equipment[0]!.status).toBe('inactivo');
   });
 
   it('parses horometro removing commas', async () => {
-    vi.mocked(readRange).mockResolvedValueOnce(withHeaders([buildRow({ 10: '12,500' })]));
+    vi.mocked(readRange).mockResolvedValueOnce(withHeaders([buildRow({ 9: '12,500' })]));
     await useEquipmentStore.getState().fetchEquipment();
     expect(useEquipmentStore.getState().equipment[0]!.current_horometro).toBe(12500);
   });

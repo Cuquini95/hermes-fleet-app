@@ -80,6 +80,14 @@ function isoToDDMMYYYY(iso: string): string {
   return `${d}/${m}/${y}`;
 }
 
+function todayIso(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 function confidenceDot(c: number): string {
   if (c >= 0.8) return '🟢';
   if (c >= 0.5) return '🟡';
@@ -87,6 +95,32 @@ function confidenceDot(c: number): string {
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
+
+function createEditableRow(fecha: string, overrides: Partial<EditableRow> = {}): EditableRow {
+  return {
+    equipo: '',
+    unidad: '',
+    modelo: '',
+    horometro: '',
+    litros: '',
+    hora: '',
+    confidence: 0,
+    fecha,
+    ...overrides,
+  };
+}
+
+function getMissingFields(row: EditableRow): string[] {
+  const missing: string[] = [];
+  if (!row.unidad) missing.push('unidad');
+  if (!row.horometro || Number(row.horometro) <= 0) missing.push('horometro');
+  if (!row.litros || Number(row.litros) <= 0) missing.push('litros');
+  return missing;
+}
+
+function isRowReady(row: EditableRow): boolean {
+  return getMissingFields(row).length === 0;
+}
 
 export default function FuelDispatchScanner({ onClose }: FuelDispatchScannerProps) {
   const equipment = useEquipmentList();
@@ -106,23 +140,31 @@ export default function FuelDispatchScanner({ onClose }: FuelDispatchScannerProp
     setErrorMsg('');
     try {
       const result = await ocrFuelDispatch(file);
-      const editableRows: EditableRow[] = result.rows.map((r: OcrFuelRow) => ({
-        equipo: r.equipo,
-        unidad: matchUnit(r.no_economico, equipment),
-        modelo: r.modelo,
-        horometro: r.horometro != null ? String(r.horometro) : '',
-        litros: r.litros != null ? String(r.litros) : '',
-        hora: r.hora ?? '',
-        confidence: r.confidence,
-        fecha: result.fecha_hoja,
-      }));
-      setFechaHoja(result.fecha_hoja);
+      const fecha = result.fecha_hoja || todayIso();
+      const editableRows: EditableRow[] = result.rows.map((r: OcrFuelRow) =>
+        createEditableRow(fecha, {
+          equipo: r.equipo,
+          unidad: matchUnit(r.no_economico, equipment),
+          modelo: r.modelo,
+          horometro: r.horometro && r.horometro > 0 ? String(r.horometro) : '',
+          litros: r.litros && r.litros > 0 ? String(r.litros) : '',
+          hora: r.hora ?? '',
+          confidence: r.confidence,
+        }),
+      );
+      if (editableRows.length === 0) {
+        editableRows.push(createEditableRow(fecha));
+      }
+      setFechaHoja(fecha);
       setRows(editableRows);
       setPhase('review');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error desconocido';
-      setErrorMsg(msg);
-      setPhase('error');
+      const fecha = todayIso();
+      setErrorMsg(`OCR no pudo leer la hoja completa. Completa los datos manualmente. Detalle: ${msg}`);
+      setFechaHoja(fecha);
+      setRows([createEditableRow(fecha)]);
+      setPhase('review');
     }
   }
 
@@ -145,12 +187,18 @@ export default function FuelDispatchScanner({ onClose }: FuelDispatchScannerProp
     setRows((prev) => prev.filter((_, i) => i !== index));
   }
 
+  function addManualRow() {
+    const fecha = fechaHoja || todayIso();
+    setFechaHoja(fecha);
+    setRows((prev) => [...prev, createEditableRow(fecha)]);
+  }
+
   // ── Batch submit ────────────────────────────────────────────────────────────
 
   async function handleConfirmAll() {
     setPhase('submitting');
     const userName = useAuthStore.getState().userName;
-    const validRows = rows.filter((r) => r.unidad && r.litros && r.horometro);
+    const validRows = rows.filter(isRowReady);
     setProgress({ sent: 0, total: validRows.length });
 
     let sent = 0;
@@ -238,6 +286,7 @@ export default function FuelDispatchScanner({ onClose }: FuelDispatchScannerProp
         <div className="flex gap-3 w-full">
           <button
             type="button"
+            data-testid="diesel-camera-button"
             onClick={() => cameraRef.current?.click()}
             className="flex-1 flex flex-col items-center gap-2 py-4 rounded-xl bg-amber text-white font-medium text-sm transition-opacity active:opacity-80"
           >
@@ -246,6 +295,7 @@ export default function FuelDispatchScanner({ onClose }: FuelDispatchScannerProp
           </button>
           <button
             type="button"
+            data-testid="diesel-upload-button"
             onClick={() => uploadRef.current?.click()}
             className="flex-1 flex flex-col items-center gap-2 py-4 rounded-xl border border-amber text-amber font-medium text-sm transition-opacity active:opacity-80"
           >
@@ -262,6 +312,7 @@ export default function FuelDispatchScanner({ onClose }: FuelDispatchScannerProp
         </button>
         <input
           ref={cameraRef}
+          data-testid="diesel-camera-input"
           type="file"
           accept="image/*"
           capture="environment"
@@ -270,6 +321,7 @@ export default function FuelDispatchScanner({ onClose }: FuelDispatchScannerProp
         />
         <input
           ref={uploadRef}
+          data-testid="diesel-upload-input"
           type="file"
           accept="image/*"
           className="hidden"
@@ -319,6 +371,9 @@ export default function FuelDispatchScanner({ onClose }: FuelDispatchScannerProp
 
   // Review phase
   if (phase === 'review') {
+    const readyRows = rows.filter(isRowReady).length;
+    const incompleteRows = rows.length - readyRows;
+
     return (
       <div className="flex flex-col gap-3 mb-4">
         {/* Header */}
@@ -331,10 +386,30 @@ export default function FuelDispatchScanner({ onClose }: FuelDispatchScannerProp
             {rows.length} {rows.length === 1 ? 'fila' : 'filas'}
           </span>
         </div>
+        {incompleteRows > 0 && (
+          <div className="rounded-xl border border-amber/40 bg-amber/10 p-3 text-xs text-text-secondary">
+            Revisa las filas marcadas. La hora es opcional; unidad, horometro y litros son necesarios para guardar.
+          </div>
+        )}
+        {errorMsg && (
+          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+            {errorMsg}
+          </div>
+        )}
 
         {/* Rows */}
-        {rows.map((row, i) => (
-          <div key={i} className="bg-white rounded-xl border border-border p-4 flex flex-col gap-3">
+        {rows.map((row, i) => {
+          const missingFields = getMissingFields(row);
+          const needsReview = missingFields.length > 0 || row.confidence < 0.75;
+
+          return (
+          <div
+            key={i}
+            data-testid={`diesel-review-row-${i}`}
+            className={`bg-white rounded-xl border p-4 flex flex-col gap-3 ${
+              needsReview ? 'border-amber/70' : 'border-border'
+            }`}
+          >
             {/* Row header */}
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
@@ -354,11 +429,31 @@ export default function FuelDispatchScanner({ onClose }: FuelDispatchScannerProp
                 </button>
               </div>
             </div>
+            {needsReview && (
+              <div className="flex flex-wrap gap-1">
+                {missingFields.map((field) => (
+                  <span key={field} className="rounded-full bg-amber/10 px-2 py-1 text-[11px] font-medium text-amber">
+                    Completar {field}
+                  </span>
+                ))}
+                {row.confidence < 0.75 && (
+                  <span className="rounded-full bg-amber/10 px-2 py-1 text-[11px] font-medium text-amber">
+                    Revisar lectura
+                  </span>
+                )}
+                {!row.hora && (
+                  <span className="rounded-full bg-gray-100 px-2 py-1 text-[11px] font-medium text-text-secondary">
+                    Hora opcional
+                  </span>
+                )}
+              </div>
+            )}
 
             {/* Unidad select */}
             <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-text-secondary">Unidad</label>
               <select
+                data-testid={`diesel-row-${i}-unidad`}
                 value={row.unidad}
                 onChange={(e) => updateRow(i, 'unidad', e.target.value)}
                 className="w-full rounded-lg border border-border p-2 bg-white text-sm text-text"
@@ -377,6 +472,7 @@ export default function FuelDispatchScanner({ onClose }: FuelDispatchScannerProp
               <div className="flex flex-col gap-1">
                 <label className="text-xs font-medium text-text-secondary">Horómetro</label>
                 <input
+                  data-testid={`diesel-row-${i}-horometro`}
                   type="number"
                   value={row.horometro}
                   onChange={(e) => updateRow(i, 'horometro', e.target.value)}
@@ -387,6 +483,7 @@ export default function FuelDispatchScanner({ onClose }: FuelDispatchScannerProp
               <div className="flex flex-col gap-1">
                 <label className="text-xs font-medium text-text-secondary">Litros</label>
                 <input
+                  data-testid={`diesel-row-${i}-litros`}
                   type="number"
                   value={row.litros}
                   onChange={(e) => updateRow(i, 'litros', e.target.value)}
@@ -397,6 +494,7 @@ export default function FuelDispatchScanner({ onClose }: FuelDispatchScannerProp
               <div className="flex flex-col gap-1">
                 <label className="text-xs font-medium text-text-secondary">Hora</label>
                 <input
+                  data-testid={`diesel-row-${i}-hora`}
                   type="text"
                   value={row.hora}
                   onChange={(e) => updateRow(i, 'hora', e.target.value)}
@@ -407,16 +505,27 @@ export default function FuelDispatchScanner({ onClose }: FuelDispatchScannerProp
               </div>
             </div>
           </div>
-        ))}
+          );
+        })}
+
+        <button
+          type="button"
+          data-testid="diesel-add-manual-row"
+          onClick={addManualRow}
+          className="w-full border border-dashed border-amber rounded-xl py-3 font-semibold text-sm text-amber"
+        >
+          + Agregar fila manual
+        </button>
 
         {/* Actions */}
         <button
           type="button"
+          data-testid="diesel-confirm-rows"
           onClick={() => void handleConfirmAll()}
-          disabled={rows.filter((r) => r.unidad && r.litros && r.horometro).length === 0}
+          disabled={readyRows === 0}
           className="w-full bg-amber text-white rounded-xl py-4 font-semibold text-base disabled:opacity-40 disabled:cursor-not-allowed transition-opacity btn-press"
         >
-          Confirmar todo ({rows.filter((r) => r.unidad && r.litros && r.horometro).length} filas)
+          Confirmar todo ({readyRows} filas)
         </button>
         <button
           type="button"

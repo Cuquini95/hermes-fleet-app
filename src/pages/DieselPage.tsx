@@ -51,7 +51,7 @@ export default function DieselPage() {
   const [fecha, setFecha] = useState(mexicoDateInput());
   const [hora, setHora] = useState(mexicoTimeInput());
   const [unidad, setUnidad] = useState('');
-  const [fuelType, setFuelType] = useState<FuelType>('Urea');
+  const [fuelType, setFuelType] = useState<FuelType>('Diesel');
   const [litros, setLitros] = useState('');
   const [costo, setCosto] = useState('');
   const [horometro, setHorometro] = useState('');
@@ -181,6 +181,7 @@ export default function DieselPage() {
           {/* OCR scan button */}
           <button
             type="button"
+            data-testid="diesel-scan-dispatch-button"
             onClick={() => setShowScanner(true)}
             className="w-full mb-4 p-4 border-2 border-dashed border-amber rounded-xl flex items-center justify-center gap-3 bg-amber/5 hover:bg-amber/10 transition-colors"
           >

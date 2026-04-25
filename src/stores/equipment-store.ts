@@ -11,7 +11,7 @@ function normalizeStatus(raw: string): Equipment['status'] {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, ''); // strip accents
   if (s === 'operativo' || s.startsWith('en operac') || s === 'disponible') return 'operativo';
-  if (s.includes('reparac') || s.includes('falla') || s.startsWith('en pm') || s === 'pm' || s.includes('mantenimiento') || s.startsWith('taller')) return 'taller';
+  if (s.includes('reparac') || s.includes('falla') || s.startsWith('en pm') || s === 'pm' || s.includes('mantenimiento') || s.includes('taller')) return 'taller';
   if (s.includes('traslado') || s.includes('alerta')) return 'alerta';
   return 'inactivo';
 }
