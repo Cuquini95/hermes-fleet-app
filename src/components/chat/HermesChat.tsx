@@ -7,52 +7,30 @@ import { useAuthStore } from '../../stores/auth-store';
 import { useEquipmentList } from '../../hooks/useEquipmentList';
 import {
   diagnose,
-  photoToFailure,
+  mechanicChat,
+  photoDiagnose,
   manualLookup,
   searchParts,
   findDiagram,
   getFaultCodePages,
   type DiagnoseResult,
-  type PhotoAnalysisResult,
   type ManualLookupResult,
   type PartResult,
 } from '../../lib/hermes-api';
 import { fileToBase64 } from '../../lib/photo-upload';
+import { tryUploadPhoto } from '../../lib/photo-upload-safe';
+import { appendRow, SHEET_TABS } from '../../lib/sheets-api';
+import { queueSubmission } from '../../lib/offline-queue';
+import { useOnlineStatus } from '../../hooks/useOnlineStatus';
+import { useWorkOrderStore } from '../../stores/workorder-store';
+import { buildDiagnosisIssueRow, buildDiagnosisWorkOrderRow, enforceMechanicDiagnosisGuards, normalizeDiagnosisResponse, type MechanicDiagnosisResult } from '../../lib/mechanic-diagnosis';
+import { normalizeFaultCode, isFaultCodeLike as isStructuredFaultCodeLike } from '../../lib/fault-code-parser';
 import { lookupFaultCode, buildFaultCodeSintoma } from '../../data/fault-codes';
-import type { ChatMessage } from '../../types/chat';
+import type { ChatActionId, ChatMessage } from '../../types/chat';
+import type { WorkOrder } from '../../types/workorder';
 import ChatBubble from './ChatBubble';
 import TypingIndicator from './TypingIndicator';
 import ChatInput from './ChatInput';
-
-// ─── Mock fallbacks (used when VPS API is unreachable) ───────────────────────
-
-const MOCK_DIAGNOSE: DiagnoseResult = {
-  causas_probables: [
-    'Sello de cilindro desgastado',
-    'Manguera de presión dañada',
-    'Conexión hidráulica floja',
-  ],
-  checklist_diagnostico: [
-    'Verificar nivel de aceite hidráulico',
-    'Inspeccionar vástago del cilindro',
-    'Revisar mangueras por agrietamiento',
-    'Verificar presión del sistema',
-  ],
-  partes_probables: [
-    'Kit sello cilindro — P/N 707-99-47570',
-    'Manguera presión — P/N 207-62-71451',
-    'O-ring set — P/N 07000-15135',
-  ],
-  prioridad: 'ALTA',
-};
-
-const MOCK_PHOTO_ANALYSIS: PhotoAnalysisResult = {
-  componente_probable: 'Cilindro hidráulico de pluma',
-  tipo_de_dano: 'Fuga externa por sello desgastado',
-  severidad: 'Alta — requiere atención en < 8 horas',
-  recomendacion_inicial:
-    'Detener operación. Verificar nivel de aceite hidráulico. No operar hasta reparación. Preparar kit de sellos y manguera de respaldo.',
-};
 
 // ─── Formatters ──────────────────────────────────────────────────────────────
 
@@ -86,8 +64,65 @@ function formatDiagnose(result: DiagnoseResult, equipo: string): string {
   return `🔍 **Diagnóstico para ${equipo}**\n\n**Causas probables:**\n${causas}\n\n**Checklist:**\n${checklist}\n\n**Partes sugeridas:**\n${partes}\n\n**Prioridad:** ${result.prioridad}`;
 }
 
-function formatPhotoAnalysis(result: PhotoAnalysisResult): string {
-  return `📷 **Análisis de imagen**\n\n**Componente:** ${result.componente_probable}\n**Tipo de daño:** ${result.tipo_de_dano}\n**Severidad:** ${result.severidad}\n\n**Recomendación:** ${result.recomendacion_inicial}`;
+function uniqueNonEmpty(items: string[]): string[] {
+  const seen = new Set<string>();
+  return items
+    .map((item) => item.trim())
+    .filter((item) => {
+      if (!item || seen.has(item)) return false;
+      seen.add(item);
+      return true;
+    });
+}
+
+function sentenceBullets(text: string, limit = 4): string[] {
+  return uniqueNonEmpty(
+    text
+      .replace(/\n+/g, ' ')
+      .split(/(?<=[.!?])\s+/)
+      .map((sentence) => sentence.replace(/\*\*/g, '').trim())
+      .filter(Boolean),
+  ).slice(0, limit);
+}
+
+function bulletList(items: string[], limit = 5): string {
+  const cleaned = uniqueNonEmpty(items).slice(0, limit);
+  if (cleaned.length === 0) return '• Sin dato confirmado.';
+  return cleaned.map((item) => `• ${item}`).join('\n');
+}
+
+function formatMechanicDiagnosis(result: MechanicDiagnosisResult): string {
+  const quickRead = sentenceBullets(result.spanish_answer, 4);
+  const code = result.detected_code?.normalized_label;
+  const stopLine = result.stop_machine_required
+    ? 'Detener la unidad hasta validar la causa.'
+    : 'Puede operar solo si no hay alarma activa y los indicadores están dentro de rango.';
+
+  return [
+    '**Lectura rápida**',
+    bulletList([
+      result.equipment_context ? `Equipo: ${result.equipment_context}` : '',
+      result.probable_system ? `Sistema probable: ${result.probable_system}` : '',
+      code ? `Código detectado: ${code}` : '',
+      ...quickRead,
+    ], 6),
+    '',
+    '**Riesgo operativo**',
+    bulletList([
+      `Nivel: ${result.safety_level}`,
+      stopLine,
+      `Confianza: ${result.confidence}%`,
+    ], 3),
+    '',
+    '**Causas probables**',
+    bulletList(result.likely_causes, 4),
+    '',
+    '**Revisar primero**',
+    bulletList(result.first_checks, 5),
+    '',
+    '**Componentes a inspeccionar**',
+    bulletList(result.recommended_parts_to_inspect, 4),
+  ].join('\n');
 }
 
 function formatPrecioMXN(price: number): string {
@@ -163,6 +198,13 @@ function extractFaultCode(text: string): string | null {
   const komatsuTM = text.match(/\b(\d{1,2}[A-Z]\d[A-Z]{1,3})\b/i);
   if (komatsuTM?.[1]) return komatsuTM[1].toUpperCase();
 
+  // Komatsu monitor / RHC codes: DK51L5, DA1QKR, DB1QKR, AA10NX
+  const komatsuMonitor = text.match(/\b(D[A-Z]\d{2}[A-Z0-9]{1,3}|[A-Z]{2}\d{2}[A-Z0-9]{1,3})\b/i);
+  if (komatsuMonitor?.[1]) return komatsuMonitor[1].toUpperCase();
+
+  const explicitFault = text.match(/\b(?:fallo|c[oó]digo|error|fault|cod)\s+([A-Z0-9-]{4,10})\b/i);
+  if (explicitFault?.[1]) return explicitFault[1].toUpperCase();
+
   // All-letter controller codes: AETMKX, AEBRKX, AEBPKX (6 uppercase letters)
   const allLetter = text.match(/\b([A-Z]{6})\b/);
   if (allLetter?.[1]) return allLetter[1].toUpperCase();
@@ -228,12 +270,52 @@ function buildGreeting(userName: string): ChatMessage {
   };
 }
 
+function diagnosisActions(): ChatActionId[] {
+  return ['create_ot', 'unit_history', 'upload_photo', 'manual_search'];
+}
+
+function resolveUnitNumber(selectedUnit: string, equipmentContext: string): string {
+  if (selectedUnit && selectedUnit !== 'General') return selectedUnit;
+  const firstSegment = String(equipmentContext || '').split('/')[0]?.trim() ?? '';
+  if (/^[A-Z]{1,4}[-]?\d{1,4}$/i.test(firstSegment)) return firstSegment.toUpperCase();
+  return '';
+}
+
+function attachEvidencePhoto(
+  diagnosis: MechanicDiagnosisResult,
+  evidencePhotoUrl: string,
+): MechanicDiagnosisResult {
+  return enforceMechanicDiagnosisGuards(diagnosis, { evidencePhotoUrl });
+}
+
+function photoEvidenceStatus(evidencePhotoUrl: string): string {
+  return evidencePhotoUrl
+    ? '\n\nFoto: guardada como evidencia para la OT.'
+    : '\n\nFoto: visible en este chat, pero no se pudo guardar como evidencia durable. Si vas a crear OT, vuelve a intentar con conexion antes de guardar.';
+}
+
+function formatUnitHistory(unit: string, workorders: WorkOrder[]): string {
+  const matches = workorders
+    .filter((wo) => wo.unidad.toLowerCase() === unit.toLowerCase())
+    .slice(0, 5);
+  if (matches.length === 0) {
+    return `Historial de ${unit}\n\nNo encontre OTs recientes en el cache local. Si la unidad tiene historial en Sheets, intenta abrir Ordenes cuando tengas conexion.`;
+  }
+  const lines = matches.map((wo) => (
+    `- ${wo.ot_id} | ${wo.fecha || 'sin fecha'} | ${wo.prioridad} | ${wo.estado}: ${wo.descripcion || wo.tipo_averia}`
+  ));
+  return `Historial reciente de ${unit}\n\n${lines.join('\n')}`;
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function HermesChat() {
   const userName = useAuthStore((s) => s.userName);
   const assignedUnits = useAuthStore((s) => s.assignedUnits);
   const equipment = useEquipmentList();
+  const isOnline = useOnlineStatus();
+  const fetchedWorkOrders = useWorkOrderStore((s) => s.fetched);
+  const fetchWorkOrders = useWorkOrderStore((s) => s.fetchWorkOrders);
 
   const defaultUnit: string =
     assignedUnits.length > 0 ? (assignedUnits[0] ?? 'General') : 'General';
@@ -243,6 +325,7 @@ export default function HermesChat() {
   ]);
   const [selectedUnit, setSelectedUnit] = useState<string>(defaultUnit);
   const [isLoading, setIsLoading] = useState(false);
+  const [openCameraRequest, setOpenCameraRequest] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Track the last fault code context so "ver manual" can look up pages
@@ -258,6 +341,124 @@ export default function HermesChat() {
   useEffect(() => {
     scrollToBottom();
   }, [messages, isLoading]);
+
+  const appendHermesMessage = useCallback((content: string) => {
+    const msg: ChatMessage = {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      role: 'hermes',
+      content,
+      timestamp: new Date(),
+    };
+    setMessages((prev) => [...prev, msg]);
+  }, []);
+
+  const handleChatAction = useCallback(async (action: ChatActionId, message: ChatMessage) => {
+    const diagnosis = message.diagnosis;
+
+    if (action === 'upload_photo') {
+      setOpenCameraRequest(Date.now());
+      return;
+    }
+
+    if (!diagnosis) {
+      appendHermesMessage('Primero necesito un diagnostico estructurado para ejecutar esta accion.');
+      return;
+    }
+
+    const unitNumber = resolveUnitNumber(selectedUnit, diagnosis.equipment_context);
+    if (action === 'create_ot') {
+      if (!unitNumber) {
+        appendHermesMessage('Selecciona la unidad arriba antes de crear la OT. No voy a abrir una orden contra "General".');
+        return;
+      }
+      const row = buildDiagnosisWorkOrderRow(diagnosis, {
+        unitNumber,
+        reportedBy: userName || 'Hermes Assistant',
+      });
+      const issueRow = buildDiagnosisIssueRow(diagnosis, {
+        unitNumber,
+        reportedBy: userName || 'Hermes Assistant',
+        otId: row[1],
+        date: row[2],
+      });
+      try {
+        if (isOnline) {
+          await Promise.all([
+            appendRow(SHEET_TABS.ORDENES_TRABAJO, row),
+            appendRow(SHEET_TABS.AVERIAS, issueRow),
+          ]);
+        } else {
+          const timestamp = new Date().toISOString();
+          await Promise.all([
+            queueSubmission({
+              type: 'falla',
+              data: { tab: SHEET_TABS.ORDENES_TRABAJO, values: row },
+              timestamp,
+            }),
+            queueSubmission({
+              type: 'falla',
+              data: { tab: SHEET_TABS.AVERIAS, values: issueRow },
+              timestamp,
+            }),
+          ]);
+        }
+        useWorkOrderStore.setState({ fetched: false });
+        appendHermesMessage(`${row[1]} creada para ${unitNumber} desde el diagnostico IA. Queda abierta para revision del taller.${diagnosis.evidence_photo_url ? ' La foto quedo enlazada como evidencia.' : ''}`);
+      } catch {
+        const timestamp = new Date().toISOString();
+        await Promise.allSettled([
+          queueSubmission({
+            type: 'falla',
+            data: { tab: SHEET_TABS.ORDENES_TRABAJO, values: row },
+            timestamp,
+          }),
+          queueSubmission({
+            type: 'falla',
+            data: { tab: SHEET_TABS.AVERIAS, values: issueRow },
+            timestamp,
+          }),
+        ]);
+        appendHermesMessage(`${row[1]} quedo en cola local. Se sincronizara cuando vuelva la conexion.`);
+      }
+      return;
+    }
+
+    if (action === 'unit_history') {
+      if (!unitNumber) {
+        appendHermesMessage('Selecciona una unidad para consultar historial. Con "General" no puedo separar fallas reales de otras unidades.');
+        return;
+      }
+      if (!fetchedWorkOrders) {
+        await fetchWorkOrders();
+      }
+      const workorders = useWorkOrderStore.getState().workorders;
+      appendHermesMessage(formatUnitHistory(unitNumber, workorders));
+      return;
+    }
+
+    if (action === 'manual_search') {
+      const code = diagnosis.detected_code?.normalized_label;
+      if (!code) {
+        appendHermesMessage('No detecte un codigo en este diagnostico. Escribe el sistema o codigo exacto para buscar manual.');
+        return;
+      }
+      try {
+        const pages = await getFaultCodePages(diagnosis.equipment_context, code);
+        if (pages.found && pages.pdf && pages.page_start !== undefined && pages.page_end !== undefined) {
+          appendHermesMessage(
+            `Manual de Taller — Codigo ${code}\n` +
+            `Paginas ${pages.page_start}-${pages.page_end}:\n\n` +
+            `![Manual p.${pages.page_start}](/hermes-api/diagrams/workshop-page/${pages.pdf}/${pages.page_start})\n\n` +
+            `![Manual p.${pages.page_end}](/hermes-api/diagrams/workshop-page/${pages.pdf}/${pages.page_end})`
+          );
+        } else {
+          appendHermesMessage(`No tengo el manual confirmado para esta unidad.\n\n${pages.message ?? ''}`);
+        }
+      } catch {
+        appendHermesMessage('No pude cargar el manual en este momento. Intenta de nuevo con conexion al servidor.');
+      }
+    }
+  }, [appendHermesMessage, fetchedWorkOrders, fetchWorkOrders, isOnline, selectedUnit, userName]);
 
   const handleSend = useCallback(
     async (text: string, photo?: File) => {
@@ -275,23 +476,38 @@ export default function HermesChat() {
       setIsLoading(true);
 
       let responseText: string;
+      let diagnosis: MechanicDiagnosisResult | undefined;
+      let actions: ChatActionId[] | undefined;
+      let evidencePhotoUrl = '';
 
       try {
         // Detect fault code early — before part number check (some codes look like part numbers)
-        const faultCode = extractFaultCode(text);
+        const normalizedCode = normalizeFaultCode(text);
+        const faultCode = normalizedCode?.normalized_label || extractFaultCode(text);
 
         if (photo) {
-          const foto_base64 = await fileToBase64(photo);
+          const [foto_base64, uploadedPhotoUrl] = await Promise.all([
+            fileToBase64(photo),
+            tryUploadPhoto(photo, 'falla-photos', `chat-${Date.now()}`),
+          ]);
+          evidencePhotoUrl = uploadedPhotoUrl;
           try {
-            const result = await photoToFailure({
+            const result = await photoDiagnose({
               foto_base64,
               equipo: selectedUnit !== 'General' ? selectedUnit : undefined,
+              contexto: text || undefined,
             });
-            responseText = formatPhotoAnalysis(result);
+            diagnosis = attachEvidencePhoto(result, evidencePhotoUrl);
+            responseText = formatMechanicDiagnosis(diagnosis) + photoEvidenceStatus(evidencePhotoUrl);
+            actions = diagnosisActions();
           } catch {
-            responseText = formatPhotoAnalysis(MOCK_PHOTO_ANALYSIS);
+            responseText =
+              'No pude analizar la imagen con el diagnóstico IA en este momento. No voy a inventar una falla. Intenta de nuevo o escribe el código/alarma visible del tablero.';
           }
-        } else if (faultCode || (isFaultCodeQuery(text) && !isPartNumber(text))) {
+          if (!diagnosis) {
+            responseText += photoEvidenceStatus(evidencePhotoUrl);
+          }
+        } else if (faultCode || ((isFaultCodeQuery(text) || isStructuredFaultCodeLike(text)) && !isPartNumber(text))) {
           // ── Fault code path ─────────────────────────────────────────────────
           const selectedEquipment = equipment.find((e) => e.unit_id === selectedUnit);
           const detectedModel = detectEquipmentFromText(text);
@@ -321,30 +537,54 @@ export default function HermesChat() {
               (userContext ? `Contexto adicional: ${userContext}` : '')
             : text;
 
+          const unitLabel = selectedUnit !== 'General' ? selectedUnit : (detectedModel !== 'General' ? detectedModel : faultCode ?? 'General');
+          const codeHeader = knownCode
+            ? `🔴 **Código ${faultCode}** — ${knownCode.descripcion}\n📍 Sistema: ${knownCode.sistema}\n${knownCode.accion ? `⚠️ **${knownCode.accion}**\n` : ''}\n`
+            : faultCode
+            ? `🔴 **Código ${faultCode}** — consultando manual...\n\n`
+            : '';
+
           try {
             const result = await diagnose({
               equipo: effectiveUnit,
               sintoma: sintomaForVPS,
               codigo_falla: faultCode ?? undefined,
             });
-            const unitLabel = selectedUnit !== 'General' ? selectedUnit : (detectedModel !== 'General' ? detectedModel : faultCode ?? 'General');
-            // Prepend known code summary so user sees the official description immediately
-            const codeHeader = knownCode
-              ? `🔴 **Código ${faultCode}** — ${knownCode.descripcion}\n📍 Sistema: ${knownCode.sistema}\n${knownCode.accion ? `⚠️ **${knownCode.accion}**\n` : ''}\n`
-              : faultCode
-              ? `🔴 **Código ${faultCode}** — consultando manual...\n\n`
-              : '';
             responseText = codeHeader + formatDiagnose(result, unitLabel);
+            diagnosis = normalizeDiagnosisResponse(result, {
+              equipment: effectiveUnit,
+              userInput: text,
+              detectedCode: normalizedCode?.normalized_label ? normalizedCode : null,
+            });
+            actions = diagnosisActions();
             if (noContext) {
               responseText = `⚠️ _Selecciona tu equipo arriba para resultados más precisos con este código._\n\n` + responseText;
             }
-            // Remember this fault code so "ver manual" can look up the PDF pages
             if (faultCode) {
               lastFaultCodeRef.current = { code: faultCode, equipo: effectiveUnit };
               responseText += `\n\n_💡 Escribe **ver manual** para abrir las páginas del manual de taller._`;
             }
           } catch {
-            responseText = formatDiagnose(MOCK_DIAGNOSE, selectedUnit);
+            try {
+              const result = await mechanicChat({
+                equipo: effectiveUnit,
+                user_input: text,
+                detected_code: normalizedCode?.normalized_label ? normalizedCode : undefined,
+                model_tier: 'reasoning',
+              });
+              diagnosis = enforceMechanicDiagnosisGuards(result);
+              responseText = formatMechanicDiagnosis(diagnosis);
+              actions = diagnosisActions();
+              if (noContext) {
+                responseText = `⚠️ _Selecciona tu equipo arriba para resultados más precisos con este código._\n\n` + responseText;
+              }
+              if (result.detected_code?.normalized_label) {
+                lastFaultCodeRef.current = { code: result.detected_code.normalized_label, equipo: effectiveUnit };
+              }
+            } catch {
+              responseText =
+                'No pude completar el diagnóstico IA en este momento. No voy a inventar causas ni partes. Intenta de nuevo o agrega código de falla, unidad y síntoma.';
+            }
           }
         } else if (isPartNumber(text) || extractPartNumber(text)) {
           // Part number detected — search catalog first
@@ -517,13 +757,32 @@ export default function HermesChat() {
             : detectEquipmentFromText(text);
 
           try {
-            const result = await diagnose({
+            const result = await mechanicChat({
               equipo: effectiveUnit,
-              sintoma: text,
+              user_input: text,
+              detected_code: normalizedCode?.normalized_label ? normalizedCode : undefined,
+              model_tier: 'auto',
             });
-            responseText = formatDiagnose(result, selectedUnit !== 'General' ? selectedUnit : effectiveUnit);
+            diagnosis = enforceMechanicDiagnosisGuards(result);
+            responseText = formatMechanicDiagnosis(diagnosis);
+            actions = diagnosisActions();
           } catch {
-            responseText = formatDiagnose(MOCK_DIAGNOSE, selectedUnit);
+            try {
+              const result = await diagnose({
+                equipo: effectiveUnit,
+                sintoma: text,
+              });
+              responseText = formatDiagnose(result, selectedUnit !== 'General' ? selectedUnit : effectiveUnit);
+              diagnosis = normalizeDiagnosisResponse(result, {
+                equipment: effectiveUnit,
+                userInput: text,
+                detectedCode: normalizedCode?.normalized_label ? normalizedCode : null,
+              });
+              actions = diagnosisActions();
+            } catch {
+              responseText =
+                'No pude completar el diagnóstico IA en este momento. No voy a inventar causas ni partes. Intenta de nuevo o agrega código de falla, unidad y síntoma.';
+            }
           }
         }
       } catch {
@@ -535,6 +794,8 @@ export default function HermesChat() {
         id: (Date.now() + 1).toString(),
         role: 'hermes',
         content: responseText,
+        diagnosis,
+        actions,
         timestamp: new Date(),
       };
 
@@ -575,14 +836,14 @@ export default function HermesChat() {
         style={{ backgroundColor: '#F1F5F9' }}
       >
         {messages.map((m) => (
-          <ChatBubble key={m.id} message={m} />
+          <ChatBubble key={m.id} message={m} onAction={handleChatAction} />
         ))}
         {isLoading && <TypingIndicator />}
         <div ref={scrollRef} />
       </div>
 
       {/* Input */}
-      <ChatInput onSend={handleSend} disabled={isLoading} />
+      <ChatInput onSend={handleSend} disabled={isLoading} openCameraRequest={openCameraRequest} />
     </div>
   );
 }
