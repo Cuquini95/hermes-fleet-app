@@ -118,7 +118,7 @@ const COLLECTIONS: [Collection, ...Collection[]] = [
     id: 'averias',
     icon: '⚠️',
     label: 'Averías',
-    tab: 'Averías',
+    tab: 'Averias',
     emptyMessage: 'No hay averías reportadas',
     columns: [
       { label: 'Fecha',       index: 0, sticky: true, minWidth: '110px' },

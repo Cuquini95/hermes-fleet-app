@@ -490,7 +490,7 @@ export const SHEET_TABS = {
   INSPECCIONES: '14 Inspecciones',
   INSPECCION_STICKERS: 'Inspeccion_Stickers',
   INSPECCION_HALLAZGOS: 'Inspeccion_Hallazgos',
-  AVERIAS: 'Averías',
+  AVERIAS: 'Averias',
   ORDENES_TRABAJO: 'ORDENES_TRABAJO',
   OT_STATUS_LOG: 'OT_STATUS_LOG',
   COMBUSTIBLE: 'Combustible',

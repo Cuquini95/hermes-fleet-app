@@ -24,8 +24,8 @@ describe('SHEET_TABS constants', () => {
     expect(SHEET_TABS.GASTOS).toBe('02 Gastos');
   });
 
-  it('AVERIAS maps to "Averías"', () => {
-    expect(SHEET_TABS.AVERIAS).toBe('Averías');
+  it('AVERIAS maps to the gateway-safe tab key', () => {
+    expect(SHEET_TABS.AVERIAS).toBe('Averias');
   });
 
   it('sticker inspection tabs are present', () => {
