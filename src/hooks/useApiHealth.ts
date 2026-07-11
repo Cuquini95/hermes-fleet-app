@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { hermesApiUrl } from '../lib/hermes-api-base';
 
 export interface HealthDb {
   pocketbase: 'up' | 'down' | 'unknown';
@@ -28,7 +29,7 @@ export function useApiHealth(): ApiHealth {
 
   const check = useCallback(async () => {
     try {
-      const res = await fetch('/hermes-api/health', {
+      const res = await fetch(hermesApiUrl('/health'), {
         signal: AbortSignal.timeout(8000),
       });
       if (!res.ok) {

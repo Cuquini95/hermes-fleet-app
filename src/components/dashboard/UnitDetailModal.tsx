@@ -10,9 +10,11 @@ import { readRange, SHEET_TABS } from '../../lib/sheets-api'
 import StatusDot from '../ui/StatusDot'
 import type { Equipment } from '../../types/equipment'
 import { firstPhotoUrl, isOpenAveria, parseAveriaRow, type AveriaEntry } from '../../lib/averias'
+import type { UnitDispatchReadiness } from '../../lib/dispatch-readiness'
 
 interface UnitDetailModalProps {
   unit: Equipment
+  dispatchReadiness?: UnitDispatchReadiness
   onClose: () => void
 }
 
@@ -30,7 +32,7 @@ const SEV_BADGE: Record<string, string> = {
   BAJA: 'bg-yellow-100 text-yellow-700 border-yellow-200',
 }
 
-export default function UnitDetailModal({ unit, onClose }: UnitDetailModalProps) {
+export default function UnitDetailModal({ unit, dispatchReadiness, onClose }: UnitDetailModalProps) {
   const [averias, setAverias] = useState<AveriaEntry[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -57,7 +59,9 @@ export default function UnitDetailModal({ unit, onClose }: UnitDetailModalProps)
 
   const open = averias?.filter(isOpenAveria) ?? []
   const closed = averias?.filter((a) => !isOpenAveria(a)) ?? []
-  const effectiveStatus: Equipment['status'] = open.length > 0 ? 'taller' : unit.status
+  const effectiveStatus: Equipment['status'] = open.length > 0
+    ? 'taller'
+    : dispatchReadiness?.effectiveStatus ?? unit.status
 
   return (
     <div
@@ -92,8 +96,17 @@ export default function UnitDetailModal({ unit, onClose }: UnitDetailModalProps)
           <Wrench size={16} className="text-gray-500" />
           <span className="font-semibold text-gray-700">Estado:</span>
           <span className="text-gray-900">{STATUS_LABEL[effectiveStatus]}</span>
+          {dispatchReadiness && dispatchReadiness.level !== 'ok' && (
+            <span className={`ml-auto rounded-full px-2 py-0.5 text-xs font-semibold border ${
+              dispatchReadiness.level === 'blocked'
+                ? 'bg-red-50 text-red-700 border-red-100'
+                : 'bg-amber-50 text-amber-700 border-amber-100'
+            }`}>
+              {dispatchReadiness.label}
+            </span>
+          )}
           {open.length > 0 && unit.status === 'operativo' && (
-            <span className="ml-auto rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700 border border-red-100">
+            <span className={`${dispatchReadiness && dispatchReadiness.level !== 'ok' ? '' : 'ml-auto'} rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700 border border-red-100`}>
               Averia abierta
             </span>
           )}
@@ -104,6 +117,22 @@ export default function UnitDetailModal({ unit, onClose }: UnitDetailModalProps)
           {error && (
             <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 mb-4">
               No se pudo cargar la información de averías: {error}
+            </div>
+          )}
+
+          {dispatchReadiness && dispatchReadiness.level !== 'ok' && (
+            <div className={`rounded-lg border px-4 py-3 text-sm mb-4 ${
+              dispatchReadiness.level === 'blocked'
+                ? 'bg-red-50 border-red-200 text-red-800'
+                : 'bg-amber-50 border-amber-200 text-amber-800'
+            }`}>
+              <p className="font-semibold">
+                {dispatchReadiness.level === 'blocked' ? 'No despachar' : 'Despacho restringido'}
+              </p>
+              <p className="mt-1">{dispatchReadiness.reason}</p>
+              {dispatchReadiness.expiresOn && (
+                <p className="mt-1 text-xs opacity-80">Vigencia: {dispatchReadiness.expiresOn}</p>
+              )}
             </div>
           )}
 

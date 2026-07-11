@@ -2,6 +2,7 @@
 // appendRow calls the VPS gateway which routes to PocketBase (or Sheets
 // in rollback mode) — no changes needed here when switching backends.
 import { appendRow } from './sheets-api';
+import { tryUploadPhotos } from './photo-upload-safe';
 
 const DB_NAME = 'hermes-offline';
 const STORE_NAME = 'pending-submissions';
@@ -19,7 +20,7 @@ function openDB(): Promise<IDBDatabase> {
 
 export interface PendingSubmission {
   id?: number;
-  type: 'dvir' | 'falla' | 'fuel' | 'trip' | 'horometro';
+  type: 'dvir' | 'falla' | 'fuel' | 'trip' | 'horometro' | 'sticker_inspection';
   data: Record<string, unknown>;
   timestamp: string;
 }
@@ -83,14 +84,30 @@ export async function flushQueue(): Promise<{ succeeded: number; failed: number 
     let failed = 0;
 
     for (const submission of pending) {
-      const { tab, values } = submission.data as { tab?: string; values?: string[] };
+      const { tab, values, photoFiles, photoBucket, photoColumnIndex } = submission.data as {
+        tab?: string;
+        values?: string[];
+        photoFiles?: File[];
+        photoBucket?: string;
+        photoColumnIndex?: number;
+      };
       if (!tab || !Array.isArray(values)) {
         // Malformed entry — remove it rather than retry forever
         if (submission.id !== undefined) await clearSubmission(submission.id);
         continue;
       }
       try {
-        await appendRow(tab, values);
+        const replayValues = [...values];
+        if (
+          Array.isArray(photoFiles) &&
+          photoFiles.length > 0 &&
+          typeof photoBucket === 'string' &&
+          typeof photoColumnIndex === 'number'
+        ) {
+          const photoUrls = await tryUploadPhotos(photoFiles, photoBucket);
+          replayValues[photoColumnIndex] = photoUrls.join(', ');
+        }
+        await appendRow(tab, replayValues);
         if (submission.id !== undefined) await clearSubmission(submission.id);
         succeeded++;
       } catch {

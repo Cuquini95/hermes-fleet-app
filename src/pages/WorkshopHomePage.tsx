@@ -14,6 +14,7 @@ import {
   Disc3,
   RefreshCw,
   Table2,
+  BadgeCheck,
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { useWorkOrderStore } from '../stores/workorder-store';
@@ -38,6 +39,7 @@ const ACTION_CARDS: ActionCard[] = [
   { label: 'PM',       icon: <Clock        size={32} className="text-amber" />, path: '/pm' },
   { label: 'Partes',   icon: <Package      size={32} className="text-amber" />, path: '/parts' },
   { label: 'Orden PM', icon: <CalendarCheck size={32} className="text-amber" />, path: '/pm-order' },
+  { label: 'Sticker 15d', icon: <BadgeCheck size={32} className="text-amber" />, path: '/sticker-inspection' },
   { label: 'Manuales', icon: <BookOpen     size={32} className="text-amber" />, path: '/manuals' },
   { label: 'Diagramas',icon: <FileImage    size={32} className="text-amber" />, path: '/diagrams' },
   { label: 'Neumáticos',icon: <Disc3       size={32} className="text-amber" />, path: '/neumaticos' },

@@ -107,7 +107,7 @@ describe('PendingSubmission type shape', () => {
   });
 
   it('accepts all valid type literals', () => {
-    const validTypes = ['dvir', 'falla', 'fuel', 'trip', 'horometro'] as const;
+    const validTypes = ['dvir', 'falla', 'fuel', 'trip', 'horometro', 'sticker_inspection'] as const;
     for (const t of validTypes) {
       const sub = { type: t, data: {}, timestamp: '' };
       expect(sub.type).toBe(t);

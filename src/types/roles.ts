@@ -26,6 +26,7 @@ export const NAV_CONFIG: Record<AppRole, { visible: NavItem[]; overflow: NavItem
       { id: 'horometro', label: 'Horómetro',   icon: 'Gauge',         path: '/horometro' },
       { id: 'fletes',    label: 'Fletes',       icon: 'MapPin',        path: '/flete' },
       { id: 'hermes',    label: 'Hermes Chat',  icon: 'MessageCircle', path: '/chat' },
+      { id: 'sticker',   label: 'Sticker 15d',  icon: 'BadgeCheck',    path: '/sticker-inspection' },
       { id: 'perfil',    label: 'Perfil',       icon: 'User',          path: '/perfil' },
     ],
   },
@@ -38,6 +39,7 @@ export const NAV_CONFIG: Record<AppRole, { visible: NavItem[]; overflow: NavItem
       { id: 'mas',     label: 'Más',     icon: 'MoreHorizontal',path: '' },
     ],
     overflow: [
+      { id: 'sticker',   label: 'Sticker 15d', icon: 'BadgeCheck', path: '/sticker-inspection' },
       { id: 'manuales',  label: 'Manuales',  icon: 'BookOpen',  path: '/manuals' },
       { id: 'diagramas', label: 'Diagramas', icon: 'FileImage', path: '/diagrams' },
       { id: 'perfil',    label: 'Perfil',    icon: 'User',      path: '/perfil' },
@@ -55,6 +57,7 @@ export const NAV_CONFIG: Record<AppRole, { visible: NavItem[]; overflow: NavItem
       { id: 'hermes',     label: 'Hermes Chat', icon: 'MessageCircle', path: '/chat' },
       { id: 'calendar',   label: 'Calendario',  icon: 'CalendarDays',  path: '/calendar' },
       { id: 'pm-order',   label: 'Orden PM',    icon: 'CalendarCheck', path: '/pm-order' },
+      { id: 'sticker',    label: 'Sticker 15d', icon: 'BadgeCheck',    path: '/sticker-inspection' },
       { id: 'manuales',   label: 'Manuales',    icon: 'BookOpen',      path: '/manuals' },
       { id: 'diagramas',  label: 'Diagramas',   icon: 'FileImage',     path: '/diagrams' },
       { id: 'pedidos',    label: 'Pedidos',     icon: 'ShoppingCart',  path: '/pedidos' },
@@ -75,6 +78,7 @@ export const NAV_CONFIG: Record<AppRole, { visible: NavItem[]; overflow: NavItem
     overflow: [
       { id: 'hermes',   label: 'Hermes Chat',  icon: 'MessageCircle', path: '/chat' },
       { id: 'calendar', label: 'Calendario',  icon: 'CalendarDays',  path: '/calendar' },
+      { id: 'sticker',  label: 'Sticker 15d', icon: 'BadgeCheck',    path: '/sticker-inspection' },
       { id: 'pm',       label: 'Programa PM', icon: 'Clock',         path: '/pm' },
       { id: 'pedidos', label: 'Pedidos',     icon: 'ShoppingCart',  path: '/pedidos' },
       { id: 'alertas', label: 'Alertas',     icon: 'AlertTriangle', path: '/alerts' },
@@ -94,6 +98,7 @@ export const NAV_CONFIG: Record<AppRole, { visible: NavItem[]; overflow: NavItem
     overflow: [
       { id: 'hermes',   label: 'Hermes Chat', icon: 'MessageCircle', path: '/chat' },
       { id: 'calendar', label: 'Calendario',  icon: 'CalendarDays',  path: '/calendar' },
+      { id: 'sticker',  label: 'Sticker 15d', icon: 'BadgeCheck',    path: '/sticker-inspection' },
       { id: 'perfil',   label: 'Perfil',      icon: 'User',          path: '/perfil' },
     ],
   },
@@ -107,6 +112,7 @@ export const NAV_CONFIG: Record<AppRole, { visible: NavItem[]; overflow: NavItem
     ],
     overflow: [
       { id: 'alertas',  label: 'Alertas',    icon: 'AlertTriangle', path: '/alerts' },
+      { id: 'sticker',  label: 'Sticker 15d', icon: 'BadgeCheck',   path: '/sticker-inspection' },
       { id: 'hermes',   label: 'Hermes Chat',icon: 'MessageCircle', path: '/chat' },
       { id: 'calendar', label: 'Calendario', icon: 'CalendarDays',  path: '/calendar' },
       { id: 'perfil',   label: 'Perfil',     icon: 'User',          path: '/perfil' },

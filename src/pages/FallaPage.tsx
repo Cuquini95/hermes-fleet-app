@@ -15,7 +15,7 @@ import { useAuthStore } from '../stores/auth-store';
 import AutoPriorityIndicator from '../components/falla/AutoPriorityIndicator';
 import PhotoCapture from '../components/ui/PhotoCapture';
 import ConfirmModal from '../components/ui/ConfirmModal';
-import SuccessToast from '../components/ui/SuccessToast';
+import SuccessToast, { type ToastType } from '../components/ui/SuccessToast';
 
 const TIPO_FALLA_OPTIONS = [
   'Mecánica',
@@ -64,6 +64,7 @@ export default function FallaPage() {
   const [photos, setPhotos] = useState<PhotoItem[]>([]);
   const [showConfirm, setShowConfirm] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
+  const [toastType, setToastType] = useState<ToastType>('success');
   const [toastVisible, setToastVisible] = useState(false);
 
   const mobilitySelected = puedeMoverse !== null;
@@ -103,15 +104,30 @@ export default function FallaPage() {
     setShowConfirm(true);
   }
 
+  function showToast(message: string, type: ToastType = 'success') {
+    setToastMessage(message);
+    setToastType(type);
+    setToastVisible(true);
+  }
+
   async function handleConfirm() {
     setShowConfirm(false);
     const otId = generateOTId();
-    const priorityValue = priority ?? 'media';
+    const priorityValue = priority ?? 'MEDIA';
 
-    // Photo upload must complete first — URL goes in the Averías row
+    if (photos.length > 0 && !isOnline) {
+      showToast('Conectate para subir fotos. La OT no se guardo para no perder evidencia.', 'error');
+      return;
+    }
+
+    // Photo upload must complete first; otherwise the row would save without evidence.
     const photoUrls = photos.length > 0
       ? await tryUploadPhotos(photos.map((p) => p.file), 'falla-photos')
       : [];
+    if (photos.length > 0 && photoUrls.length !== photos.length) {
+      showToast('No se pudieron subir todas las fotos. Revisa Supabase o la conexion e intenta de nuevo.', 'error');
+      return;
+    }
     const observacionesBase = `Ubicación: ${ubicacion}. Cliente: ${clienteAfectado}. Puede moverse: ${puedeMoverse ? 'Sí' : 'No'}`;
     const observaciones = observacionesBase;
     const fotoUrl = photoUrls.join(', ');
@@ -137,27 +153,28 @@ export default function FallaPage() {
     ];
 
     const otRow = [
-      String(Date.now()),
-      otId,
-      mexicoDate(),
-      unidad,
-      tipoFalla,
-      descripcion,
-      priorityValue,
-      priorityValue,
-      '',
-      'Abierta',
-      '',
-      '',
-      '',
-      '',
-      '',
+      String(Date.now()), // ROW_ID
+      otId,               // OT_ID
+      mexicoDate(),       // FECHA
+      unidad,             // UNIDAD
+      tipoFalla,          // TIPO_AVERIA
+      descripcion,        // DESCRIPCION
+      priorityValue,      // SEVERIDAD
+      priorityValue,      // PRIORIDAD
+      '',                 // MECANICO
+      'Abierta',          // ESTADO
+      fotoUrl,            // FOTO_URL
+      otId,               // AVERIA_REF
+      '',                 // PARTES
+      '',                 // COSTO_ESTIMADO
+      '',                 // FECHA_CIERRE
+      observaciones,      // OBSERVACIONES
+      '0',                // PROGRESO
     ];
 
     if (isOnline) {
       // Show success immediately — both sheet writes fire in parallel in background
-      setToastMessage(`${otId} creada — Jefe de Taller notificado`);
-      setToastVisible(true);
+      showToast(`${otId} creada — Jefe de Taller notificado`);
 
       // Push notification to fleet manager / workshop
       sendPushEvent('nueva_falla', { ot_id: otId, unidad, tipo: tipoFalla, prioridad: priorityValue });
@@ -180,14 +197,14 @@ export default function FallaPage() {
         .catch((err: unknown) => console.error('Queue failed (averias):', err));
       queueSubmission({ type: 'falla', data: { tab: SHEET_TABS.ORDENES_TRABAJO, values: otRow }, timestamp: new Date().toISOString() })
         .catch((err: unknown) => console.error('Queue failed (ordenes_trabajo):', err));
-      setToastMessage('Avería guardada — se sincronizará al reconectarse ✓');
-      setToastVisible(true);
+      showToast('Avería guardada — se sincronizará al reconectarse ✓');
     }
   }
 
   function handleToastDismiss() {
+    const shouldNavigateBack = toastType === 'success';
     setToastVisible(false);
-    navigate(-1);
+    if (shouldNavigateBack) navigate(-1);
   }
 
   return (
@@ -196,6 +213,7 @@ export default function FallaPage() {
         message={toastMessage}
         visible={toastVisible}
         onDismiss={handleToastDismiss}
+        type={toastType}
       />
 
       <ConfirmModal

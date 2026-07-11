@@ -56,6 +56,7 @@ export const ES_TO_EN: Record<string, string> = {
   turbo: 'turbocharger',
   turbocompresor: 'turbocharger',
   inyector: 'injector',
+  inyectores: 'injector',
   'bomba de inyeccion': 'injection pump',
   carburador: 'carburetor',
   'colector de escape': 'exhaust manifold',
@@ -175,11 +176,25 @@ export const ES_TO_EN: Record<string, string> = {
   'zapata de oruga': 'track shoe',
   zapata: 'shoe',
   rodillo: 'roller',
+  rodillos: 'roller',
   'rodillo superior': 'carrier roller',
   'rodillo inferior': 'track roller',
+  rolo: 'roller',
+  rolos: 'roller',
+  'rolo superior': 'carrier roller',
+  'rolo inferior': 'track roller',
+  'rol superior': 'carrier roller',
+  'rol inferior': 'track roller',
   'rueda guia': 'idler',
   'rueda tensora': 'idler',
   'rueda motriz': 'sprocket',
+  catalina: 'sprocket',
+  'mando final': 'final drive',
+  balero: 'bearing',
+  baleros: 'bearing',
+  balinera: 'bearing',
+  balineras: 'bearing',
+  pinon: 'sprocket',
   piñon: 'sprocket',
   piñón: 'sprocket',
 
@@ -223,6 +238,62 @@ export const EN_TO_ES: Record<string, string> = Object.fromEntries(
   Object.entries(ES_TO_EN).map(([es, en]) => [en.toLowerCase(), es])
 );
 
+const QUERY_VARIANTS: Record<string, string[]> = {
+  inyector: ['injector', 'injector assembly', 'inyectores', 'injectors'],
+  inyectores: ['injector', 'injector assembly', 'inyector', 'injectors'],
+  injector: ['inyector', 'inyectores', 'injectors', 'injector assembly'],
+  injectors: ['inyectores', 'inyector', 'injector', 'injector assembly'],
+  'filtro aire': ['air filter', 'filtro de aire'],
+  'filtro aceite': ['oil filter', 'filtro de aceite'],
+  'filtro diesel': ['fuel filter', 'filtro de combustible'],
+  'rolo inferior': ['track roller', 'lower roller', 'rodillo inferior', 'rol inferior'],
+  'rol inferior': ['track roller', 'lower roller', 'rodillo inferior', 'rolo inferior'],
+  'rodillo inferior': ['track roller', 'lower roller', 'rolo inferior', 'rol inferior'],
+  'track roller': ['rolo inferior', 'rodillo inferior', 'rol inferior', 'lower roller'],
+  'lower roller': ['track roller', 'rolo inferior', 'rodillo inferior', 'rol inferior'],
+  'rolo superior': ['carrier roller', 'upper roller', 'rodillo superior', 'rol superior'],
+  'rol superior': ['carrier roller', 'upper roller', 'rodillo superior', 'rolo superior'],
+  'rodillo superior': ['carrier roller', 'upper roller', 'rolo superior', 'rol superior'],
+  'carrier roller': ['rolo superior', 'rodillo superior', 'rol superior', 'upper roller'],
+  'upper roller': ['carrier roller', 'rolo superior', 'rodillo superior', 'rol superior'],
+  'rueda guia': ['idler', 'rueda tensora'],
+  'rueda tensora': ['idler', 'rueda guia'],
+  'rueda motriz': ['sprocket', 'catalina', 'pinon', 'piñon'],
+  catalina: ['sprocket', 'rueda motriz', 'pinon', 'piñon'],
+  pinon: ['sprocket', 'catalina', 'rueda motriz', 'piñon'],
+  'piñon': ['sprocket', 'catalina', 'rueda motriz', 'pinon'],
+  'piñón': ['sprocket', 'catalina', 'rueda motriz', 'pinon'],
+  sprocket: ['catalina', 'rueda motriz', 'pinon', 'piñon'],
+};
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function containsWholeTerm(haystack: string, needle: string): boolean {
+  const normalizedNeedle = needle.trim().toLowerCase();
+  if (!normalizedNeedle) return false;
+  const pattern = new RegExp(`(^|[^a-z0-9])${escapeRegex(normalizedNeedle)}($|[^a-z0-9])`, 'i');
+  return pattern.test(haystack);
+}
+
+function addVariantTerms(terms: Set<string>, query: string): void {
+  const normalized = query.toLowerCase().trim();
+  const directVariants = QUERY_VARIANTS[normalized] ?? [];
+  for (const variant of directVariants) {
+    const cleaned = variant.trim();
+    if (cleaned) terms.add(cleaned);
+  }
+
+  for (const [token, variants] of Object.entries(QUERY_VARIANTS)) {
+    if (!normalized.includes(token)) continue;
+    for (const variant of variants) {
+      const cleaned = variant.trim();
+      if (cleaned) terms.add(cleaned);
+    }
+  }
+}
+
 /**
  * Given a search query, return an array of terms to search for:
  * the original query + any translation found in the dictionary.
@@ -240,9 +311,11 @@ export function expandQuery(query: string): string[] {
 
   // Partial match: if query contains a known ES key
   for (const [es, en] of Object.entries(ES_TO_EN)) {
-    if (lower.includes(es) && !terms.has(en)) terms.add(en);
-    if (lower.includes(en) && !terms.has(es)) terms.add(es);
+    if (containsWholeTerm(lower, es) && !terms.has(en)) terms.add(en);
+    if (containsWholeTerm(lower, en) && !terms.has(es)) terms.add(es);
   }
+
+  addVariantTerms(terms, query);
 
   return Array.from(terms);
 }

@@ -73,6 +73,40 @@ export function openAveriaUnitSet(rows: string[][]): Set<string> {
   return units;
 }
 
+const PHOTO_URL_RE = /https?:\/\/[^\s,|"'<>]+/gi;
+
+function normalizePhotoUrl(value: string): string {
+  return value.trim().replace(/[)\].,;]+$/g, '');
+}
+
+function isHttpPhotoUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+export function photoUrls(value: string): string[] {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+
+  for (const match of value.matchAll(PHOTO_URL_RE)) {
+    const rawUrl = match[0] ?? '';
+    const matchIndex = match.index ?? 0;
+    const prefix = value.slice(Math.max(0, matchIndex - 5), matchIndex).toLowerCase();
+    if (prefix.endsWith('blob:')) continue;
+
+    const url = normalizePhotoUrl(rawUrl);
+    if (!url || seen.has(url) || !isHttpPhotoUrl(url)) continue;
+    seen.add(url);
+    urls.push(url);
+  }
+
+  return urls;
+}
+
 export function firstPhotoUrl(value: string): string {
-  return value.split(',').map((url) => url.trim()).find(Boolean) ?? '';
+  return photoUrls(value)[0] ?? '';
 }

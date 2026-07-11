@@ -1,0 +1,10 @@
+node_modules
+dist
+coverage
+playwright-report
+test-results
+.tmp-*
+.codex-*.png
+*.log
+*.local
+lighthouse-*.json

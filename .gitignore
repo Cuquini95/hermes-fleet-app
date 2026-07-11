@@ -31,6 +31,7 @@ dist-ssr
 .env
 .env.local
 .env.*.local
+.vercel.env*
 
 # Local build archives and VPS scratch files
 *.tar.gz

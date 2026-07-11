@@ -41,6 +41,7 @@ const GastosPage          = lazy(() => import('./pages/GastosPage'));
 const NuevoGastoPage      = lazy(() => import('./pages/NuevoGastoPage'));
 
 const DVIRPage            = lazy(() => import('./pages/DVIRPage'));
+const StickerInspectionPage = lazy(() => import('./pages/StickerInspectionPage'));
 const FallaPage           = lazy(() => import('./pages/FallaPage'));
 const FleetPage           = lazy(() => import('./pages/FleetPage'));
 const AlertsPage          = lazy(() => import('./pages/AlertsPage'));
@@ -172,6 +173,7 @@ export default function App() {
         {/* Operator / field operations */}
         <Route path="/dvir"            element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><PageBoundary role={role}><S><DVIRPage /></S></PageBoundary></RequireRole>} />
         <Route path="/dvir-compliance" element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><PageBoundary role={role}><S><DVIRPage /></S></PageBoundary></RequireRole>} />
+        <Route path="/sticker-inspection" element={<RequireRole roles={['operador', ...WORKSHOP]}><PageBoundary role={role}><S><StickerInspectionPage /></S></PageBoundary></RequireRole>} />
         <Route path="/falla"           element={<RequireRole roles={ALL}><PageBoundary role={role}><S><FallaPage /></S></PageBoundary></RequireRole>} />
         <Route path="/fleet"           element={<RequireRole roles={['supervisor', 'gerencia', 'coordinador']}><PageBoundary role={role}><S><FleetPage /></S></PageBoundary></RequireRole>} />
         <Route path="/alerts"          element={<RequireRole roles={ADMIN}><PageBoundary role={role}><S><AlertsPage /></S></PageBoundary></RequireRole>} />

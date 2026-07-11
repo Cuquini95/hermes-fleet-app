@@ -28,9 +28,15 @@ describe('SHEET_TABS constants', () => {
     expect(SHEET_TABS.AVERIAS).toBe('Averías');
   });
 
+  it('sticker inspection tabs are present', () => {
+    expect(SHEET_TABS.INSPECCION_STICKERS).toBe('Inspeccion_Stickers');
+    expect(SHEET_TABS.INSPECCION_HALLAZGOS).toBe('Inspeccion_Hallazgos');
+  });
+
   it('contains all expected keys (no accidental deletion)', () => {
     const expectedKeys = [
-      'FLOTA', 'INSPECCIONES', 'AVERIAS', 'ORDENES_TRABAJO', 'OT_STATUS_LOG',
+      'FLOTA', 'INSPECCIONES', 'INSPECCION_STICKERS', 'INSPECCION_HALLAZGOS',
+      'AVERIAS', 'ORDENES_TRABAJO', 'OT_STATUS_LOG',
       'COMBUSTIBLE', 'VIAJES', 'HOROMETROS', 'HISTORIAL_PM', 'ORDENES_MANTENIMIENTO',
       'INVENTARIO', 'FLETES', 'INCIDENTES', 'TURNOS', 'COTIZACIONES',
       'NEUMATICOS', 'GASTOS', 'WORKSHOP_SCHEDULE',

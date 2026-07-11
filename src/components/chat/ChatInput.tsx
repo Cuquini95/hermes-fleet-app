@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Camera, Send, X } from 'lucide-react';
+import { ImagePlus, Send, X } from 'lucide-react';
 
 interface ChatInputProps {
   onSend: (text: string, photo?: File) => void;
@@ -78,17 +78,18 @@ export default function ChatInput({ onSend, disabled }: ChatInputProps) {
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={disabled}
+          aria-label="Adjuntar imagen"
+          title="Adjuntar imagen"
           className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 disabled:opacity-40"
           style={{ backgroundColor: '#2563EB' }}
         >
-          <Camera size={18} color="white" />
+          <ImagePlus size={18} color="white" />
         </button>
 
         <input
           ref={fileInputRef}
           type="file"
           accept="image/*"
-          capture="environment"
           className="hidden"
           onChange={handleFileChange}
         />

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { normalizePartResult } from './hermes-api';
+import { hermesApiUrl, resolveHermesApiBase } from './hermes-api-base';
 
 describe('normalizePartResult', () => {
   it('fills missing catalog fields for supplier price rows', () => {
@@ -23,5 +24,21 @@ describe('normalizePartResult', () => {
       unit_price: 498.4,
       alternatives: [],
     });
+  });
+});
+
+describe('Hermes API base URL', () => {
+  it('uses the local proxy in production when no override is configured', () => {
+    expect(resolveHermesApiBase({ PROD: true })).toBe('/hermes-api');
+  });
+
+  it('uses the local proxy in development when no override is configured', () => {
+    expect(resolveHermesApiBase({ PROD: false })).toBe('/hermes-api');
+  });
+
+  it('normalizes configured API URLs and request paths', () => {
+    expect(resolveHermesApiBase({ VITE_HERMES_API_URL: 'https://api.example.com/hermes-api///' }))
+      .toBe('https://api.example.com/hermes-api');
+    expect(hermesApiUrl('/health')).toBe('/hermes-api/health');
   });
 });

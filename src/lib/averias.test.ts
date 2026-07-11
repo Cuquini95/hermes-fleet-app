@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { firstPhotoUrl, openAveriaUnitSet, parseAveriaRow } from './averias';
+import { firstPhotoUrl, openAveriaUnitSet, parseAveriaRow, photoUrls } from './averias';
 
 const PHOTO_URL = 'https://xwrhkxecykuuutuitlnd.supabase.co/storage/v1/object/public/falla-photos/1777054000012-0.jpg';
 
@@ -60,5 +60,16 @@ describe('parseAveriaRow', () => {
 
   it('returns first photo URL when multiple photos are comma-separated', () => {
     expect(firstPhotoUrl(`${PHOTO_URL}, https://example.test/second.jpg`)).toBe(PHOTO_URL);
+  });
+
+  it('extracts valid photo URLs from legacy labeled text', () => {
+    expect(photoUrls(`Fotos: ${PHOTO_URL} | otra: https://example.test/second.jpg`)).toEqual([
+      PHOTO_URL,
+      'https://example.test/second.jpg',
+    ]);
+  });
+
+  it('ignores session-only blob URLs and non-url placeholders', () => {
+    expect(photoUrls('blob:http://localhost:5173/temp, Foto 1, pending-upload')).toEqual([]);
   });
 });

@@ -5,7 +5,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const apiTarget = env.VITE_HERMES_API_URL || 'http://5.78.204.80:8000';
+  const apiTarget = env.VITE_HERMES_API_URL || 'https://5-78-204-80.sslip.io/hermes-api';
 
   return {
     plugins: [

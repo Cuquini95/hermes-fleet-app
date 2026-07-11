@@ -9,6 +9,7 @@
  */
 import {
   AlertTriangle,
+  BadgeCheck,
   BarChart3,
   BookOpen,
   CalendarCheck,
@@ -37,6 +38,7 @@ import {
 
 export const NAV_ICONS: Readonly<Record<string, LucideIcon>> = {
   AlertTriangle,
+  BadgeCheck,
   BarChart3,
   BookOpen,
   CalendarCheck,

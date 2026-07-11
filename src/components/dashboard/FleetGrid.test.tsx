@@ -127,7 +127,7 @@ describe('FleetGrid — STATUS_ORDER sorting logic', () => {
 // ── Click handler wiring ──────────────────────────────────────────────────────
 describe('FleetGrid — click handler opens modal', () => {
   it('source wires onClick to setSelected on each tile button', () => {
-    expect(source).toContain('onClick={() => setSelected(unit)');
+    expect(source).toContain('onClick={() => setSelected({ unit, readiness })');
   });
 
   it('source renders UnitDetailModal when selected is truthy', () => {

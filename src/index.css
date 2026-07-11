@@ -132,6 +132,25 @@ body {
   opacity: 0.9;
 }
 
+@layer components {
+  .field-input {
+    width: 100%;
+    min-height: 46px;
+    border-radius: 0.75rem;
+    border: 1px solid var(--color-border);
+    background: #ffffff;
+    padding: 0.75rem;
+    color: var(--color-text);
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+  }
+
+  .field-input:focus {
+    outline: 2px solid var(--color-amber);
+    outline-offset: 2px;
+  }
+}
+
 /* Card hover lift */
 .card-lift {
   transition: transform 0.2s ease, box-shadow 0.2s ease;

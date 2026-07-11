@@ -9,7 +9,7 @@ export default function FloatingChatButton() {
   const ALLOWED_ROLES = ['mecanico', 'coordinador', 'jefe_taller', 'supervisor', 'gerencia']
   if (!role || !ALLOWED_ROLES.includes(role)) return null
 
-  if (location.pathname === '/chat') return null
+  if (location.pathname === '/chat' || location.pathname === '/sticker-inspection') return null
 
   return (
     <div style={{ position: 'fixed', bottom: '84px', left: '16px', zIndex: 45 }}>

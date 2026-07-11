@@ -4,7 +4,7 @@
  * Verifies: PocketBase (VPS 200), Sheets (gviz), no duplicates.
  */
 
-const VPS  = 'http://5.78.204.80:8000';
+const VPS  = 'https://5-78-204-80.sslip.io/hermes-api';
 const SSID = '14rWfjrJbXTZG_Mth1Gzk3RzVYd5mohbJR3BsXEItFgU';
 const TS   = Date.now();
 const BASE = `SW${TS}`;

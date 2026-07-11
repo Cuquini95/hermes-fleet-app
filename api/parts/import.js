@@ -1,4 +1,4 @@
-const DEFAULT_PARTS_SEARCH_URL = 'http://5.78.204.80:8000/parts';
+const DEFAULT_PARTS_SEARCH_URL = 'https://5-78-204-80.sslip.io/hermes-api/parts';
 
 function normalizePartNumber(value) {
   return String(value ?? '').trim().toUpperCase();

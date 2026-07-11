@@ -9,7 +9,9 @@
  * are handled by the gateway. No changes are needed here when switching
  * between backends; the VPS env var controls it transparently.
  */
-const HERMES_API = '/hermes-api';
+import { HERMES_API_BASE } from './hermes-api-base';
+
+const HERMES_API = HERMES_API_BASE;
 
 // ── Retry + timeout helper ────────────────────────────────────────────────────
 
@@ -486,6 +488,8 @@ export async function deleteRow(
 export const SHEET_TABS = {
   FLOTA: '01 Inventario',
   INSPECCIONES: '14 Inspecciones',
+  INSPECCION_STICKERS: 'Inspeccion_Stickers',
+  INSPECCION_HALLAZGOS: 'Inspeccion_Hallazgos',
   AVERIAS: 'Averías',
   ORDENES_TRABAJO: 'ORDENES_TRABAJO',
   OT_STATUS_LOG: 'OT_STATUS_LOG',

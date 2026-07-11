@@ -12,7 +12,9 @@
  * never block the app or any form submission.
  */
 
-const HERMES_API = '/hermes-api';
+import { HERMES_API_BASE } from './hermes-api-base';
+
+const HERMES_API = HERMES_API_BASE;
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY ?? '';
 
 /** Request notification permission. Returns true if granted. */

@@ -45,24 +45,24 @@ export default function LoginPage() {
     if (key === '') return;
     setPin((prev) => {
       if (prev.length >= 4) return prev;
-      const newPin = prev + key;
-      if (newPin.length === 4 && selectedRole) {
-        const success = login(selectedRole, newPin);
-        if (success) {
-          // Navigate after state update settles
-          setTimeout(() => navigate(ROLE_HOME[selectedRole]), 0);
-        } else {
-          setPinError(true);
-          setTimeout(() => {
-            setPin('');
-            setPinError(false);
-          }, 800);
-          return newPin;
-        }
-      }
-      return newPin;
+      return prev + key;
     });
-  }, [selectedRole, login, navigate]);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedRole || pin.length !== 4) return;
+    const success = login(selectedRole, pin);
+    if (success) {
+      setTimeout(() => navigate(ROLE_HOME[selectedRole]), 0);
+      return;
+    }
+    setPinError(true);
+    const resetTimer = setTimeout(() => {
+      setPin('');
+      setPinError(false);
+    }, 800);
+    return () => clearTimeout(resetTimer);
+  }, [selectedRole, pin, login, navigate]);
 
   useEffect(() => {
     if (!selectedRole) return;

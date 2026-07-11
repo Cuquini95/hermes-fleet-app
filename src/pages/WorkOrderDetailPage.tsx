@@ -10,6 +10,7 @@ import { useAuthStore } from '../stores/auth-store';
 import { useEquipmentById } from '../hooks/useEquipmentList';
 import { PRIORITY_CONFIG, ESTADO_CONFIG, OT_STATUS_FLOW, getNextStatuses } from '../types/workorder';
 import type { OTEstado, OTStatusField, StatusLogEntry } from '../types/workorder';
+import { photoUrls } from '../lib/averias';
 
 const FIELD_LABELS: Record<OTStatusField, string> = {
   estado: 'Estado',
@@ -154,6 +155,7 @@ export default function WorkOrderDetailPage() {
   const priorityConfig = PRIORITY_CONFIG[prioKey] ?? { color: '#6B7280', bg: '#F3F4F6', label: wo.prioridad, time: '' };
   const canEdit = true; // All roles can edit
   const nextStatuses = getNextStatuses(OT_STATUS_FLOW.includes(wo.estado as OTEstado) ? wo.estado as OTEstado : 'Abierta');
+  const photos = photoUrls(wo.foto_url);
 
   return (
     <div className="flex flex-col gap-4 pb-6 animate-fade-up">
@@ -241,14 +243,14 @@ export default function WorkOrderDetailPage() {
           </div>
         )}
 
-        {wo.foto_url && (
+        {photos.length > 0 && (
           <div>
             <p className="text-xs text-text-secondary mb-1">Fotos</p>
             <div className="flex gap-2 overflow-x-auto">
-              {wo.foto_url.split(',').filter(Boolean).map((url, i) => (
+              {photos.map((url, i) => (
                 <img
                   key={i}
-                  src={url.trim()}
+                  src={url}
                   alt={`Foto ${i + 1}`}
                   className="w-20 h-20 rounded-lg object-cover border border-border"
                 />
