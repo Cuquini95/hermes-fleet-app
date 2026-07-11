@@ -7,8 +7,8 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const token = process.env.CMMS_HERMES_SYSTEM_TOKEN;
-  const ingestSecret = process.env.CMMS_HERMES_INGEST_SECRET;
+  const token = cleanEnvValue(process.env.CMMS_HERMES_SYSTEM_TOKEN);
+  const ingestSecret = cleanEnvValue(process.env.CMMS_HERMES_INGEST_SECRET);
   if (!token && !ingestSecret) {
     return res.status(202).json({
       success: false,
@@ -20,7 +20,7 @@ export default async function handler(req, res) {
   try {
     const body = await readJsonBody(req);
     const payload = toCmmsDamagePayload(body);
-    const baseUrl = (process.env.CMMS_API_BASE || DEFAULT_CMMS_API_BASE).replace(/\/+$/, '');
+    const baseUrl = (cleanEnvValue(process.env.CMMS_API_BASE) || DEFAULT_CMMS_API_BASE).replace(/\/+$/, '');
     const useIngestSecret = Boolean(ingestSecret);
     const upstream = await fetch(`${baseUrl}${useIngestSecret ? '/api/live/hermes/damages/ingest' : '/api/live/hermes/damages'}`, {
       method: 'POST',
@@ -76,6 +76,10 @@ function normalizeSeverity(value) {
 function stringOrNull(value, maxLength) {
   const text = String(value || '').trim();
   return text ? text.slice(0, maxLength) : null;
+}
+
+function cleanEnvValue(value) {
+  return String(value || '').replace(/[\uFEFF\u200B-\u200D\u2060]/g, '').trim();
 }
 
 async function readJsonBody(req) {

@@ -55,6 +55,25 @@ describe('CMMS damage proxy', () => {
       external_event_id: 'hermes-falla-OT-1',
     });
   });
+
+  it('removes hidden characters from CMMS header environment values', async () => {
+    process.env.CMMS_API_BASE = '\uFEFF https://cmms.example.test/ ';
+    process.env.CMMS_HERMES_INGEST_SECRET = '\uFEFFsecret-token\u200B ';
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ authority: 'hermes' }), { status: 200 }),
+    );
+    const res = createRes();
+
+    await handler({ method: 'POST', body: { asset_id: 'CA25', title: 'Falla' } }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://cmms.example.test/api/live/hermes/damages/ingest',
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'x-cmms-hermes-ingest-secret': 'secret-token' }),
+      }),
+    );
+  });
 });
 
 function createRes() {
