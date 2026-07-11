@@ -1,4 +1,5 @@
-import { defineConfig, loadEnv } from 'vite';
+import { loadEnv } from 'vite';
+import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
@@ -60,10 +61,19 @@ export default defineConfig(({ mode }) => {
         },
         injectManifest: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-          maximumFileSizeToCacheInBytes: 4 * 1024 * 1024, // 4 MiB
+          maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         },
       }),
     ],
+    test: {
+      exclude: [
+        '**/node_modules/**',
+        '**/dist/**',
+        '**/e2e/**',
+        '**/*.spec.e2e.{ts,tsx}',
+        '**/playwright/**',
+      ],
+    },
     server: {
       proxy: {
         '/hermes-api': {
