@@ -117,9 +117,18 @@ export default function FallaPage() {
     const priorityValue = priority ?? 'MEDIA';
 
     const photoFiles = photos.map((p) => p.file);
-    const photoSummary = isOnline && photoFiles.length > 0
-      ? await uploadFallaPhotos(photoFiles)
-      : { urls: [], failedCount: 0 };
+    let photoSummary = { urls: [] as string[] };
+    if (isOnline && photoFiles.length > 0) {
+      try {
+        photoSummary = await uploadFallaPhotos(photoFiles);
+      } catch (error) {
+        const message = error instanceof Error
+          ? error.message
+          : 'No se pudieron subir todas las fotos. Revisa Supabase o la conexión e intenta de nuevo.';
+        showToast(message, 'error');
+        return;
+      }
+    }
     const photoUrls = photoSummary.urls;
     const observacionesBase = `Ubicación: ${ubicacion}. Cliente: ${clienteAfectado}. Puede moverse: ${puedeMoverse ? 'Sí' : 'No'}`;
     const observaciones = observacionesBase;
@@ -177,8 +186,8 @@ export default function FallaPage() {
     ];
 
     if (isOnline) {
-      // Show success immediately — both sheet writes fire in parallel in background
-      showToast(fallaSavedMessage(otId, photoSummary.failedCount));
+      // Selected photos must have durable URLs before the report can be saved.
+      showToast(fallaSavedMessage(otId));
 
       // Push notification to fleet manager / workshop
       sendPushEvent('nueva_falla', { ot_id: otId, unidad, tipo: tipoFalla, prioridad: priorityValue });
@@ -237,7 +246,11 @@ export default function FallaPage() {
         .catch((err: unknown) => console.error('Queue failed (ordenes_trabajo):', err));
       queueSubmission({
         type: 'cmms_damage',
-        data: { cmmsDamage },
+        data: {
+          cmmsDamage,
+          photoFiles,
+          photoBucket: 'falla-photos',
+        },
         timestamp: new Date().toISOString(),
       })
         .catch((err: unknown) => console.error('Queue failed (cmms_damage):', err));

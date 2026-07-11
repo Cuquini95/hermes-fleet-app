@@ -1,29 +1,27 @@
-import { tryUploadPhoto } from './photo-upload-safe';
+import { uploadPhoto } from './photo-upload';
 
 export interface FallaPhotoUploadSummary {
   urls: string[];
-  failedCount: number;
 }
 
 type UploadPhoto = (file: File, bucket: string, path?: string) => Promise<string>;
 
 export async function uploadFallaPhotos(
   files: File[],
-  uploadPhoto: UploadPhoto = tryUploadPhoto,
+  upload: UploadPhoto = uploadPhoto,
 ): Promise<FallaPhotoUploadSummary> {
   const uploadBatchId = Date.now();
-  const results = await Promise.all(
-    files.map((file, index) => uploadPhoto(file, 'falla-photos', `${uploadBatchId}-${index}`)),
+  const urls = await Promise.all(
+    files.map((file, index) => upload(file, 'falla-photos', `${uploadBatchId}-${index}`)),
   );
-  const urls = results.filter((url) => url.trim() !== '');
 
-  return {
-    urls,
-    failedCount: files.length - urls.length,
-  };
+  if (urls.some((url) => url.trim() === '')) {
+    throw new Error('No se pudieron subir todas las fotos. Revisa Supabase o la conexión e intenta de nuevo.');
+  }
+
+  return { urls };
 }
 
-export function fallaSavedMessage(otId: string, failedPhotoCount: number): string {
-  if (failedPhotoCount <= 0) return `${otId} creada - Jefe de Taller notificado`;
-  return `${otId} creada. ${failedPhotoCount} foto(s) no subieron; la falla ya quedo registrada.`;
+export function fallaSavedMessage(otId: string): string {
+  return `${otId} creada - Jefe de Taller notificado`;
 }

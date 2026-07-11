@@ -3,6 +3,7 @@
 // in rollback mode) — no changes needed here when switching backends.
 import { appendRow } from './sheets-api';
 import { tryUploadPhotos } from './photo-upload-safe';
+import { uploadFallaPhotos } from './falla-submit';
 import { reportCmmsDamage, type CmmsDamageReport } from './cmms-events';
 
 const DB_NAME = 'hermes-offline';
@@ -99,7 +100,17 @@ export async function flushQueue(): Promise<{ succeeded: number; failed: number 
           continue;
         }
         try {
-          await reportCmmsDamage(cmmsDamage);
+          let replayDamage = cmmsDamage;
+          if (
+            Array.isArray(photoFiles) &&
+            photoFiles.length > 0 &&
+            typeof photoBucket === 'string' &&
+            !cmmsDamage.photoUrl
+          ) {
+            const photoSummary = await uploadFallaPhotos(photoFiles);
+            replayDamage = { ...cmmsDamage, photoUrl: photoSummary.urls[0] };
+          }
+          await reportCmmsDamage(replayDamage);
           if (submission.id !== undefined) await clearSubmission(submission.id);
           succeeded++;
         } catch {
@@ -120,7 +131,9 @@ export async function flushQueue(): Promise<{ succeeded: number; failed: number 
           typeof photoBucket === 'string' &&
           typeof photoColumnIndex === 'number'
         ) {
-          const photoUrls = await tryUploadPhotos(photoFiles, photoBucket);
+          const photoUrls = submission.type === 'falla'
+            ? (await uploadFallaPhotos(photoFiles)).urls
+            : await tryUploadPhotos(photoFiles, photoBucket);
           replayValues[photoColumnIndex] = photoUrls.join(', ');
         }
         await appendRow(tab, replayValues);
