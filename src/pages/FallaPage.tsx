@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { z } from 'zod';
 import { useEquipmentList } from '../hooks/useEquipmentList';
-import { generateOTId } from '../lib/ot-generator';
+import { generateNextOTId } from '../lib/ot-generator';
 import { calculatePriority } from '../lib/priority-calculator';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
@@ -113,7 +113,7 @@ export default function FallaPage() {
 
   async function handleConfirm() {
     setShowConfirm(false);
-    const otId = generateOTId();
+    const otId = await generateNextOTId();
     const priorityValue = priority ?? 'MEDIA';
 
     const photoFiles = photos.map((p) => p.file);

@@ -1,65 +1,79 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { generateOTId } from './ot-generator';
+import {
+  extractOTSequence,
+  formatOTId,
+  generateNextOTId,
+  generateOTId,
+  nextOTSequenceFromRows,
+} from './ot-generator';
+import { readRange, SHEET_TABS } from './sheets-api';
 
-describe('generateOTId', () => {
+vi.mock('./sheets-api', () => ({
+  SHEET_TABS: { ORDENES_TRABAJO: 'ORDENES_TRABAJO' },
+  readRange: vi.fn(),
+}));
+
+function memoryStorage(seed?: string) {
+  const values = new Map<string, string>();
+  if (seed) values.set('hermes_ot_sequence', seed);
+  return {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+  };
+}
+
+describe('OT sequence generator', () => {
   afterEach(() => {
-    vi.useRealTimers();
+    vi.clearAllMocks();
   });
 
-  it('produces IDs in OT-YYYYMMDD-HHMM-XXXX format', () => {
-    const id = generateOTId();
-    // Allow hex chars in suffix (UUID slice)
-    expect(id).toMatch(/^OT-\d{8}-\d{4}-[a-f0-9]{4}$/);
+  it('formats work orders as short sequential IDs', () => {
+    expect(formatOTId(1)).toBe('OT-0001');
+    expect(formatOTId(12)).toBe('OT-0012');
+    expect(formatOTId(1234)).toBe('OT-1234');
   });
 
-  it('prefix is always OT', () => {
-    const id = generateOTId();
-    expect(id.startsWith('OT-')).toBe(true);
+  it('extracts only the new readable sequence format', () => {
+    expect(extractOTSequence('OT-0008')).toBe(8);
+    expect(extractOTSequence('ot-0100')).toBe(100);
+    expect(extractOTSequence('OT-20260710-2212-e2a9')).toBeNull();
+    expect(extractOTSequence('')).toBeNull();
   });
 
-  it('contains exactly 4 dash-separated segments', () => {
-    const id = generateOTId();
-    const parts = id.split('-');
-    expect(parts).toHaveLength(4);
+  it('finds the next sequence across sheet rows', () => {
+    expect(nextOTSequenceFromRows([
+      ['ROW_ID', 'OT_ID'],
+      ['1', 'OT-0001'],
+      ['2', 'OT-0007'],
+      ['3', 'OT-20260710-2212-e2a9'],
+    ])).toBe(8);
   });
 
-  it('date segment is 8 digits (YYYYMMDD)', () => {
-    const id = generateOTId();
-    const datePart = id.split('-')[1];
-    expect(datePart).toMatch(/^\d{8}$/);
+  it('starts at OT-0001 when no sequential rows exist', () => {
+    expect(generateOTId([['ROW_ID', 'OT_ID'], ['1', 'OT-20260710-2212-e2a9']], memoryStorage())).toBe('OT-0001');
   });
 
-  it('time segment is 4 digits (HHMM)', () => {
-    const id = generateOTId();
-    const timePart = id.split('-')[2];
-    expect(timePart).toMatch(/^\d{4}$/);
+  it('never goes backward against the local offline sequence', () => {
+    const storage = memoryStorage('12');
+
+    expect(generateOTId([['1', 'OT-0003']], storage)).toBe('OT-0013');
+    expect(storage.getItem('hermes_ot_sequence')).toBe('13');
   });
 
-  it('produces mostly-unique IDs even when called rapidly (>96% unique in 1000 calls)', () => {
-    // The suffix is 4 hex chars sliced from a UUID, giving 65536 possible values.
-    // In 1000 rapid calls with the same HHMM timestamp, birthday-problem collisions
-    // are expected (~1.1%). We assert high but not perfect uniqueness.
-    // For production, the caller should deduplicate or add a sequence number if needed.
-    const ids = new Set(Array.from({ length: 1000 }, generateOTId));
-    expect(ids.size).toBeGreaterThanOrEqual(960);
+  it('reads existing work orders fresh before assigning the next online ID', async () => {
+    vi.mocked(readRange).mockResolvedValueOnce([
+      ['ROW_ID', 'OT_ID'],
+      ['1', 'OT-0001'],
+      ['2', 'OT-0002'],
+    ]);
+
+    await expect(generateNextOTId()).resolves.toBe('OT-0003');
+    expect(readRange).toHaveBeenCalledWith(SHEET_TABS.ORDENES_TRABAJO, undefined, 5000, 0);
   });
 
-  it('uses Mexico City date — encodes the correct date for a known UTC timestamp', () => {
-    // 2026-04-05 06:00 UTC = 2026-04-05 01:00 CST (UTC-5), so date should be 20260405
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-04-05T06:00:00.000Z'));
-    const id = generateOTId();
-    expect(id.split('-')[1]).toBe('20260405');
-  });
+  it('falls back to a local sequence if the remote read fails', async () => {
+    vi.mocked(readRange).mockRejectedValueOnce(new Error('offline'));
 
-  it('does not embed a zero-padded 24:00 hour', () => {
-    // Midnight UTC = 19:00 CST (UTC-5), never 2400
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
-    const id = generateOTId();
-    const timePart = id.split('-')[2];
-    const hour = parseInt(timePart!.slice(0, 2), 10);
-    expect(hour).toBeGreaterThanOrEqual(0);
-    expect(hour).toBeLessThan(24);
+    await expect(generateNextOTId()).resolves.toMatch(/^OT-\d{4,}$/);
   });
 });

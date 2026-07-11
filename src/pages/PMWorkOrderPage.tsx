@@ -8,7 +8,7 @@ import { ArrowLeft, Wrench, Package, Clock, CheckCircle, AlertTriangle } from 'l
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { getNextPM } from '../data/pm-rules';
 import { getCumulativePMParts, getAvailablePMLevels, type PMPart } from '../data/pm-parts-catalog';
-import { generateOTId } from '../lib/ot-generator';
+import { generateNextOTId } from '../lib/ot-generator';
 import { mexicoDate } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
 import { useAuthStore } from '../stores/auth-store';
@@ -100,7 +100,7 @@ export default function PMWorkOrderPage() {
   async function handleConfirm() {
     setShowConfirm(false);
 
-    const otId = generateOTId();
+    const otId = await generateNextOTId();
     const date = mexicoDate();
     const partsListStr = partsKit
       ? partsKit.parts.map((p) => `${p.partNumber} x${p.quantity}`).join(', ')

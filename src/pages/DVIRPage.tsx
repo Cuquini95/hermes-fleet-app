@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { DVIRCheck, CheckStatus } from '../types/dvir';
 import { DVIR_SYSTEMS } from '../data/dvir-systems';
 import { useEquipmentList } from '../hooks/useEquipmentList';
-import { generateOTId } from '../lib/ot-generator';
+import { generateNextOTId } from '../lib/ot-generator';
 import { mexicoDateInput, mexicoTimeInput, mexicoDateCompact, mexicoTimeCompact } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
 import { tryUploadPhotos } from '../lib/photo-upload-safe';
@@ -122,7 +122,7 @@ export default function DVIRPage() {
 
     let otId: string | null = null;
     if (fallaCount > 0) {
-      otId = generateOTId();
+      otId = await generateNextOTId();
     }
 
     const now = new Date();
