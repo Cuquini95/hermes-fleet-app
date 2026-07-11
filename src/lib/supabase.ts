@@ -1,7 +1,14 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'placeholder-key';
+// Vercel environment values can accidentally include trailing line breaks when pasted.
+// Supabase trims the URL internally, but the API key is used directly in HTTP headers,
+// where a newline makes every Storage request fail before it reaches Supabase.
+const SUPABASE_URL = (
+  import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co'
+).trim();
+const SUPABASE_ANON_KEY = (
+  import.meta.env.VITE_SUPABASE_ANON_KEY || 'placeholder-key'
+).trim();
 
 const isPlaceholder =
   SUPABASE_URL.includes('placeholder') || SUPABASE_ANON_KEY.includes('placeholder');
