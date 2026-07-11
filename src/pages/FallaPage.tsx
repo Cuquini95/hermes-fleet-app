@@ -7,10 +7,10 @@ import { generateOTId } from '../lib/ot-generator';
 import { calculatePriority } from '../lib/priority-calculator';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
 import { appendRow, SHEET_TABS } from '../lib/sheets-api';
-import { tryUploadPhotos } from '../lib/photo-upload-safe';
 import { sendPushEvent } from '../lib/push-notifications';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { queueSubmission, flushQueue } from '../lib/offline-queue';
+import { fallaSavedMessage, uploadFallaPhotos } from '../lib/falla-submit';
 import { useAuthStore } from '../stores/auth-store';
 import AutoPriorityIndicator from '../components/falla/AutoPriorityIndicator';
 import PhotoCapture from '../components/ui/PhotoCapture';
@@ -115,19 +115,11 @@ export default function FallaPage() {
     const otId = generateOTId();
     const priorityValue = priority ?? 'MEDIA';
 
-    if (photos.length > 0 && !isOnline) {
-      showToast('Conectate para subir fotos. La OT no se guardo para no perder evidencia.', 'error');
-      return;
-    }
-
-    // Photo upload must complete first; otherwise the row would save without evidence.
-    const photoUrls = photos.length > 0
-      ? await tryUploadPhotos(photos.map((p) => p.file), 'falla-photos')
-      : [];
-    if (photos.length > 0 && photoUrls.length !== photos.length) {
-      showToast('No se pudieron subir todas las fotos. Revisa Supabase o la conexion e intenta de nuevo.', 'error');
-      return;
-    }
+    const photoFiles = photos.map((p) => p.file);
+    const photoSummary = isOnline && photoFiles.length > 0
+      ? await uploadFallaPhotos(photoFiles)
+      : { urls: [], failedCount: 0 };
+    const photoUrls = photoSummary.urls;
     const observacionesBase = `Ubicación: ${ubicacion}. Cliente: ${clienteAfectado}. Puede moverse: ${puedeMoverse ? 'Sí' : 'No'}`;
     const observaciones = observacionesBase;
     const fotoUrl = photoUrls.join(', ');
@@ -174,7 +166,7 @@ export default function FallaPage() {
 
     if (isOnline) {
       // Show success immediately — both sheet writes fire in parallel in background
-      showToast(`${otId} creada — Jefe de Taller notificado`);
+      showToast(fallaSavedMessage(otId, photoSummary.failedCount));
 
       // Push notification to fleet manager / workshop
       sendPushEvent('nueva_falla', { ot_id: otId, unidad, tipo: tipoFalla, prioridad: priorityValue });
@@ -193,11 +185,33 @@ export default function FallaPage() {
         });
       });
     } else {
-      queueSubmission({ type: 'falla', data: { tab: SHEET_TABS.AVERIAS, values: averiaRow }, timestamp: new Date().toISOString() })
+      queueSubmission({
+        type: 'falla',
+        data: {
+          tab: SHEET_TABS.AVERIAS,
+          values: averiaRow,
+          photoFiles,
+          photoBucket: 'falla-photos',
+          photoColumnIndex: 14,
+        },
+        timestamp: new Date().toISOString(),
+      })
         .catch((err: unknown) => console.error('Queue failed (averias):', err));
-      queueSubmission({ type: 'falla', data: { tab: SHEET_TABS.ORDENES_TRABAJO, values: otRow }, timestamp: new Date().toISOString() })
+      queueSubmission({
+        type: 'falla',
+        data: {
+          tab: SHEET_TABS.ORDENES_TRABAJO,
+          values: otRow,
+          photoFiles,
+          photoBucket: 'falla-photos',
+          photoColumnIndex: 10,
+        },
+        timestamp: new Date().toISOString(),
+      })
         .catch((err: unknown) => console.error('Queue failed (ordenes_trabajo):', err));
-      showToast('Avería guardada — se sincronizará al reconectarse ✓');
+      showToast(photoFiles.length > 0
+        ? 'Averia guardada - fotos se subiran al reconectarse'
+        : 'Averia guardada - se sincronizara al reconectarse');
     }
   }
 
