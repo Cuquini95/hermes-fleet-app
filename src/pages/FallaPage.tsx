@@ -11,6 +11,7 @@ import { sendPushEvent } from '../lib/push-notifications';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { queueSubmission, flushQueue } from '../lib/offline-queue';
 import { fallaSavedMessage, uploadFallaPhotos } from '../lib/falla-submit';
+import { cmmsSeverityFromHermesPriority, reportCmmsDamage, type CmmsDamageReport } from '../lib/cmms-events';
 import { useAuthStore } from '../stores/auth-store';
 import AutoPriorityIndicator from '../components/falla/AutoPriorityIndicator';
 import PhotoCapture from '../components/ui/PhotoCapture';
@@ -123,6 +124,17 @@ export default function FallaPage() {
     const observacionesBase = `Ubicación: ${ubicacion}. Cliente: ${clienteAfectado}. Puede moverse: ${puedeMoverse ? 'Sí' : 'No'}`;
     const observaciones = observacionesBase;
     const fotoUrl = photoUrls.join(', ');
+    const cmmsDamage: CmmsDamageReport = {
+      assetId: unidad,
+      title: `${tipoFalla || 'Falla reportada'} - ${unidad}`.slice(0, 180),
+      severity: cmmsSeverityFromHermesPriority(priorityValue),
+      description: descripcion.trim(),
+      photoUrl: photoUrls[0],
+      relatedWorkOrderId: otId,
+      downtime,
+      reason: `Hermes reportado por ${userName || 'Operador'}: ${observaciones}`,
+      externalEventId: `hermes-falla-${otId}`,
+    };
 
     // Sheet has 15 cols: FECHA HORA UNIDAD TIPO_AVERIA DESCRIPCION SEVERIDAD TECNICO
     //   TIEMPO_PARO COSTO_ESTIMADO ESTADO SOLUCION OBSERVACIONES PROVEEDOR_PIEZA OT_ID Foto_URL
@@ -171,16 +183,30 @@ export default function FallaPage() {
       // Push notification to fleet manager / workshop
       sendPushEvent('nueva_falla', { ot_id: otId, unidad, tipo: tipoFalla, prioridad: priorityValue });
 
-      Promise.allSettled([
-        appendRow(SHEET_TABS.AVERIAS, averiaRow),
-        appendRow(SHEET_TABS.ORDENES_TRABAJO, otRow),
-      ]).then((results) => {
-        results.forEach((r, i) => {
-          if (r.status === 'rejected') {
-            console.error(`Background write failed (Falla row ${i}):`, r.reason);
-            const tab = i === 0 ? SHEET_TABS.AVERIAS : SHEET_TABS.ORDENES_TRABAJO;
-            const values = i === 0 ? averiaRow : otRow;
-            queueSubmission({ type: 'falla', data: { tab, values }, timestamp: new Date().toISOString() }).catch(() => {});
+      const backgroundWrites = [
+        {
+          label: 'Averias',
+          run: () => appendRow(SHEET_TABS.AVERIAS, averiaRow),
+          retry: () => queueSubmission({ type: 'falla', data: { tab: SHEET_TABS.AVERIAS, values: averiaRow }, timestamp: new Date().toISOString() }),
+        },
+        {
+          label: 'Ordenes Trabajo',
+          run: () => appendRow(SHEET_TABS.ORDENES_TRABAJO, otRow),
+          retry: () => queueSubmission({ type: 'falla', data: { tab: SHEET_TABS.ORDENES_TRABAJO, values: otRow }, timestamp: new Date().toISOString() }),
+        },
+        {
+          label: 'CMMS',
+          run: () => reportCmmsDamage(cmmsDamage),
+          retry: () => queueSubmission({ type: 'cmms_damage', data: { cmmsDamage }, timestamp: new Date().toISOString() }),
+        },
+      ];
+
+      Promise.allSettled(backgroundWrites.map((write) => write.run())).then((results) => {
+        results.forEach((result, index) => {
+          const write = backgroundWrites[index];
+          if (write && result.status === 'rejected') {
+            console.error(`Background write failed (${write.label}):`, result.reason);
+            write.retry().catch(() => {});
           }
         });
       });
@@ -209,6 +235,12 @@ export default function FallaPage() {
         timestamp: new Date().toISOString(),
       })
         .catch((err: unknown) => console.error('Queue failed (ordenes_trabajo):', err));
+      queueSubmission({
+        type: 'cmms_damage',
+        data: { cmmsDamage },
+        timestamp: new Date().toISOString(),
+      })
+        .catch((err: unknown) => console.error('Queue failed (cmms_damage):', err));
       showToast(photoFiles.length > 0
         ? 'Averia guardada - fotos se subiran al reconectarse'
         : 'Averia guardada - se sincronizara al reconectarse');

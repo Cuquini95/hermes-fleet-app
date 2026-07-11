@@ -3,6 +3,7 @@
 // in rollback mode) — no changes needed here when switching backends.
 import { appendRow } from './sheets-api';
 import { tryUploadPhotos } from './photo-upload-safe';
+import { reportCmmsDamage, type CmmsDamageReport } from './cmms-events';
 
 const DB_NAME = 'hermes-offline';
 const STORE_NAME = 'pending-submissions';
@@ -20,7 +21,7 @@ function openDB(): Promise<IDBDatabase> {
 
 export interface PendingSubmission {
   id?: number;
-  type: 'dvir' | 'falla' | 'fuel' | 'trip' | 'horometro' | 'sticker_inspection';
+  type: 'dvir' | 'falla' | 'fuel' | 'trip' | 'horometro' | 'sticker_inspection' | 'cmms_damage';
   data: Record<string, unknown>;
   timestamp: string;
 }
@@ -91,6 +92,21 @@ export async function flushQueue(): Promise<{ succeeded: number; failed: number 
         photoBucket?: string;
         photoColumnIndex?: number;
       };
+      const cmmsDamage = submission.data.cmmsDamage as CmmsDamageReport | undefined;
+      if (submission.type === 'cmms_damage') {
+        if (!cmmsDamage) {
+          if (submission.id !== undefined) await clearSubmission(submission.id);
+          continue;
+        }
+        try {
+          await reportCmmsDamage(cmmsDamage);
+          if (submission.id !== undefined) await clearSubmission(submission.id);
+          succeeded++;
+        } catch {
+          failed++;
+        }
+        continue;
+      }
       if (!tab || !Array.isArray(values)) {
         // Malformed entry — remove it rather than retry forever
         if (submission.id !== undefined) await clearSubmission(submission.id);
