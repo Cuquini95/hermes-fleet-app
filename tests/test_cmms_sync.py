@@ -7,6 +7,7 @@ class FakePocketBase:
     def __init__(self):
         self.rows = {}
         self.sequence = 0
+        self.fail_collection_once = None
 
     def find_one(self, collection, field, value):
         return next(
@@ -15,6 +16,9 @@ class FakePocketBase:
         )
 
     def create(self, collection, body):
+        if self.fail_collection_once == collection:
+            self.fail_collection_once = None
+            raise RuntimeError("temporary PocketBase failure")
         self.sequence += 1
         row = {"id": f"r{self.sequence}", **body}
         self.rows.setdefault(collection, []).append(row)
@@ -82,6 +86,35 @@ class SyncServiceTests(unittest.TestCase):
             self.service.deliver(event(aggregate_type="unknown"), "key-4")
         receipt = self.pb.find_one("cmms_sync_receipts", "idempotency_key", "key-4")
         self.assertEqual("failed", receipt["status"])
+
+    def test_payload_does_not_override_pocketbase_record_identity(self):
+        self.service.deliver(
+            event(payload={
+                "id": "47f6c725-e65f-4085-a5bd-0a655ae70bc0",
+                "collectionId": "internal",
+                "collectionName": "wrong_collection",
+                "status": "open",
+                "version": 1,
+            }),
+            "key-5",
+        )
+        row = self.pb.find_one("cmms_work_orders", "supabase_id", "wo-1")
+        self.assertEqual("r2", row["id"])
+        self.assertNotIn("collectionId", row)
+        self.assertNotIn("collectionName", row)
+
+    def test_failed_receipt_can_be_retried(self):
+        self.pb.fail_collection_once = "cmms_work_orders"
+        with self.assertRaises(RuntimeError):
+            self.service.deliver(event(), "key-6")
+        failed = self.pb.find_one("cmms_sync_receipts", "idempotency_key", "key-6")
+        self.assertEqual("failed", failed["status"])
+
+        retried = self.service.deliver(event(), "key-6")
+        self.assertFalse(retried["duplicate"])
+        self.assertEqual(failed["id"], retried["receipt_id"])
+        self.assertEqual("committed", failed["status"])
+        self.assertEqual(1, len(self.pb.rows["cmms_work_orders"]))
 
 
 if __name__ == "__main__":
