@@ -17,6 +17,7 @@ COLLECTIONS = {
     "work_order": "cmms_work_orders",
     "meter_reading": "cmms_meter_readings",
 }
+POCKETBASE_RESERVED_FIELDS = {"id", "collectionId", "collectionName"}
 
 
 class SyncConflict(RuntimeError):
@@ -84,13 +85,19 @@ class SyncService:
         if prior:
             if prior.get("status") == "committed":
                 return {"success": True, "receipt_id": prior["id"], "duplicate": True}
-            raise SyncConflict("Event with this key is already processing")
-
-        receipt = self.pocketbase.create("cmms_sync_receipts", {
-            "idempotency_key": idempotency_key, "event_id": event.event_id,
-            "event_type": event.event_type, "aggregate_id": event.aggregate_id,
-            "status": "processing",
-        })
+            if prior.get("status") != "failed":
+                raise SyncConflict("Event with this key is already processing")
+            receipt = self.pocketbase.update(
+                "cmms_sync_receipts",
+                prior["id"],
+                {"status": "processing", "error": ""},
+            )
+        else:
+            receipt = self.pocketbase.create("cmms_sync_receipts", {
+                "idempotency_key": idempotency_key, "event_id": event.event_id,
+                "event_type": event.event_type, "aggregate_id": event.aggregate_id,
+                "status": "processing",
+            })
         try:
             self._apply(event)
             self.pocketbase.update("cmms_sync_receipts", receipt["id"], {"status": "committed"})
@@ -106,7 +113,12 @@ class SyncService:
         if not collection:
             raise UnsupportedAggregate(f"Unsupported aggregate_type: {event.aggregate_type}")
         current = self.pocketbase.find_one(collection, "supabase_id", event.aggregate_id)
-        incoming = {**event.payload, "supabase_id": event.aggregate_id, "last_event_id": event.event_id}
+        payload = {
+            key: value
+            for key, value in event.payload.items()
+            if key not in POCKETBASE_RESERVED_FIELDS
+        }
+        incoming = {**payload, "supabase_id": event.aggregate_id, "last_event_id": event.event_id}
         incoming_version = int(incoming.get("version") or 0)
         current_version = int((current or {}).get("version") or 0)
         if current and incoming_version and current_version > incoming_version:
