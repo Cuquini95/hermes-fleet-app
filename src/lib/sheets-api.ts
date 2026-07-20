@@ -9,7 +9,20 @@
  * are handled by the gateway. No changes are needed here when switching
  * between backends; the VPS env var controls it transparently.
  */
+import { normalizeCustomerName } from './customer-normalization';
+import { useAuthStore } from '../stores/auth-store';
+
 const HERMES_API = '/hermes-api';
+const FLETES_TAB = 'Reporte_Fletes_Transporte';
+const FLETES_CLIENTE_COL = 9;
+
+function requestHeaders(): Record<string, string> {
+  const token = useAuthStore.getState().token;
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
 
 // ── Retry + timeout helper ────────────────────────────────────────────────────
 
@@ -102,15 +115,23 @@ function invalidateCachedTab(tab: string): void {
   }
 }
 
+function normalizeRowForTab(tab: string, values: string[]): string[] {
+  if (tab !== FLETES_TAB) return values;
+  const next = [...values];
+  next[FLETES_CLIENTE_COL] = normalizeCustomerName(next[FLETES_CLIENTE_COL] ?? '');
+  return next;
+}
+
 // ── API functions ─────────────────────────────────────────────────────────────
 
 /** Append a new row to the given sheet tab. Invalidates the local cache for that tab on success. */
 export async function appendRow(tab: string, values: string[]): Promise<void> {
   invalidateCachedTab(tab);
+  const normalizedValues = normalizeRowForTab(tab, values);
   const response = await fetchWithRetry(`${HERMES_API}/api/sheets/append`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tab, values }),
+    headers: requestHeaders(),
+    body: JSON.stringify({ tab, values: normalizedValues }),
   });
   if (!response.ok) {
     const text = await response.text();
@@ -146,7 +167,7 @@ export async function readRange(
 
   const response = await fetchWithRetry(
     `${HERMES_API}/api/sheets/read?${params}`,
-    {},
+    { headers: requestHeaders() },
     signal,
   );
   if (!response.ok) {
@@ -154,7 +175,7 @@ export async function readRange(
     throw new Error(`Sheets API error ${response.status}: ${text}`);
   }
   const data = await response.json();
-  const rows: string[][] = data.data || [];
+  const rows: string[][] = (data.data || []).map((row: string[]) => normalizeRowForTab(tab, row));
 
   // Cache only full fetches (no pagination)
   if (limit === undefined && offset === undefined) {
@@ -176,15 +197,19 @@ export async function updateCell(
   updateValue: string
 ): Promise<void> {
   invalidateCachedTab(tab);
+  const normalizedUpdateValue =
+    tab === FLETES_TAB && updateColumn === FLETES_CLIENTE_COL
+      ? normalizeCustomerName(updateValue)
+      : updateValue;
   const response = await fetchWithRetry(`${HERMES_API}/api/sheets/update`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: requestHeaders(),
     body: JSON.stringify({
       tab,
       search_column: searchColumn,
       search_value: searchValue,
       update_column: updateColumn,
-      update_value: updateValue,
+      update_value: normalizedUpdateValue,
     }),
   });
   if (!response.ok) {
@@ -209,7 +234,7 @@ export async function upsertRow(
   invalidateCachedTab(tab);
   const response = await fetchWithRetry(`${HERMES_API}/api/sheets/upsert-row`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: requestHeaders(),
     body: JSON.stringify({ tab, key, values }),
   });
   if (!response.ok) {
@@ -316,7 +341,7 @@ export async function ocrBoleta(file: File): Promise<OcrBoletaResult> {
   const image_base64 = await compressToBase64(file);
   const response = await fetchWithRetry(`${HERMES_API}/api/ocr/boleta`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: requestHeaders(),
     body: JSON.stringify({ image_base64 }),
   });
   if (!response.ok) {
@@ -356,7 +381,7 @@ export async function ocrReceipt(file: File): Promise<OcrReceiptResult> {
 
   const response = await fetchWithRetry(`${HERMES_API}/api/ocr/receipt`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: requestHeaders(),
     body: JSON.stringify({ image_base64, media_type }),
   });
   if (!response.ok) {
@@ -392,7 +417,7 @@ export async function ocrFuelDispatch(file: File): Promise<OcrFuelResult> {
   const image_base64 = await compressToBase64(file);
   const response = await fetchWithRetry(`${HERMES_API}/api/ocr/fuel-dispatch`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: requestHeaders(),
     body: JSON.stringify({ image_base64, media_type: 'image/jpeg' }),
   });
   if (!response.ok) {
@@ -433,7 +458,7 @@ export async function importPartsFromQuote(
   try {
     const res = await fetchWithRetry(`${HERMES_API}/api/parts/import`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: requestHeaders(),
       body: JSON.stringify({ supplier, parts: partsWithNumbers }),
     });
     if (!res.ok) return [];
@@ -456,7 +481,7 @@ export async function deleteRow(
   invalidateCachedTab(tab);
   const response = await fetchWithRetry(`${HERMES_API}/api/sheets/delete-row`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: requestHeaders(),
     body: JSON.stringify({ tab, match }),
   });
   if (!response.ok) {

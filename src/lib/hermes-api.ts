@@ -1,9 +1,27 @@
 // Always proxy through /hermes-api — Vite dev server and Vercel both rewrite to VPS
+import { useAuthStore } from '../stores/auth-store';
+import type { NormalizedFaultCode } from './fault-code-parser';
+import type { MechanicDiagnosisResult } from './mechanic-diagnosis';
+import {
+  canonicalizeHermesEquipment,
+  filterPartsForCanonicalEquipment,
+  isDiagramResultCompatible,
+} from './equipment-normalization';
+
 const HERMES_BASE = '/hermes-api';
 
 /** Backoff delays: 1s, 2s, 4s, 8s */
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000];
 const REQUEST_TIMEOUT_MS = 15_000;
+const AI_REQUEST_TIMEOUT_MS = 120_000;
+
+function requestHeaders(includeJson = false): Record<string, string> {
+  const token = useAuthStore.getState().token;
+  return {
+    ...(includeJson ? { 'Content-Type': 'application/json' } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
 
 async function hermesPost<T>(
   endpoint: string,
@@ -16,13 +34,14 @@ async function hermesPost<T>(
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
     const timeoutCtrl = new AbortController();
-    const timeoutId = setTimeout(() => timeoutCtrl.abort(), REQUEST_TIMEOUT_MS);
+    const requestTimeoutMs = endpoint.startsWith('/ai/') ? AI_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
+    const timeoutId = setTimeout(() => timeoutCtrl.abort(), requestTimeoutMs);
     const combined = signal ? combineSignals(signal, timeoutCtrl.signal) : timeoutCtrl.signal;
 
     try {
       const res = await fetch(`${HERMES_BASE}${endpoint}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: requestHeaders(true),
         body: JSON.stringify(body),
         signal: combined,
       });
@@ -60,7 +79,10 @@ async function hermesGet<T>(
     const combined = signal ? combineSignals(signal, timeoutCtrl.signal) : timeoutCtrl.signal;
 
     try {
-      const res = await fetch(`${HERMES_BASE}${endpoint}${qs}`, { signal: combined });
+      const res = await fetch(`${HERMES_BASE}${endpoint}${qs}`, {
+        headers: requestHeaders(),
+        signal: combined,
+      });
       clearTimeout(timeoutId);
       if (!res.ok) {
         const text = await res.text();
@@ -99,13 +121,42 @@ export interface DiagnoseParams {
 export interface DiagnoseResult {
   causas_probables: string[];
   checklist_diagnostico: string[];
-  partes_probables: string[];
+  partes_probables: Array<string | Record<string, unknown>>;
   prioridad: string;
+  probable_system?: string;
+  safety_level?: string;
+  stop_machine_required?: boolean;
+  confidence?: number;
+  spanish_answer?: string;
+  recommended_parts_to_inspect?: string[];
 }
 
 /** Run AI diagnosis on a failure description and return probable causes, checklist, and parts. */
 export async function diagnose(params: DiagnoseParams, signal?: AbortSignal): Promise<DiagnoseResult> {
   return hermesPost('/ai/diagnose', params as unknown as Record<string, unknown>, signal);
+}
+
+export interface MechanicChatParams {
+  user_input: string;
+  equipo?: string;
+  unit_number?: string;
+  user_role?: string;
+  detected_code?: NormalizedFaultCode | null;
+  equipment_history?: string;
+  recent_failures?: string;
+  dvir_context?: string;
+  maintenance_history?: string;
+  photo_base64?: string;
+  model_tier?: 'auto' | 'fast' | 'reasoning';
+}
+
+/** Full mechanic-brain flow: code detection, manual/catalog/history context, model routing, structured Spanish answer. */
+export async function mechanicChat(params: MechanicChatParams, signal?: AbortSignal): Promise<MechanicDiagnosisResult> {
+  return hermesPost('/ai/mechanic-chat', params as unknown as Record<string, unknown>, signal);
+}
+
+export async function extractCode(text: string, signal?: AbortSignal): Promise<NormalizedFaultCode> {
+  return hermesPost('/ai/extract-code', { text }, signal);
 }
 
 export interface PhotoAnalysisParams {
@@ -121,9 +172,20 @@ export interface PhotoAnalysisResult {
   recomendacion_inicial: string;
 }
 
-/** Analyze a photo (base64 JPEG/PNG) and return probable component, damage type, and initial recommendation. */
+/** OCR/photo route that extracts dashboard/manual text first, then returns the structured mechanic-brain diagnosis. */
+export async function photoDiagnose(params: PhotoAnalysisParams, signal?: AbortSignal): Promise<MechanicDiagnosisResult> {
+  return hermesPost('/ai/photo-diagnose', params as unknown as Record<string, unknown>, signal);
+}
+
+/** Compatibility wrapper for older callers. New code should use photoDiagnose. */
 export async function photoToFailure(params: PhotoAnalysisParams, signal?: AbortSignal): Promise<PhotoAnalysisResult> {
-  return hermesPost('/ai/photo_to_failure', params as unknown as Record<string, unknown>, signal);
+  const result = await photoDiagnose(params, signal);
+  return {
+    componente_probable: result.probable_system,
+    tipo_de_dano: result.likely_causes[0] ?? result.probable_system,
+    severidad: result.safety_level,
+    recomendacion_inicial: result.spanish_answer,
+  };
 }
 
 export interface ManualLookupParams {
@@ -159,8 +221,13 @@ export interface PartResult {
 /** Search the parts catalog by free-text query, optionally filtered by equipment model. */
 export async function searchParts(query: string, equipo?: string, signal?: AbortSignal): Promise<PartResult[]> {
   const params: Record<string, string> = { q: query };
-  if (equipo) params.equipo = equipo;
-  return hermesGet('/parts', params, signal);
+  const canonicalEquipment = canonicalizeHermesEquipment(equipo);
+  if (canonicalEquipment) params.equipo = canonicalEquipment;
+
+  const results = await hermesGet<PartResult[]>('/parts', params, signal);
+  return canonicalEquipment
+    ? filterPartsForCanonicalEquipment(results, canonicalEquipment)
+    : results;
 }
 
 export interface DiagramResult {
@@ -174,7 +241,18 @@ export interface DiagramResult {
 
 /** Locate a diagram (PDF page or extracted image) matching the given equipment and search term. */
 export async function findDiagram(equipo: string, search: string, signal?: AbortSignal): Promise<DiagramResult> {
-  return hermesGet('/diagrams/find', { equipo, search }, signal);
+  const canonicalEquipment = canonicalizeHermesEquipment(equipo) ?? equipo;
+  const result = await hermesGet<DiagramResult>('/diagrams/find', { equipo: canonicalEquipment, search }, signal);
+
+  if (result.found && !isDiagramResultCompatible(result.pdf, canonicalEquipment)) {
+    return {
+      found: false,
+      pdf: result.pdf,
+      message: `Diagram mismatch for ${canonicalEquipment}`,
+    };
+  }
+
+  return result;
 }
 
 export interface FaultCodePagesResult {

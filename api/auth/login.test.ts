@@ -1,6 +1,6 @@
 import { createHash, webcrypto } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import authHandler from './login';
+import authHandler from './login.js';
 
 const SESSION_SECRET = 'test-session-secret-with-32-plus-chars';
 

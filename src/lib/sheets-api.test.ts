@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SHEET_TABS, appendRow } from './sheets-api';
+import { SHEET_TABS, appendRow, readRange, updateCell } from './sheets-api';
+import { useAuthStore } from '../stores/auth-store';
 
 // ── SHEET_TABS constants ──────────────────────────────────────────────────────
 
@@ -66,6 +67,7 @@ describe('appendRow', () => {
   });
 
   afterEach(() => {
+    useAuthStore.getState().logout();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -122,6 +124,45 @@ describe('appendRow', () => {
     expect(body.values).toEqual(['colA', 'colB']);
   });
 
+  it('sends the current server session token to the gateway', async () => {
+    useAuthStore.getState().setSession({
+      token: 'server-session-token-1234567890',
+      role: 'gerencia',
+      user_name: 'Gerencia',
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+    });
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await appendRow('TestTab', ['value']);
+
+    const [, options] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect((options.headers as Record<string, string>).Authorization).toBe(
+      'Bearer server-session-token-1234567890',
+    );
+  });
+
+  it('normalizes Fletes customer aliases before append', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const row = Array.from({ length: 15 }, (_, i) => `col${i}`);
+    row[9] = 'La Sabida';
+    await appendRow(SHEET_TABS.FLETES, row);
+
+    const [, options] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(options.body as string);
+    expect(body.values[9]).toBe('SBM Constructora');
+  });
+
   it('uses fallback error message when json.success=false with no error field', async () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(JSON.stringify({ success: false }), {
@@ -130,5 +171,67 @@ describe('appendRow', () => {
       }),
     );
     await expect(appendRow('SomeTab', ['a'])).rejects.toThrow('appendRow failed');
+  });
+});
+
+describe('readRange', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn().mockReturnValue(null),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+      clear: vi.fn(),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('normalizes Fletes customer aliases on read', async () => {
+    const row = Array.from({ length: 15 }, (_, i) => `col${i}`);
+    row[9] = 'lla Sallada';
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ data: [row] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await expect(readRange(SHEET_TABS.FLETES)).resolves.toEqual([
+      expect.arrayContaining(['SBM Constructora']),
+    ]);
+  });
+});
+
+describe('updateCell', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn().mockReturnValue(null),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+      clear: vi.fn(),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('normalizes Fletes customer aliases before update', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await updateCell(SHEET_TABS.FLETES, 0, '25/04/2026', 9, 'La Saladala');
+
+    const [, options] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(options.body as string);
+    expect(body.update_value).toBe('SBM Constructora');
   });
 });
