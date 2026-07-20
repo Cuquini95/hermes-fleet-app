@@ -1,4 +1,4 @@
-import { buildSmartDiagnoseResponse, readJsonBody } from '../_lib/hermes-ai.js';
+﻿import { buildSmartDiagnoseResponse, readJsonBody } from '../../lib/hermes-ai.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -16,3 +16,4 @@ export default async function handler(req, res) {
     });
   }
 }
+

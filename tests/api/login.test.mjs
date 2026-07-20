@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict';
+﻿import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, test } from 'node:test';
 
@@ -50,7 +50,7 @@ afterEach(() => {
 });
 
 test('rejects non-POST methods', async () => {
-  const { default: handler } = await import(`./login.js?t=${Date.now()}`);
+  const { default: handler } = await import(`../../api/auth/login.js?t=${Date.now()}`);
   const res = mockResponse();
   await handler(mockRequest('GET'), res);
   assert.equal(res.state.statusCode, 405);
@@ -58,14 +58,14 @@ test('rejects non-POST methods', async () => {
 
 test('fails closed when users env missing', async () => {
   delete process.env.HERMES_AUTH_USERS_JSON;
-  const { default: handler } = await import(`./login.js?t=${Date.now() + 1}`);
+  const { default: handler } = await import(`../../api/auth/login.js?t=${Date.now() + 1}`);
   const res = mockResponse();
   await handler(mockRequest('POST', { username: 'x', role: 'operador', password: 'y' }), res);
   assert.equal(res.state.statusCode, 503);
 });
 
 test('rejects invalid credentials with 401', async () => {
-  const { default: handler } = await import(`./login.js?t=${Date.now() + 2}`);
+  const { default: handler } = await import(`../../api/auth/login.js?t=${Date.now() + 2}`);
   const res = mockResponse();
   await handler(
     mockRequest('POST', { username: 'release_qa', role: 'operador', password: 'wrong-password' }),
@@ -76,7 +76,7 @@ test('rejects invalid credentials with 401', async () => {
 });
 
 test('issues session for valid credentials', async () => {
-  const { default: handler } = await import(`./login.js?t=${Date.now() + 3}`);
+  const { default: handler } = await import(`../../api/auth/login.js?t=${Date.now() + 3}`);
   const res = mockResponse();
   await handler(
     mockRequest('POST', { username: 'release_qa', role: 'operador', password: PASSWORD }),
@@ -88,3 +88,5 @@ test('issues session for valid credentials', async () => {
   assert.ok(parsed.token.includes('.'));
   assert.equal(parsed.role, 'operador');
 });
+
+

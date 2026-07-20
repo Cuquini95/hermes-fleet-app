@@ -1,4 +1,4 @@
-import { buildPhotoAnalysisResponse, readJsonBody } from '../_lib/hermes-ai.js';
+﻿import { buildPhotoAnalysisResponse, readJsonBody } from '../../lib/hermes-ai.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -18,3 +18,4 @@ export default async function handler(req, res) {
     });
   }
 }
+
