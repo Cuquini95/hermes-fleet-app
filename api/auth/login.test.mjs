@@ -1,26 +1,16 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { createRequire } from 'node:module';
 import { afterEach, beforeEach, test } from 'node:test';
-
-const require = createRequire(import.meta.url);
-const handler = require('./login.js');
 
 const SECRET = 'hermes-auth-prod-test-secret-32chars-min!!';
 const PASSWORD = 'ReleaseQaProbe2026!';
 const PASSWORD_HASH = createHash('sha256').update(PASSWORD, 'utf8').digest('hex');
 
 function mockRequest(method, body) {
-  const listeners = {};
   return {
     method,
     body,
-    on(event, cb) {
-      listeners[event] = cb;
-      if (event === 'end' && body === undefined) {
-        queueMicrotask(() => cb());
-      }
-    },
+    on() {},
   };
 }
 
@@ -60,6 +50,7 @@ afterEach(() => {
 });
 
 test('rejects non-POST methods', async () => {
+  const { default: handler } = await import(`./login.js?t=${Date.now()}`);
   const res = mockResponse();
   await handler(mockRequest('GET'), res);
   assert.equal(res.state.statusCode, 405);
@@ -67,12 +58,14 @@ test('rejects non-POST methods', async () => {
 
 test('fails closed when users env missing', async () => {
   delete process.env.HERMES_AUTH_USERS_JSON;
+  const { default: handler } = await import(`./login.js?t=${Date.now() + 1}`);
   const res = mockResponse();
   await handler(mockRequest('POST', { username: 'x', role: 'operador', password: 'y' }), res);
   assert.equal(res.state.statusCode, 503);
 });
 
 test('rejects invalid credentials with 401', async () => {
+  const { default: handler } = await import(`./login.js?t=${Date.now() + 2}`);
   const res = mockResponse();
   await handler(
     mockRequest('POST', { username: 'release_qa', role: 'operador', password: 'wrong-password' }),
@@ -83,6 +76,7 @@ test('rejects invalid credentials with 401', async () => {
 });
 
 test('issues session for valid credentials', async () => {
+  const { default: handler } = await import(`./login.js?t=${Date.now() + 3}`);
   const res = mockResponse();
   await handler(
     mockRequest('POST', { username: 'release_qa', role: 'operador', password: PASSWORD }),

@@ -2,7 +2,7 @@
  * Hermes production login — fail-closed when auth env is missing/malformed.
  * Env: HERMES_AUTH_USERS_JSON, HERMES_AUTH_SESSION_SECRET (>=32 chars)
  */
-const crypto = require('crypto');
+import crypto from 'node:crypto';
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const ROLES = new Set(['operador', 'mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia']);
@@ -91,7 +91,7 @@ function readBody(request) {
   });
 }
 
-module.exports = async function handler(request, response) {
+export default async function handler(request, response) {
   if (request.method !== 'POST') {
     return sendJson(response, 405, { detail: 'Method not allowed.' });
   }
@@ -145,4 +145,4 @@ module.exports = async function handler(request, response) {
     user_name: user.user_name,
     assigned_units: user.assigned_units ?? [],
   });
-};
+}
