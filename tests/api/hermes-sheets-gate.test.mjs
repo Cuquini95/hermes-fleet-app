@@ -43,3 +43,15 @@ test('verifyBearer accepts valid unexpired session', async () => {
   assert.equal(result.ok, true);
 });
 
+test('verifyBearer rejects expired session', async () => {
+  const { verifyBearer } = await import(`../../api/hermes-sheets-gate.js?t=${Date.now() + 3}`);
+  const token = sign({
+    sub: 'score_qa',
+    role: 'operador',
+    exp: new Date(Date.now() - 60_000).toISOString(),
+  });
+  const result = verifyBearer(`Bearer ${token}`);
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 401);
+});
+
