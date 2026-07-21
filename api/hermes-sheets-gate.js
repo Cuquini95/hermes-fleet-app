@@ -98,12 +98,21 @@ export default async function handler(req, res) {
   const bodyBuf = ['GET', 'HEAD'].includes(req.method || 'GET') ? undefined : await readBody(req);
 
   try {
+    // After user session verification, call VPS with service token so direct origin
+    // can stay fail-closed (user session secret does not need to live on VPS).
+    const upstreamToken = String(
+      process.env.HERMES_UPSTREAM_SHEETS_TOKEN || process.env.HERMES_SYNC_TOKEN || '',
+    ).trim();
+    const upstreamAuth = upstreamToken
+      ? `Bearer ${upstreamToken}`
+      : req.headers.authorization;
+
     const upstream = await fetch(upstreamUrl, {
       method: req.method || 'GET',
       headers: {
         Accept: req.headers.accept || 'application/json',
         'Content-Type': req.headers['content-type'] || 'application/json',
-        Authorization: req.headers.authorization,
+        Authorization: upstreamAuth,
       },
       body: bodyBuf && bodyBuf.length ? bodyBuf : undefined,
     });
