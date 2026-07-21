@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:api": "node --test tests/api/login.test.mjs tests/api/hermes-sheets-gate.test.mjs",
     "test:pipeline": "node test-pipeline.mjs"
   },
   "dependencies": {

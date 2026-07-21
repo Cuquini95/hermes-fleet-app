@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { buildDiagnoseResponse, buildManualLookupResponse, buildPhotoAnalysisResponse } from '../_lib/hermes-ai.js';
+import { buildDiagnoseResponse, buildManualLookupResponse, buildPhotoAnalysisResponse } from '../../lib/hermes-ai.js';
 
 afterEach(() => {
   delete process.env.HERMES_PHOTO_ANALYSIS_PROVIDER;
