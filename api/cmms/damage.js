@@ -1,5 +1,6 @@
 const DEFAULT_CMMS_API_BASE = 'https://gtp-cmms.vercel.app';
-const DEFAULT_TIMEOUT_MS = 12_000;
+// Upstream cold starts + live auth can exceed 12s; keep under typical serverless budget.
+const DEFAULT_TIMEOUT_MS = 25_000;
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -36,12 +37,23 @@ export default async function handler(req, res) {
 
     const responsePayload = await safeJson(upstream);
     if (!upstream.ok) {
-      return res.status(upstream.status).json(responsePayload ?? { error: 'CMMS damage handoff failed' });
+      return res.status(upstream.status).json({
+        ...(responsePayload && typeof responsePayload === 'object' ? responsePayload : { error: 'CMMS damage handoff failed' }),
+        cmms_status: upstream.status,
+        cmms_base: baseUrl,
+        path: useIngestSecret ? '/api/live/hermes/damages/ingest' : '/api/live/hermes/damages',
+      });
     }
     return res.status(200).json({ success: true, cmms: responsePayload });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'CMMS damage handoff failed';
-    return res.status(502).json({ success: false, error: message });
+    const baseUrl = (cleanEnvValue(process.env.CMMS_API_BASE) || DEFAULT_CMMS_API_BASE).replace(/\/+$/, '');
+    return res.status(502).json({
+      success: false,
+      error: message,
+      cmms_base: baseUrl,
+      timeout_ms: DEFAULT_TIMEOUT_MS,
+    });
   }
 }
 
