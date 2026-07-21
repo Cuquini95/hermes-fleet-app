@@ -10,6 +10,7 @@
  * between backends; the VPS env var controls it transparently.
  */
 import { HERMES_API_BASE } from './hermes-api-base';
+import { useAuthStore } from '../stores/auth-store';
 
 const HERMES_API = HERMES_API_BASE;
 
@@ -17,6 +18,16 @@ const HERMES_API = HERMES_API_BASE;
 
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000];
 const REQUEST_TIMEOUT_MS = 15_000;
+
+/** Attach Hermes HMAC session so Vercel sheets gate + VPS accept the request. */
+function withAuthHeaders(headers?: HeadersInit): HeadersInit {
+  const merged = new Headers(headers ?? undefined);
+  const token = useAuthStore.getState().sessionToken;
+  if (token && !merged.has('Authorization')) {
+    merged.set('Authorization', `Bearer ${token}`);
+  }
+  return merged;
+}
 
 async function fetchWithRetry(
   url: string,
@@ -37,7 +48,11 @@ async function fetchWithRetry(
       : timeoutCtrl.signal;
 
     try {
-      const res = await fetch(url, { ...options, signal: combinedSignal });
+      const res = await fetch(url, {
+        ...options,
+        headers: withAuthHeaders(options.headers),
+        signal: combinedSignal,
+      });
       clearTimeout(timeoutId);
       return res;
     } catch (err: unknown) {
