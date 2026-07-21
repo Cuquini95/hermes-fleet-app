@@ -22,6 +22,7 @@ function resetStore() {
     userName: '',
     assignedUnits: [],
     isAuthenticated: false,
+    sessionToken: null,
   });
 }
 
@@ -189,5 +190,11 @@ describe('auth-store — logout', () => {
     getStore().logout();
     expect(getStore().isAuthenticated).toBe(false);
     expect(getStore().role).toBeNull();
+  });
+
+  it('clears sessionToken after logout', () => {
+    useAuthStore.setState({ sessionToken: 'test-token' });
+    getStore().logout();
+    expect(getStore().sessionToken).toBeNull();
   });
 });
