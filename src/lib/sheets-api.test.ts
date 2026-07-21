@@ -128,6 +128,24 @@ describe('appendRow', () => {
     expect(body.values).toEqual(['colA', 'colB']);
   });
 
+  it('attaches Authorization Bearer from auth-store sessionToken', async () => {
+    const { useAuthStore } = await import('../stores/auth-store');
+    useAuthStore.setState({ sessionToken: 'test-session-token-xyz' });
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await appendRow('AuthTab', ['a']);
+
+    const [, options] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    const headers = new Headers(options.headers);
+    expect(headers.get('Authorization')).toBe('Bearer test-session-token-xyz');
+    useAuthStore.setState({ sessionToken: null });
+  });
+
   it('uses fallback error message when json.success=false with no error field', async () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(JSON.stringify({ success: false }), {
