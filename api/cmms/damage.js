@@ -10,41 +10,78 @@ export default async function handler(req, res) {
 
   const token = cleanEnvValue(process.env.CMMS_HERMES_SYSTEM_TOKEN);
   const ingestSecret = cleanEnvValue(process.env.CMMS_HERMES_INGEST_SECRET);
-  if (!token && !ingestSecret) {
+  const hostedUrl = cleanEnvValue(process.env.HOSTED_CMMS_SUPABASE_URL || process.env.SUPABASE_URL);
+  const hostedKey = cleanEnvValue(
+    process.env.HOSTED_CMMS_SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY,
+  );
+  const allowHostedFallback = Boolean(hostedUrl && hostedKey);
+
+  if (!token && !ingestSecret && !allowHostedFallback) {
     return res.status(202).json({
       success: false,
       skipped: true,
-      reason: 'CMMS_HERMES_INGEST_SECRET or CMMS_HERMES_SYSTEM_TOKEN is not configured',
+      reason:
+        'CMMS_HERMES_INGEST_SECRET / CMMS_HERMES_SYSTEM_TOKEN / HOSTED Supabase service key not configured',
     });
   }
 
   try {
     const body = await readJsonBody(req);
     const payload = toCmmsDamagePayload(body);
-    const baseUrl = (cleanEnvValue(process.env.CMMS_API_BASE) || DEFAULT_CMMS_API_BASE).replace(/\/+$/, '');
-    const useIngestSecret = Boolean(ingestSecret);
-    const upstream = await fetch(`${baseUrl}${useIngestSecret ? '/api/live/hermes/damages/ingest' : '/api/live/hermes/damages'}`, {
-      method: 'POST',
-      headers: {
-        ...(useIngestSecret
-          ? { 'x-cmms-hermes-ingest-secret': ingestSecret }
-          : { Authorization: `Bearer ${token}` }),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
-    });
 
-    const responsePayload = await safeJson(upstream);
-    if (!upstream.ok) {
-      return res.status(upstream.status).json({
-        ...(responsePayload && typeof responsePayload === 'object' ? responsePayload : { error: 'CMMS damage handoff failed' }),
-        cmms_status: upstream.status,
-        cmms_base: baseUrl,
-        path: useIngestSecret ? '/api/live/hermes/damages/ingest' : '/api/live/hermes/damages',
-      });
+    // 1) Prefer live gtp-cmms / PocketBase path when secrets present
+    if (token || ingestSecret) {
+      const baseUrl = (cleanEnvValue(process.env.CMMS_API_BASE) || DEFAULT_CMMS_API_BASE).replace(/\/+$/, '');
+      const useIngestSecret = Boolean(ingestSecret);
+      const path = useIngestSecret ? '/api/live/hermes/damages/ingest' : '/api/live/hermes/damages';
+      try {
+        const upstream = await fetch(`${baseUrl}${path}`, {
+          method: 'POST',
+          headers: {
+            ...(useIngestSecret
+              ? { 'x-cmms-hermes-ingest-secret': ingestSecret }
+              : { Authorization: `Bearer ${token}` }),
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+        });
+        const responsePayload = await safeJson(upstream);
+        if (upstream.ok) {
+          return res.status(200).json({ success: true, cmms: responsePayload, path: 'live' });
+        }
+        // Fall through to HOSTED if enabled
+        if (!allowHostedFallback) {
+          return res.status(upstream.status).json({
+            ...(responsePayload && typeof responsePayload === 'object'
+              ? responsePayload
+              : { error: 'CMMS damage handoff failed' }),
+            cmms_status: upstream.status,
+            cmms_base: baseUrl,
+            path,
+          });
+        }
+      } catch (liveError) {
+        if (!allowHostedFallback) {
+          const message = liveError instanceof Error ? liveError.message : 'CMMS damage handoff failed';
+          return res.status(502).json({
+            success: false,
+            error: message,
+            cmms_base: baseUrl,
+            timeout_ms: DEFAULT_TIMEOUT_MS,
+          });
+        }
+        // continue to hosted
+      }
     }
-    return res.status(200).json({ success: true, cmms: responsePayload });
+
+    // 2) HOSTED Supabase SoR fallback (gtp-cmms-rescue / maintenance-os DB)
+    if (allowHostedFallback) {
+      const hosted = await createHostedDamageWorkOrder(payload, hostedUrl, hostedKey);
+      return res.status(200).json({ success: true, path: 'hosted_supabase', ...hosted });
+    }
+
+    return res.status(502).json({ success: false, error: 'No damage handoff path available' });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'CMMS damage handoff failed';
     const baseUrl = (cleanEnvValue(process.env.CMMS_API_BASE) || DEFAULT_CMMS_API_BASE).replace(/\/+$/, '');
@@ -55,6 +92,126 @@ export default async function handler(req, res) {
       timeout_ms: DEFAULT_TIMEOUT_MS,
     });
   }
+}
+
+/**
+ * Create a TEST_QA-safe HOSTED work order + failure with hermes legacy linkage.
+ * Uses service role; assets looked up by unit_code (asset_id field from Hermes is unit code).
+ */
+async function createHostedDamageWorkOrder(payload, supabaseUrl, serviceKey) {
+  const base = supabaseUrl.replace(/\/+$/, '');
+  const unit = payload.asset_id;
+  const stamp = Date.now().toString(36).toUpperCase().slice(-6);
+  const hermesOt = payload.external_event_id || `OT-QA${stamp}`;
+  const title = payload.title.slice(0, 180);
+  const description = payload.description || title;
+
+  const assets = await sbGet(
+    base,
+    serviceKey,
+    `/rest/v1/cmms_assets?select=id,unit_code,organization_id,site_id&unit_code=eq.${encodeURIComponent(unit)}&limit=1`,
+  );
+  if (!Array.isArray(assets) || assets.length === 0) {
+    throw new Error(`HOSTED asset not found for unit_code=${unit}`);
+  }
+  const asset = assets[0];
+  const woNo = `OT-20260721-H${stamp}`;
+  const woId = cryptoRandomId();
+
+  const failBody = {
+    organization_id: asset.organization_id,
+    site_id: asset.site_id,
+    asset_id: asset.id,
+    description: `Hermes damage: ${description}`.slice(0, 500),
+    severity: payload.severity === 'critical' ? 'critical' : payload.severity === 'high' ? 'high' : 'medium',
+    status: 'reported',
+    equipment_stopped: payload.severity === 'critical' || payload.severity === 'high',
+    legacy_source: 'hermes',
+    legacy_id: hermesOt,
+  };
+  const failures = await sbPost(base, serviceKey, '/rest/v1/cmms_failures', failBody);
+  const failure = Array.isArray(failures) ? failures[0] : failures;
+
+  const woBody = {
+    id: woId,
+    organization_id: asset.organization_id,
+    site_id: asset.site_id,
+    asset_id: asset.id,
+    failure_id: failure?.id || null,
+    work_order_no: woNo,
+    work_type: 'corrective',
+    title: title.startsWith('TEST_QA') ? title : `TEST_QA ${title}`.slice(0, 180),
+    description: description.slice(0, 1000),
+    priority: payload.severity === 'critical' || payload.severity === 'high' ? 'high' : 'medium',
+    status: 'open',
+    legacy_source: 'hermes',
+    legacy_id: hermesOt,
+    metadata: {
+      hermes_native_damage: true,
+      photo_url: payload.photo_url,
+      reason: payload.reason,
+      path: 'hosted_supabase_fallback',
+    },
+  };
+  const created = await sbPost(base, serviceKey, '/rest/v1/cmms_work_orders', woBody);
+  const row = Array.isArray(created) ? created[0] : created;
+
+  return {
+    hermes_ot: hermesOt,
+    work_order_no: woNo,
+    work_order_id: row?.id || woId,
+    asset_unit: asset.unit_code,
+    asset_id: asset.id,
+    failure_id: failure?.id || null,
+    authority: 'hermes',
+    created: true,
+  };
+}
+
+function cryptoRandomId() {
+  // UUID v4
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+async function sbGet(base, key, path) {
+  const r = await fetch(`${base}${path}`, {
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+      Accept: 'application/json',
+    },
+    signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(`HOSTED GET ${path} -> ${r.status} ${t.slice(0, 200)}`);
+  }
+  return r.json();
+}
+
+async function sbPost(base, key, path, body) {
+  const r = await fetch(`${base}${path}`, {
+    method: 'POST',
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      Prefer: 'return=representation',
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(`HOSTED POST ${path} -> ${r.status} ${t.slice(0, 200)}`);
+  }
+  return r.json();
 }
 
 function toCmmsDamagePayload(body = {}) {
