@@ -151,3 +151,27 @@ test('push subscription role is overwritten with the verified session role', asy
     globalThis.fetch = originalFetch;
   }
 });
+
+test('Sheets-only upstream credentials cannot authorize the broader VPS proxy', async () => {
+  const { default: handler } = await import(`../../api/hermes-vps-gate.js?sheets-only=${Date.now()}`);
+  const originalFetch = globalThis.fetch;
+  process.env.HERMES_UPSTREAM_SHEETS_TOKEN = 'sheets-only-token';
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    throw new Error('must not forward with a Sheets-only token');
+  };
+  try {
+    const res = response();
+    await handler({
+      method: 'POST',
+      headers: { authorization: token('supervisor', 'sheets-only-qa') },
+      query: { upstreamPath: '/hermes-api/api/push/send' },
+      body: { event: 'nueva_falla', data: {} },
+    }, res);
+    assert.equal(res.state.statusCode, 503);
+    assert.equal(calls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

@@ -91,7 +91,6 @@ export function resolveVpsOperation(rawPath, method) {
 function upstreamToken() {
   return String(
     process.env.HERMES_UPSTREAM_VPS_TOKEN ||
-    process.env.HERMES_UPSTREAM_SHEETS_TOKEN ||
     process.env.HERMES_SYNC_TOKEN ||
     '',
   ).trim();
