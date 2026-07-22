@@ -32,14 +32,23 @@ export default async function handler(req, res) {
   const hostedKey = cleanEnvValue(
     process.env.HOSTED_CMMS_SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY,
   );
-  const allowHostedFallback = Boolean(hostedUrl && hostedKey);
+  const hostedOrganizationId = cleanEnvValue(process.env.CMMS_HERMES_FALLBACK_ORGANIZATION_ID);
+  const hostedCredentials = Boolean(hostedUrl && hostedKey);
+  const allowHostedFallback = Boolean(hostedCredentials && hostedOrganizationId);
 
-  if (!token && !ingestSecret && !allowHostedFallback) {
+  if (!token && !ingestSecret && !hostedCredentials) {
     return res.status(202).json({
       success: false,
       skipped: true,
       reason:
         'CMMS_HERMES_INGEST_SECRET / CMMS_HERMES_SYSTEM_TOKEN / HOSTED Supabase service key not configured',
+    });
+  }
+  if (!token && !ingestSecret && hostedCredentials && !hostedOrganizationId) {
+    return res.status(202).json({
+      success: false,
+      skipped: true,
+      reason: 'CMMS_HERMES_FALLBACK_ORGANIZATION_ID is not configured',
     });
   }
 
@@ -100,7 +109,12 @@ export default async function handler(req, res) {
 
     // 2) HOSTED Supabase SoR fallback (gtp-cmms-rescue / maintenance-os DB)
     if (allowHostedFallback) {
-      const hosted = await createHostedDamageWorkOrder(payload, hostedUrl, hostedKey);
+      const hosted = await createHostedDamageWorkOrder(
+        payload,
+        hostedUrl,
+        hostedKey,
+        hostedOrganizationId,
+      );
       return res.status(200).json({ success: true, path: 'hosted_supabase', correlation_id: correlationId, ...hosted });
     }
 
@@ -134,9 +148,10 @@ export default async function handler(req, res) {
 
 /**
  * Create a TEST_QA-safe HOSTED work order + failure with hermes legacy linkage.
- * Uses service role; assets looked up by unit_code (asset_id field from Hermes is unit code).
+ * Uses service role; assets are looked up by unit_code within an explicit
+ * fallback organization (asset_id from Hermes is the unit code).
  */
-async function createHostedDamageWorkOrder(payload, supabaseUrl, serviceKey) {
+async function createHostedDamageWorkOrder(payload, supabaseUrl, serviceKey, organizationId) {
   const base = supabaseUrl.replace(/\/+$/, '');
   const unit = payload.asset_id;
   const stamp = Date.now().toString(36).toUpperCase().slice(-6);
@@ -151,7 +166,7 @@ async function createHostedDamageWorkOrder(payload, supabaseUrl, serviceKey) {
     const existing = await sbGet(
       base,
       serviceKey,
-      `/rest/v1/cmms_work_orders?select=id,work_order_no,asset_id,failure_id,legacy_source,legacy_id&legacy_source=eq.hermes&legacy_id=eq.${encodeURIComponent(hermesOt)}&limit=1`,
+      `/rest/v1/cmms_work_orders?select=id,work_order_no,asset_id,failure_id,legacy_source,legacy_id&organization_id=eq.${encodeURIComponent(organizationId)}&legacy_source=eq.hermes&legacy_id=eq.${encodeURIComponent(hermesOt)}&limit=1`,
     );
     const existingRow = Array.isArray(existing) ? existing[0] : null;
     if (existingRow) {
@@ -171,10 +186,13 @@ async function createHostedDamageWorkOrder(payload, supabaseUrl, serviceKey) {
   const assets = await sbGet(
     base,
     serviceKey,
-    `/rest/v1/cmms_assets?select=id,unit_code,organization_id,site_id&unit_code=eq.${encodeURIComponent(unit)}&limit=1`,
+    `/rest/v1/cmms_assets?select=id,unit_code,organization_id,site_id&organization_id=eq.${encodeURIComponent(organizationId)}&unit_code=eq.${encodeURIComponent(unit)}&limit=2`,
   );
   if (!Array.isArray(assets) || assets.length === 0) {
     throw new Error(`HOSTED asset not found for unit_code=${unit}`);
+  }
+  if (assets.length !== 1) {
+    throw new Error(`HOSTED asset lookup is not unique for unit_code=${unit}`);
   }
   const asset = assets[0];
   const woNo = `OT-20260721-H${stamp}`;

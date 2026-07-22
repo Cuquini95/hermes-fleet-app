@@ -11,6 +11,7 @@ afterEach(() => {
   delete process.env.CMMS_HERMES_SYSTEM_TOKEN;
   delete process.env.HOSTED_CMMS_SUPABASE_URL;
   delete process.env.HOSTED_CMMS_SUPABASE_SERVICE_KEY;
+  delete process.env.CMMS_HERMES_FALLBACK_ORGANIZATION_ID;
   delete process.env.HERMES_AUTH_SESSION_SECRET;
 });
 
@@ -23,6 +24,24 @@ describe('CMMS damage proxy', () => {
 
     expect(res.statusCode).toBe(202);
     expect(res.body).toMatchObject({ success: false, skipped: true });
+  });
+
+  it('does not enable the hosted fallback without explicit organization scope', async () => {
+    process.env.HOSTED_CMMS_SUPABASE_URL = 'https://cmms-supabase.example.test';
+    process.env.HOSTED_CMMS_SUPABASE_SERVICE_KEY = 'hosted-service-key';
+    process.env.HERMES_AUTH_SESSION_SECRET = TEST_SESSION_SECRET;
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    const res = createRes();
+
+    await handler(authorizedRequest({ asset_id: 'CA25', title: 'Falla' }), res);
+
+    expect(res.statusCode).toBe(202);
+    expect(res.body).toMatchObject({
+      success: false,
+      skipped: true,
+      reason: 'CMMS_HERMES_FALLBACK_ORGANIZATION_ID is not configured',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('rejects unauthenticated damage handoffs before checking CMMS configuration', async () => {
@@ -143,6 +162,7 @@ describe('CMMS damage proxy', () => {
   it('replays an existing hosted work order for the same external event id', async () => {
     process.env.HOSTED_CMMS_SUPABASE_URL = 'https://cmms-supabase.example.test';
     process.env.HOSTED_CMMS_SUPABASE_SERVICE_KEY = 'hosted-service-key';
+    process.env.CMMS_HERMES_FALLBACK_ORGANIZATION_ID = 'org-a';
     process.env.HERMES_AUTH_SESSION_SECRET = TEST_SESSION_SECRET;
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify([{
@@ -174,6 +194,31 @@ describe('CMMS damage proxy', () => {
     expect(fetchMock.mock.calls[0][0]).toContain(
       'cmms_work_orders?select=id,work_order_no,asset_id,failure_id,legacy_source,legacy_id',
     );
+    expect(fetchMock.mock.calls[0][0]).toContain('organization_id=eq.org-a');
+  });
+
+  it('fails closed when the hosted asset lookup is not unique inside the organization', async () => {
+    process.env.HOSTED_CMMS_SUPABASE_URL = 'https://cmms-supabase.example.test';
+    process.env.HOSTED_CMMS_SUPABASE_SERVICE_KEY = 'hosted-service-key';
+    process.env.CMMS_HERMES_FALLBACK_ORGANIZATION_ID = 'org-a';
+    process.env.HERMES_AUTH_SESSION_SECRET = TEST_SESSION_SECRET;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify([
+        { id: 'asset-a', unit_code: 'CA25', organization_id: 'org-a', site_id: 'site-a' },
+        { id: 'asset-b', unit_code: 'CA25', organization_id: 'org-a', site_id: 'site-b' },
+      ]), { status: 200 }),
+    ));
+    const res = createRes();
+
+    await handler(authorizedRequest({ asset_id: 'CA25', title: 'Falla' }), res);
+
+    expect(res.statusCode).toBe(502);
+    expect(res.body).toMatchObject({
+      success: false,
+      error: 'HOSTED asset lookup is not unique for unit_code=CA25',
+    });
+    expect(fetchMock.mock.calls[0][0]).toContain('organization_id=eq.org-a');
+    expect(fetchMock.mock.calls[0][0]).toContain('unit_code=eq.CA25&limit=2');
   });
 });
 

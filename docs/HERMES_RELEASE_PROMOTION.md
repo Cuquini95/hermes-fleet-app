@@ -28,7 +28,9 @@ Required Vercel environment names:
   `CMMS_HERMES_INGEST_SECRET`, unless the approved hosted Supabase fallback is
   being used
 - `HOSTED_CMMS_SUPABASE_URL` and
-  `HOSTED_CMMS_SUPABASE_SERVICE_KEY` only when the hosted fallback is approved
+  `HOSTED_CMMS_SUPABASE_SERVICE_KEY` plus
+  `CMMS_HERMES_FALLBACK_ORGANIZATION_ID` only when the hosted fallback is
+  approved
 
 Never place values for these variables in the repository, transcript, or
 evidence artifact.
