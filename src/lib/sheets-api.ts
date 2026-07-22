@@ -29,6 +29,12 @@ function withAuthHeaders(headers?: HeadersInit): HeadersInit {
   return merged;
 }
 
+function clearRejectedServerSession(response: Response): void {
+  if (response.status !== 401) return;
+  const auth = useAuthStore.getState();
+  if (auth.authMode === 'server') auth.logout();
+}
+
 async function fetchWithRetry(
   url: string,
   options: RequestInit = {},
@@ -54,6 +60,7 @@ async function fetchWithRetry(
         signal: combinedSignal,
       });
       clearTimeout(timeoutId);
+      clearRejectedServerSession(res);
       return res;
     } catch (err: unknown) {
       clearTimeout(timeoutId);

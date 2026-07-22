@@ -146,6 +146,27 @@ describe('appendRow', () => {
     useAuthStore.setState({ authMode: null, sessionToken: null });
   });
 
+  it('clears a stale server session when Sheets rejects it', async () => {
+    const { useAuthStore } = await import('../stores/auth-store');
+    useAuthStore.setState({
+      role: 'gerencia',
+      userName: 'Gerencia',
+      isAuthenticated: true,
+      authMode: 'server',
+      sessionToken: 'stale-session-token',
+      sessionExpiresAt: '2099-01-01T00:00:00.000Z',
+    });
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ detail: 'Invalid session.' }), { status: 401 }),
+    );
+
+    await expect(appendRow('AuthTab', ['a'])).rejects.toThrow('401');
+
+    expect(useAuthStore.getState().isAuthenticated).toBe(false);
+    expect(useAuthStore.getState().authMode).toBeNull();
+    expect(useAuthStore.getState().sessionToken).toBeNull();
+  });
+
   it('uses fallback error message when json.success=false with no error field', async () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(JSON.stringify({ success: false }), {
