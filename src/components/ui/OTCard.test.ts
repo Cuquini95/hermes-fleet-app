@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { timeSince } from './OTCard';
+import { timeSince } from './ot-card-utils';
 
 describe('timeSince', () => {
   it('formats Sheets dd/mm/yyyy dates without NaN', () => {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Wrench, RefreshCw } from 'lucide-react';
 import { useEquipmentList } from '../hooks/useEquipmentList';
@@ -80,7 +80,7 @@ export default function PMSchedulePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  async function loadPMData() {
+  const loadPMData = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -121,11 +121,11 @@ export default function PMSchedulePage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [equipment]);
 
   useEffect(() => {
     loadPMData();
-  }, []);
+  }, [loadPMData]);
 
   return (
     <div className="flex flex-col pb-4 animate-fade-up">

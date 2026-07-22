@@ -1,10 +1,13 @@
-﻿import { buildPhotoAnalysisResponse, readJsonBody } from '../../lib/hermes-ai.js';
+import { buildPhotoAnalysisResponse, readJsonBody } from '../../lib/hermes-ai.js';
+import { requireSession } from '../require-session.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  if (!requireSession(req, res, { scope: 'ai-photo', limit: 10 })) return;
 
   try {
     const body = await readJsonBody(req);
@@ -18,4 +21,3 @@ export default async function handler(req, res) {
     });
   }
 }
-

@@ -203,7 +203,6 @@ test('"Ver / Imprimir" link navigates to print page with ULTRATK header', async 
 
 test('"Ver / Imprimir" link in OC list leads to print page', async ({ page }) => {
   // This test uses a pre-loaded list state — mock returns one OC immediately
-  let callCount = 0;
   await page.route('**googleapis.com/v4/spreadsheets/**', async (route) => {
     const url = route.request().url();
     const method = route.request().method();
@@ -231,7 +230,6 @@ test('"Ver / Imprimir" link in OC list leads to print page', async ({ page }) =>
     }
 
     // OC list always returns one row
-    callCount++;
     await route.fulfill({
       status: 200,
       body: JSON.stringify({ values: [

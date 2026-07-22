@@ -63,7 +63,10 @@ export default function OperatorHomePage() {
   }, [userName]);
 
   useEffect(() => {
-    checkDVIRStatus();
+    const initialCheck = window.setTimeout(() => {
+      void checkDVIRStatus();
+    }, 0);
+    return () => window.clearTimeout(initialCheck);
   }, [checkDVIRStatus]);
 
   const greeting = new Date().getHours() < 12 ? 'Buenos días' : new Date().getHours() < 18 ? 'Buenas tardes' : 'Buenas noches';

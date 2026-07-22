@@ -34,10 +34,13 @@ export default function LoginPage() {
   const [selectedRole, setSelectedRole] = useState<AppRole | null>(null);
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState(false);
+  const [pinErrorMessage, setPinErrorMessage] = useState('');
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
   const navigate = useNavigate();
   const login = useAuthStore((s) => s.login);
 
   const handleKeyPress = useCallback((key: string) => {
+    if (isAuthenticating) return;
     if (key === 'del') {
       setPin((prev) => prev.slice(0, -1));
       return;
@@ -47,21 +50,43 @@ export default function LoginPage() {
       if (prev.length >= 4) return prev;
       return prev + key;
     });
-  }, []);
+  }, [isAuthenticating]);
 
   useEffect(() => {
     if (!selectedRole || pin.length !== 4) return;
-    const success = login(selectedRole, pin);
-    if (success) {
-      setTimeout(() => navigate(ROLE_HOME[selectedRole]), 0);
-      return;
-    }
-    setPinError(true);
-    const resetTimer = setTimeout(() => {
-      setPin('');
+    let resetTimer: number | undefined;
+    let cancelled = false;
+    const attempt = window.setTimeout(() => {
+      setIsAuthenticating(true);
       setPinError(false);
-    }, 800);
-    return () => clearTimeout(resetTimer);
+      setPinErrorMessage('');
+      void login(selectedRole, pin).then((result) => {
+        if (cancelled) return;
+        setIsAuthenticating(false);
+        if (result.success) {
+          window.setTimeout(() => navigate(ROLE_HOME[selectedRole]), 0);
+          return;
+        }
+        setPinError(true);
+        setPinErrorMessage(
+          result.reason === 'server_unavailable'
+            ? 'Servidor de autenticación no disponible.'
+            : result.reason === 'server_rejected'
+              ? 'PIN no válido para este rol.'
+              : 'PIN incorrecto.',
+        );
+        resetTimer = window.setTimeout(() => {
+          setPin('');
+          setPinError(false);
+          setPinErrorMessage('');
+        }, 800);
+      });
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(attempt);
+      if (resetTimer !== undefined) window.clearTimeout(resetTimer);
+    };
   }, [selectedRole, pin, login, navigate]);
 
   useEffect(() => {
@@ -77,11 +102,16 @@ export default function LoginPage() {
   const handleRoleSelect = (role: AppRole) => {
     setSelectedRole(role);
     setPin('');
+    setPinError(false);
+    setPinErrorMessage('');
   };
 
   const handleBack = () => {
     setSelectedRole(null);
     setPin('');
+    setPinError(false);
+    setPinErrorMessage('');
+    setIsAuthenticating(false);
   };
 
   return (
@@ -156,7 +186,14 @@ export default function LoginPage() {
             ))}
           </div>
           {pinError && (
-            <p className="text-sm font-medium" style={{ color: '#DC2626' }}>PIN incorrecto</p>
+            <p className="text-sm font-medium text-center" style={{ color: '#DC2626' }} role="alert">
+              {pinErrorMessage}
+            </p>
+          )}
+          {isAuthenticating && (
+            <p className="text-sm font-medium" style={{ color: '#2563EB' }} aria-live="polite">
+              Validando sesión…
+            </p>
           )}
 
           {/* Numeric keypad */}
@@ -165,7 +202,7 @@ export default function LoginPage() {
               <button
                 key={idx}
                 onClick={() => handleKeyPress(key)}
-                disabled={key === ''}
+                disabled={key === '' || isAuthenticating}
                 className={[
                   'flex items-center justify-center rounded-xl transition-opacity active:opacity-60',
                   key === '' ? 'invisible' : '',

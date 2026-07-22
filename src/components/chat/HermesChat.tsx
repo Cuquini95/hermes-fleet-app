@@ -544,11 +544,12 @@ export default function HermesChat() {
   const lastDiagnosisContextRef = useRef<DiagnosticCaseState | null>(null);
   const pendingMechanicIntakeRef = useRef<{ originalText: string } | null>(null);
 
-  useEffect(() => {
+  const handleUnitChange = useCallback((unit: string) => {
+    setSelectedUnit(unit);
     lastDiagnosisContextRef.current = null;
     pendingMechanicIntakeRef.current = null;
     setGuidedOptions([]);
-  }, [selectedUnit]);
+  }, []);
 
   function scrollToBottom() {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -1012,7 +1013,7 @@ export default function HermesChat() {
         </span>
         <select
           value={selectedUnit}
-          onChange={(e) => setSelectedUnit(e.target.value)}
+          onChange={(e) => handleUnitChange(e.target.value)}
           className="text-sm font-medium rounded-full px-4 py-1 outline-none appearance-none cursor-pointer"
           style={{
             backgroundColor: '#1E3A8A',

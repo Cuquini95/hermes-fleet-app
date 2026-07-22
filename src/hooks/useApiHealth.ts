@@ -44,9 +44,14 @@ export function useApiHealth(): ApiHealth {
   }, []);
 
   useEffect(() => {
-    check();
-    const id = setInterval(check, POLL_INTERVAL_MS);
-    return () => clearInterval(id);
+    const initialCheck = window.setTimeout(() => {
+      void check();
+    }, 0);
+    const id = window.setInterval(check, POLL_INTERVAL_MS);
+    return () => {
+      window.clearTimeout(initialCheck);
+      window.clearInterval(id);
+    };
   }, [check]);
 
   return health;

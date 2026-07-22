@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { useCatalogoStore } from '../../stores/catalogo-store';
 
 /** Form field values for a manually-entered part. */
-export interface ManualForm {
+interface ManualForm {
   part_number: string;
   description: string;
   quantity: string;
@@ -15,19 +15,6 @@ export interface ManualForm {
   equipment: string;
   urgencia: 'Normal' | 'Urgente' | 'Crítico';
   notes: string;
-}
-
-/** Returns an empty ManualForm. */
-export function emptyManual(): ManualForm {
-  return {
-    part_number: '',
-    description: '',
-    quantity: '1',
-    unit_price: '0',
-    equipment: '',
-    urgencia: 'Normal',
-    notes: '',
-  };
 }
 
 interface ManualPartFormProps {

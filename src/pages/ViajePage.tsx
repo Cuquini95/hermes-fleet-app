@@ -129,22 +129,27 @@ export default function ViajePage() {
   // Single mode: recalculate flete whenever rate or tonelaje changes
   useEffect(() => {
     if (!autoRate) return;
-    const ton = parseFloat(tonelaje);
-    if (!isNaN(ton) && ton > 0) {
-      setFlete((autoRate * ton).toFixed(2));
-    }
+    const recalculation = window.setTimeout(() => {
+      const ton = parseFloat(tonelaje);
+      if (!isNaN(ton) && ton > 0) {
+        setFlete((autoRate * ton).toFixed(2));
+      }
+    }, 0);
+    return () => window.clearTimeout(recalculation);
   }, [autoRate, tonelaje]);
 
   // Multi mode: recalculate all trip fletes when the route changes
   useEffect(() => {
     if (!autoRate) return;
-    setTrips((prev) =>
-      prev.map((t) => {
-        const ton = parseFloat(t.tonelaje);
-        return !isNaN(ton) && ton > 0 ? { ...t, flete: (autoRate * ton).toFixed(2) } : t;
-      })
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const recalculation = window.setTimeout(() => {
+      setTrips((prev) =>
+        prev.map((t) => {
+          const ton = parseFloat(t.tonelaje);
+          return !isNaN(ton) && ton > 0 ? { ...t, flete: (autoRate * ton).toFixed(2) } : t;
+        })
+      );
+    }, 0);
+    return () => window.clearTimeout(recalculation);
   }, [autoRate]);
 
   // ── UI state ──────────────────────────────────────────────────────────────

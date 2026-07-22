@@ -93,7 +93,6 @@ function EditableInput({
       el.focus();
       if ('select' in el) el.select();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const baseClasses = [

@@ -3,6 +3,7 @@
  * Env: HERMES_AUTH_USERS_JSON, HERMES_AUTH_SESSION_SECRET (>=32 chars)
  */
 import crypto from 'node:crypto';
+import { rejectIfRateLimited } from '../rate-limit.js';
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const ROLES = new Set(['operador', 'mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia']);
@@ -95,6 +96,8 @@ export default async function handler(request, response) {
   if (request.method !== 'POST') {
     return sendJson(response, 405, { detail: 'Method not allowed.' });
   }
+
+  if (rejectIfRateLimited(request, response, { scope: 'login', limit: 10 })) return;
 
   const users = configuredUsers();
   if (users.length === 0) {

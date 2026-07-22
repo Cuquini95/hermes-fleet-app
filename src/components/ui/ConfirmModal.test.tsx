@@ -19,7 +19,7 @@ describe('ConfirmModal — module exports', () => {
 describe('ConfirmModal — handleConfirm logic', () => {
   it('calls onConfirm exactly once when not disabled', async () => {
     const onConfirm = vi.fn().mockResolvedValue(undefined);
-    let isDisabled = false;
+    const isDisabled = false;
     let submitting = false;
 
     // Simulate handleConfirm guard
@@ -39,8 +39,8 @@ describe('ConfirmModal — handleConfirm logic', () => {
 
   it('does not call onConfirm when externalLoading=true', async () => {
     const onConfirm = vi.fn();
-    let externalLoading = true;
-    let submitting = false;
+    const externalLoading = true;
+    const submitting = false;
     const isDisabled = externalLoading || submitting;
 
     async function handleConfirm(): Promise<void> {

@@ -4,11 +4,17 @@
     { "source": "/hermes-api/ai/diagnose", "destination": "/api/hermes-ai/diagnose" },
     { "source": "/hermes-api/ai/manual_lookup", "destination": "/api/hermes-ai/manual_lookup" },
     { "source": "/hermes-api/ai/photo_to_failure", "destination": "/api/hermes-ai/photo_to_failure" },
+    { "source": "/hermes-api/ai/fault_code_pages", "destination": "/api/hermes-vps-gate?upstreamPath=/hermes-api/ai/fault_code_pages" },
     {
       "source": "/hermes-api/api/sheets/:path*",
       "destination": "/api/hermes-sheets-gate?upstreamPath=/hermes-api/api/sheets/:path*"
     },
-    { "source": "/hermes-api/:path*", "destination": "https://5-78-204-80.sslip.io/hermes-api/:path*" },
+    { "source": "/hermes-api/api/ocr/:path*", "destination": "/api/hermes-vps-gate?upstreamPath=/hermes-api/api/ocr/:path*" },
+    { "source": "/hermes-api/api/push/:path*", "destination": "/api/hermes-vps-gate?upstreamPath=/hermes-api/api/push/:path*" },
+    { "source": "/hermes-api/health", "destination": "https://5-78-204-80.sslip.io/hermes-api/health" },
+    { "source": "/hermes-api/parts", "destination": "/api/hermes-vps-gate?upstreamPath=/hermes-api/parts" },
+    { "source": "/hermes-api/diagrams/:path*", "destination": "https://5-78-204-80.sslip.io/hermes-api/diagrams/:path*" },
+    { "source": "/hermes-api/:path*", "destination": "/api/hermes-vps-gate?upstreamPath=/hermes-api/:path*" },
     { "source": "/((?!api/|assets/).*)", "destination": "/index.html" }
   ],
   "headers": [

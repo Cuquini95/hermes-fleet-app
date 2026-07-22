@@ -1,3 +1,5 @@
+import { useAuthStore } from '../stores/auth-store';
+
 export type CmmsSeverity = 'critical' | 'high' | 'medium' | 'low';
 
 export interface CmmsDamageReport {
@@ -29,9 +31,17 @@ export function cmmsSeverityFromHermesPriority(priority: string): CmmsSeverity {
 }
 
 export async function reportCmmsDamage(report: CmmsDamageReport): Promise<CmmsDamageResult> {
+  const { authMode, sessionToken } = useAuthStore.getState();
+  if (authMode !== 'server' || !sessionToken) {
+    throw new Error('Sesión Hermes no disponible; vuelve a iniciar sesión.');
+  }
+
   const response = await fetch('/api/cmms/damage', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${sessionToken}`,
+    },
     body: JSON.stringify({
       asset_id: report.assetId,
       title: report.title,

@@ -16,8 +16,17 @@ interface RequireRoleProps {
 export default function RequireRole({ roles, children }: RequireRoleProps) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const role = useAuthStore((s) => s.role);
+  const authMode = useAuthStore((s) => s.authMode);
+  const sessionToken = useAuthStore((s) => s.sessionToken);
+  const sessionExpiresAt = useAuthStore((s) => s.sessionExpiresAt);
 
-  if (!isAuthenticated || !role) {
+  const hasSession = authMode === 'offline'
+    || (
+      authMode === 'server'
+      && Boolean(sessionToken)
+      && Boolean(sessionExpiresAt)
+    );
+  if (!isAuthenticated || !role || !hasSession) {
     return <Navigate to="/login" replace />;
   }
 

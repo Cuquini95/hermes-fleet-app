@@ -13,9 +13,19 @@
  */
 
 import { HERMES_API_BASE } from './hermes-api-base';
+import { useAuthStore } from '../stores/auth-store';
 
 const HERMES_API = HERMES_API_BASE;
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY ?? '';
+
+function sessionHeaders(): Headers | null {
+  const { authMode, sessionToken } = useAuthStore.getState();
+  if (authMode !== 'server' || !sessionToken) return null;
+  return new Headers({
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${sessionToken}`,
+  });
+}
 
 /** Request notification permission. Returns true if granted. */
 async function requestPermission(): Promise<boolean> {
@@ -33,6 +43,8 @@ async function requestPermission(): Promise<boolean> {
  */
 export async function subscribeToPush(role: string): Promise<void> {
   if (!VAPID_PUBLIC_KEY || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  const headers = sessionHeaders();
+  if (!headers) return;
   try {
     const granted = await requestPermission();
     if (!granted) return;
@@ -45,10 +57,11 @@ export async function subscribeToPush(role: string): Promise<void> {
       applicationServerKey: VAPID_PUBLIC_KEY,
     });
 
+    const session = useAuthStore.getState();
     await fetch(`${HERMES_API}/api/push/subscribe`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ subscription: sub.toJSON(), role }),
+      headers,
+      body: JSON.stringify({ subscription: sub.toJSON(), role: session.role ?? role }),
     });
   } catch {
     // Non-critical — push subscription never blocks app usage
@@ -64,9 +77,11 @@ export function sendPushEvent(
   data: Record<string, string>,
 ): void {
   if (!VAPID_PUBLIC_KEY) return;
+  const headers = sessionHeaders();
+  if (!headers) return;
   fetch(`${HERMES_API}/api/push/send`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ event, data }),
   }).catch(() => {
     // Non-critical

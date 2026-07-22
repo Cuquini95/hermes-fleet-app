@@ -10,6 +10,7 @@ export const FUEL_BENCHMARKS: Record<string, { min: number; max: number; unit: s
   'Doosan DX360LCA': { min: 0.85, max: 1.0, unit: 'L/hr' },
 };
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- preserve the future rate-based API until horómetro deltas are available.
 export function isAnomalous(_model: string, _consumption: number): boolean {
   // Anomaly detection requires horómetro delta to compute L/hr rate.
   // A single fueling event (total liters) cannot be compared against rate benchmarks.

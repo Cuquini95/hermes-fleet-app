@@ -146,7 +146,7 @@ export async function generateGastosPDF(data: GastoReportData): Promise<Blob> {
 
   y = drawHeroKpi(doc, data, y);
   y = drawTypeBreakdown(doc, data, y + 16);
-  y = drawUnitDetails(doc, data, y + 20, logoDataUrl, autoTable);
+  drawUnitDetails(doc, data, y + 20, logoDataUrl, autoTable);
 
   drawFooters(doc);
 

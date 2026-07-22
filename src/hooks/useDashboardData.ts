@@ -149,8 +149,11 @@ export function useDashboardData(): DashboardData {
   useEffect(() => {
     const controller = new AbortController();
     abortRef.current = controller;
-    fetchAll(controller.signal).catch(() => {});
+    const initialFetch = window.setTimeout(() => {
+      fetchAll(controller.signal).catch(() => {});
+    }, 0);
     return () => {
+      window.clearTimeout(initialFetch);
       controller.abort();
       abortRef.current = null;
     };

@@ -73,22 +73,27 @@ export default function InventoryPage() {
 
   useEffect(() => {
     const ctrl = new AbortController();
-    setLoading(true);
-    setError(null);
+    const load = window.setTimeout(() => {
+      setLoading(true);
+      setError(null);
 
-    readRange(SHEET_TABS.INVENTARIO, ctrl.signal)
-      .then((rows) => {
-        setItems(parseRows(rows));
-        setUpdatedAt(new Date());
-        setLoading(false);
-      })
-      .catch((err: unknown) => {
-        if (err instanceof DOMException && err.name === 'AbortError') return;
-        setError(err instanceof Error ? err.message : 'Error al cargar inventario');
-        setLoading(false);
-      });
+      readRange(SHEET_TABS.INVENTARIO, ctrl.signal)
+        .then((rows) => {
+          setItems(parseRows(rows));
+          setUpdatedAt(new Date());
+          setLoading(false);
+        })
+        .catch((err: unknown) => {
+          if (err instanceof DOMException && err.name === 'AbortError') return;
+          setError(err instanceof Error ? err.message : 'Error al cargar inventario');
+          setLoading(false);
+        });
+    }, 0);
 
-    return () => ctrl.abort();
+    return () => {
+      window.clearTimeout(load);
+      ctrl.abort();
+    };
   }, [retryKey]);
 
   const criticalCount = items.filter((i) => i.status === 'critical').length;

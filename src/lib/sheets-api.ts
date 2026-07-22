@@ -22,8 +22,8 @@ const REQUEST_TIMEOUT_MS = 15_000;
 /** Attach Hermes HMAC session so Vercel sheets gate + VPS accept the request. */
 function withAuthHeaders(headers?: HeadersInit): HeadersInit {
   const merged = new Headers(headers ?? undefined);
-  const token = useAuthStore.getState().sessionToken;
-  if (token && !merged.has('Authorization')) {
+  const { authMode, sessionToken: token } = useAuthStore.getState();
+  if (authMode === 'server' && token && !merged.has('Authorization')) {
     merged.set('Authorization', `Bearer ${token}`);
   }
   return merged;

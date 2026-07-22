@@ -41,11 +41,6 @@ export function AutocompleteInput({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Reset active index when filtered list changes
-  useEffect(() => {
-    setActiveIndex(-1);
-  }, [value]);
-
   const selectSuggestion = useCallback((suggestion: string) => {
     onChange(suggestion);
     setOpen(false);
@@ -84,6 +79,7 @@ export function AutocompleteInput({
         onChange={(e) => {
           onChange(e.target.value);
           setOpen(true);
+          setActiveIndex(-1);
         }}
         onFocus={() => setOpen(true)}
         onKeyDown={handleKeyDown}

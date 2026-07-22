@@ -5,6 +5,7 @@ import { appendRow } from './sheets-api';
 import { tryUploadPhotos } from './photo-upload-safe';
 import { uploadFallaPhotos } from './falla-submit';
 import { reportCmmsDamage, type CmmsDamageReport } from './cmms-events';
+import { useAuthStore } from '../stores/auth-store';
 
 const DB_NAME = 'hermes-offline';
 const STORE_NAME = 'pending-submissions';
@@ -76,6 +77,10 @@ let flushing = false;
  */
 export async function flushQueue(): Promise<{ succeeded: number; failed: number }> {
   if (!navigator.onLine) return { succeeded: 0, failed: 0 };
+  const auth = useAuthStore.getState();
+  if (auth.authMode !== 'server' || !auth.sessionToken) {
+    return { succeeded: 0, failed: 0 };
+  }
   if (flushing) return { succeeded: 0, failed: 0 };
   flushing = true;
   try {

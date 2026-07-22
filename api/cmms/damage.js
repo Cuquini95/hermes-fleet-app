@@ -1,3 +1,6 @@
+import { verifyBearer } from '../hermes-sheets-gate.js';
+import { rejectIfRateLimited } from '../rate-limit.js';
+
 const DEFAULT_CMMS_API_BASE = 'https://gtp-cmms.vercel.app';
 // Upstream cold starts + live auth can exceed 12s; keep under typical serverless budget.
 const DEFAULT_TIMEOUT_MS = 25_000;
@@ -7,6 +10,17 @@ export default async function handler(req, res) {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  const auth = verifyBearer(req.headers?.authorization || req.headers?.Authorization);
+  if (!auth.ok) {
+    return res.status(auth.status).json({ detail: auth.detail });
+  }
+  if (rejectIfRateLimited(req, res, { scope: 'cmms-damage', limit: 30 }, auth.session.sub)) return;
+
+  const correlationId = String(
+    req.headers?.['x-correlation-id'] || req.headers?.['x-request-id'] || crypto.randomUUID(),
+  ).slice(0, 120);
+  res.setHeader('X-Correlation-ID', correlationId);
 
   const token = cleanEnvValue(process.env.CMMS_HERMES_SYSTEM_TOKEN);
   const ingestSecret = cleanEnvValue(process.env.CMMS_HERMES_INGEST_SECRET);
@@ -42,6 +56,9 @@ export default async function handler(req, res) {
               ? { 'x-cmms-hermes-ingest-secret': ingestSecret }
               : { Authorization: `Bearer ${token}` }),
             'Content-Type': 'application/json',
+            'X-Correlation-ID': correlationId,
+            'X-Hermes-Actor': auth.session.sub,
+            'X-Hermes-Role': auth.session.role,
           },
           body: JSON.stringify(payload),
           signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
@@ -59,6 +76,7 @@ export default async function handler(req, res) {
             cmms_status: upstream.status,
             cmms_base: baseUrl,
             path,
+            correlation_id: correlationId,
           });
         }
       } catch (liveError) {
@@ -69,6 +87,7 @@ export default async function handler(req, res) {
             error: message,
             cmms_base: baseUrl,
             timeout_ms: DEFAULT_TIMEOUT_MS,
+            correlation_id: correlationId,
           });
         }
         // continue to hosted
@@ -78,10 +97,10 @@ export default async function handler(req, res) {
     // 2) HOSTED Supabase SoR fallback (gtp-cmms-rescue / maintenance-os DB)
     if (allowHostedFallback) {
       const hosted = await createHostedDamageWorkOrder(payload, hostedUrl, hostedKey);
-      return res.status(200).json({ success: true, path: 'hosted_supabase', ...hosted });
+      return res.status(200).json({ success: true, path: 'hosted_supabase', correlation_id: correlationId, ...hosted });
     }
 
-    return res.status(502).json({ success: false, error: 'No damage handoff path available' });
+    return res.status(502).json({ success: false, error: 'No damage handoff path available', correlation_id: correlationId });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'CMMS damage handoff failed';
     const baseUrl = (cleanEnvValue(process.env.CMMS_API_BASE) || DEFAULT_CMMS_API_BASE).replace(/\/+$/, '');
@@ -90,6 +109,7 @@ export default async function handler(req, res) {
       error: message,
       cmms_base: baseUrl,
       timeout_ms: DEFAULT_TIMEOUT_MS,
+      correlation_id: correlationId,
     });
   }
 }
@@ -105,6 +125,30 @@ async function createHostedDamageWorkOrder(payload, supabaseUrl, serviceKey) {
   const hermesOt = payload.external_event_id || `OT-QA${stamp}`;
   const title = payload.title.slice(0, 180);
   const description = payload.description || title;
+
+  // Retries from a field client must not create a second CMMS work order.
+  // The event id is the cross-app idempotency key; requests without one keep
+  // the existing TEST_QA-safe unique identifier behavior.
+  if (payload.external_event_id) {
+    const existing = await sbGet(
+      base,
+      serviceKey,
+      `/rest/v1/cmms_work_orders?select=id,work_order_no,asset_id,failure_id,legacy_source,legacy_id&legacy_source=eq.hermes&legacy_id=eq.${encodeURIComponent(hermesOt)}&limit=1`,
+    );
+    const existingRow = Array.isArray(existing) ? existing[0] : null;
+    if (existingRow) {
+      return {
+        hermes_ot: existingRow.legacy_id || hermesOt,
+        work_order_no: existingRow.work_order_no || null,
+        work_order_id: existingRow.id,
+        asset_id: existingRow.asset_id || null,
+        failure_id: existingRow.failure_id || null,
+        authority: 'hermes',
+        created: false,
+        idempotent_replay: true,
+      };
+    }
+  }
 
   const assets = await sbGet(
     base,

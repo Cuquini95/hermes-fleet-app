@@ -45,7 +45,7 @@ export function usePullToRefresh({ onRefresh, threshold = 80 }: UsePullToRefresh
       }
     }
     setPullDistance(0);
-  }, [pulling, pullDistance, threshold, onRefresh]);
+  }, [pulling, pullDistance, refreshing, threshold, onRefresh]);
 
   const pullIndicatorStyle: React.CSSProperties = {
     height: pullDistance > 0 || refreshing ? Math.max(pullDistance, refreshing ? 48 : 0) : 0,

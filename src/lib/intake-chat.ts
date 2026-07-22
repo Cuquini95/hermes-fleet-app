@@ -1,3 +1,5 @@
+import { useAuthStore } from '../stores/auth-store';
+
 export interface IntakeChatParams {
   text: string;
   selectedUnit?: string;
@@ -67,9 +69,15 @@ export function shouldUseBusinessIntake(text: string, hasPhoto = false): boolean
 }
 
 export async function sendIntakeChatMessage(params: IntakeChatParams): Promise<IntakeChatResult> {
+  const { authMode, sessionToken } = useAuthStore.getState();
+  const headers = new Headers({ 'Content-Type': 'application/json' });
+  if (authMode === 'server' && sessionToken) {
+    headers.set('Authorization', `Bearer ${sessionToken}`);
+  }
+
   const response = await fetch('/api/intake/chat', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       text: params.text,
       selectedUnit: params.selectedUnit,

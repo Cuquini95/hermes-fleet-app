@@ -130,7 +130,7 @@ describe('appendRow', () => {
 
   it('attaches Authorization Bearer from auth-store sessionToken', async () => {
     const { useAuthStore } = await import('../stores/auth-store');
-    useAuthStore.setState({ sessionToken: 'test-session-token-xyz' });
+    useAuthStore.setState({ authMode: 'server', sessionToken: 'test-session-token-xyz' });
     vi.mocked(fetch).mockResolvedValue(
       new Response(JSON.stringify({ success: true }), {
         status: 200,
@@ -143,7 +143,7 @@ describe('appendRow', () => {
     const [, options] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
     const headers = new Headers(options.headers);
     expect(headers.get('Authorization')).toBe('Bearer test-session-token-xyz');
-    useAuthStore.setState({ sessionToken: null });
+    useAuthStore.setState({ authMode: null, sessionToken: null });
   });
 
   it('uses fallback error message when json.success=false with no error field', async () => {

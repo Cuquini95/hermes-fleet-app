@@ -218,7 +218,7 @@ export default function GastosPage() {
 
   useEffect(() => {
     fetchGastos();
-  }, []);
+  }, [fetchGastos]);
 
   const monthly   = useMemo(
     () => filterByMonth(gastos, selectedYear, selectedMonth),

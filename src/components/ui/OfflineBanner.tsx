@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getPendingCount } from '../../lib/offline-queue';
 import { WifiOff } from 'lucide-react';
+import { useAuthStore } from '../../stores/auth-store';
 
 export function OfflineBanner() {
   const isOnline = useOnlineStatus();
+  const authMode = useAuthStore((s) => s.authMode);
   const [pendingCount, setPendingCount] = useState(0);
 
   useEffect(() => {
@@ -24,13 +26,13 @@ export function OfflineBanner() {
     };
   }, [isOnline]);
 
-  if (isOnline) return null;
+  if (isOnline && authMode !== 'offline') return null;
 
   return (
     <div className="fixed top-16 left-0 right-0 z-40 bg-gray-600 text-white text-center py-2 text-sm flex items-center justify-center gap-2">
-      <WifiOff size={16} />
+      <WifiOff size={16} aria-hidden="true" />
       <span>
-        Sin conexión
+        {authMode === 'offline' ? 'Modo offline: los cambios se guardan localmente' : 'Sin conexión'}
         {pendingCount > 0 && (
           <>
             {' — '}

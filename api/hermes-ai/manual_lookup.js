@@ -1,10 +1,13 @@
-﻿import { buildManualLookupResponse, readJsonBody } from '../../lib/hermes-ai.js';
+import { buildManualLookupResponse, readJsonBody } from '../../lib/hermes-ai.js';
+import { requireSession } from '../require-session.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  if (!requireSession(req, res, { scope: 'ai-manual', limit: 30 })) return;
 
   try {
     const body = await readJsonBody(req);
@@ -16,4 +19,3 @@ export default async function handler(req, res) {
     });
   }
 }
-

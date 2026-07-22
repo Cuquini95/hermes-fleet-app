@@ -11,6 +11,7 @@ import { useEquipmentById } from '../hooks/useEquipmentList';
 import { PRIORITY_CONFIG, ESTADO_CONFIG, OT_STATUS_FLOW, getNextStatuses } from '../types/workorder';
 import type { OTEstado, OTStatusField, StatusLogEntry } from '../types/workorder';
 import { photoUrls } from '../lib/averias';
+import { canEditAnyWorkOrderField, canEditWorkOrderField } from '../lib/role-permissions';
 
 const FIELD_LABELS: Record<OTStatusField, string> = {
   estado: 'Estado',
@@ -20,11 +21,6 @@ const FIELD_LABELS: Record<OTStatusField, string> = {
   costo_estimado: 'Costo estimado',
   prioridad: 'Prioridad',
 };
-
-function canEditField(_role: string | null, _field: OTStatusField): boolean {
-  // All roles can edit all fields
-  return true;
-}
 
 function StatusPillRow({ current }: { current: OTEstado }) {
   const allStatuses: OTEstado[] = ['Abierta', 'En Reparación', 'Esperando Pieza', 'Resuelta', 'Completado'];
@@ -106,7 +102,7 @@ export default function WorkOrderDetailPage() {
       setEditCosto(String(wo.costo_estimado || ''));
       setEditNotas(wo.observaciones);
     }
-  }, [wo?.ot_id, wo?.estado, wo?.mecanico_asignado, wo?.costo_estimado, wo?.observaciones]);
+  }, [wo]);
 
   const otLog = statusLog
     .filter((e) => e.ot_id === otId)
@@ -153,7 +149,7 @@ export default function WorkOrderDetailPage() {
 
   const prioKey = wo.prioridad?.toUpperCase() as keyof typeof PRIORITY_CONFIG;
   const priorityConfig = PRIORITY_CONFIG[prioKey] ?? { color: '#6B7280', bg: '#F3F4F6', label: wo.prioridad, time: '' };
-  const canEdit = true; // All roles can edit
+  const canEdit = canEditAnyWorkOrderField(role);
   const nextStatuses = getNextStatuses(OT_STATUS_FLOW.includes(wo.estado as OTEstado) ? wo.estado as OTEstado : 'Abierta');
   const photos = photoUrls(wo.foto_url);
 
@@ -273,7 +269,7 @@ export default function WorkOrderDetailPage() {
           <h3 className="text-sm font-bold text-text">Actualizar OT</h3>
 
           {/* Status */}
-          {canEditField(role, 'estado') && (
+          {canEditWorkOrderField(role, 'estado') && (
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-text-secondary">Estado</label>
               <div className="flex gap-2">
@@ -299,7 +295,7 @@ export default function WorkOrderDetailPage() {
           )}
 
           {/* Mechanic */}
-          {canEditField(role, 'mecanico_asignado') && (
+          {canEditWorkOrderField(role, 'mecanico_asignado') && (
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-text-secondary">Mecanico asignado</label>
               <div className="flex gap-2">
@@ -323,7 +319,7 @@ export default function WorkOrderDetailPage() {
           )}
 
           {/* Progress */}
-          {canEditField(role, 'progreso') && (
+          {canEditWorkOrderField(role, 'progreso') && (
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-text-secondary">Progreso</label>
               <div className="flex gap-2">
@@ -347,7 +343,7 @@ export default function WorkOrderDetailPage() {
           )}
 
           {/* Cost */}
-          {canEditField(role, 'costo_estimado') && (
+          {canEditWorkOrderField(role, 'costo_estimado') && (
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-text-secondary">Costo estimado ($)</label>
               <div className="flex gap-2">
@@ -371,7 +367,7 @@ export default function WorkOrderDetailPage() {
           )}
 
           {/* Notes */}
-          {canEditField(role, 'observaciones') && (
+          {canEditWorkOrderField(role, 'observaciones') && (
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-text-secondary">Observaciones</label>
               <textarea

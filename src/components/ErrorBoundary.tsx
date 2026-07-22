@@ -108,34 +108,37 @@ class InnerBoundary extends Component<Props, State> {
   }
 }
 
-// Use Sentry's HOC only when DSN is configured; otherwise use bare boundary
+const SENTRY_FALLBACK = (
+  <div className="flex flex-col items-center justify-center min-h-screen p-6 bg-gray-50">
+    <div
+      className="bg-white rounded-xl p-8 shadow-sm border max-w-sm w-full flex flex-col items-center gap-4 text-center"
+      style={{ borderColor: '#E2E8F0' }}
+    >
+      <span className="text-4xl" aria-hidden="true">⚠️</span>
+      <h2 className="text-lg font-bold text-text">Algo salió mal</h2>
+      <p className="text-sm text-text-secondary">
+        Puedes intentar nuevamente o regresar al inicio.
+      </p>
+      <button
+        type="button"
+        onClick={() => { window.location.href = '/'; }}
+        className="w-full text-white rounded-xl py-3 font-semibold"
+        style={{ backgroundColor: '#F59E0B' }}
+      >
+        Ir al inicio
+      </button>
+    </div>
+  </div>
+);
+
+// Create the HOC once so enabling Sentry does not recreate a component per render.
+const SentryBoundary = Sentry.withErrorBoundary(InnerBoundary, {
+  fallback: SENTRY_FALLBACK,
+});
+
 export default function ErrorBoundary({ children, role, inline }: Props) {
   if (import.meta.env.VITE_SENTRY_DSN) {
-    const Wrapped = Sentry.withErrorBoundary(InnerBoundary, {
-      fallback: (
-        <div className="flex flex-col items-center justify-center min-h-screen p-6 bg-gray-50">
-          <div
-            className="bg-white rounded-xl p-8 shadow-sm border max-w-sm w-full flex flex-col items-center gap-4 text-center"
-            style={{ borderColor: '#E2E8F0' }}
-          >
-            <span className="text-4xl" aria-hidden="true">⚠️</span>
-            <h2 className="text-lg font-bold text-text">Algo salió mal</h2>
-            <p className="text-sm text-text-secondary">
-              Puedes intentar nuevamente o regresar al inicio.
-            </p>
-            <button
-              type="button"
-              onClick={() => { window.location.href = role ? ROLE_HOME[role] : '/'; }}
-              className="w-full text-white rounded-xl py-3 font-semibold"
-              style={{ backgroundColor: '#F59E0B' }}
-            >
-              Ir al inicio
-            </button>
-          </div>
-        </div>
-      ),
-    });
-    return <Wrapped role={role} inline={inline}>{children}</Wrapped>;
+    return <SentryBoundary role={role} inline={inline}>{children}</SentryBoundary>;
   }
   return <InnerBoundary role={role} inline={inline}>{children}</InnerBoundary>;
 }

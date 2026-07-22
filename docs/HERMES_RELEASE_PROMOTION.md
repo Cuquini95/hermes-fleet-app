@@ -1,0 +1,77 @@
+# Hermes release promotion and evidence gate
+
+This runbook is for an authorized release operator. A green local build is a
+candidate only; it does not prove that `hermes-fleet-app.vercel.app` serves the
+candidate.
+
+## Candidate freeze
+
+Record the exact commit and keep the checkout clean before promotion:
+
+```powershell
+git rev-parse HEAD
+git status --short
+npm.cmd run test:api
+npm.cmd test
+npm.cmd run lint
+npm.cmd run build
+npm.cmd audit --omit=dev
+```
+
+Required Vercel environment names:
+
+- `HERMES_AUTH_USERS_JSON`
+- `HERMES_AUTH_SESSION_SECRET` (at least 32 characters)
+- `HERMES_UPSTREAM_VPS_TOKEN`
+- `HERMES_UPSTREAM_SHEETS_TOKEN` (if Sheets operations are enabled)
+- `CMMS_API_BASE` plus either `CMMS_HERMES_SYSTEM_TOKEN` or
+  `CMMS_HERMES_INGEST_SECRET`, unless the approved hosted Supabase fallback is
+  being used
+- `HOSTED_CMMS_SUPABASE_URL` and
+  `HOSTED_CMMS_SUPABASE_SERVICE_KEY` only when the hosted fallback is approved
+
+Never place values for these variables in the repository, transcript, or
+evidence artifact.
+
+## Route gate after promotion
+
+Capture the deployment ID, commit SHA, aliases, output functions, and deployed
+rewrite configuration with `vercel inspect <deployment-or-alias> --format=json`.
+The deployed output must include `api/hermes-vps-gate` and the protected AI,
+Sheets, intake, parts-import, and CMMS handlers.
+
+Anonymous probes must fail before upstream side effects:
+
+```powershell
+$base = 'https://hermes-fleet-app.vercel.app'
+Invoke-WebRequest "$base/api/hermes-vps-gate" -Method Get
+Invoke-WebRequest "$base/api/hermes-ai/manual_lookup" -Method Post -Body '{}'
+Invoke-WebRequest "$base/api/cmms/damage" -Method Post -Body '{}'
+Invoke-WebRequest "$base/hermes-api/ai/fault_code_pages?equipo=HM400-3&codigo_falla=E01" -Method Get
+Invoke-WebRequest "$base/hermes-api/parts?q=CA20" -Method Get
+```
+
+Expected anonymous results are 401 (or 405 for an intentionally unsupported
+method), never an upstream success, payload-validation response, or public
+data response. The fault-code and parts requests are especially important:
+they were public through the old catch-all rewrite.
+
+With a disposable authorized session and approved service-token configuration,
+capture authenticated checks for OCR, Push, fault-code lookup, parts lookup,
+Sheets role boundaries, and the CMMS damage handoff. Verify that each receipt
+contains a correlation ID, the actor comes from the verified session, and a
+replayed `external_event_id` returns the original hosted work order rather
+than creating another one.
+
+## Release decision
+
+Promote only when all of the following are attached to the release evidence:
+
+1. Candidate commit and clean-worktree receipt.
+2. Vercel deployment ID and alias mapping for that commit.
+3. Required environment names confirmed without exposing values.
+4. Anonymous and authenticated route results above.
+5. Rollback target (previous READY deployment ID).
+
+If any item is missing, classify the result as `CANDIDATE` or `HOLD`; do not
+describe the local candidate as production-ready.

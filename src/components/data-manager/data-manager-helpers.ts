@@ -28,7 +28,7 @@ export function looksLikeHeaderRow(row: string[], columns: ColumnDef[]): boolean
 
 /** Formats a raw numeric string as MXN currency. */
 export function formatCurrency(raw: string): string {
-  const cleaned = raw.replace(/[^0-9.\-]/g, '');
+  const cleaned = raw.replace(/[^0-9.-]/g, '');
   const n = parseFloat(cleaned);
   if (!Number.isFinite(n)) return raw;
   return n.toLocaleString('es-MX', {

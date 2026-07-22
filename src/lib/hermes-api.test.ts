@@ -1,6 +1,12 @@
-import { describe, expect, it } from 'vitest';
-import { normalizePartResult } from './hermes-api';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { diagnose, normalizePartResult } from './hermes-api';
 import { hermesApiUrl, resolveHermesApiBase } from './hermes-api-base';
+import { useAuthStore } from '../stores/auth-store';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  useAuthStore.setState({ authMode: null, sessionToken: null, sessionExpiresAt: null });
+});
 
 describe('normalizePartResult', () => {
   it('fills missing catalog fields for supplier price rows', () => {
@@ -40,5 +46,24 @@ describe('Hermes API base URL', () => {
     expect(resolveHermesApiBase({ VITE_HERMES_API_URL: 'https://api.example.com/hermes-api///' }))
       .toBe('https://api.example.com/hermes-api');
     expect(hermesApiUrl('/health')).toBe('/hermes-api/health');
+  });
+});
+
+describe('Hermes authenticated AI client', () => {
+  it('forwards the server session to protected AI routes', async () => {
+    useAuthStore.setState({ authMode: 'server', sessionToken: 'signed-session' });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({
+        causas_probables: ['Causa 1'],
+        checklist_diagnostico: ['Prueba 1'],
+        partes_probables: ['Parte 1'],
+        prioridad: 'MEDIA',
+      }), { status: 200 }),
+    );
+
+    await diagnose({ equipo: 'CA20', sintoma: 'falla de prueba' });
+
+    const options = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(new Headers(options.headers).get('Authorization')).toBe('Bearer signed-session');
   });
 });

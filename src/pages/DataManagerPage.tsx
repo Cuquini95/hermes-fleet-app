@@ -229,7 +229,7 @@ function looksLikeHeaderRow(row: string[], columns: ColumnDef[]): boolean {
 }
 
 function formatCurrency(raw: string): string {
-  const cleaned = raw.replace(/[^0-9.\-]/g, '');
+  const cleaned = raw.replace(/[^0-9.-]/g, '');
   const n = parseFloat(cleaned);
   if (!Number.isFinite(n)) return raw;
   return n.toLocaleString('es-MX', {
@@ -998,7 +998,6 @@ function EditableInput({
       el.focus();
       if ('select' in el) el.select();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const baseClasses = [

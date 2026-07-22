@@ -1,4 +1,7 @@
+import { requireSession } from '../require-session.js';
+
 const DEFAULT_PARTS_SEARCH_URL = 'https://5-78-204-80.sslip.io/hermes-api/parts';
+const CATALOG_ROLES = new Set(['jefe_taller', 'coordinador', 'supervisor', 'gerencia']);
 
 function normalizePartNumber(value) {
   return String(value ?? '').trim().toUpperCase();
@@ -120,6 +123,8 @@ export default async function handler(req, res) {
     res.setHeader('Allow', 'POST, OPTIONS');
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
+
+  if (!requireSession(req, res, { roles: CATALOG_ROLES, scope: 'parts-import', limit: 10 })) return;
 
   try {
     const supplier = String(req.body?.supplier ?? '').trim();

@@ -98,20 +98,57 @@ const CALENDAR_ACCESS: AppRole[] = ['jefe_taller', 'coordinador', 'supervisor', 
 function RootRedirect() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const role = useAuthStore((s) => s.role);
-  if (isAuthenticated && role) return <Navigate to={ROLE_HOME[role]} replace />;
+  const authMode = useAuthStore((s) => s.authMode);
+  const sessionToken = useAuthStore((s) => s.sessionToken);
+  const sessionExpiresAt = useAuthStore((s) => s.sessionExpiresAt);
+  const hasSession = authMode === 'offline'
+    || (
+      authMode === 'server'
+      && Boolean(sessionToken)
+      && Boolean(sessionExpiresAt)
+    );
+  if (isAuthenticated && role && hasSession) return <Navigate to={ROLE_HOME[role]} replace />;
   return <Navigate to="/login" replace />;
 }
 
 export default function App() {
   const initRealtime = useWorkOrderStore((s) => s.initRealtime);
   const role = useAuthStore((s) => s.role) ?? undefined;
+  const authMode = useAuthStore((s) => s.authMode);
+  const sessionToken = useAuthStore((s) => s.sessionToken);
+  const sessionExpiresAt = useAuthStore((s) => s.sessionExpiresAt);
+  const logout = useAuthStore((s) => s.logout);
 
   useEffect(() => {
-    const handleOnline = () => { flushQueue().catch(() => {}); };
+    const handleOnline = () => {
+      const auth = useAuthStore.getState();
+      if (auth.authMode === 'offline') {
+        // An offline shell must not silently become an online session without
+        // server verification. Queued writes remain safely in IndexedDB.
+        auth.logout();
+        return;
+      }
+      if (auth.authMode === 'server') flushQueue().catch(() => {});
+    };
     window.addEventListener('online', handleOnline);
     if (navigator.onLine) handleOnline();
     return () => { window.removeEventListener('online', handleOnline); };
   }, []);
+
+  useEffect(() => {
+    if (authMode === 'server' && navigator.onLine) flushQueue().catch(() => {});
+  }, [authMode]);
+
+  useEffect(() => {
+    if (authMode !== 'server' || !sessionToken || !sessionExpiresAt) return;
+    const delay = Date.parse(sessionExpiresAt) - Date.now();
+    if (!Number.isFinite(delay) || delay <= 0) {
+      logout();
+      return;
+    }
+    const timer = window.setTimeout(logout, delay);
+    return () => window.clearTimeout(timer);
+  }, [authMode, sessionToken, sessionExpiresAt, logout]);
 
   useEffect(() => {
     const cleanup = initRealtime();

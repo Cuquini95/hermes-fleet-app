@@ -1,11 +1,21 @@
 import { z } from 'zod';
 import { hermesApiUrl } from './hermes-api-base';
+import { useAuthStore } from '../stores/auth-store';
 
 /** Backoff delays: 1s, 2s, 4s, 8s */
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000];
 const REQUEST_TIMEOUT_MS = 15_000;
 const AI_REQUEST_TIMEOUT_MS = 30_000;
 const FAST_FAIL_RETRY_DELAYS_MS = [1000];
+
+function withSessionHeaders(headers?: HeadersInit): HeadersInit {
+  const merged = new Headers(headers ?? undefined);
+  const { authMode, sessionToken } = useAuthStore.getState();
+  if (authMode === 'server' && sessionToken && !merged.has('Authorization')) {
+    merged.set('Authorization', `Bearer ${sessionToken}`);
+  }
+  return merged;
+}
 
 function requestTimeoutFor(endpoint: string): number {
   if (endpoint === '/ai/diagnose' || endpoint === '/ai/photo_to_failure') {
@@ -107,7 +117,7 @@ async function hermesPost<T>(
     try {
       const res = await fetch(hermesApiUrl(endpoint), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: withSessionHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(body),
         signal: combined,
       });
@@ -147,7 +157,10 @@ async function hermesGet<T>(
     const combined = signal ? combineSignals(signal, timeoutCtrl.signal) : timeoutCtrl.signal;
 
     try {
-      const res = await fetch(hermesApiUrl(`${endpoint}${qs}`), { signal: combined });
+      const res = await fetch(hermesApiUrl(`${endpoint}${qs}`), {
+        headers: withSessionHeaders(),
+        signal: combined,
+      });
       clearTimeout(timeoutId);
       if (!res.ok) {
         const text = await res.text();

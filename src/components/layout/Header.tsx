@@ -11,6 +11,7 @@ export default function Header() {
   const location = useLocation();
   const userName = useAuthStore((s) => s.userName);
   const role = useAuthStore((s) => s.role);
+  const authMode = useAuthStore((s) => s.authMode);
   const logout = useAuthStore((s) => s.logout);
 
   // Show the back arrow on every page EXCEPT the role-home (where back would
@@ -69,6 +70,11 @@ export default function Header() {
           <span className="text-white font-semibold text-sm">{userName}</span>
           {role && (
             <span className="text-white/60 text-xs">{ROLE_LABELS[role]}</span>
+          )}
+          {authMode === 'offline' && (
+            <span className="text-amber-300 text-[10px] font-semibold uppercase tracking-wide">
+              Modo offline
+            </span>
           )}
         </div>
       </div>

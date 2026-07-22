@@ -1,6 +1,6 @@
 /**
- * Contract: client MOCK_USERS PIN map is the source of truth for multi-role QA.
- * SHA-256 of each PIN is what HERMES_AUTH_USERS_JSON password_sha256 must match.
+ * Contract: client MOCK_USERS is the offline-only multi-role QA fallback.
+ * Production online authentication is verified by /api/auth/login instead.
  */
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
@@ -27,7 +27,7 @@ describe('auth PIN contract (shipped MOCK_USERS)', () => {
     }
   });
 
-  it('produces stable sha256 digests for server HERMES_AUTH_USERS_JSON alignment', () => {
+  it('produces stable sha256 digests for offline QA documentation', () => {
     const digests: Record<string, string> = {};
     for (const [role, pin] of Object.entries(EXPECTED_PINS)) {
       digests[role] = createHash('sha256').update(pin, 'utf8').digest('hex');

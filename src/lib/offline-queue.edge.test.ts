@@ -46,7 +46,7 @@ function makeIDBStub(initialRecords: Array<Record<string, unknown>> = []) {
     }),
   });
 
-  const makeTx = (mode: string) => {
+  const makeTx = () => {
     const tx = {
       objectStore: vi.fn(() => makeStore()),
       oncomplete: null as (() => void) | null,
@@ -58,7 +58,7 @@ function makeIDBStub(initialRecords: Array<Record<string, unknown>> = []) {
   };
 
   const fakeDB = {
-    transaction: vi.fn((_name: string, mode: string) => makeTx(mode)),
+    transaction: vi.fn(() => makeTx()),
   };
 
   const fakeRequest = {
@@ -103,9 +103,11 @@ function makeSubmission(
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 describe('offline-queue edge cases', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.stubGlobal('navigator', { onLine: true });
     vi.resetModules();
+    const { useAuthStore } = await import('../stores/auth-store');
+    useAuthStore.setState({ authMode: 'server', sessionToken: 'queue-test-session' });
   });
 
   afterEach(() => {
@@ -118,7 +120,7 @@ describe('offline-queue edge cases', () => {
   it('flushQueue processes 1000+ items without throwing', async () => {
     const N = 1000;
     const submissions = Array.from({ length: N }, (_, i) => makeSubmission(i + 1));
-    const { openFn, store } = makeIDBStub(submissions);
+    const { openFn } = makeIDBStub(submissions);
 
     vi.stubGlobal('indexedDB', { open: openFn });
     mockAppendRow.mockResolvedValue(undefined);
@@ -130,6 +132,17 @@ describe('offline-queue edge cases', () => {
     // All 1000 must have succeeded (appendRow always resolves)
     expect(result.succeeded).toBe(N);
     expect(result.failed).toBe(0);
+  });
+
+  it('does not replay queued mutations from an offline-only session', async () => {
+    const { useAuthStore } = await import('../stores/auth-store');
+    useAuthStore.setState({ authMode: 'offline', sessionToken: null });
+    const { flushQueue } = await import('./offline-queue');
+
+    const result = await flushQueue();
+
+    expect(result).toEqual({ succeeded: 0, failed: 0 });
+    expect(mockAppendRow).not.toHaveBeenCalled();
   });
 
   // ── 2. localStorage roundtrip simulation ──────────────────────────────────

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { X } from 'lucide-react';
 
@@ -21,14 +21,7 @@ function storeConsent(): void {
 }
 
 export default function ConsentBanner() {
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    // Only show after hydration to avoid SSR mismatch
-    if (!hasConsented()) {
-      setVisible(true);
-    }
-  }, []);
+  const [visible, setVisible] = useState(() => !hasConsented());
 
   if (!visible) return null;
 
