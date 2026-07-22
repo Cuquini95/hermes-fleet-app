@@ -63,6 +63,18 @@ test('verifyBearer rejects expired session', async () => {
   assert.equal(result.status, 401);
 });
 
+test('verifyBearer rejects a signed session with a malformed expiration', async () => {
+  const { verifyBearer } = await import(`../../api/hermes-sheets-gate.js?t=${Date.now() + 30}`);
+  const token = sign({
+    sub: 'score_qa',
+    role: 'operador',
+    exp: 'not-a-date',
+  });
+  const result = verifyBearer(`Bearer ${token}`);
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 401);
+});
+
 test('verifyBearer rejects a signed session without an actor subject', async () => {
   const { verifyBearer } = await import(`../../api/hermes-sheets-gate.js?t=${Date.now() + 4}`);
   const token = sign({

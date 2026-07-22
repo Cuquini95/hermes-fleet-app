@@ -79,6 +79,7 @@ export function verifyBearer(authHeader) {
   } catch {
     return { ok: false, status: 401, detail: 'Invalid session.' };
   }
+  const expiresAt = typeof payload?.exp === 'string' ? Date.parse(payload.exp) : Number.NaN;
   if (
     !payload ||
     typeof payload.sub !== 'string' ||
@@ -86,7 +87,8 @@ export function verifyBearer(authHeader) {
     typeof payload.role !== 'string' ||
     !ROLES.has(payload.role) ||
     typeof payload.exp !== 'string' ||
-    Date.parse(payload.exp) <= Date.now()
+    !Number.isFinite(expiresAt) ||
+    expiresAt <= Date.now()
   ) {
     return { ok: false, status: 401, detail: 'Invalid or expired session.' };
   }
