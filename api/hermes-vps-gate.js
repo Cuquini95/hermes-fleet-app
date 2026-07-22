@@ -127,7 +127,10 @@ function bodyForOperation(operation, body, session) {
 }
 
 export default async function handler(req, res) {
-  const auth = verifyBearer(req.headers?.authorization || req.headers?.Authorization);
+  const auth = verifyBearer(
+    req.headers?.authorization || req.headers?.Authorization,
+    req.headers?.cookie || req.headers?.Cookie,
+  );
   if (!auth.ok) return sendJson(res, auth.status, { detail: auth.detail });
 
   const requestedPath = typeof req.query?.upstreamPath === 'string'

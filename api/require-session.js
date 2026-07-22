@@ -3,7 +3,10 @@ import { rejectIfRateLimited } from './rate-limit.js';
 
 /** Return the verified Hermes session or terminate the request fail-closed. */
 export function requireSession(req, res, options = {}) {
-  const auth = verifyBearer(req.headers?.authorization || req.headers?.Authorization);
+  const auth = verifyBearer(
+    req.headers?.authorization || req.headers?.Authorization,
+    req.headers?.cookie || req.headers?.Cookie,
+  );
   if (!auth.ok) {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('WWW-Authenticate', 'Bearer');

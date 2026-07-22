@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { rejectIfRateLimited } from './rate-limit.js';
 
 const UPSTREAM = 'https://5-78-204-80.sslip.io';
+const SESSION_COOKIE_NAME = 'hermes_session';
 const ROLES = new Set(['operador', 'mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia']);
 const SHEET_PATH_PREFIX = '/hermes-api/api/sheets/';
 const SHEET_OPERATIONS = new Map([
@@ -51,13 +52,33 @@ function decodeBase64Url(value) {
   }
 }
 
-export function verifyBearer(authHeader) {
-  if (!authHeader || typeof authHeader !== 'string') {
-    return { ok: false, status: 401, detail: 'Authentication required.' };
+function readSessionCookie(cookieHeader) {
+  if (typeof cookieHeader !== 'string') return '';
+  for (const part of cookieHeader.split(';')) {
+    const separator = part.indexOf('=');
+    if (separator < 0 || part.slice(0, separator).trim() !== SESSION_COOKIE_NAME) continue;
+    try {
+      return decodeURIComponent(part.slice(separator + 1).trim());
+    } catch {
+      return '';
+    }
   }
-  const match = /^Bearer\s+([^\s]+)$/i.exec(authHeader.trim());
-  if (!match) return { ok: false, status: 401, detail: 'Authentication required.' };
-  const token = match[1];
+  return '';
+}
+
+export function verifyBearer(authHeader, cookieHeader) {
+  let token = '';
+  if (authHeader !== undefined && authHeader !== null) {
+    if (typeof authHeader !== 'string') {
+      return { ok: false, status: 401, detail: 'Authentication required.' };
+    }
+    const match = /^Bearer\s+([^\s]+)$/i.exec(authHeader.trim());
+    if (!match) return { ok: false, status: 401, detail: 'Authentication required.' };
+    token = match[1];
+  } else {
+    token = readSessionCookie(cookieHeader);
+  }
+  if (!token) return { ok: false, status: 401, detail: 'Authentication required.' };
   const secret = sessionSecret();
   if (!secret) return { ok: false, status: 503, detail: 'Hermes auth session signing is not configured.' };
 
@@ -140,7 +161,10 @@ function readBody(req) {
 }
 
 export default async function handler(req, res) {
-  const auth = verifyBearer(req.headers.authorization || req.headers.Authorization);
+  const auth = verifyBearer(
+    req.headers.authorization || req.headers.Authorization,
+    req.headers.cookie || req.headers.Cookie,
+  );
   if (!auth.ok) {
     return sendJson(res, auth.status, { detail: auth.detail });
   }

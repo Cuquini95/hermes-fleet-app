@@ -51,6 +51,18 @@ test('verifyBearer accepts valid unexpired session', async () => {
   });
 });
 
+test('verifyBearer accepts a valid HttpOnly session cookie when Bearer is absent', async () => {
+  const { verifyBearer } = await import(`../../api/hermes-sheets-gate.js?t=${Date.now() + 20}`);
+  const token = sign({
+    sub: 'score_qa',
+    role: 'gerencia',
+    exp: new Date(Date.now() + 60_000).toISOString(),
+  });
+  const result = verifyBearer(undefined, `hermes_session=${encodeURIComponent(token)}`);
+  assert.equal(result.ok, true);
+  assert.equal(result.session.role, 'gerencia');
+});
+
 test('verifyBearer rejects expired session', async () => {
   const { verifyBearer } = await import(`../../api/hermes-sheets-gate.js?t=${Date.now() + 3}`);
   const token = sign({

@@ -15,7 +15,10 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const auth = verifyBearer(req.headers?.authorization || req.headers?.Authorization);
+  const auth = verifyBearer(
+    req.headers?.authorization || req.headers?.Authorization,
+    req.headers?.cookie || req.headers?.Cookie,
+  );
   if (!auth.ok) {
     return res.status(auth.status).json({ detail: auth.detail });
   }

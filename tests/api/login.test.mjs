@@ -121,6 +121,10 @@ test('issues session for valid credentials', async () => {
   assert.equal(typeof parsed.token, 'string');
   assert.ok(parsed.token.includes('.'));
   assert.equal(parsed.role, 'operador');
+  assert.match(res.state.headers['Set-Cookie'], /^hermes_session=/);
+  assert.match(res.state.headers['Set-Cookie'], /HttpOnly/);
+  assert.match(res.state.headers['Set-Cookie'], /Secure/);
+  assert.match(res.state.headers['Set-Cookie'], /SameSite=Lax/);
 });
 
 

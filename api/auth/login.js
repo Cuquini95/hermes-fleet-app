@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { rejectIfRateLimited } from '../rate-limit.js';
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const SESSION_COOKIE_NAME = 'hermes_session';
 const MAX_LOGIN_BODY_BYTES = 16 * 1024;
 const ROLES = new Set(['operador', 'mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia']);
 
@@ -125,6 +126,10 @@ function readBody(request) {
   });
 }
 
+function sessionCookie(token) {
+  return `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}; HttpOnly; Secure; SameSite=Lax`;
+}
+
 export default async function handler(request, response) {
   if (request.method !== 'POST') {
     return sendJson(response, 405, { detail: 'Method not allowed.' });
@@ -180,6 +185,7 @@ export default async function handler(request, response) {
     sessionSecret,
   );
 
+  response.setHeader('Set-Cookie', sessionCookie(token));
   return sendJson(response, 200, {
     token,
     token_type: 'hmac-session',
