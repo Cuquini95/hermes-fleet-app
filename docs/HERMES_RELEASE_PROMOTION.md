@@ -33,13 +33,15 @@ Required Vercel environment names:
 Never place values for these variables in the repository, transcript, or
 evidence artifact.
 
-The direct Hermes origin must enforce the same boundary. The VPS service must
-accept `HERMES_UPSTREAM_VPS_TOKEN` (or the existing `HERMES_SYNC_TOKEN`) for
-the Vercel gateway and a valid signed Hermes session for approved direct
-clients. Anonymous requests to `/ai/*`, `/api/ocr/*`, `/api/push/*`, and
-`/parts` must return 401 before route validation or side effects. Protecting
-only the Vercel rewrite is insufficient because the VPS hostname remains a
-separate public origin.
+The direct Hermes origins must enforce the same boundary. Both
+`hermes-api.service` (public prefix `/hermes-api/`, port 8000) and
+`panama-hermes-api.service` (public prefix `/panama-hermes-api/`, port 8001)
+run the same checkout and must accept `HERMES_UPSTREAM_VPS_TOKEN` (or the
+existing `HERMES_SYNC_TOKEN`) for the Vercel gateway and a valid signed Hermes
+session for approved direct clients. Anonymous requests to `/ai/*`,
+`/api/ocr/*`, `/api/push/*`, and `/parts` must return 401 before route
+validation or side effects on both public prefixes. Protecting only the Vercel
+rewrite or only port 8000 is insufficient because both VPS paths are public.
 
 ## Route gate after promotion
 
@@ -67,7 +69,9 @@ they were public through the old catch-all rewrite.
 Repeat the same anonymous probes directly against
 `https://5-78-204-80.sslip.io`. The direct-origin results must match the
 Vercel-gateway boundary; a 200 from the VPS for a sensitive path is a release
-blocker even if the Vercel route returns 401.
+blocker even if the Vercel route returns 401. Repeat the sensitive-path probes
+under both `/hermes-api/` and `/panama-hermes-api/`, and capture restart
+receipts for both services.
 
 With a disposable authorized session and approved service-token configuration,
 capture authenticated checks for OCR, Push, fault-code lookup, parts lookup,
