@@ -74,6 +74,70 @@ test('parts import preserves the admin role boundary after authentication', asyn
   delete process.env.HERMES_AUTH_SESSION_SECRET;
 });
 
+test('parts import rejects oversized parsed bodies before external lookups', async () => {
+  const secret = 'hermes-parts-body-test-secret-32chars';
+  process.env.HERMES_AUTH_SESSION_SECRET = secret;
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    throw new Error('must not forward');
+  };
+  try {
+    const { default: handler } = await import('../../api/parts/import.js?body-limit=2');
+    const response = mockResponse();
+    const token = signSession({
+      sub: 'supervisor-1',
+      role: 'supervisor',
+      exp: '2099-01-01T00:00:00.000Z',
+    }, secret);
+
+    await handler({
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}` },
+      body: { supplier: 'x'.repeat(2 * 1024 * 1024), parts: [] },
+    }, response);
+
+    assert.equal(response.state.statusCode, 413);
+    assert.equal(response.state.body.success, false);
+    assert.match(response.state.body.error, /Request body is too large/);
+    assert.equal(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.HERMES_AUTH_SESSION_SECRET;
+  }
+});
+
+test('parts import returns 400 for malformed streamed JSON', async () => {
+  const secret = 'hermes-parts-json-test-secret-32chars';
+  process.env.HERMES_AUTH_SESSION_SECRET = secret;
+  try {
+    const { default: handler } = await import('../../api/parts/import.js?body-json=2');
+    const response = mockResponse();
+    const token = signSession({
+      sub: 'supervisor-1',
+      role: 'supervisor',
+      exp: '2099-01-01T00:00:00.000Z',
+    }, secret);
+    const request = {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}` },
+      on(event, callback) {
+        if (event === 'data') callback('{"supplier":"unterminated"');
+        if (event === 'end') callback();
+      },
+    };
+
+    await handler(request, response);
+
+    assert.equal(response.state.statusCode, 400);
+    assert.equal(response.state.body.success, false);
+    assert.match(response.state.body.error, /Invalid JSON body/);
+  } finally {
+    delete process.env.HERMES_AUTH_SESSION_SECRET;
+  }
+});
+
 test('intake rejects oversized parsed bodies before contacting OpsOS', async () => {
   const secret = 'hermes-intake-body-test-secret-32chars';
   process.env.HERMES_AUTH_SESSION_SECRET = secret;

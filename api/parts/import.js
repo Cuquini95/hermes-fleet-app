@@ -2,6 +2,10 @@ import { requireSession } from '../require-session.js';
 
 const DEFAULT_PARTS_SEARCH_URL = 'https://5-78-204-80.sslip.io/hermes-api/parts';
 const CATALOG_ROLES = new Set(['jefe_taller', 'coordinador', 'supervisor', 'gerencia']);
+const MAX_PARTS_IMPORT_BODY_BYTES = 2 * 1024 * 1024;
+
+class RequestBodyTooLargeError extends Error {}
+class InvalidJsonBodyError extends Error {}
 
 function normalizePartNumber(value) {
   return String(value ?? '').trim().toUpperCase();
@@ -127,8 +131,9 @@ export default async function handler(req, res) {
   if (!requireSession(req, res, { roles: CATALOG_ROLES, scope: 'parts-import', limit: 10 })) return;
 
   try {
-    const supplier = String(req.body?.supplier ?? '').trim();
-    const parts = Array.isArray(req.body?.parts) ? req.body.parts : [];
+    const body = await readJsonBody(req);
+    const supplier = String(body.supplier ?? '').trim();
+    const parts = Array.isArray(body.parts) ? body.parts : [];
     const validParts = parts.filter((part) => normalizePartNumber(part?.part_number) && toNumber(part?.unit_price) > 0);
 
     const currentRows = new Map();
@@ -149,9 +154,102 @@ export default async function handler(req, res) {
       telegram_reason: telegram.reason,
     });
   } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return res.status(413).json({ success: false, error: 'Request body is too large' });
+    }
+    if (error instanceof InvalidJsonBodyError) {
+      return res.status(400).json({ success: false, error: 'Invalid JSON body' });
+    }
     return res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'parts_import_failed',
     });
+  }
+}
+
+async function readJsonBody(req) {
+  const declaredLength = Number(req.headers?.['content-length'] || req.headers?.['Content-Length']);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_PARTS_IMPORT_BODY_BYTES) {
+    throw new RequestBodyTooLargeError();
+  }
+
+  if (req.body !== undefined && req.body !== null && typeof req.body === 'object') {
+    assertBodySize(JSON.stringify(req.body));
+    return req.body;
+  }
+  if (typeof req.body === 'string') {
+    assertBodySize(req.body);
+    return parseJsonBody(req.body);
+  }
+
+  if (typeof req[Symbol.asyncIterator] === 'function') {
+    return parseJsonBody(await readAsyncBody(req));
+  }
+  if (typeof req.on === 'function') {
+    return parseJsonBody(await readEventBody(req));
+  }
+
+  return {};
+}
+
+async function readAsyncBody(req) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size > MAX_PARTS_IMPORT_BODY_BYTES) {
+      if (typeof req.destroy === 'function') req.destroy();
+      throw new RequestBodyTooLargeError();
+    }
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+function readEventBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    let settled = false;
+
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      if (typeof req.destroy === 'function') req.destroy();
+      reject(error);
+    };
+
+    req.on('data', (chunk) => {
+      if (settled) return;
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.length;
+      if (size > MAX_PARTS_IMPORT_BODY_BYTES) {
+        fail(new RequestBodyTooLargeError());
+        return;
+      }
+      chunks.push(buffer);
+    });
+    req.on('end', () => {
+      if (settled) return;
+      settled = true;
+      resolve(Buffer.concat(chunks).toString('utf8'));
+    });
+    req.on('error', fail);
+  });
+}
+
+function assertBodySize(value) {
+  if (Buffer.byteLength(value, 'utf8') > MAX_PARTS_IMPORT_BODY_BYTES) {
+    throw new RequestBodyTooLargeError();
+  }
+}
+
+function parseJsonBody(raw) {
+  if (!raw || !raw.trim()) return {};
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new InvalidJsonBodyError();
   }
 }
