@@ -111,6 +111,47 @@ test('intake rejects oversized parsed bodies before contacting OpsOS', async () 
   }
 });
 
+test('intake rejects oversized streamed bodies before contacting OpsOS', async () => {
+  const secret = 'hermes-intake-stream-test-secret-32chars';
+  process.env.HERMES_AUTH_SESSION_SECRET = secret;
+  process.env.OPSOS_INTAKE_URL = 'https://opsos.example.test';
+  process.env.OPSOS_INTAKE_SECRET = 'opsos-service-secret';
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    throw new Error('must not forward');
+  };
+  try {
+    const { default: handler } = await import('../../api/intake/chat.js?body-stream-limit=1');
+    const response = mockResponse();
+    const token = signSession({
+      sub: 'operator-1',
+      role: 'operador',
+      exp: '2099-01-01T00:00:00.000Z',
+    }, secret);
+    const request = {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}` },
+      on(event, callback) {
+        if (event === 'data') callback('x'.repeat(8 * 1024 * 1024 + 1));
+        if (event === 'end') callback();
+      },
+    };
+
+    await handler(request, response);
+
+    assert.equal(response.state.statusCode, 413);
+    assert.match(response.state.body.error, /Request body is too large/);
+    assert.equal(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.HERMES_AUTH_SESSION_SECRET;
+    delete process.env.OPSOS_INTAKE_URL;
+    delete process.env.OPSOS_INTAKE_SECRET;
+  }
+});
+
 test('intake returns 400 for malformed streamed JSON', async () => {
   const secret = 'hermes-intake-json-test-secret-32chars';
   process.env.HERMES_AUTH_SESSION_SECRET = secret;
