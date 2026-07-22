@@ -7,29 +7,44 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
-
-interface ChartPoint {
-  day: string;
-  pct: number;
-  unavailable?: number;
-  total?: number;
-}
+import {
+  getAvailabilityChartState,
+  type AvailabilityChartPoint,
+} from './availability-chart-state';
 
 interface AvailabilityChartProps {
-  data: ChartPoint[];
+  data: AvailabilityChartPoint[];
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
 }
 
-export default function AvailabilityChart({ data }: AvailabilityChartProps) {
-  const hasData = data.length > 0 && data.some((point) => point.total && point.total > 0);
+export default function AvailabilityChart({ data, loading = false, error = null, onRetry }: AvailabilityChartProps) {
+  const state = getAvailabilityChartState(data, loading, error);
 
   return (
     <div className="bg-card rounded-xl shadow-sm p-4 border border-border">
       <h3 className="font-semibold text-text mb-4">
         Tendencia de Disponibilidad - 7 dias
       </h3>
-      {!hasData ? (
+      {state !== 'ready' ? (
         <div className="flex h-[200px] items-center justify-center rounded-lg border border-dashed border-border text-sm text-text-secondary">
-          Cargando disponibilidad real...
+          {state === 'loading' && 'Cargando disponibilidad real...'}
+          {state === 'empty' && 'No hay datos suficientes para construir la tendencia.'}
+          {state === 'error' && (
+            <div className="text-center" role="alert">
+              <p className="text-red-600">{error}</p>
+              {onRetry && (
+                <button
+                  type="button"
+                  onClick={onRetry}
+                  className="mt-2 underline hover:text-text"
+                >
+                  Reintentar
+                </button>
+              )}
+            </div>
+          )}
         </div>
       ) : (
         <ResponsiveContainer width="100%" height={200}>
@@ -49,7 +64,7 @@ export default function AvailabilityChart({ data }: AvailabilityChartProps) {
             />
             <Tooltip
               formatter={(value, _name, item) => {
-                const payload = item.payload as ChartPoint;
+                const payload = item.payload as AvailabilityChartPoint;
                 const unavailable = payload.unavailable ?? 0;
                 const total = payload.total ?? 0;
                 const available = Math.max(0, total - unavailable);

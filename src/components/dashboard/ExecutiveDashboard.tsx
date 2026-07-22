@@ -4,6 +4,7 @@ import { Activity, AlertTriangle, Fuel, Bell, RefreshCw, Package, ShoppingCart, 
 import { useEquipmentList } from '../../hooks/useEquipmentList';
 import { useDashboardData } from '../../hooks/useDashboardData';
 import { useAuthStore } from '../../stores/auth-store';
+import { useEquipmentStore } from '../../stores/equipment-store';
 import KPICard from '../ui/KPICard';
 import { SkeletonKPI } from '../ui/Skeleton';
 import FleetGrid from './FleetGrid';
@@ -28,10 +29,18 @@ export default function ExecutiveDashboard() {
   const equipment = useEquipmentList();
   const data = useDashboardData();
   const role = useAuthStore((s) => s.role);
+  const equipmentLoading = useEquipmentStore((s) => s.loading);
+  const equipmentError = useEquipmentStore((s) => s.error);
+  const refetchEquipment = useEquipmentStore((s) => s.refetch);
+  const isDataLoading = data.loading || equipmentLoading;
+  const dataError = equipmentError
+    ? 'No se pudo cargar el inventario de unidades.'
+    : data.error;
 
   const handleRefresh = useCallback(async () => {
     data.refresh();
-  }, [data]);
+    await refetchEquipment();
+  }, [data, refetchEquipment]);
 
   const { scrollRef, onTouchStart, onTouchMove, onTouchEnd, pullDistance, refreshing, pullIndicatorStyle, isReady } =
     usePullToRefresh({ onRefresh: handleRefresh });
@@ -39,7 +48,7 @@ export default function ExecutiveDashboard() {
   return (
     <div
       ref={scrollRef}
-      className={`flex flex-col py-4 overflow-y-auto transition-opacity ${data.loading ? 'opacity-60' : 'opacity-100'}`}
+      className={`flex flex-col py-4 overflow-y-auto transition-opacity ${isDataLoading ? 'opacity-60' : 'opacity-100'}`}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
@@ -67,7 +76,7 @@ export default function ExecutiveDashboard() {
           </button>
         ))}
         <button
-          onClick={data.refresh}
+          onClick={handleRefresh}
           disabled={data.loading}
           className="ml-auto p-1.5 rounded-full text-text-secondary hover:text-text hover:bg-card border border-transparent hover:border-border transition-colors disabled:opacity-40"
           aria-label="Actualizar datos"
@@ -76,11 +85,24 @@ export default function ExecutiveDashboard() {
         </button>
       </div>
 
+      {dataError && !isDataLoading && (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2" role="alert">
+          <p className="text-sm text-red-700">{dataError}</p>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            className="shrink-0 text-sm font-medium text-red-700 underline hover:text-red-900"
+          >
+            Reintentar
+          </button>
+        </div>
+      )}
+
       {/* General tab */}
       {activeTab === 'general' && (
         <div className="flex flex-col gap-4">
           {/* KPI row */}
-          {data.loading ? (
+          {isDataLoading ? (
             <div className="grid grid-cols-2 gap-3">
               <SkeletonKPI />
               <SkeletonKPI />
@@ -120,7 +142,12 @@ export default function ExecutiveDashboard() {
           <FleetGrid equipment={equipment} />
 
           {/* Availability chart */}
-          <AvailabilityChart data={data.availabilityTrend} />
+          <AvailabilityChart
+            data={data.availabilityTrend}
+            loading={isDataLoading}
+            error={dataError}
+            onRetry={handleRefresh}
+          />
 
           {/* Daily actions */}
           <AccionesDelDia />
