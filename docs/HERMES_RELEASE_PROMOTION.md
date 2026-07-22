@@ -33,6 +33,14 @@ Required Vercel environment names:
 Never place values for these variables in the repository, transcript, or
 evidence artifact.
 
+The direct Hermes origin must enforce the same boundary. The VPS service must
+accept `HERMES_UPSTREAM_VPS_TOKEN` (or the existing `HERMES_SYNC_TOKEN`) for
+the Vercel gateway and a valid signed Hermes session for approved direct
+clients. Anonymous requests to `/ai/*`, `/api/ocr/*`, `/api/push/*`, and
+`/parts` must return 401 before route validation or side effects. Protecting
+only the Vercel rewrite is insufficient because the VPS hostname remains a
+separate public origin.
+
 ## Route gate after promotion
 
 Capture the deployment ID, commit SHA, aliases, output functions, and deployed
@@ -55,6 +63,11 @@ Expected anonymous results are 401 (or 405 for an intentionally unsupported
 method), never an upstream success, payload-validation response, or public
 data response. The fault-code and parts requests are especially important:
 they were public through the old catch-all rewrite.
+
+Repeat the same anonymous probes directly against
+`https://5-78-204-80.sslip.io`. The direct-origin results must match the
+Vercel-gateway boundary; a 200 from the VPS for a sensitive path is a release
+blocker even if the Vercel route returns 401.
 
 With a disposable authorized session and approved service-token configuration,
 capture authenticated checks for OCR, Push, fault-code lookup, parts lookup,
