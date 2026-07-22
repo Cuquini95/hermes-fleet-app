@@ -14,6 +14,17 @@ function mockRequest(method, body) {
   };
 }
 
+function streamRequest(raw) {
+  return {
+    method: 'POST',
+    headers: {},
+    on(event, callback) {
+      if (event === 'data') callback(raw);
+      if (event === 'end') callback();
+    },
+  };
+}
+
 function mockResponse() {
   const state = { statusCode: 0, body: '', headers: {} };
   return {
@@ -62,6 +73,29 @@ test('fails closed when users env missing', async () => {
   const res = mockResponse();
   await handler(mockRequest('POST', { username: 'x', role: 'operador', password: 'y' }), res);
   assert.equal(res.state.statusCode, 503);
+});
+
+test('rejects oversized parsed login bodies before password verification', async () => {
+  const { default: handler } = await import(`../../api/auth/login.js?t=${Date.now() + 11}`);
+  const res = mockResponse();
+  await handler(
+    mockRequest('POST', {
+      username: 'release_qa',
+      role: 'operador',
+      password: 'x'.repeat(20_000),
+    }),
+    res,
+  );
+  assert.equal(res.state.statusCode, 413);
+  assert.match(res.state.body, /Request body is too large/);
+});
+
+test('rejects malformed login JSON as a client error', async () => {
+  const { default: handler } = await import(`../../api/auth/login.js?t=${Date.now() + 12}`);
+  const res = mockResponse();
+  await handler(streamRequest('{"username":"release_qa"'), res);
+  assert.equal(res.state.statusCode, 400);
+  assert.match(res.state.body, /Invalid JSON body/);
 });
 
 test('rejects invalid credentials with 401', async () => {

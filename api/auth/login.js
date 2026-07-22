@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { rejectIfRateLimited } from '../rate-limit.js';
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const MAX_LOGIN_BODY_BYTES = 16 * 1024;
 const ROLES = new Set(['operador', 'mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia']);
 
 function sendJson(response, status, body) {
@@ -69,26 +70,58 @@ function signSession(payload, secret) {
 
 function readBody(request) {
   return new Promise((resolve) => {
-    if (request.body && typeof request.body === 'object') {
-      resolve(request.body);
+    const declaredLength = Number(request.headers?.['content-length'] || request.headers?.['Content-Length']);
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_LOGIN_BODY_BYTES) {
+      resolve({ tooLarge: true });
       return;
     }
-    let raw = '';
-    request.on('data', (chunk) => {
-      raw += chunk;
-    });
-    request.on('end', () => {
-      if (!raw) {
-        resolve({});
+
+    if (request.body !== undefined && request.body !== null && typeof request.body === 'object') {
+      if (Buffer.byteLength(JSON.stringify(request.body), 'utf8') > MAX_LOGIN_BODY_BYTES) {
+        resolve({ tooLarge: true });
+        return;
+      }
+      resolve({ body: request.body });
+      return;
+    }
+    if (typeof request.body === 'string') {
+      if (Buffer.byteLength(request.body, 'utf8') > MAX_LOGIN_BODY_BYTES) {
+        resolve({ tooLarge: true });
         return;
       }
       try {
-        resolve(JSON.parse(raw));
+        resolve({ body: request.body.trim() ? JSON.parse(request.body) : {} });
       } catch {
-        resolve({});
+        resolve({ invalid: true });
+      }
+      return;
+    }
+
+    let raw = '';
+    let size = 0;
+    let tooLarge = false;
+    request.on('data', (chunk) => {
+      const text = String(chunk);
+      size += Buffer.byteLength(text, 'utf8');
+      if (size <= MAX_LOGIN_BODY_BYTES) raw += text;
+      else tooLarge = true;
+    });
+    request.on('end', () => {
+      if (tooLarge) {
+        resolve({ tooLarge: true });
+        return;
+      }
+      if (!raw) {
+        resolve({ body: {} });
+        return;
+      }
+      try {
+        resolve({ body: JSON.parse(raw) });
+      } catch {
+        resolve({ invalid: true });
       }
     });
-    request.on('error', () => resolve({}));
+    request.on('error', () => resolve({ invalid: true }));
   });
 }
 
@@ -108,7 +141,14 @@ export default async function handler(request, response) {
     return sendJson(response, 503, { detail: 'Hermes auth session signing is not configured.' });
   }
 
-  const body = await readBody(request);
+  const bodyResult = await readBody(request);
+  if (bodyResult.tooLarge) {
+    return sendJson(response, 413, { detail: 'Request body is too large.' });
+  }
+  if (bodyResult.invalid) {
+    return sendJson(response, 400, { detail: 'Invalid JSON body.' });
+  }
+  const body = bodyResult.body || {};
   const username = typeof body.username === 'string' ? body.username.trim().toLowerCase() : '';
   const role = typeof body.role === 'string' ? body.role.trim() : '';
   const password = typeof body.password === 'string' ? body.password : '';

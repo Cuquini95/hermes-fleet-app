@@ -86,6 +86,9 @@ The CMMS damage bridge must also return `400` for malformed JSON and `413` for
 request bodies larger than 64 KiB before contacting CMMS. These are boundary
 checks, not substitutes for the authenticated live handoff proof.
 
+The login handler must return `400` for malformed JSON and `413` for request
+bodies larger than 16 KiB before evaluating credentials.
+
 ## Release decision
 
 Promote only when all of the following are attached to the release evidence:
