@@ -12,7 +12,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run --exclude tests/**/*.mjs",
-    "test:api": "node --test tests/api/login.test.mjs tests/api/hermes-sheets-gate.test.mjs tests/api/hermes-vps-gate.test.mjs tests/api/protected-routes.test.mjs tests/api/rate-limit.test.mjs",
+    "test:api": "node --test tests/api/login.test.mjs tests/api/hermes-sheets-gate.test.mjs tests/api/hermes-vps-gate.test.mjs tests/api/protected-routes.test.mjs tests/api/rate-limit.test.mjs tests/api/pipeline-config.test.mjs",
     "test:pipeline": "node test-pipeline.mjs"
   },
   "dependencies": {

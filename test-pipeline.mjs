@@ -19,9 +19,15 @@
 import { createClient } from '@supabase/supabase-js';
 
 const VPS = 'https://5-78-204-80.sslip.io/hermes-api';
-const SUPABASE_URL = 'https://xwrhkxecykuuutuitlnd.supabase.co';
-const SUPABASE_ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh3cmhreGVjeWt1dXV0dWl0bG5kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzNTE0MDIsImV4cCI6MjA5MDkyNzQwMn0.sCxRRx9FLHL8bUAWzHzc7XrWrpm_MvYIe_9Qy-Irkjk';
+const SUPABASE_URL = process.env.HERMES_PIPELINE_SUPABASE_URL?.trim();
+const SUPABASE_ANON_KEY = process.env.HERMES_PIPELINE_SUPABASE_ANON_KEY?.trim();
+
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.error(
+    'Missing HERMES_PIPELINE_SUPABASE_URL and HERMES_PIPELINE_SUPABASE_ANON_KEY; refusing to run live Storage tests.'
+  );
+  process.exit(1);
+}
 
 const VERBOSE = process.argv.includes('--verbose');
 
