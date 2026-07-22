@@ -89,6 +89,9 @@ checks, not substitutes for the authenticated live handoff proof.
 The login handler must return `400` for malformed JSON and `413` for request
 bodies larger than 16 KiB before evaluating credentials.
 
+The authenticated intake bridge must return `400` for malformed JSON and
+`413` for request bodies larger than 8 MiB before contacting OpsOS.
+
 ## Release decision
 
 Promote only when all of the following are attached to the release evidence:
