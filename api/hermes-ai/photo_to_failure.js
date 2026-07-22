@@ -1,4 +1,9 @@
-import { buildPhotoAnalysisResponse, readJsonBody } from '../../lib/hermes-ai.js';
+import {
+  buildPhotoAnalysisResponse,
+  InvalidJsonBodyError,
+  readJsonBody,
+  RequestBodyTooLargeError,
+} from '../../lib/hermes-ai.js';
 import { requireSession } from '../require-session.js';
 
 export default async function handler(req, res) {
@@ -14,6 +19,12 @@ export default async function handler(req, res) {
     const payload = await buildPhotoAnalysisResponse(body);
     return res.status(200).json(payload);
   } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return res.status(413).json({ error: 'Request body is too large' });
+    }
+    if (error instanceof InvalidJsonBodyError) {
+      return res.status(400).json({ error: 'Invalid JSON body' });
+    }
     const message = error instanceof Error ? error.message : 'Invalid photo analysis request';
     const status = message.includes('OPENAI_API_KEY') || message.includes('OPENROUTER_API_KEY') ? 503 : 400;
     return res.status(status).json({

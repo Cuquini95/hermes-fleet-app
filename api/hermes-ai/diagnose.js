@@ -1,4 +1,9 @@
-import { buildSmartDiagnoseResponse, readJsonBody } from '../../lib/hermes-ai.js';
+import {
+  buildSmartDiagnoseResponse,
+  InvalidJsonBodyError,
+  readJsonBody,
+  RequestBodyTooLargeError,
+} from '../../lib/hermes-ai.js';
 import { requireSession } from '../require-session.js';
 
 export default async function handler(req, res) {
@@ -14,6 +19,12 @@ export default async function handler(req, res) {
     const payload = await buildSmartDiagnoseResponse(body);
     return res.status(200).json(payload);
   } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return res.status(413).json({ error: 'Request body is too large' });
+    }
+    if (error instanceof InvalidJsonBodyError) {
+      return res.status(400).json({ error: 'Invalid JSON body' });
+    }
     return res.status(400).json({
       error: error instanceof Error ? error.message : 'Invalid diagnose request',
     });

@@ -92,6 +92,10 @@ bodies larger than 16 KiB before evaluating credentials.
 The authenticated intake bridge must return `400` for malformed JSON and
 `413` for request bodies larger than 8 MiB before contacting OpsOS.
 
+The authenticated AI diagnose, manual-lookup, and photo-analysis handlers use
+the same bounded 8 MiB parser and must return `400` for malformed JSON or
+`413` for oversized bodies before provider work.
+
 ## Release decision
 
 Promote only when all of the following are attached to the release evidence:
