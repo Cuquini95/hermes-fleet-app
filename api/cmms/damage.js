@@ -4,6 +4,10 @@ import { rejectIfRateLimited } from '../rate-limit.js';
 const DEFAULT_CMMS_API_BASE = 'https://gtp-cmms.vercel.app';
 // Upstream cold starts + live auth can exceed 12s; keep under typical serverless budget.
 const DEFAULT_TIMEOUT_MS = 25_000;
+const MAX_BODY_BYTES = 64 * 1024;
+
+class RequestBodyTooLargeError extends Error {}
+class InvalidJsonBodyError extends Error {}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -102,6 +106,20 @@ export default async function handler(req, res) {
 
     return res.status(502).json({ success: false, error: 'No damage handoff path available', correlation_id: correlationId });
   } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return res.status(413).json({
+        success: false,
+        error: 'Request body is too large',
+        correlation_id: correlationId,
+      });
+    }
+    if (error instanceof InvalidJsonBodyError) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid JSON body',
+        correlation_id: correlationId,
+      });
+    }
     const message = error instanceof Error ? error.message : 'CMMS damage handoff failed';
     const baseUrl = (cleanEnvValue(process.env.CMMS_API_BASE) || DEFAULT_CMMS_API_BASE).replace(/\/+$/, '');
     return res.status(502).json({
@@ -296,15 +314,50 @@ function cleanEnvValue(value) {
 }
 
 async function readJsonBody(req) {
-  if (req.body && typeof req.body === 'object') return req.body;
-  if (typeof req.body === 'string') return JSON.parse(req.body || '{}');
+  const declaredLength = Number(req.headers?.['content-length'] || req.headers?.['Content-Length']);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
+    throw new RequestBodyTooLargeError();
+  }
+
+  if (req.body !== undefined && req.body !== null && typeof req.body === 'object') {
+    assertBodySize(JSON.stringify(req.body));
+    return req.body;
+  }
+  if (typeof req.body === 'string') {
+    assertBodySize(req.body);
+    return parseJsonBody(req.body);
+  }
+
+  if (typeof req[Symbol.asyncIterator] !== 'function') return {};
 
   const chunks = [];
+  let size = 0;
   for await (const chunk of req) {
-    chunks.push(chunk);
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size > MAX_BODY_BYTES) {
+      if (typeof req.destroy === 'function') req.destroy();
+      throw new RequestBodyTooLargeError();
+    }
+    chunks.push(buffer);
   }
   const raw = Buffer.concat(chunks).toString('utf8');
-  return raw ? JSON.parse(raw) : {};
+  return parseJsonBody(raw);
+}
+
+function assertBodySize(value) {
+  if (Buffer.byteLength(value, 'utf8') > MAX_BODY_BYTES) {
+    throw new RequestBodyTooLargeError();
+  }
+}
+
+function parseJsonBody(raw) {
+  if (!raw || !raw.trim()) return {};
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new InvalidJsonBodyError();
+  }
 }
 
 async function safeJson(response) {

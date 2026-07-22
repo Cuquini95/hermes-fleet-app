@@ -80,6 +80,10 @@ contains a correlation ID, the actor comes from the verified session, and a
 replayed `external_event_id` returns the original hosted work order rather
 than creating another one.
 
+The CMMS damage bridge must also return `400` for malformed JSON and `413` for
+request bodies larger than 64 KiB before contacting CMMS. These are boundary
+checks, not substitutes for the authenticated live handoff proof.
+
 ## Release decision
 
 Promote only when all of the following are attached to the release evidence:

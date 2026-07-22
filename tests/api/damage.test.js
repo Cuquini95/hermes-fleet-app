@@ -35,6 +35,55 @@ describe('CMMS damage proxy', () => {
     expect(res.body).toMatchObject({ detail: 'Authentication required.' });
   });
 
+  it('returns 400 for malformed JSON instead of reporting an upstream failure', async () => {
+    process.env.CMMS_HERMES_INGEST_SECRET = 'secret-token';
+    process.env.HERMES_AUTH_SESSION_SECRET = TEST_SESSION_SECRET;
+    const res = createRes();
+
+    await handler(authorizedRequest('{"asset_id":"CA25"'), res);
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toMatchObject({ success: false, error: 'Invalid JSON body' });
+  });
+
+  it('rejects oversized parsed bodies before any CMMS upstream call', async () => {
+    process.env.CMMS_HERMES_INGEST_SECRET = 'secret-token';
+    process.env.HERMES_AUTH_SESSION_SECRET = TEST_SESSION_SECRET;
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    const res = createRes();
+
+    await handler(authorizedRequest({
+      asset_id: 'CA25',
+      title: 'Falla',
+      description: 'x'.repeat(70_000),
+    }), res);
+
+    expect(res.statusCode).toBe(413);
+    expect(res.body).toMatchObject({ success: false, error: 'Request body is too large' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('stops oversized streamed bodies before forwarding them upstream', async () => {
+    process.env.CMMS_HERMES_INGEST_SECRET = 'secret-token';
+    process.env.HERMES_AUTH_SESSION_SECRET = TEST_SESSION_SECRET;
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    const destroy = vi.fn();
+    const request = authorizedRequest(undefined);
+    request[Symbol.asyncIterator] = async function* () {
+      yield Buffer.from('{"asset_id":"CA25","title":"Falla","description":"');
+      yield Buffer.from('x'.repeat(70_000));
+      yield Buffer.from('"}');
+    };
+    request.destroy = destroy;
+    const res = createRes();
+
+    await handler(request, res);
+
+    expect(res.statusCode).toBe(413);
+    expect(destroy).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('forwards sanitized damage payloads to CMMS with the server-side token', async () => {
     process.env.CMMS_API_BASE = 'https://cmms.example.test/';
     process.env.CMMS_HERMES_INGEST_SECRET = 'secret-token';
