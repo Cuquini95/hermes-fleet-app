@@ -98,6 +98,8 @@ const CALENDAR_ACCESS: AppRole[] = ['jefe_taller', 'coordinador', 'supervisor', 
 function RootRedirect() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const role = useAuthStore((s) => s.role);
+  const sessionChecked = useAuthStore((s) => s.sessionChecked);
+  if (!sessionChecked) return <div role="status" className="flex min-h-screen items-center justify-center text-sm text-slate-500">Validando sesión…</div>;
   if (isAuthenticated && role) return <Navigate to={ROLE_HOME[role]} replace />;
   return <Navigate to="/login" replace />;
 }
@@ -105,6 +107,11 @@ function RootRedirect() {
 export default function App() {
   const initRealtime = useWorkOrderStore((s) => s.initRealtime);
   const role = useAuthStore((s) => s.role) ?? undefined;
+  const validateSession = useAuthStore((s) => s.validateSession);
+
+  useEffect(() => {
+    void validateSession();
+  }, [validateSession]);
 
   useEffect(() => {
     const handleOnline = () => { flushQueue().catch(() => {}); };
