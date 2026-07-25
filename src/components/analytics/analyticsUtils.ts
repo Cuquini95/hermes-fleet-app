@@ -195,12 +195,12 @@ export function buildTrend(combustibleRows: string[][], period: Period): WeekPoi
 
     let key: string
     if (period === 'year') {
-      const raw = d.toLocaleString('es-MX', { month: 'short', timeZone: 'UTC' })
-      key = raw.charAt(0).toUpperCase() + raw.slice(1)
+      // Sheet dates are calendar dates without a timezone. Formatting a local
+      // midnight as UTC shifts the month backwards in positive-offset regions.
+      key = MONTH_ORDER[d.getMonth()]!
     } else if (period === 'custom') {
       // For custom range, group by month like year view
-      const raw = d.toLocaleString('es-MX', { month: 'short', timeZone: 'UTC' })
-      key = raw.charAt(0).toUpperCase() + raw.slice(1)
+      key = MONTH_ORDER[d.getMonth()]!
     } else {
       // Relative week index from window start
       const cutoff = getPeriodCutoff(period)
