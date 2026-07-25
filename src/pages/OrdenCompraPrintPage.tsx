@@ -21,13 +21,12 @@ const COMPANY = {
   street: 'Juarez 312, Revolucion',
   city: 'Tecalitlan, Jalisco',
   phone: 'Tel: 314-115-1515',
-  signer: 'TOMAS EMMANUEL MORA SOTO',
 }
 
 const RED = '#E2231A'
 const TABLE_MIN_ROWS = 8
 
-/** OC states where the buyer has authorized the document — overlay the signature image. */
+/** OC states where the buyer has authorized the document. */
 const SIGNED_STATES = new Set(['Aprobada', 'Recibida', 'Pagada'])
 
 interface OCHeader {
@@ -368,26 +367,28 @@ export default function OrdenCompraPrintPage() {
           </div>
         </div>
 
-        {/* Signature — image overlays the line when the OC is signed-off */}
-        <div className="mt-12">
-          <div className="inline-block relative" style={{ minWidth: 280 }}>
-            {SIGNED_STATES.has(header.estado) && (
-              <img
-                src="/signature-tomas.png"
-                alt="Firma autorizada"
-                style={{
-                  position: 'absolute',
-                  bottom: 4,
-                  left: 20,
-                  height: 110,
-                  width: 'auto',
-                  pointerEvents: 'none',
-                }}
-              />
-            )}
-            <div className="border-t border-gray-700 pt-1" style={{ minWidth: 280 }}>
-              <p className="text-[11px] font-bold uppercase tracking-wide">{COMPANY.signer}</p>
-            </div>
+        {/* Approval provenance — never embed a reusable personal signature asset. */}
+        <div className="mt-12" data-testid="purchase-approval-provenance">
+          <div
+            className="inline-block px-4 py-3"
+            style={{
+              minWidth: 320,
+              border: `1.5px solid ${SIGNED_STATES.has(header.estado) ? '#166534' : '#6B7280'}`,
+              backgroundColor: SIGNED_STATES.has(header.estado) ? '#F0FDF4' : '#F9FAFB',
+            }}
+          >
+            <p className="text-[10px] font-extrabold uppercase tracking-widest">
+              {SIGNED_STATES.has(header.estado) ? 'Autorización digital registrada' : 'Pendiente de autorización'}
+            </p>
+            <p className="mt-2 text-[11px] font-bold uppercase">
+              {header.aprobada_por || 'Responsable de aprobación no registrado'}
+            </p>
+            <p className="mt-1 text-[10px] text-gray-700">
+              Estado: {header.estado || 'Sin estado'} · OC: {header.oc_id}
+            </p>
+            <p className="mt-1 text-[9px] text-gray-600">
+              La validez de esta autorización depende del registro auditable de la orden; esta impresión no contiene una firma reutilizable.
+            </p>
           </div>
         </div>
       </div>
