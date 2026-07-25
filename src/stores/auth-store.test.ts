@@ -1,20 +1,12 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFile } from 'node:fs/promises';
 
-// Mock zustand persist middleware so tests don't touch localStorage
 vi.mock('zustand/middleware', async () => {
   const actual = await vi.importActual<typeof import('zustand/middleware')>('zustand/middleware');
-  return {
-    ...actual,
-    persist: (config: unknown) => config, // no-op persist in tests
-  };
+  return { ...actual, persist: (config: unknown) => config };
 });
 
-// Import AFTER mocks
 const { useAuthStore } = await import('./auth-store');
-
-function getStore() {
-  return useAuthStore.getState();
-}
 
 function resetStore() {
   useAuthStore.setState({
@@ -22,179 +14,75 @@ function resetStore() {
     userName: '',
     assignedUnits: [],
     isAuthenticated: false,
-    sessionToken: null,
+    sessionChecked: false,
   });
 }
 
-describe('auth-store — initial state', () => {
+function response(status: number, body?: unknown) {
+  return new Response(body === undefined ? null : JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+describe('auth-store — server-backed session', () => {
   beforeEach(() => {
     resetStore();
+    vi.restoreAllMocks();
   });
 
-  it('starts with role=null', () => {
-    expect(getStore().role).toBeNull();
+  it('never contains a client-side role PIN table', async () => {
+    const source = await readFile(new URL('./auth-store.ts', import.meta.url), 'utf8');
+    expect(source).not.toContain('MOCK_USERS');
+    expect(source).not.toMatch(/pin:\s*['"]\d{4}/);
   });
 
-  it('starts with userName as empty string', () => {
-    expect(getStore().userName).toBe('');
+  it('rejects malformed PINs without calling the server', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(useAuthStore.getState().login('operador', '12')).resolves.toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('starts with assignedUnits as empty array', () => {
-    expect(getStore().assignedUnits).toEqual([]);
+  it('uses the server response as the authenticated profile', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(200, {
+      role: 'mecanico', userName: 'Mecánico', assignedUnits: [],
+    })));
+    await expect(useAuthStore.getState().login('mecanico', '4567')).resolves.toBe(true);
+    expect(useAuthStore.getState()).toMatchObject({
+      role: 'mecanico', userName: 'Mecánico', isAuthenticated: true, sessionChecked: true,
+    });
   });
 
-  it('starts with isAuthenticated=false', () => {
-    expect(getStore().isAuthenticated).toBe(false);
-  });
-});
-
-describe('auth-store — login success', () => {
-  beforeEach(() => {
-    resetStore();
+  it('fails closed on invalid credentials', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(401, { error: 'invalid' })));
+    await expect(useAuthStore.getState().login('operador', '4567')).resolves.toBe(false);
+    expect(useAuthStore.getState().isAuthenticated).toBe(false);
   });
 
-  it('returns true when pin is correct for operador', () => {
-    const result = getStore().login('operador', '2026');
-    expect(result).toBe(true);
+  it('clears forged persisted state when the HttpOnly session is invalid', async () => {
+    useAuthStore.setState({ role: 'gerencia', userName: 'Gerencia', isAuthenticated: true });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(401)));
+    await useAuthStore.getState().validateSession();
+    expect(useAuthStore.getState()).toMatchObject({
+      role: null, isAuthenticated: false, sessionChecked: true,
+    });
   });
 
-  it('sets isAuthenticated=true on successful login', () => {
-    getStore().login('operador', '2026');
-    expect(getStore().isAuthenticated).toBe(true);
+  it('restores only a profile validated by the server', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(200, {
+      role: 'supervisor', userName: 'Supervisor', assignedUnits: ['CA22'],
+    })));
+    await useAuthStore.getState().validateSession();
+    expect(useAuthStore.getState()).toMatchObject({
+      role: 'supervisor', assignedUnits: ['CA22'], isAuthenticated: true, sessionChecked: true,
+    });
   });
 
-  it('sets role correctly after login', () => {
-    getStore().login('operador', '2026');
-    expect(getStore().role).toBe('operador');
-  });
-
-  it('sets userName correctly for operador', () => {
-    getStore().login('operador', '2026');
-    expect(getStore().userName).toBe('Operador');
-  });
-
-  it('sets assignedUnits correctly for operador', () => {
-    getStore().login('operador', '2026');
-    expect(getStore().assignedUnits).toEqual(['CA22']);
-  });
-
-  it('returns true and sets state for mecanico with correct pin', () => {
-    const result = getStore().login('mecanico', '2015');
-    expect(result).toBe(true);
-    expect(getStore().role).toBe('mecanico');
-    expect(getStore().userName).toBe('Mecánico');
-    expect(getStore().assignedUnits).toEqual([]);
-  });
-
-  it('returns true and sets state for supervisor with correct pin', () => {
-    const result = getStore().login('supervisor', '2008');
-    expect(result).toBe(true);
-    expect(getStore().role).toBe('supervisor');
-    expect(getStore().userName).toBe('Supervisor');
-    expect(getStore().assignedUnits).toEqual(['CA22', 'CA26', 'EH45']);
-  });
-
-  it('returns true and sets state for jefe_taller with correct pin', () => {
-    const result = getStore().login('jefe_taller', '1995');
-    expect(result).toBe(true);
-    expect(getStore().role).toBe('jefe_taller');
-    expect(getStore().userName).toBe('Jefe de Taller');
-  });
-
-  it('returns true for coordinador with correct pin', () => {
-    const result = getStore().login('coordinador', '2001');
-    expect(result).toBe(true);
-    expect(getStore().role).toBe('coordinador');
-  });
-
-  it('returns true for gerencia with correct pin', () => {
-    const result = getStore().login('gerencia', '1963');
-    expect(result).toBe(true);
-    expect(getStore().role).toBe('gerencia');
-  });
-});
-
-describe('auth-store — login failure', () => {
-  beforeEach(() => {
-    resetStore();
-  });
-
-  it('returns false when pin is wrong', () => {
-    const result = getStore().login('operador', '0000');
-    expect(result).toBe(false);
-  });
-
-  it('does not change isAuthenticated when pin is wrong', () => {
-    getStore().login('operador', '9999');
-    expect(getStore().isAuthenticated).toBe(false);
-  });
-
-  it('does not set role when pin is wrong', () => {
-    getStore().login('operador', '9999');
-    expect(getStore().role).toBeNull();
-  });
-
-  it('returns false when pin length is not 4 (too short)', () => {
-    const result = getStore().login('operador', '202');
-    expect(result).toBe(false);
-  });
-
-  it('returns false when pin length is not 4 (too long)', () => {
-    const result = getStore().login('operador', '20265');
-    expect(result).toBe(false);
-  });
-
-  it('returns false when pin is empty string', () => {
-    const result = getStore().login('operador', '');
-    expect(result).toBe(false);
-  });
-
-  it('does not authenticate with the pin of a different role', () => {
-    // mecanico pin used for operador role
-    const result = getStore().login('operador', '2015');
-    expect(result).toBe(false);
-    expect(getStore().isAuthenticated).toBe(false);
-  });
-});
-
-describe('auth-store — logout', () => {
-  beforeEach(() => {
-    resetStore();
-  });
-
-  it('clears role after logout', () => {
-    getStore().login('operador', '2026');
-    getStore().logout();
-    expect(getStore().role).toBeNull();
-  });
-
-  it('clears userName after logout', () => {
-    getStore().login('operador', '2026');
-    getStore().logout();
-    expect(getStore().userName).toBe('');
-  });
-
-  it('clears assignedUnits after logout', () => {
-    getStore().login('operador', '2026');
-    getStore().logout();
-    expect(getStore().assignedUnits).toEqual([]);
-  });
-
-  it('sets isAuthenticated=false after logout', () => {
-    getStore().login('operador', '2026');
-    getStore().logout();
-    expect(getStore().isAuthenticated).toBe(false);
-  });
-
-  it('logout is idempotent on an already-logged-out store', () => {
-    getStore().logout();
-    expect(getStore().isAuthenticated).toBe(false);
-    expect(getStore().role).toBeNull();
-  });
-
-  it('clears sessionToken after logout', () => {
-    useAuthStore.setState({ sessionToken: 'test-token' });
-    getStore().logout();
-    expect(getStore().sessionToken).toBeNull();
+  it('logs out server-side and clears local state', async () => {
+    useAuthStore.setState({ role: 'operador', userName: 'Operador', isAuthenticated: true });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(204)));
+    await useAuthStore.getState().logout();
+    expect(useAuthStore.getState()).toMatchObject({ role: null, isAuthenticated: false });
   });
 });
