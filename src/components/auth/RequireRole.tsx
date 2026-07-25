@@ -16,6 +16,11 @@ interface RequireRoleProps {
 export default function RequireRole({ roles, children }: RequireRoleProps) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const role = useAuthStore((s) => s.role);
+  const sessionChecked = useAuthStore((s) => s.sessionChecked);
+
+  if (!sessionChecked) {
+    return <div role="status" aria-live="polite" className="flex min-h-screen items-center justify-center text-sm text-slate-500">Validando sesión…</div>;
+  }
 
   if (!isAuthenticated || !role) {
     return <Navigate to="/login" replace />;
