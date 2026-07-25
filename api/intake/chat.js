@@ -1,3 +1,5 @@
+import { requireSession } from '../_lib/session-auth.js';
+
 const DEFAULT_TIMEOUT_MS = 15_000;
 
 export default async function handler(req, res) {
@@ -5,6 +7,7 @@ export default async function handler(req, res) {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'Method not allowed' });
   }
+  if (!requireSession(req, res)) return;
 
   const baseUrl = process.env.OPSOS_INTAKE_URL;
   const secret = process.env.OPSOS_INTAKE_SECRET;
