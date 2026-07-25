@@ -3,7 +3,7 @@
  * Env: HERMES_AUTH_USERS_JSON, HERMES_AUTH_SESSION_SECRET (>=32 chars)
  */
 import crypto from 'node:crypto';
-import { rejectIfRateLimited } from '../rate-limit.js';
+import { rejectIfRateLimited } from '../_rate-limit.js';
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const SESSION_COOKIE_NAME = 'hermes_session';

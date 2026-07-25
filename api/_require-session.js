@@ -1,5 +1,5 @@
 import { verifyBearer } from './hermes-sheets-gate.js';
-import { rejectIfRateLimited } from './rate-limit.js';
+import { rejectIfRateLimited } from './_rate-limit.js';
 
 /** Return the verified Hermes session or terminate the request fail-closed. */
 export function requireSession(req, res, options = {}) {

@@ -7,7 +7,7 @@
  */
 import crypto from 'node:crypto';
 import { verifyBearer } from './hermes-sheets-gate.js';
-import { rejectIfRateLimited } from './rate-limit.js';
+import { rejectIfRateLimited } from './_rate-limit.js';
 
 const UPSTREAM = 'https://5-78-204-80.sslip.io';
 const MAX_BODY_BYTES = 8 * 1024 * 1024;

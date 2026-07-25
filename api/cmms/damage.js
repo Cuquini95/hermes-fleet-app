@@ -1,5 +1,5 @@
 import { verifyBearer } from '../hermes-sheets-gate.js';
-import { rejectIfRateLimited } from '../rate-limit.js';
+import { rejectIfRateLimited } from '../_rate-limit.js';
 
 const DEFAULT_CMMS_API_BASE = 'https://gtp-cmms.vercel.app';
 // Upstream cold starts + live auth can exceed 12s; keep under typical serverless budget.

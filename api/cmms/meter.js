@@ -21,7 +21,7 @@
  * instead of double-counting.
  */
 import { verifyBearer } from '../hermes-sheets-gate.js';
-import { rejectIfRateLimited } from '../rate-limit.js';
+import { rejectIfRateLimited } from '../_rate-limit.js';
 
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_READINGS = 500;

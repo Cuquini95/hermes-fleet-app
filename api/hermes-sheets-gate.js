@@ -3,7 +3,7 @@
  * Requires a valid Authorization: Bearer session before forwarding to VPS.
  */
 import crypto from 'node:crypto';
-import { rejectIfRateLimited } from './rate-limit.js';
+import { rejectIfRateLimited } from './_rate-limit.js';
 
 const UPSTREAM = 'https://5-78-204-80.sslip.io';
 const SESSION_COOKIE_NAME = 'hermes_session';

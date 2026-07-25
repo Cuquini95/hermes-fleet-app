@@ -1,4 +1,4 @@
-import { requireSession } from '../require-session.js';
+import { requireSession } from '../_require-session.js';
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_INTAKE_BODY_BYTES = 8 * 1024 * 1024;

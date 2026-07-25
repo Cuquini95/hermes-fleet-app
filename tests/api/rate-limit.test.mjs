@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { rejectIfRateLimited, resetRateLimits } from '../../api/rate-limit.js';
+import { rejectIfRateLimited, resetRateLimits } from '../../api/_rate-limit.js';
 
 function response() {
   const state = { status: 0, body: null, headers: {} };

@@ -1,4 +1,4 @@
-import { requireSession } from '../require-session.js';
+import { requireSession } from '../_require-session.js';
 
 const DEFAULT_PARTS_SEARCH_URL = 'https://5-78-204-80.sslip.io/hermes-api/parts';
 const CATALOG_ROLES = new Set(['jefe_taller', 'coordinador', 'supervisor', 'gerencia']);

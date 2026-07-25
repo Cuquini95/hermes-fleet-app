@@ -4,7 +4,7 @@ import {
   readJsonBody,
   RequestBodyTooLargeError,
 } from '../../lib/hermes-ai.js';
-import { requireSession } from '../require-session.js';
+import { requireSession } from '../_require-session.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
