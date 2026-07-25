@@ -7,4 +7,5 @@ test-results
 .codex-*.png
 *.log
 *.local
+api/**/*.test.js
 lighthouse-*.json
