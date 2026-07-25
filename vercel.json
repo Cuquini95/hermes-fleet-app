@@ -1,14 +1,9 @@
 {
   "rewrites": [
-    { "source": "/signature-tomas.png", "destination": "/api/removed-asset" },
     { "source": "/hermes-api/ai/diagnose", "destination": "/api/hermes-ai/diagnose" },
     { "source": "/hermes-api/ai/manual_lookup", "destination": "/api/hermes-ai/manual_lookup" },
     { "source": "/hermes-api/ai/photo_to_failure", "destination": "/api/hermes-ai/photo_to_failure" },
-    {
-      "source": "/hermes-api/api/sheets/:path*",
-      "destination": "/api/hermes-sheets-gate?upstreamPath=/hermes-api/api/sheets/:path*"
-    },
-    { "source": "/hermes-api/:path*", "destination": "https://5-78-204-80.sslip.io/hermes-api/:path*" },
+    { "source": "/hermes-api/:path*", "destination": "/api/hermes/:path*" },
     { "source": "/((?!api/|assets/).*)", "destination": "/index.html" }
   ],
   "headers": [
