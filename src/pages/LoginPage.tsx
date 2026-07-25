@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Truck,
@@ -34,35 +34,41 @@ export default function LoginPage() {
   const [selectedRole, setSelectedRole] = useState<AppRole | null>(null);
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState(false);
+  const [authenticating, setAuthenticating] = useState(false);
   const navigate = useNavigate();
   const login = useAuthStore((s) => s.login);
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleKeyPress = useCallback((key: string) => {
+    if (authenticating) return;
     if (key === 'del') {
       setPin((prev) => prev.slice(0, -1));
       return;
     }
     if (key === '') return;
-    setPin((prev) => {
-      if (prev.length >= 4) return prev;
-      return prev + key;
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!selectedRole || pin.length !== 4) return;
-    const success = login(selectedRole, pin);
-    if (success) {
-      setTimeout(() => navigate(ROLE_HOME[selectedRole]), 0);
-      return;
+    if (pin.length >= 4) return;
+    const nextPin = pin + key;
+    setPin(nextPin);
+    if (nextPin.length === 4 && selectedRole) {
+      setAuthenticating(true);
+      void login(selectedRole, nextPin).then((success) => {
+        if (success) {
+          navigate(ROLE_HOME[selectedRole]);
+          return;
+        }
+        setPinError(true);
+        resetTimerRef.current = setTimeout(() => {
+          setPin('');
+          setPinError(false);
+          resetTimerRef.current = null;
+        }, 800);
+      }).finally(() => setAuthenticating(false));
     }
-    setPinError(true);
-    const resetTimer = setTimeout(() => {
-      setPin('');
-      setPinError(false);
-    }, 800);
-    return () => clearTimeout(resetTimer);
-  }, [selectedRole, pin, login, navigate]);
+  }, [authenticating, pin, selectedRole, login, navigate]);
+
+  useEffect(() => () => {
+    if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+  }, []);
 
   useEffect(() => {
     if (!selectedRole) return;
@@ -75,13 +81,17 @@ export default function LoginPage() {
   }, [selectedRole, handleKeyPress]);
 
   const handleRoleSelect = (role: AppRole) => {
+    if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
     setSelectedRole(role);
     setPin('');
+    setPinError(false);
   };
 
   const handleBack = () => {
+    if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
     setSelectedRole(null);
     setPin('');
+    setPinError(false);
   };
 
   return (
@@ -112,6 +122,7 @@ export default function LoginPage() {
             {ROLE_CARDS.map(({ role, label, icon }) => (
               <button
                 key={role}
+                type="button"
                 onClick={() => handleRoleSelect(role)}
                 className="flex flex-col items-center gap-2 rounded-xl py-5 px-3 transition-opacity active:opacity-70"
                 style={{ backgroundColor: '#1E3A8A' }}
@@ -124,7 +135,7 @@ export default function LoginPage() {
             ))}
           </div>
 
-          <p className="text-xs mt-4" style={{ color: '#9CA3AF' }}>v1.0.0 MVP • GTP Hermes Fleet</p>
+          <p className="text-xs mt-4" style={{ color: '#9CA3AF' }}>v1.0.0 • GTP Hermes Fleet</p>
         </div>
       ) : (
         /* Phase 2 - PIN Entry */
@@ -132,9 +143,11 @@ export default function LoginPage() {
           {/* Header with back arrow */}
           <div className="flex items-center w-full gap-3">
             <button
+              type="button"
               onClick={handleBack}
               className="transition-colors"
               style={{ color: '#162252' }}
+              aria-label="Regresar a selección de rol"
             >
               <ArrowLeft size={22} />
             </button>
@@ -156,7 +169,7 @@ export default function LoginPage() {
             ))}
           </div>
           {pinError && (
-            <p className="text-sm font-medium" style={{ color: '#DC2626' }}>PIN incorrecto</p>
+            <p role="alert" aria-live="assertive" className="text-sm font-medium" style={{ color: '#DC2626' }}>PIN incorrecto</p>
           )}
 
           {/* Numeric keypad */}
@@ -164,8 +177,10 @@ export default function LoginPage() {
             {PIN_KEYS.map((key, idx) => (
               <button
                 key={idx}
+                type="button"
                 onClick={() => handleKeyPress(key)}
-                disabled={key === ''}
+                disabled={key === '' || authenticating}
+                aria-label={key === 'del' ? 'Borrar último dígito' : key === '' ? undefined : `Dígito ${key}`}
                 className={[
                   'flex items-center justify-center rounded-xl transition-opacity active:opacity-60',
                   key === '' ? 'invisible' : '',
@@ -184,7 +199,9 @@ export default function LoginPage() {
             ))}
           </div>
 
-          <p className="text-xs mt-4" style={{ color: '#9CA3AF' }}>v1.0.0 MVP • GTP Hermes Fleet</p>
+          {authenticating && <p role="status" aria-live="polite" className="text-sm" style={{ color: '#162252' }}>Validando acceso…</p>}
+
+          <p className="text-xs mt-4" style={{ color: '#9CA3AF' }}>v1.0.0 • GTP Hermes Fleet</p>
         </div>
       )}
     </div>
