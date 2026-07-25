@@ -167,6 +167,45 @@ describe('appendRow', () => {
     expect(useAuthStore.getState().sessionToken).toBeNull();
   });
 
+  it('clears an offline-mode session when Sheets rejects it', async () => {
+    const { useAuthStore } = await import('../stores/auth-store');
+    useAuthStore.setState({
+      role: 'gerencia',
+      userName: 'Gerencia',
+      isAuthenticated: true,
+      authMode: 'offline',
+      sessionToken: null,
+      sessionExpiresAt: null,
+    });
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ detail: 'Authentication required.' }), { status: 401 }),
+    );
+
+    await expect(appendRow('AuthTab', ['a'])).rejects.toThrow('401');
+
+    expect(useAuthStore.getState().isAuthenticated).toBe(false);
+    expect(useAuthStore.getState().authMode).toBeNull();
+  });
+
+  it('clears a legacy session that predates authMode when Sheets rejects it', async () => {
+    const { useAuthStore } = await import('../stores/auth-store');
+    useAuthStore.setState({
+      role: 'gerencia',
+      userName: 'Gerencia',
+      isAuthenticated: true,
+      authMode: null,
+      sessionToken: null,
+      sessionExpiresAt: null,
+    });
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ detail: 'Authentication required.' }), { status: 401 }),
+    );
+
+    await expect(appendRow('AuthTab', ['a'])).rejects.toThrow('401');
+
+    expect(useAuthStore.getState().isAuthenticated).toBe(false);
+  });
+
   it('uses fallback error message when json.success=false with no error field', async () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(JSON.stringify({ success: false }), {

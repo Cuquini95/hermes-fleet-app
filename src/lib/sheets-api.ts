@@ -29,10 +29,17 @@ function withAuthHeaders(headers?: HeadersInit): HeadersInit {
   return merged;
 }
 
+/**
+ * Any 401 from the gateway invalidates the local session, whatever mode it
+ * claims. A 401 is only observable while online, and an offline-mode or legacy
+ * (pre-authMode) session holds no credential the gateway will ever accept — so
+ * leaving it authenticated strands the user on a dashboard that retries
+ * forever with no route back to the login screen.
+ */
 function clearRejectedServerSession(response: Response): void {
   if (response.status !== 401) return;
   const auth = useAuthStore.getState();
-  if (auth.authMode === 'server') auth.logout();
+  if (auth.isAuthenticated) auth.logout();
 }
 
 async function fetchWithRetry(
