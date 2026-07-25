@@ -2,107 +2,100 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { AppRole } from '../types/roles';
 
+interface SessionProfile {
+  role: AppRole;
+  userName: string;
+  assignedUnits: string[];
+}
+
 interface AuthState {
   role: AppRole | null;
   userName: string;
   assignedUnits: string[];
   isAuthenticated: boolean;
-  /** HMAC session from /api/auth/login when server users are configured. */
-  sessionToken: string | null;
-  login: (role: AppRole, pin: string) => boolean;
-  logout: () => void;
+  sessionChecked: boolean;
+  login: (role: AppRole, pin: string) => Promise<boolean>;
+  validateSession: () => Promise<void>;
+  logout: () => Promise<void>;
 }
 
-/** Role PIN map (also used as server password when HERMES_AUTH_USERS_JSON matches). */
-export const MOCK_USERS: Record<AppRole, { userName: string; assignedUnits: string[]; pin: string }> = {
-  operador:    { userName: 'Operador',       assignedUnits: ['CA22'], pin: '2026' },
-  mecanico:    { userName: 'Mecánico',       assignedUnits: [], pin: '2015' },
-  jefe_taller: { userName: 'Jefe de Taller', assignedUnits: [], pin: '1995' },
-  coordinador: { userName: 'Coordinador',    assignedUnits: [], pin: '2001' },
-  supervisor:  { userName: 'Supervisor',     assignedUnits: ['CA22', 'CA26', 'EH45'], pin: '2008' },
-  gerencia:    { userName: 'Gerencia',       assignedUnits: [], pin: '1963' },
+const cleared = {
+  role: null,
+  userName: '',
+  assignedUnits: [],
+  isAuthenticated: false,
 };
 
-/** Best-effort server session exchange; UI login still succeeds on PIN alone. */
-export async function exchangeServerSession(
-  role: AppRole,
-  pin: string,
-): Promise<{ token: string; user_name?: string; assigned_units?: string[] } | null> {
-  try {
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ username: role, role, password: pin }),
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as {
-      token?: string;
-      user_name?: string;
-      assigned_units?: string[];
-    };
-    if (!data.token) return null;
-    return {
-      token: data.token,
-      user_name: data.user_name,
-      assigned_units: data.assigned_units,
-    };
-  } catch {
-    return null;
-  }
+function validProfile(value: unknown): value is SessionProfile {
+  if (!value || typeof value !== 'object') return false;
+  const profile = value as Partial<SessionProfile>;
+  return typeof profile.role === 'string'
+    && typeof profile.userName === 'string'
+    && Array.isArray(profile.assignedUnits)
+    && profile.assignedUnits.every((unit) => typeof unit === 'string');
 }
 
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
-      role: null,
-      userName: '',
-      assignedUnits: [],
-      isAuthenticated: false,
-      sessionToken: null,
+      ...cleared,
+      sessionChecked: false,
 
-      login: (role: AppRole, pin: string): boolean => {
-        if (pin.length !== 4) return false;
-        const user = MOCK_USERS[role];
-        if (pin !== user.pin) return false;
-        set({
-          role,
-          userName: user.userName,
-          assignedUnits: user.assignedUnits,
-          isAuthenticated: true,
-          sessionToken: null,
-        });
-        // Non-blocking: attach server HMAC session when env users match PIN map
-        void exchangeServerSession(role, pin).then((session) => {
-          if (!session) return;
-          set({
-            sessionToken: session.token,
-            userName: session.user_name || user.userName,
-            assignedUnits: session.assigned_units ?? user.assignedUnits,
+      login: async (role: AppRole, pin: string): Promise<boolean> => {
+        if (!/^\d{4,8}$/.test(pin)) return false;
+        try {
+          const response = await fetch('/api/auth/login', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ role, pin }),
           });
-        });
-        return true;
+          if (!response.ok) return false;
+          const profile: unknown = await response.json();
+          if (!validProfile(profile) || profile.role !== role) return false;
+          set({ ...profile, isAuthenticated: true, sessionChecked: true });
+          return true;
+        } catch {
+          return false;
+        }
       },
 
-      logout: () => {
-        set({
-          role: null,
-          userName: '',
-          assignedUnits: [],
-          isAuthenticated: false,
-          sessionToken: null,
-        });
+      validateSession: async () => {
+        try {
+          const response = await fetch('/api/auth/session', {
+            credentials: 'same-origin',
+            headers: { Accept: 'application/json' },
+          });
+          if (!response.ok) {
+            set({ ...cleared, sessionChecked: true });
+            return;
+          }
+          const profile: unknown = await response.json();
+          if (!validProfile(profile)) {
+            set({ ...cleared, sessionChecked: true });
+            return;
+          }
+          set({ ...profile, isAuthenticated: true, sessionChecked: true });
+        } catch {
+          set({ ...cleared, sessionChecked: true });
+        }
+      },
+
+      logout: async () => {
+        try {
+          await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+        } finally {
+          set({ ...cleared, sessionChecked: true });
+        }
       },
     }),
     {
       name: 'hermes-auth',
-      // Only persist the session state, not the action functions
       partialize: (state) => ({
         role: state.role,
         userName: state.userName,
         assignedUnits: state.assignedUnits,
-        isAuthenticated: state.isAuthenticated,
-        sessionToken: state.sessionToken,
       }),
-    }
-  )
+    },
+  ),
 );
