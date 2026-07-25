@@ -1,4 +1,4 @@
-const DEFAULT_PARTS_SEARCH_URL = 'https://5-78-204-80.sslip.io/hermes-api/parts';
+import { requireSession } from '../_lib/session-auth.js';
 
 function normalizePartNumber(value) {
   return String(value ?? '').trim().toUpperCase();
@@ -14,7 +14,8 @@ function round2(value) {
 }
 
 async function findCurrentPart(partNumber) {
-  const baseUrl = process.env.HERMES_PARTS_SEARCH_URL || DEFAULT_PARTS_SEARCH_URL;
+  const baseUrl = process.env.HERMES_PARTS_SEARCH_URL;
+  if (!baseUrl) throw new Error('HERMES_PARTS_SEARCH_URL is not configured');
   const url = `${baseUrl}?q=${encodeURIComponent(partNumber)}`;
   const res = await fetch(url);
   if (!res.ok) return null;
@@ -120,6 +121,7 @@ export default async function handler(req, res) {
     res.setHeader('Allow', 'POST, OPTIONS');
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
+  if (!requireSession(req, res, ['jefe_taller', 'coordinador', 'supervisor', 'gerencia'])) return;
 
   try {
     const supplier = String(req.body?.supplier ?? '').trim();
