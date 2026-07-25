@@ -4,7 +4,7 @@
     { "source": "/hermes-api/ai/manual_lookup", "destination": "/api/hermes-ai/manual_lookup" },
     { "source": "/hermes-api/ai/photo_to_failure", "destination": "/api/hermes-ai/photo_to_failure" },
     { "source": "/hermes-api/:path*", "destination": "/api/hermes/:path*" },
-    { "source": "/((?!api/|assets/).*)", "destination": "/index.html" }
+    { "source": "/((?!api/|assets/|signature-tomas\\.png$).*)", "destination": "/index.html" }
   ],
   "headers": [
     {
