@@ -115,7 +115,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div
+    <main
       className="min-h-screen flex flex-col items-center justify-between py-10 px-4"
       style={{ background: '#FFFFFF' }}
     >
@@ -129,7 +129,7 @@ export default function LoginPage() {
               alt="Trans Plus"
               className="w-24 h-24"
             />
-            <span className="font-bold text-2xl tracking-widest" style={{ color: '#162252' }}>HERMES</span>
+            <h1 className="font-bold text-2xl tracking-widest" style={{ color: '#162252' }}>HERMES</h1>
             <span className="text-sm" style={{ color: '#6B7280' }}>Grupo Trans Plus • Operaciones</span>
           </div>
 
@@ -224,6 +224,6 @@ export default function LoginPage() {
           <p className="text-xs mt-4" style={{ color: '#9CA3AF' }}>v1.0.0 MVP • GTP Hermes Fleet</p>
         </div>
       )}
-    </div>
+    </main>
   );
 }
