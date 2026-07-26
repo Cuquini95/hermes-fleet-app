@@ -11,7 +11,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "vitest run --exclude tests/**/*.mjs",
     "test:api": "node --test tests/api/login.test.mjs tests/api/hermes-sheets-gate.test.mjs",
     "test:pipeline": "node test-pipeline.mjs"
   },

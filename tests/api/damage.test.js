@@ -1,18 +1,22 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import handler from './damage.js';
+import handler from '../../api/cmms/damage.js';
+import { signSession } from '../../api/_lib/session-auth.js';
+
+const SESSION_SECRET = 'damage-test-session-secret-that-is-long-enough';
 
 afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.CMMS_API_BASE;
   delete process.env.CMMS_HERMES_INGEST_SECRET;
   delete process.env.CMMS_HERMES_SYSTEM_TOKEN;
+  delete process.env.HERMES_AUTH_SECRET;
 });
 
 describe('CMMS damage proxy', () => {
   it('skips without pretending success when the CMMS system token is missing', async () => {
     const res = createRes();
 
-    await handler({ method: 'POST', body: { asset_id: 'CA25', title: 'Falla' } }, res);
+    await handler(authorizedRequest({ asset_id: 'CA25', title: 'Falla' }), res);
 
     expect(res.statusCode).toBe(202);
     expect(res.body).toMatchObject({ success: false, skipped: true });
@@ -26,9 +30,7 @@ describe('CMMS damage proxy', () => {
     );
     const res = createRes();
 
-    await handler({
-      method: 'POST',
-      body: {
+    await handler(authorizedRequest({
         assetId: ' ca25 ',
         title: 'Hidraulica - CA25',
         severity: 'MEDIA',
@@ -36,8 +38,7 @@ describe('CMMS damage proxy', () => {
         photoUrl: 'https://cdn.example.test/falla.jpg',
         relatedWorkOrderId: 'OT-1',
         externalEventId: 'hermes-falla-OT-1',
-      },
-    }, res);
+      }), res);
 
     expect(res.statusCode).toBe(200);
     expect(fetchMock).toHaveBeenCalledWith(
@@ -64,7 +65,7 @@ describe('CMMS damage proxy', () => {
     );
     const res = createRes();
 
-    await handler({ method: 'POST', body: { asset_id: 'CA25', title: 'Falla' } }, res);
+    await handler(authorizedRequest({ asset_id: 'CA25', title: 'Falla' }), res);
 
     expect(res.statusCode).toBe(200);
     expect(fetchMock).toHaveBeenCalledWith(
@@ -75,6 +76,15 @@ describe('CMMS damage proxy', () => {
     );
   });
 });
+
+function authorizedRequest(body) {
+  process.env.HERMES_AUTH_SECRET = SESSION_SECRET;
+  return {
+    method: 'POST',
+    headers: { cookie: `hermes_session=${signSession('supervisor')}` },
+    body,
+  };
+}
 
 function createRes() {
   return {

@@ -20,12 +20,13 @@
  * so a replayed reading collides on (source='hermes-horometro', legacy_id)
  * instead of double-counting.
  */
-import { verifyBearer } from '../hermes-sheets-gate.js';
-import { rejectIfRateLimited } from '../rate-limit.js';
+import { requireSession } from '../_lib/session-auth.js';
+import { rejectIfRateLimited } from '../_lib/rate-limit.js';
 
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_READINGS = 500;
 const DEFAULT_TIMEOUT_MS = 25_000;
+const METER_ROLES = ['operador', 'mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
 
 function cleanEnvValue(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : '';
@@ -83,16 +84,20 @@ async function sbFetch(base, key, path, init = {}) {
   }
 }
 
-export function createMeterHandler({ env = process.env } = {}) {
+export function createMeterHandler({
+  env = process.env,
+  authorize = requireSession,
+  rateLimit = rejectIfRateLimited,
+} = {}) {
   return async function handler(req, res) {
     if (req.method !== 'POST') {
       return res.status(405).json({ detail: 'Method not allowed.' });
     }
 
-    const auth = verifyBearer(req.headers?.authorization, req.headers?.cookie);
-    if (!auth.ok) return res.status(auth.status).json({ detail: auth.detail });
+    const session = authorize(req, res, METER_ROLES);
+    if (!session) return undefined;
 
-    if (rejectIfRateLimited(req, res)) return undefined;
+    if (rateLimit(req, res, { scope: 'cmms-meter', limit: 120 }, session.role)) return undefined;
 
     const supabaseUrl = cleanEnvValue(
       env.HOSTED_CMMS_SUPABASE_URL || env.SUPABASE_URL,

@@ -1,12 +1,8 @@
-import crypto from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMeterHandler, dedupeLatestPerUnit, normalizeReading } from '../../api/cmms/meter.js';
 
-const SESSION_SECRET = 'meter-test-session-secret-that-is-long-enough';
-
 afterEach(() => {
   vi.restoreAllMocks();
-  delete process.env.HERMES_AUTH_SESSION_SECRET;
 });
 
 describe('CMMS meter handoff endpoint', () => {
@@ -21,7 +17,6 @@ describe('CMMS meter handoff endpoint', () => {
   });
 
   it('looks up the CMMS asset and inserts the captured horometer', async () => {
-    process.env.HERMES_AUTH_SESSION_SECRET = SESSION_SECRET;
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
       if (String(url).includes('/cmms_assets?')) {
         return new Response(JSON.stringify([
@@ -39,11 +34,13 @@ describe('CMMS meter handoff endpoint', () => {
         HOSTED_CMMS_SUPABASE_SERVICE_KEY: 'service-key',
         CMMS_HERMES_FALLBACK_ORGANIZATION_ID: 'org-a',
       },
+      authorize: () => ({ role: 'supervisor' }),
+      rateLimit: () => false,
     });
     const res = createResponse();
     await handler({
       method: 'POST',
-      headers: { authorization: `Bearer ${makeSessionToken()}` },
+      headers: {},
       body: {
         readings: [
           { unit: 'CA26', hours: 12400, recorded_at: '2026-07-25T18:00:00Z' },
@@ -66,17 +63,17 @@ describe('CMMS meter handoff endpoint', () => {
       legacy_id: 'CA26:2026-07-25T19:15:00.000Z',
     }]);
   });
-});
 
-function makeSessionToken() {
-  const payload = Buffer.from(JSON.stringify({
-    sub: 'meter-test',
-    role: 'supervisor',
-    exp: new Date(Date.now() + 60_000).toISOString(),
-  })).toString('base64url');
-  const signature = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
-  return `${payload}.${signature}`;
-}
+  it('rejects an anonymous meter handoff before checking CMMS configuration', async () => {
+    const handler = createMeterHandler({ env: {}, rateLimit: () => false });
+    const res = createResponse();
+
+    await handler({ method: 'POST', headers: {}, body: {} }, res);
+
+    expect(res.statusCode).toBe(401);
+    expect(res.body).toEqual({ error: 'Sesión inválida' });
+  });
+});
 
 function createResponse() {
   return {
