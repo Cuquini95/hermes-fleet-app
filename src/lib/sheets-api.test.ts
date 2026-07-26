@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SHEET_TABS, appendRow } from './sheets-api';
+import { SHEET_TABS, appendRow, handoffMeterReadings } from './sheets-api';
 
 // ── SHEET_TABS constants ──────────────────────────────────────────────────────
 
@@ -214,5 +214,64 @@ describe('appendRow', () => {
       }),
     );
     await expect(appendRow('SomeTab', ['a'])).rejects.toThrow('appendRow failed');
+  });
+});
+
+describe('handoffMeterReadings', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn().mockReturnValue(null),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+      clear: vi.fn(),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('posts readings to the CMMS meter handoff with the server session', async () => {
+    const { useAuthStore } = await import('../stores/auth-store');
+    useAuthStore.setState({ authMode: 'server', sessionToken: 'meter-session-token' });
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({
+        received: 1,
+        accepted: 1,
+        applied: 1,
+        unmatched: [],
+        ambiguous: [],
+        rejected: [],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+
+    await expect(handoffMeterReadings([{
+      unit: 'CA26',
+      hours: 12500.5,
+      recorded_at: '2026-07-25T19:15:00.000Z',
+    }])).resolves.toMatchObject({ applied: 1 });
+
+    const [url, options] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/api/cmms/meter');
+    expect(options.method).toBe('POST');
+    expect(new Headers(options.headers).get('Authorization')).toBe('Bearer meter-session-token');
+    expect(JSON.parse(options.body as string)).toEqual({
+      readings: [{
+        unit: 'CA26',
+        hours: 12500.5,
+        recorded_at: '2026-07-25T19:15:00.000Z',
+      }],
+    });
+  });
+
+  it('surfaces a failed CMMS handoff so callers can queue it', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response('upstream unavailable', { status: 502 }));
+
+    await expect(handoffMeterReadings([{
+      unit: 'TR17',
+      hours: 4100,
+      recorded_at: '2026-07-25T18:00:00.000Z',
+    }])).rejects.toThrow('502');
   });
 });

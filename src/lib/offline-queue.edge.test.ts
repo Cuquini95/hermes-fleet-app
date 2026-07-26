@@ -82,9 +82,12 @@ function makeIDBStub(initialRecords: Array<Record<string, unknown>> = []) {
 
 vi.mock('./sheets-api', () => ({
   appendRow: vi.fn(),
+  handoffMeterReadings: vi.fn(),
 }));
 import { appendRow } from './sheets-api';
 const mockAppendRow = vi.mocked(appendRow);
+import { handoffMeterReadings } from './sheets-api';
+const mockHandoffMeterReadings = vi.mocked(handoffMeterReadings);
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -317,6 +320,38 @@ describe('offline-queue edge cases', () => {
     const result = await flushQueue();
 
     expect(result).toEqual({ succeeded: 0, failed: 0 });
+    expect(mockAppendRow).not.toHaveBeenCalled();
+  });
+
+  it('replays a queued CMMS meter handoff without writing a duplicate sheet row', async () => {
+    const submission = {
+      id: 77,
+      type: 'cmms_meter' as const,
+      data: {
+        readings: [{
+          unit: 'CA26',
+          hours: 12500.5,
+          recorded_at: '2026-07-25T19:15:00.000Z',
+        }],
+      },
+      timestamp: new Date().toISOString(),
+    };
+    const { openFn } = makeIDBStub([submission]);
+    vi.stubGlobal('indexedDB', { open: openFn });
+    mockHandoffMeterReadings.mockResolvedValue({
+      received: 1,
+      accepted: 1,
+      applied: 1,
+      unmatched: [],
+      ambiguous: [],
+      rejected: [],
+    });
+
+    const { flushQueue } = await import('./offline-queue');
+    const result = await flushQueue();
+
+    expect(result).toEqual({ succeeded: 1, failed: 0 });
+    expect(mockHandoffMeterReadings).toHaveBeenCalledWith(submission.data.readings);
     expect(mockAppendRow).not.toHaveBeenCalled();
   });
 });

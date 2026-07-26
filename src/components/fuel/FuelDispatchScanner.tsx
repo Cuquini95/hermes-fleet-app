@@ -6,7 +6,8 @@ import { useRef, useState } from 'react';
 import { Camera, Upload, CheckCircle, X, Loader2, AlertCircle } from 'lucide-react';
 import { useEquipmentList } from '../../hooks/useEquipmentList';
 import { useAuthStore } from '../../stores/auth-store';
-import { ocrFuelDispatch, appendRow, SHEET_TABS, type OcrFuelRow } from '../../lib/sheets-api';
+import { ocrFuelDispatch, appendRow, handoffMeterReadings, SHEET_TABS, type OcrFuelRow } from '../../lib/sheets-api';
+import type { CmmsMeterReading } from '../../lib/cmms-meter';
 import { queueSubmission } from '../../lib/offline-queue';
 import { getNextPM } from '../../data/pm-rules';
 import { mexicoTime } from '../../lib/date-utils';
@@ -229,6 +230,12 @@ export default function FuelDispatchScanner({ onClose }: FuelDispatchScannerProp
           ? getNextPM(model, horometroNum)
           : null;
 
+      const meterReading: CmmsMeterReading = {
+        unit: row.unidad,
+        hours: horometroNum,
+        recorded_at: new Date().toISOString(),
+      };
+
       const horomRow = [
         row.fecha ? isoToDDMMYYYY(row.fecha) : formatDateDDMMYYYY(new Date()),
         row.hora ? `${row.hora}:00` : mexicoTime(),
@@ -258,9 +265,20 @@ export default function FuelDispatchScanner({ onClose }: FuelDispatchScannerProp
       if (results[1].status === 'rejected') {
         queueSubmission({
           type: 'horometro',
-          data: { tab: SHEET_TABS.HOROMETROS, values: horomRow },
+          data: { tab: SHEET_TABS.HOROMETROS, values: horomRow, meterReading },
           timestamp: new Date().toISOString(),
         }).catch(() => {});
+      } else {
+        try {
+          await handoffMeterReadings([meterReading]);
+        } catch (error) {
+          console.error('CMMS meter handoff failed (FuelDispatchScanner):', error);
+          queueSubmission({
+            type: 'cmms_meter',
+            data: { readings: [meterReading] },
+            timestamp: new Date().toISOString(),
+          }).catch(() => {});
+        }
       }
 
       sent++;

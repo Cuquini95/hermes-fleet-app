@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Clock } from 'lucide-react';
+import { ArrowLeft, Clock, RefreshCw } from 'lucide-react';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { getNextPM } from '../data/pm-rules';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
-import { appendRow, SHEET_TABS } from '../lib/sheets-api';
+import { appendRow, handoffMeterReadings, SHEET_TABS, syncExistingHorometros } from '../lib/sheets-api';
+import type { CmmsMeterReading } from '../lib/cmms-meter';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { queueSubmission, flushQueue } from '../lib/offline-queue';
 import { useAuthStore } from '../stores/auth-store';
@@ -16,6 +17,7 @@ type TurnoType = 'inicio' | 'final';
 export default function HorometroPage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
+  const role = useAuthStore((s) => s.role);
   const equipment = useEquipmentList();
   const isOnline = useOnlineStatus();
 
@@ -31,6 +33,8 @@ export default function HorometroPage() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [toastVisible, setToastVisible] = useState(false);
+  const [syncingExisting, setSyncingExisting] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
 
   const selectedEquipment = equipment.find((eq) => eq.unit_id === unidad);
   const horasActual = horometro ? parseFloat(horometro) : null;
@@ -65,9 +69,34 @@ export default function HorometroPage() {
     setShowConfirm(true);
   }
 
+  async function handleHistoricalSync() {
+    if (syncingExisting || (role !== 'supervisor' && role !== 'gerencia')) return;
+    setSyncingExisting(true);
+    setSyncMessage('');
+    try {
+      const result = await syncExistingHorometros();
+      const unresolved = [...result.unmatched, ...result.ambiguous];
+      setSyncMessage(
+        unresolved.length > 0
+          ? `CMMS recibió ${result.accepted} lectura(s); revisar ${unresolved.join(', ')}.`
+          : `CMMS recibió ${result.accepted} lectura(s) históricas.`,
+      );
+    } catch (error: unknown) {
+      console.error('CMMS historical meter sync failed:', error);
+      setSyncMessage('No se pudo sincronizar el histórico; se puede reintentar.');
+    } finally {
+      setSyncingExisting(false);
+    }
+  }
+
   async function handleConfirm() {
     setShowConfirm(false);
 
+    const meterReading: CmmsMeterReading = {
+      unit: unidad,
+      hours: Number(horometro),
+      recorded_at: new Date().toISOString(),
+    };
     const row = [
       mexicoDate(),          // FECHA
       mexicoTime(),          // HORA
@@ -83,17 +112,56 @@ export default function HorometroPage() {
     const label = turno === 'inicio' ? 'Inicio' : 'Final';
 
     if (isOnline) {
+      let sheetWritten = false;
       try {
         await appendRow(SHEET_TABS.HOROMETROS, row);
+        sheetWritten = true;
       } catch (err) {
         console.error('Sheets append failed (Horometros):', err);
-        queueSubmission({ type: 'horometro', data: { tab: SHEET_TABS.HOROMETROS, values: row }, timestamp: new Date().toISOString() }).catch(() => {});
+        try {
+          await queueSubmission({
+            type: 'horometro',
+            data: { tab: SHEET_TABS.HOROMETROS, values: row, meterReading },
+            timestamp: new Date().toISOString(),
+          });
+          setToastMessage(`Horómetro ${label} guardado — hoja y CMMS pendientes de sincronización ✓`);
+        } catch (queueError) {
+          console.error('Horometro queue failed:', queueError);
+          setToastMessage('No se pudo guardar el horómetro. Intenta nuevamente.');
+        }
       }
-      setToastMessage(`Horómetro ${label} de Turno registrado ✓`);
+
+      if (sheetWritten) {
+        try {
+          await handoffMeterReadings([meterReading]);
+          setToastMessage(`Horómetro ${label} de Turno registrado y conectado a CMMS ✓`);
+        } catch (err) {
+          console.error('CMMS meter handoff failed:', err);
+          try {
+            await queueSubmission({
+              type: 'cmms_meter',
+              data: { readings: [meterReading] },
+              timestamp: new Date().toISOString(),
+            });
+            setToastMessage(`Horómetro ${label} registrado — CMMS pendiente de sincronización ✓`);
+          } catch (queueError) {
+            console.error('CMMS meter queue failed:', queueError);
+            setToastMessage(`Horómetro ${label} quedó en la hoja; CMMS requiere reintento ✓`);
+          }
+        }
+      }
     } else {
-      queueSubmission({ type: 'horometro', data: { tab: SHEET_TABS.HOROMETROS, values: row }, timestamp: new Date().toISOString() })
-        .catch((err: unknown) => console.error('Queue failed:', err));
-      setToastMessage('Horómetro guardado — se sincronizará al reconectarse ✓');
+      try {
+        await queueSubmission({
+          type: 'horometro',
+          data: { tab: SHEET_TABS.HOROMETROS, values: row, meterReading },
+          timestamp: new Date().toISOString(),
+        });
+        setToastMessage('Horómetro guardado — hoja y CMMS se sincronizarán al reconectarse ✓');
+      } catch (err: unknown) {
+        console.error('Queue failed:', err);
+        setToastMessage('No se pudo guardar el horómetro. Intenta nuevamente.');
+      }
     }
 
     setToastVisible(true);
@@ -131,6 +199,21 @@ export default function HorometroPage() {
         </button>
         <h1 className="text-xl font-bold text-text">Registro Horómetro</h1>
       </div>
+
+      {(role === 'supervisor' || role === 'gerencia') && (
+        <div className="bg-white rounded-xl p-3 shadow-sm border border-border mb-4">
+          <button
+            type="button"
+            onClick={() => void handleHistoricalSync()}
+            disabled={syncingExisting || !isOnline}
+            className="w-full flex items-center justify-center gap-2 rounded-xl border border-amber text-amber py-3 text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <RefreshCw size={16} className={syncingExisting ? 'animate-spin' : ''} />
+            {syncingExisting ? 'Sincronizando histórico…' : 'Sincronizar histórico con CMMS'}
+          </button>
+          {syncMessage && <p className="text-xs text-text-secondary text-center mt-2">{syncMessage}</p>}
+        </div>
+      )}
 
       {/* Turno toggle */}
       <div className="bg-white rounded-xl p-3 shadow-sm border border-border mb-4">
