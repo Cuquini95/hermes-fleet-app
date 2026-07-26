@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SHEET_TABS, appendRow } from './sheets-api';
+import { SHEET_TABS, appendRow, handoffMeterReadings } from './sheets-api';
 
 // ── SHEET_TABS constants ──────────────────────────────────────────────────────
 
@@ -128,9 +128,7 @@ describe('appendRow', () => {
     expect(body.values).toEqual(['colA', 'colB']);
   });
 
-  it('attaches Authorization Bearer from auth-store sessionToken', async () => {
-    const { useAuthStore } = await import('../stores/auth-store');
-    useAuthStore.setState({ sessionToken: 'test-session-token-xyz' });
+  it('uses the same-origin gateway so the HttpOnly session cookie is included by the browser', async () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(JSON.stringify({ success: true }), {
         status: 200,
@@ -140,10 +138,10 @@ describe('appendRow', () => {
 
     await appendRow('AuthTab', ['a']);
 
-    const [, options] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    const [url, options] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url.startsWith('/')).toBe(true);
     const headers = new Headers(options.headers);
-    expect(headers.get('Authorization')).toBe('Bearer test-session-token-xyz');
-    useAuthStore.setState({ sessionToken: null });
+    expect(headers.has('Authorization')).toBe(false);
   });
 
   it('uses fallback error message when json.success=false with no error field', async () => {
@@ -154,5 +152,62 @@ describe('appendRow', () => {
       }),
     );
     await expect(appendRow('SomeTab', ['a'])).rejects.toThrow('appendRow failed');
+  });
+});
+
+describe('handoffMeterReadings', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn().mockReturnValue(null),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+      clear: vi.fn(),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('posts readings to the same-origin CMMS meter handoff', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({
+        received: 1,
+        accepted: 1,
+        applied: 1,
+        unmatched: [],
+        ambiguous: [],
+        rejected: [],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+
+    await expect(handoffMeterReadings([{
+      unit: 'CA26',
+      hours: 12500.5,
+      recorded_at: '2026-07-25T19:15:00.000Z',
+    }])).resolves.toMatchObject({ applied: 1 });
+
+    const [url, options] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/api/cmms/meter');
+    expect(options.method).toBe('POST');
+    expect(new Headers(options.headers).has('Authorization')).toBe(false);
+    expect(JSON.parse(options.body as string)).toEqual({
+      readings: [{
+        unit: 'CA26',
+        hours: 12500.5,
+        recorded_at: '2026-07-25T19:15:00.000Z',
+      }],
+    });
+  });
+
+  it('surfaces a failed CMMS handoff so callers can queue it', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response('upstream unavailable', { status: 502 }));
+
+    await expect(handoffMeterReadings([{
+      unit: 'TR17',
+      hours: 4100,
+      recorded_at: '2026-07-25T18:00:00.000Z',
+    }])).rejects.toThrow('502');
   });
 });

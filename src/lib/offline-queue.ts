@@ -1,10 +1,11 @@
 // Offline queue replays pending submissions through the fleet data API.
 // appendRow calls the VPS gateway which routes to PocketBase (or Sheets
 // in rollback mode) — no changes needed here when switching backends.
-import { appendRow } from './sheets-api';
+import { appendRow, handoffMeterReadings } from './sheets-api';
 import { tryUploadPhotos } from './photo-upload-safe';
 import { uploadFallaPhotos } from './falla-submit';
 import { reportCmmsDamage, type CmmsDamageReport } from './cmms-events';
+import { isCmmsMeterReading, type CmmsMeterReading } from './cmms-meter';
 
 const DB_NAME = 'hermes-offline';
 const STORE_NAME = 'pending-submissions';
@@ -22,7 +23,7 @@ function openDB(): Promise<IDBDatabase> {
 
 export interface PendingSubmission {
   id?: number;
-  type: 'dvir' | 'falla' | 'fuel' | 'trip' | 'horometro' | 'sticker_inspection' | 'cmms_damage';
+  type: 'dvir' | 'falla' | 'fuel' | 'trip' | 'horometro' | 'cmms_meter' | 'sticker_inspection' | 'cmms_damage';
   data: Record<string, unknown>;
   timestamp: string;
 }
@@ -94,6 +95,28 @@ export async function flushQueue(): Promise<{ succeeded: number; failed: number 
         photoColumnIndex?: number;
       };
       const cmmsDamage = submission.data.cmmsDamage as CmmsDamageReport | undefined;
+      const queuedMeterReadings = Array.isArray(submission.data.readings)
+        ? submission.data.readings.filter(isCmmsMeterReading)
+        : [];
+      const queuedMeterReading = isCmmsMeterReading(submission.data.meterReading)
+        ? submission.data.meterReading
+        : null;
+
+      if (submission.type === 'cmms_meter') {
+        if (queuedMeterReadings.length === 0) {
+          if (submission.id !== undefined) await clearSubmission(submission.id);
+          continue;
+        }
+        try {
+          await handoffMeterReadings(queuedMeterReadings);
+          if (submission.id !== undefined) await clearSubmission(submission.id);
+          succeeded++;
+        } catch {
+          failed++;
+        }
+        continue;
+      }
+
       if (submission.type === 'cmms_damage') {
         if (!cmmsDamage) {
           if (submission.id !== undefined) await clearSubmission(submission.id);
@@ -137,6 +160,22 @@ export async function flushQueue(): Promise<{ succeeded: number; failed: number 
           replayValues[photoColumnIndex] = photoUrls.join(', ');
         }
         await appendRow(tab, replayValues);
+
+        // A queued horometer has to reach the source sheet before its CMMS
+        // handoff. If CMMS is temporarily unavailable after the sheet write,
+        // split the retry into a meter-only entry so the sheet row is not
+        // appended a second time.
+        if (submission.type === 'horometro' && queuedMeterReading) {
+          try {
+            await handoffMeterReadings([queuedMeterReading]);
+          } catch {
+            await queueSubmission({
+              type: 'cmms_meter',
+              data: { readings: [queuedMeterReading] as CmmsMeterReading[] },
+              timestamp: new Date().toISOString(),
+            });
+          }
+        }
         if (submission.id !== undefined) await clearSubmission(submission.id);
         succeeded++;
       } catch {

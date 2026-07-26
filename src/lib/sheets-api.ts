@@ -10,6 +10,7 @@
  * between backends; the VPS env var controls it transparently.
  */
 import { HERMES_API_BASE } from './hermes-api-base';
+import { parseHorometroSheetRows, type CmmsMeterReading } from './cmms-meter';
 
 const HERMES_API = HERMES_API_BASE;
 
@@ -122,6 +123,58 @@ export async function appendRow(tab: string, values: string[]): Promise<void> {
   if (!json.success) {
     throw new Error(json.error ?? 'appendRow failed — row not written');
   }
+}
+
+export interface CmmsMeterHandoffResult {
+  received: number;
+  accepted: number;
+  applied: number;
+  unmatched: string[];
+  ambiguous: string[];
+  rejected: Array<string | null>;
+}
+
+/** Send one or more already-persisted Hermes meter readings to CMMS. */
+export async function handoffMeterReadings(
+  readings: readonly CmmsMeterReading[],
+): Promise<CmmsMeterHandoffResult> {
+  if (readings.length === 0) {
+    return { received: 0, accepted: 0, applied: 0, unmatched: [], ambiguous: [], rejected: [] };
+  }
+
+  const response = await fetchWithRetry(`${HERMES_API}/api/cmms/meter`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ readings }),
+  });
+  const text = await response.text();
+  let payload: Partial<CmmsMeterHandoffResult> & { detail?: string } = {};
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    payload = {};
+  }
+  if (!response.ok) {
+    throw new Error(`CMMS meter handoff error ${response.status}: ${payload.detail || text}`);
+  }
+
+  return {
+    received: Number(payload.received || 0),
+    accepted: Number(payload.accepted || 0),
+    applied: Number(payload.applied || 0),
+    unmatched: Array.isArray(payload.unmatched) ? payload.unmatched.filter((unit): unit is string => typeof unit === 'string') : [],
+    ambiguous: Array.isArray(payload.ambiguous) ? payload.ambiguous.filter((unit): unit is string => typeof unit === 'string') : [],
+    rejected: Array.isArray(payload.rejected) ? payload.rejected.filter((unit): unit is string | null => typeof unit === 'string' || unit === null) : [],
+  };
+}
+
+/**
+ * Explicitly backfill the latest valid reading from the historical Hermes tab.
+ * This reads the source first and only then sends normalized values to CMMS.
+ */
+export async function syncExistingHorometros(): Promise<CmmsMeterHandoffResult> {
+  const rows = await readRange(SHEET_TABS.HOROMETROS);
+  return handoffMeterReadings(parseHorometroSheetRows(rows));
 }
 
 /**
