@@ -1,4 +1,4 @@
-import { requireSession } from '../_lib/session-auth.js';
+import { requireSession } from './session-auth.js';
 
 const DEFAULT_CMMS_API_BASE = 'https://gtp-cmms.vercel.app';
 const DEFAULT_TIMEOUT_MS = 12_000;

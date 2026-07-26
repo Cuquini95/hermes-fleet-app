@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import handler from '../../api/cmms/damage.js';
+import handler from '../../api/_lib/cmms-damage.js';
 import { signSession } from '../../api/_lib/session-auth.js';
 
 const SESSION_SECRET = 'damage-test-session-secret-that-is-long-enough';

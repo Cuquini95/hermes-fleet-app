@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createMeterHandler, dedupeLatestPerUnit, normalizeReading } from '../../api/cmms/meter.js';
+import { createMeterHandler, dedupeLatestPerUnit, normalizeReading } from '../../api/_lib/cmms-meter.js';
 
 afterEach(() => {
   vi.restoreAllMocks();

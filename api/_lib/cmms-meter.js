@@ -20,8 +20,8 @@
  * so a replayed reading collides on (source='hermes-horometro', legacy_id)
  * instead of double-counting.
  */
-import { requireSession } from '../_lib/session-auth.js';
-import { rejectIfRateLimited } from '../_lib/rate-limit.js';
+import { requireSession } from './session-auth.js';
+import { rejectIfRateLimited } from './rate-limit.js';
 
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_READINGS = 500;
