@@ -14,7 +14,7 @@ interface AuthState {
   assignedUnits: string[];
   isAuthenticated: boolean;
   sessionChecked: boolean;
-  login: (role: AppRole, pin: string) => Promise<boolean>;
+  login: (role: AppRole) => Promise<boolean>;
   validateSession: () => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -41,14 +41,13 @@ export const useAuthStore = create<AuthState>()(
       ...cleared,
       sessionChecked: false,
 
-      login: async (role: AppRole, pin: string): Promise<boolean> => {
-        if (!/^\d{4,8}$/.test(pin)) return false;
+      login: async (role: AppRole): Promise<boolean> => {
         try {
           const response = await fetch('/api/auth/login', {
             method: 'POST',
             credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ role, pin }),
+            body: JSON.stringify({ role }),
           });
           if (!response.ok) return false;
           const profile: unknown = await response.json();

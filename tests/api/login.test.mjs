@@ -48,26 +48,26 @@ test('rejects non-POST methods', async () => {
   assert.equal(res.state.statusCode, 405);
 });
 
-test('fails closed when role PIN configuration is missing', async () => {
-  delete process.env.HERMES_PIN_HASH_OPERADOR;
+test('fails closed when session signing secret is missing', async () => {
+  delete process.env.HERMES_AUTH_SECRET;
   const { default: handler } = await import(`../../api/auth/login.js?t=${Date.now() + 1}`);
   const res = mockResponse();
-  await handler(mockRequest('POST', { role: 'operador', pin: PIN }), res);
+  await handler(mockRequest('POST', { role: 'operador' }), res);
   assert.equal(res.state.statusCode, 503);
 });
 
-test('rejects invalid credentials with 401', async () => {
+test('rejects unknown roles with 401', async () => {
   const { default: handler } = await import(`../../api/auth/login.js?t=${Date.now() + 2}`);
   const res = mockResponse();
-  await handler(mockRequest('POST', { role: 'operador', pin: '1111' }), res);
+  await handler(mockRequest('POST', { role: 'admin' }), res);
   assert.equal(res.state.statusCode, 401);
   assert.match(res.state.body, /inv/i);
 });
 
-test('issues an HttpOnly session cookie for valid credentials', async () => {
+test('issues an HttpOnly session cookie for a valid role without a PIN', async () => {
   const { default: handler } = await import(`../../api/auth/login.js?t=${Date.now() + 3}`);
   const res = mockResponse();
-  await handler(mockRequest('POST', { role: 'operador', pin: PIN }), res);
+  await handler(mockRequest('POST', { role: 'operador' }), res);
   assert.equal(res.state.statusCode, 200);
   const parsed = JSON.parse(res.state.body);
   assert.equal(parsed.role, 'operador');

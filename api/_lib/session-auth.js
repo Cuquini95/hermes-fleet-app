@@ -60,6 +60,10 @@ export function requireSession(req, res, allowedRoles) {
   return claims;
 }
 
+export function isRole(role) {
+  return ROLES.has(role);
+}
+
 export function verifyRolePin(role, pin) {
   if (!ROLES.has(role) || !/^\d{4,8}$/.test(pin || '')) return false;
   const key = `HERMES_PIN_HASH_${role.toUpperCase()}`;
