@@ -9,7 +9,7 @@ import { pathToFileURL } from 'node:url';
 const local = process.env.HERMES_TEST_LOCAL === '1' && !process.env.VERCEL;
 const preview = process.env.VERCEL_ENV === 'preview'
   && process.env.VERCEL_GIT_COMMIT_REF === 'codex/hermes-integration-recovery';
-if (!local && (!preview || Date.now() > 1794442077790)) process.exit(0);
+if (!local && (!preview || Date.now() > 1794442244110)) process.exit(0);
 
 const require = createRequire(resolve('package.json'));
 const { chromium } = require('playwright');
@@ -96,12 +96,14 @@ globalThis.fetch = async (url, options) => {
     && body.text.includes('+25%'), 'Alert must contain the isolated price change');
   trace.push('telegram');
   outgoing.push(body.text);
+  console.log('hermes_gasto_telegram_send_started');
   if (local) return Response.json({ ok: true, result: { message_id: 1 } });
   const response = await networkFetch(url, options);
   const payload = await response.clone().json();
   assert.ok(response.ok && payload.ok && payload.result.chat.type === 'private'
     && String(payload.result.chat.id) === chatId
     && Number.isSafeInteger(payload.result.message_id), 'Telegram delivery not confirmed');
+  console.log('hermes_gasto_telegram_api_accepted');
   return response;
 };
 
@@ -199,6 +201,8 @@ try {
   stage = 'expense_form';
   await page.goto(origin + '/gastos/nuevo');
   await page.getByRole('heading', { name: 'Nuevo Gasto' }).waitFor();
+  const consent = page.getByRole('button', { name: 'Cerrar aviso temporalmente' });
+  if (await consent.isVisible()) await consent.click();
   await page.getByPlaceholder('Nombre del proveedor').fill(supplier);
   await page.locator('select').filter({ has: page.locator('option[value="PRUEBA-01"]') }).selectOption('PRUEBA-01');
   await page.getByPlaceholder('0.00').first().fill('125');
@@ -207,10 +211,19 @@ try {
   await page.locator('input[type="number"]').last().fill('125');
   assert.equal(outgoing.length, 0);
 
-  stage = 'save_and_alert';
-  const comparison = page.waitForResponse((response) => response.url() === origin + '/api/parts/import');
-  await page.getByRole('button', { name: 'Registrar Gasto', exact: true }).click();
-  const response = await comparison;
+  stage = 'form_validation';
+  assert.ok(await page.locator('form').evaluate((form) => form.checkValidity()), 'Synthetic expense form is invalid');
+  stage = 'submit_click';
+  const submit = page.getByRole('button', { name: 'Registrar Gasto', exact: true });
+  await submit.click({ trial: true });
+  console.log('hermes_gasto_submit_actionable');
+  stage = 'save_and_compare';
+  const [response] = await Promise.all([
+    page.waitForResponse((r) => r.url() === origin + '/api/parts/import'),
+    submit.click(),
+  ]);
+  console.log('hermes_gasto_compare_status ' + response.status());
+  stage = 'response_and_ui';
   assert.equal(response.status(), 200);
   const result = await response.json();
   assert.equal(result.telegram_sent, true);
@@ -232,6 +245,7 @@ try {
 } catch (error) {
   console.error('hermes_gasto_failed_stage ' + stage);
   if (local) console.error(error);
+  else console.error('hermes_gasto_diagnostics ' + JSON.stringify({ trace, outgoing: outgoing.length, errorType: error.name }));
   process.exitCode = 1;
 } finally {
   await browser?.close();
