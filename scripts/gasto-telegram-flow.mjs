@@ -9,7 +9,7 @@ import { pathToFileURL } from 'node:url';
 const local = process.env.HERMES_TEST_LOCAL === '1' && !process.env.VERCEL;
 const preview = process.env.VERCEL_ENV === 'preview'
   && process.env.VERCEL_GIT_COMMIT_REF === 'codex/hermes-integration-recovery';
-if (!local && (!preview || Date.now() > 1794442244110)) process.exit(0);
+if (!local && (!preview || Date.now() > 1794442331704)) process.exit(0);
 
 const require = createRequire(resolve('package.json'));
 const { chromium } = require('playwright');
@@ -93,7 +93,7 @@ globalThis.fetch = async (url, options) => {
   assert.ok(outgoing.length === 0, 'Duplicate alert blocked');
   assert.ok(body.text.includes(expectedCode) && body.text.includes(description)
     && body.text.includes('$100.00') && body.text.includes('$125.00')
-    && body.text.includes('+25%'), 'Alert must contain the isolated price change');
+    && body.text.includes('(+25.0%)'), 'Alert must contain the isolated price change');
   trace.push('telegram');
   outgoing.push(body.text);
   console.log('hermes_gasto_telegram_send_started');
