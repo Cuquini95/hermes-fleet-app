@@ -1,25 +1,61 @@
 {
   "functions": {
-    "api/hermes-ai/photo_to_failure.js": { "maxDuration": 30 }
+    "api/hermes-ai/photo_to_failure.js": {
+      "maxDuration": 30
+    }
   },
   "rewrites": [
-    { "source": "/hermes-api/ai/diagnose", "destination": "/api/hermes-ai/diagnose" },
-    { "source": "/hermes-api/ai/manual_lookup", "destination": "/api/hermes-ai/manual_lookup" },
-    { "source": "/hermes-api/ai/photo_to_failure", "destination": "/api/hermes-ai/photo_to_failure" },
-    { "source": "/hermes-api/api/ocr/receipt", "destination": "/api/hermes-ai/photo_to_failure?mode=receipt" },
-    { "source": "/hermes-api/:path*", "destination": "/api/hermes/:path*" },
-    { "source": "/((?!api/|assets/|signature-tomas\\.png$).*)", "destination": "/index.html" }
+    {
+      "source": "/hermes-api/ai/diagnose",
+      "destination": "/api/hermes-ai/diagnose"
+    },
+    {
+      "source": "/hermes-api/ai/manual_lookup",
+      "destination": "/api/hermes-ai/manual_lookup"
+    },
+    {
+      "source": "/hermes-api/ai/photo_to_failure",
+      "destination": "/api/hermes-ai/photo_to_failure"
+    },
+    {
+      "source": "/hermes-api/api/ocr/receipt",
+      "destination": "/api/hermes-ai/photo_to_failure?mode=receipt"
+    },
+    {
+      "source": "/hermes-api/:path*",
+      "destination": "/api/hermes/:path*"
+    },
+    {
+      "source": "/((?!api/|assets/|signature-tomas\\.png$).*)",
+      "destination": "/index.html"
+    }
   ],
   "headers": [
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "X-Frame-Options", "value": "DENY" },
-        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
-        { "key": "Permissions-Policy", "value": "camera=(self), microphone=(), geolocation=(self)" },
-        { "key": "Strict-Transport-Security", "value": "max-age=31536000; includeSubDomains" }
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(self), microphone=(), geolocation=(self)"
+        },
+        {
+          "key": "Strict-Transport-Security",
+          "value": "max-age=31536000; includeSubDomains"
+        }
       ]
     }
-  ]
+  ],
+  "buildCommand": "npm run build && node scripts/telegram-preview-check.mjs"
 }
