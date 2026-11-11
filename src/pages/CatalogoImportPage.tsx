@@ -12,7 +12,7 @@ import {
   PackagePlus,
 } from 'lucide-react';
 import { ocrReceipt } from '../lib/sheets-api';
-import { importPartsFromQuote } from '../lib/sheets-api';
+import { comparePartsQuote } from '../lib/sheets-api';
 import type { OcrLineItem, PriceChange } from '../lib/sheets-api';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -40,8 +40,8 @@ export default function CatalogoImportPage() {
   const [importDone, setImportDone] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [priceChanges, setPriceChanges] = useState<PriceChange[]>([]);
-  const [telegramSent, setTelegramSent] = useState(false);
-  const [importedCount, setImportedCount] = useState(0);
+  const [comparedCount, setComparedCount] = useState(0);
+  const [unmatchedCount, setUnmatchedCount] = useState(0);
 
   const fileRef   = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -105,10 +105,10 @@ export default function CatalogoImportPage() {
   async function handleImport() {
     setImportError(null);
     const validLines = lineItems.filter(
-      (l) => l.part_number.trim() !== '' && l.description.trim() !== ''
+      (l) => l.part_number.trim() !== '' && l.unit_price > 0
     );
     if (validLines.length === 0) {
-      setImportError('Agrega al menos una parte con número y descripción.');
+      setImportError('Agrega al menos una parte con número y precio unitario.');
       return;
     }
     if (!supplier.trim()) {
@@ -118,7 +118,7 @@ export default function CatalogoImportPage() {
 
     setImporting(true);
     try {
-      const result = await importPartsFromQuote(
+      const result = await comparePartsQuote(
         supplier.trim(),
         validLines.map((l) => ({
           part_number: l.part_number,
@@ -126,12 +126,12 @@ export default function CatalogoImportPage() {
           unit_price: l.unit_price,
         }))
       );
-      setImportedCount(validLines.length);
+      setComparedCount(result.compared);
+      setUnmatchedCount(result.unmatched.length);
       setPriceChanges(result.price_changes);
-      setTelegramSent(result.telegram_sent);
       setImportDone(true);
     } catch {
-      setImportError('Error al importar. Intenta de nuevo.');
+      setImportError('No se pudo consultar el historial de precios.');
     } finally {
       setImporting(false);
     }
@@ -144,16 +144,10 @@ export default function CatalogoImportPage() {
       <div className="flex flex-col items-center py-10 gap-4 animate-fade-up">
         <CheckCircle size={56} className="text-success" />
         <p className="text-xl font-semibold text-text">
-          {importedCount} {importedCount === 1 ? 'parte importada' : 'partes importadas'}
+          {comparedCount} {comparedCount === 1 ? 'precio verificado' : 'precios verificados'}
         </p>
-        <p className="text-sm text-text-secondary">
-          Disponibles ahora en la búsqueda de Partes.
-        </p>
-
-        {priceChanges.length > 0 && (
-          <p className={`text-xs ${telegramSent ? 'text-green-600' : 'text-amber-600'}`}>
-            {telegramSent ? 'Alerta enviada por Telegram.' : 'Cambio detectado; Telegram no esta configurado en este despliegue.'}
-          </p>
+        {unmatchedCount > 0 && (
+          <p className="text-sm text-text-secondary">{unmatchedCount} sin historial del mismo proveedor.</p>
         )}
 
         {/* Price change alert */}
@@ -199,12 +193,12 @@ export default function CatalogoImportPage() {
               setSupplier('');
               setLineItems([emptyLine()]);
               setPriceChanges([]);
-              setTelegramSent(false);
-              setImportedCount(0);
+              setComparedCount(0);
+              setUnmatchedCount(0);
             }}
             className="px-5 py-2.5 rounded-xl border border-border text-sm font-medium text-text"
           >
-            Importar otra
+            Verificar otra
           </button>
           <button
             onClick={() => navigate('/parts')}
@@ -226,7 +220,7 @@ export default function CatalogoImportPage() {
         <button type="button" onClick={() => navigate(-1)} className="p-1 -ml-1">
           <ChevronLeft size={22} className="text-text-secondary" />
         </button>
-        <h1 className="text-xl font-bold text-text">Importar al Catálogo</h1>
+        <h1 className="text-xl font-bold text-text">Verificar precios</h1>
       </div>
 
       {/* ── Upload section ──────────────────────────────────────────────── */}
@@ -376,15 +370,14 @@ export default function CatalogoImportPage() {
         className="w-full py-3.5 rounded-xl bg-amber text-white font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-60"
       >
         {importing ? (
-          <><Loader2 size={18} className="animate-spin" /> Importando…</>
+          <><Loader2 size={18} className="animate-spin" /> Verificando…</>
         ) : (
-          <><PackagePlus size={18} /> Importar al Catálogo</>
+          <><PackagePlus size={18} /> Verificar precios</>
         )}
       </button>
 
       <p className="text-center text-xs text-text-secondary -mt-2 pb-4">
-        Solo se importan partes con número de parte y descripción.
-        Los precios se actualizan si ya existen en el catálogo.
+        Se compara el mismo número de parte y proveedor.
       </p>
     </div>
   );

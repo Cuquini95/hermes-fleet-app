@@ -1,4 +1,4 @@
-import { buildManualLookupResponse, readJsonBody } from '../_lib/hermes-ai.js';
+import { buildManualLookupResponse, readJsonBody } from '../../lib/hermes-ai.js';
 import { requireSession } from '../_lib/session-auth.js';
 
 export default async function handler(req, res) {

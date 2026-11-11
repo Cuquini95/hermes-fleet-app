@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { useGastosStore } from '../stores/gastos-store';
-import { ocrReceipt, importPartsFromQuote } from '../lib/sheets-api';
+import { ocrReceipt, comparePartsQuote } from '../lib/sheets-api';
 import type { GastoTipo, MetodoPago } from '../stores/gastos-store';
 import type { OcrLineItem, PriceChange } from '../lib/sheets-api';
 import { uploadPhoto } from '../lib/photo-upload';
@@ -85,6 +85,9 @@ export default function NuevoGastoPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [priceChanges, setPriceChanges] = useState<PriceChange[]>([]);
   const [telegramSent, setTelegramSent] = useState(false);
+  const [priceMessage, setPriceMessage] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const submitLock = useRef(false);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -204,61 +207,62 @@ export default function NuevoGastoPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (submitLock.current) return;
+    submitLock.current = true;
+    setSubmitting(true);
     setSubmitError(null);
-
-    // If OCR didn't upload a photo but user manually captured one, upload it now
-    let finalImageUrl = imageUrl;
-    const firstReceipt = receiptPhotos[0];
-    if (!finalImageUrl && firstReceipt) {
-      const urls = await tryUploadPhotos([firstReceipt.file], 'receipts');
-      finalImageUrl = urls[0] ?? '';
-    }
-
-    const commonFields = {
-      tipo,
-      proveedor,
-      rfc_proveedor: rfcProveedor,
-      folio_factura: folioFactura,
-      ot_id: otId,
-      metodo_pago: metodoPago,
-      imagen_url: finalImageUrl,
-      solicitante: userName,
-      line_items: lineItems.filter((l) => l.description.trim() !== ''),
-    };
+    setPriceMessage('');
 
     try {
+      // If OCR didn't upload a photo but user manually captured one, upload it now
+      let finalImageUrl = imageUrl;
+      const firstReceipt = receiptPhotos[0];
+      if (!finalImageUrl && firstReceipt) {
+        const urls = await tryUploadPhotos([firstReceipt.file], 'receipts');
+        finalImageUrl = urls[0] ?? '';
+      }
+
+      const commonFields = {
+        tipo,
+        proveedor,
+        rfc_proveedor: rfcProveedor,
+        folio_factura: folioFactura,
+        ot_id: otId,
+        metodo_pago: metodoPago,
+        imagen_url: finalImageUrl,
+        solicitante: userName,
+        line_items: lineItems.filter((l) => l.description.trim() !== ''),
+      };
+
+      const expenseIds: string[] = [];
       if (unitMode === 'single') {
-        await saveGasto({ ...commonFields, subtotal, iva, total, unidad });
+        expenseIds.push(await saveGasto({ ...commonFields, subtotal, iva, total, unidad }));
       } else {
         for (const entry of splitEntries) {
           const proportion = total > 0 ? entry.amount / total : 1 / splitEntries.length;
-          await saveGasto({
+          expenseIds.push(await saveGasto({
             ...commonFields,
             unidad: entry.unitId,
             total: entry.amount,
             subtotal: parseFloat((subtotal * proportion).toFixed(2)),
             iva: parseFloat((iva * proportion).toFixed(2)),
-          });
+          }));
         }
       }
 
-      // Auto-import parts into catalog when saving a Refaccion quote.
-      // Returns any price changes so we can show an alert before navigating away.
-      if (tipo === 'Refaccion' && commonFields.line_items.length > 0) {
-        const result = await importPartsFromQuote(
-          proveedor,
-          commonFields.line_items.map((l) => ({
-            part_number: l.part_number,
-            description: l.description,
-            unit_price: l.unit_price,
-          }))
-        );
-        if (result.price_changes.length > 0) {
+      if (tipo === 'Refaccion' && commonFields.line_items.some((line) => line.part_number && line.unit_price > 0)) {
+        try {
+          const result = await comparePartsQuote(proveedor, commonFields.line_items, { expenseIds, notify: true });
           setPriceChanges(result.price_changes);
           setTelegramSent(result.telegram_sent);
-          // Give the user time to read the alert before navigating
+          if (result.unmatched.length) setPriceMessage(`Sin historial comparable para ${result.unmatched.length} repuesto(s).`);
+          if (result.price_changes.length || result.unmatched.length) {
+            setSubmitDone(true);
+            return;
+          }
+        } catch {
+          setPriceMessage('El gasto se guardó. La verificación de precios está pendiente.');
           setSubmitDone(true);
-          setTimeout(() => navigate(-1), 6000);
           return;
         }
       }
@@ -267,6 +271,9 @@ export default function NuevoGastoPage() {
       setTimeout(() => navigate(-1), 1800);
     } catch (err: unknown) {
       setSubmitError(err instanceof Error ? err.message : 'Error al guardar');
+    } finally {
+      submitLock.current = false;
+      setSubmitting(false);
     }
   }
 
@@ -317,14 +324,16 @@ export default function NuevoGastoPage() {
               })}
             </div>
             <p className="text-xs text-amber-600 mt-3 text-center">
-              {telegramSent ? 'Se envio una alerta por Telegram.' : 'Cambio detectado; Telegram no esta configurado en este despliegue.'}
-              {' '}Regresando en unos segundos...
+              {telegramSent ? 'Alerta enviada por Telegram.' : 'La alerta de Telegram quedó pendiente.'}
             </p>
           </div>
         )}
 
-        {priceChanges.length === 0 && (
-          <p className="text-sm text-text-secondary">Regresando…</p>
+        {priceMessage && <p role="status" className="text-sm text-text-secondary">{priceMessage}</p>}
+        {(priceMessage || priceChanges.length > 0) && (
+          <button type="button" onClick={() => navigate(-1)} className="rounded-xl bg-amber px-5 py-3 font-semibold text-white">
+            Listo
+          </button>
         )}
       </div>
     );
@@ -729,10 +738,10 @@ export default function NuevoGastoPage() {
       {/* ── Submit ───────────────────────────────────────────────────────── */}
       <button
         type="submit"
-        disabled={saving || (unitMode === 'multi' && !splitOk)}
+        disabled={saving || submitting || (unitMode === 'multi' && !splitOk)}
         className="w-full bg-amber text-white font-semibold rounded-xl py-3.5 flex items-center justify-center gap-2 disabled:opacity-60"
       >
-        {saving ? (
+        {saving || submitting ? (
           <>
             <Loader2 size={18} className="animate-spin" />
             Guardando…

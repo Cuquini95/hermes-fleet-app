@@ -1,57 +1,6 @@
 import { requireSession } from '../_lib/session-auth.js';
-
-function normalizePartNumber(value) {
-  return String(value ?? '').trim().toUpperCase();
-}
-
-function toNumber(value) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function round2(value) {
-  return Math.round(value * 100) / 100;
-}
-
-async function findCurrentPart(partNumber) {
-  const baseUrl = process.env.HERMES_PARTS_SEARCH_URL;
-  if (!baseUrl) throw new Error('HERMES_PARTS_SEARCH_URL is not configured');
-  const url = `${baseUrl}?q=${encodeURIComponent(partNumber)}`;
-  const res = await fetch(url);
-  if (!res.ok) return null;
-
-  const rows = await res.json();
-  if (!Array.isArray(rows)) return null;
-
-  const normalized = normalizePartNumber(partNumber);
-  return rows.find((row) => normalizePartNumber(row.part_number) === normalized) ?? null;
-}
-
-function buildPriceChanges(supplier, parts, currentRows) {
-  const changes = [];
-
-  for (const part of parts) {
-    const partNumber = normalizePartNumber(part.part_number);
-    const newPrice = toNumber(part.unit_price);
-    const current = currentRows.get(partNumber);
-    const oldPrice = toNumber(current?.unit_price);
-
-    if (!partNumber || newPrice <= 0 || oldPrice <= 0 || round2(newPrice) === round2(oldPrice)) {
-      continue;
-    }
-
-    changes.push({
-      part_number: partNumber,
-      description: String(part.description || current?.description || '').trim(),
-      old_price: round2(oldPrice),
-      new_price: round2(newPrice),
-      pct_change: oldPrice > 0 ? round2(((newPrice - oldPrice) / oldPrice) * 100) : 0,
-      supplier: String(supplier || current?.supplier || '').trim(),
-    });
-  }
-
-  return changes;
-}
+import { readHermesRows } from '../_lib/hermes-google-sheets.js';
+import { PARTS_RANGE, EXPENSES_RANGE, searchInventory, recoverExpensePrices, compareQuote } from '../_lib/hermes-part-prices.js';
 
 function formatMoney(value) {
   return `$${Number(value).toLocaleString('es-MX', {
@@ -86,9 +35,7 @@ function buildTelegramMessage(changes) {
 
 async function sendTelegramPriceAlert(changes) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_PRICE_ALERT_CHAT_ID
-    || process.env.TELEGRAM_REPORT_CHAT_ID
-    || process.env.TELEGRAM_CHAT_ID;
+  const chatId = process.env.TELEGRAM_PRICE_ALERT_CHAT_ID;
 
   if (!token || !chatId || changes.length === 0) {
     return { sent: false, reason: !token || !chatId ? 'telegram_env_missing' : 'no_changes' };
@@ -96,6 +43,7 @@ async function sendTelegramPriceAlert(changes) {
 
   const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: 'POST',
+    signal: AbortSignal.timeout(6000),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       chat_id: chatId,
@@ -111,44 +59,51 @@ async function sendTelegramPriceAlert(changes) {
   return { sent: true };
 }
 
+const WORKSHOP = ['mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
+
 export default async function handler(req, res) {
+  res.setHeader('Cache-Control', 'no-store');
   if (req.method === 'OPTIONS') {
-    res.setHeader('Allow', 'POST, OPTIONS');
+    res.setHeader('Allow', 'GET, POST, OPTIONS');
     return res.status(204).end();
   }
-
-  if (req.method !== 'POST') {
-    res.setHeader('Allow', 'POST, OPTIONS');
-    return res.status(405).json({ error: 'Method Not Allowed' });
+  if (req.method !== 'GET' && req.method !== 'POST') {
+    res.setHeader('Allow', 'GET, POST, OPTIONS');
+    return res.status(405).json({ error: 'Método no permitido' });
   }
-  if (!requireSession(req, res, ['jefe_taller', 'coordinador', 'supervisor', 'gerencia'])) return;
+  if (!requireSession(req, res, req.method === 'GET' ? WORKSHOP : WORKSHOP.slice(1))) return;
 
   try {
+    if (req.method === 'GET') {
+      const query = String(req.query?.q ?? '').trim().slice(0, 120);
+      if (!query) return res.status(200).json([]);
+      return res.status(200).json(searchInventory(await readHermesRows(PARTS_RANGE), query, req.query?.equipo));
+    }
+
     const supplier = String(req.body?.supplier ?? '').trim();
-    const parts = Array.isArray(req.body?.parts) ? req.body.parts : [];
-    const validParts = parts.filter((part) => normalizePartNumber(part?.part_number) && toNumber(part?.unit_price) > 0);
-
-    const currentRows = new Map();
-    await Promise.all(validParts.map(async (part) => {
-      const partNumber = normalizePartNumber(part.part_number);
-      const current = await findCurrentPart(partNumber);
-      if (current) currentRows.set(partNumber, current);
-    }));
-
-    const priceChanges = buildPriceChanges(supplier, validParts, currentRows);
-    const telegram = await sendTelegramPriceAlert(priceChanges);
-
+    const parts = req.body?.parts;
+    const excludedIds = Array.isArray(req.body?.expense_ids) ? req.body.expense_ids.slice(0, 100) : [];
+    if (!supplier || !Array.isArray(parts) || parts.length === 0 || parts.length > 100) {
+      return res.status(400).json({ error: 'Indica el proveedor y entre 1 y 100 líneas.' });
+    }
+    if (process.env.HERMES_EXPENSE_PRICE_CURRENCY !== 'MXN') {
+      return res.status(503).json({ error: 'La moneda del historial está pendiente de confirmar.' });
+    }
+    const rows = await readHermesRows(EXPENSES_RANGE);
+    const prices = recoverExpensePrices(rows, supplier, excludedIds);
+    const { compared, unmatched, changes } = compareQuote(parts, supplier, prices);
+    const telegram = changes.length && req.body?.notify === true
+      ? await sendTelegramPriceAlert(changes).catch(() => ({ sent: false, reason: 'telegram_unavailable' }))
+      : { sent: false, reason: 'not_requested' };
     return res.status(200).json({
       success: true,
-      imported: validParts.length,
-      price_changes: priceChanges,
+      compared,
+      unmatched,
+      price_changes: changes,
       telegram_sent: telegram.sent,
       telegram_reason: telegram.reason,
     });
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'parts_import_failed',
-    });
+  } catch {
+    return res.status(503).json({ error: 'No se pudo leer el historial en Google Sheets.' });
   }
 }

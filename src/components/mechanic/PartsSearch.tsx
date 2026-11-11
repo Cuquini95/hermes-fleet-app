@@ -87,7 +87,7 @@ export default function PartsSearch() {
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber text-white text-xs font-semibold"
         >
           <PackagePlus size={14} />
-          Importar
+          Verificar precios
         </button>
       </div>
 
@@ -104,7 +104,7 @@ export default function PartsSearch() {
       </div>
 
       {/* Equipment filter pills */}
-      <div className="flex gap-2 overflow-x-auto pb-2 mb-4 scrollbar-none">
+      <div className="flex flex-wrap gap-2 pb-2 mb-4">
         {EQUIPMENT_FILTERS.map((filter) => (
           <button
             key={filter}
@@ -138,8 +138,7 @@ export default function PartsSearch() {
       {!loading && apiError && (
         <div className="flex flex-col items-center gap-3 py-10 text-center">
           <WifiOff size={28} className="text-text-secondary" />
-          <p className="text-sm font-medium text-text">Sin conexión al servidor</p>
-          <p className="text-xs text-text-secondary">Verifica que el VPS esté activo e intenta de nuevo.</p>
+          <p className="text-sm font-medium text-text">Inventario no disponible</p>
         </div>
       )}
 
