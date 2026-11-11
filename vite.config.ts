@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
+import { APPS, appUrl } from './src/apps/catalog';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
@@ -11,6 +12,34 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       tailwindcss(),
+      {
+        name: 'focused-app-manifests',
+        generateBundle() {
+          for (const app of APPS) {
+            const url = appUrl(app);
+            this.emitFile({
+              type: 'asset',
+              fileName: `${url.slice(1)}.webmanifest`,
+              source: JSON.stringify({
+                id: url,
+                name: `${app.label} · Hermes`,
+                short_name: app.label,
+                scope: `${url}/`,
+                start_url: `${url}/`,
+                theme_color: '#162252',
+                background_color: '#F1F5F9',
+                display: 'standalone',
+                orientation: 'portrait',
+                lang: 'es-MX',
+                icons: [
+                  { src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png' },
+                  { src: '/pwa-512x512.png', sizes: '512x512', type: 'image/png' },
+                ],
+              }),
+            });
+          }
+        },
+      },
       VitePWA({
         strategies: 'injectManifest',
         srcDir: 'src',

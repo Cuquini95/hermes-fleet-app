@@ -75,7 +75,7 @@ export default function WorkOrdersPage() {
   return (
     <div
       ref={scrollRef}
-      className="py-4 animate-fade-up overflow-y-auto"
+      className="py-4 animate-fade-up"
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
@@ -90,7 +90,7 @@ export default function WorkOrdersPage() {
       <h2 className="font-semibold text-lg text-text mb-3">Órdenes de Trabajo</h2>
 
       {/* Filter pills */}
-      <div className="flex gap-2 overflow-x-auto pb-3 -mx-1 px-1 mb-2">
+      <div className="flex flex-wrap gap-2 pb-3 mb-2">
         {FILTER_OPTIONS.map((key) => (
           <button
             key={key}

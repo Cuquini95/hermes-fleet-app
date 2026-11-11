@@ -77,7 +77,7 @@ export default function BottomNav() {
       <MoreTray
         open={showMoreTray}
         onClose={() => setShowMoreTray(false)}
-        items={overflow}
+        items={[{ id: 'apps', label: 'Aplicaciones', icon: 'Home', path: '/apps' }, ...overflow]}
       />
     </>
   );

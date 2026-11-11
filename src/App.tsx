@@ -8,6 +8,9 @@ import type { AppRole } from './types/roles';
 import RequireRole from './components/auth/RequireRole';
 import AppShell from './components/layout/AppShell';
 import ErrorBoundary from './components/ErrorBoundary';
+import { ALL, ADMIN, WORKSHOP, MANAGEMENT } from './apps/catalog';
+import { activeApp } from './apps/active-app';
+import { AppDirectory, AppStart, FocusedAppShell } from './apps/FocusedApp';
 
 // ── All pages are lazy-loaded — nothing lands in the initial chunk except
 //    the shell, auth guard, and error boundary. ────────────────────────────────
@@ -88,12 +91,6 @@ function PageBoundary({ role, children }: { role?: AppRole; children: React.Reac
 
 // ── Role constants ────────────────────────────────────────────────────────────
 
-const ALL: AppRole[]          = ['operador', 'mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
-const ADMIN: AppRole[]        = ['jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
-const WORKSHOP: AppRole[]     = ['mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
-const MANAGEMENT: AppRole[]   = ['jefe_taller', 'coordinador', 'gerencia'];
-const GASTOS_WRITE: AppRole[] = ['jefe_taller', 'coordinador', 'gerencia'];
-const CALENDAR_ACCESS: AppRole[] = ['jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
 
 function RootRedirect() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -121,6 +118,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (activeApp && activeApp.id !== 'averias') return;
     const cleanup = initRealtime();
     return cleanup;
   }, [initRealtime]);
@@ -133,20 +131,28 @@ export default function App() {
       <Route path="/terms"   element={<S><TermsPage /></S>} />
 
       {/* ── Chat — any authenticated user, no AppShell ─────────────────── */}
-      <Route path="/chat" element={
+      {!activeApp && <Route path="/chat" element={
         <RequireRole roles={ALL}>
           <S><ChatPage /></S>
         </RequireRole>
-      } />
+      } />}
+
+      {!activeApp && (
+        <Route element={<RequireRole roles={ALL}><FocusedAppShell /></RequireRole>}>
+          <Route path="/apps" element={<AppDirectory />} />
+        </Route>
+      )}
 
       {/* ── Protected shell ────────────────────────────────────────────── */}
       <Route element={
         <RequireRole roles={ALL}>
           <ErrorBoundary role={role}>
-            <AppShell />
+            {activeApp ? <FocusedAppShell /> : <AppShell />}
           </ErrorBoundary>
         </RequireRole>
       }>
+        {activeApp && <Route index element={<AppStart />} />}
+
         {/* Role homes */}
         <Route path="/operator"    element={<RequireRole roles={['operador']}><PageBoundary role={role}><S><OperatorHomePage /></S></PageBoundary></RequireRole>} />
         <Route path="/mechanic"    element={<RequireRole roles={['mecanico']}><PageBoundary role={role}><S><MechanicPage /></S></PageBoundary></RequireRole>} />
@@ -160,7 +166,7 @@ export default function App() {
         <Route path="/workorders"       element={<RequireRole roles={WORKSHOP}><PageBoundary role={role}><S><WorkOrdersPage /></S></PageBoundary></RequireRole>} />
         <Route path="/pm"               element={<RequireRole roles={ADMIN}><PageBoundary role={role}><S><PMSchedulePage /></S></PageBoundary></RequireRole>} />
         <Route path="/pm-order"         element={<RequireRole roles={ADMIN}><PageBoundary role={role}><S><PMWorkOrderPage /></S></PageBoundary></RequireRole>} />
-        <Route path="/calendar"         element={<RequireRole roles={CALENDAR_ACCESS}><PageBoundary role={role}><S><CalendarPage /></S></PageBoundary></RequireRole>} />
+        <Route path="/calendar"         element={<RequireRole roles={ADMIN}><PageBoundary role={role}><S><CalendarPage /></S></PageBoundary></RequireRole>} />
 
         {/* Parts & manuals */}
         <Route path="/parts"        element={<RequireRole roles={WORKSHOP}><PageBoundary role={role}><S><PartsSearch /></S></PageBoundary></RequireRole>} />
@@ -175,7 +181,7 @@ export default function App() {
 
         {/* Gastos */}
         <Route path="/gastos"       element={<RequireRole roles={MANAGEMENT}><PageBoundary role={role}><S><GastosPage /></S></PageBoundary></RequireRole>} />
-        <Route path="/gastos/nuevo" element={<RequireRole roles={GASTOS_WRITE}><PageBoundary role={role}><S><NuevoGastoPage /></S></PageBoundary></RequireRole>} />
+        <Route path="/gastos/nuevo" element={<RequireRole roles={MANAGEMENT}><PageBoundary role={role}><S><NuevoGastoPage /></S></PageBoundary></RequireRole>} />
 
         {/* Operator / field operations */}
         <Route path="/dvir"            element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><PageBoundary role={role}><S><DVIRPage /></S></PageBoundary></RequireRole>} />
@@ -201,7 +207,7 @@ export default function App() {
         <Route path="/admin/ordenes-compra/:ocId" element={<RequireRole roles={['gerencia']}><PageBoundary role={role}><S><OrdenCompraPrintPage /></S></PageBoundary></RequireRole>} />
       </Route>
 
-      <Route path="*" element={<RootRedirect />} />
+      <Route path="*" element={activeApp ? <Navigate to="/" replace /> : <RootRedirect />} />
     </Routes>
   );
 }

@@ -417,7 +417,7 @@ export default function BulkBoletasPage() {
 
       {/* ── Thumbnail strip ───────────────────────────────────────────────── */}
       {boletas.length > 0 && (
-        <div className="flex gap-2 overflow-x-auto pb-1 mb-3">
+        <div className="flex gap-2 flex-wrap pb-1 mb-3">
           {boletas.map((b) => (
             <div key={b.id} className="relative flex-shrink-0 w-14 h-14">
               <img

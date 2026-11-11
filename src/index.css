@@ -203,3 +203,13 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+.focused-app main {
+  overflow-wrap: anywhere;
+}
+
+.focused-app :where(input:not([type=checkbox]):not([type=radio]):not([type=file]), select, textarea) {
+  min-width: 0;
+  min-height: 44px;
+  font-size: 16px;
+}

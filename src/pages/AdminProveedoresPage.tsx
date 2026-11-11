@@ -130,25 +130,20 @@ export default function AdminProveedoresPage() {
         <p className="text-sm text-gray-500">Sin proveedores todavía. Crea el primero arriba.</p>
       )}
       {rows !== null && rows.length > 1 && (
-        <div className="overflow-x-auto bg-white border rounded-lg">
-          <table className="w-full text-xs">
-            <thead className="bg-gray-50">
-              <tr>
-                {HEADERS.map((h) => (
-                  <th key={h} className="px-2 py-1.5 text-left font-semibold text-gray-600">{h}</th>
+        <div className="grid gap-3">
+          {rows.slice(1).map((row, index) => (
+            <details key={index} className="min-w-0 break-words rounded-xl border border-border bg-white px-4 shadow-sm">
+              <summary className="min-h-11 cursor-pointer py-3 text-sm font-semibold">{row[0]}</summary>
+              <dl className="grid gap-2 pb-4 text-sm">
+                {HEADERS.slice(1).map((label, index) => row[index + 1] && (
+                  <div key={label}>
+                    <dt className="text-xs text-text-secondary">{label}</dt>
+                    <dd>{row[index + 1]}</dd>
+                  </div>
                 ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {rows.slice(1).map((r, i) => (
-                <tr key={i} className="hover:bg-gray-50">
-                  {HEADERS.map((_, j) => (
-                    <td key={j} className="px-2 py-1">{r[j] ?? ''}</td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              </dl>
+            </details>
+          ))}
         </div>
       )}
     </div>
@@ -171,7 +166,7 @@ function Input({ label, value, onChange, type = 'text', required }: InputProps) 
         value={value}
         required={required}
         onChange={(e) => onChange(e.target.value)}
-        className="border rounded px-2 py-1.5 text-sm"
+        className="min-h-11 min-w-0 rounded border px-2 py-1.5 text-sm"
       />
     </label>
   )

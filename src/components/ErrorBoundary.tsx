@@ -1,5 +1,7 @@
 import * as Sentry from '@sentry/react';
 import { Component, type ReactNode, type ErrorInfo } from 'react';
+import { appUrl } from '../apps/catalog';
+import { activeApp } from '../apps/active-app';
 import { ROLE_HOME } from '../types/roles';
 import type { AppRole } from '../types/roles';
 
@@ -37,7 +39,7 @@ class InnerBoundary extends Component<Props, State> {
 
   handleGoHome = () => {
     const { role } = this.props;
-    const home = role ? ROLE_HOME[role] : '/';
+    const home = activeApp ? `${appUrl(activeApp)}/` : role ? ROLE_HOME[role] : '/';
     window.location.href = home;
   };
 
@@ -125,7 +127,7 @@ export default function ErrorBoundary({ children, role, inline }: Props) {
             </p>
             <button
               type="button"
-              onClick={() => { window.location.href = role ? ROLE_HOME[role] : '/'; }}
+              onClick={() => { window.location.href = activeApp ? `${appUrl(activeApp)}/` : role ? ROLE_HOME[role] : '/'; }}
               className="w-full text-white rounded-xl py-3 font-semibold"
               style={{ backgroundColor: '#F59E0B' }}
             >

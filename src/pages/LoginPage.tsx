@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Truck,
   Wrench,
@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import type { AppRole } from '../types/roles';
 import { ROLE_HOME } from '../types/roles';
+import { activeApp } from '../apps/active-app';
 import { useAuthStore } from '../stores/auth-store';
 
 interface RoleCard {
@@ -30,6 +31,10 @@ export default function LoginPage() {
   const [pendingRole, setPendingRole] = useState<AppRole | null>(null);
   const [loginError, setLoginError] = useState(false);
   const navigate = useNavigate();
+  const { state } = useLocation();
+  const from: unknown = state?.from;
+  const actions = activeApp?.actions;
+  const appRoles = actions ? ROLE_CARDS.filter(({ role }) => actions.some((action) => action.roles.includes(role))) : ROLE_CARDS;
   const login = useAuthStore((s) => s.login);
 
   const handleRoleSelect = (role: AppRole) => {
@@ -38,7 +43,9 @@ export default function LoginPage() {
     setLoginError(false);
     void login(role).then((success) => {
       if (success) {
-        navigate(ROLE_HOME[role]);
+        const returnPath = typeof from === 'string' && from.startsWith('/') && !/^\/[\/\\]/.test(from) ? from : undefined;
+        const nextPath = activeApp ? returnPath ?? '/' : returnPath === '/apps' ? '/apps' : ROLE_HOME[role];
+        navigate(nextPath, { replace: true });
         return;
       }
       setLoginError(true);
@@ -58,7 +65,7 @@ export default function LoginPage() {
             alt="Trans Plus"
             className="w-24 h-24"
           />
-          <span className="font-bold text-2xl tracking-widest" style={{ color: '#162252' }}>HERMES</span>
+          <span className="font-bold text-2xl tracking-widest" style={{ color: '#162252' }}>{activeApp?.label ?? 'HERMES'}</span>
           <span className="text-sm" style={{ color: '#6B7280' }}>Grupo Trans Plus • Operaciones</span>
         </div>
 
@@ -68,7 +75,7 @@ export default function LoginPage() {
 
         {/* Role cards grid */}
         <div className="grid grid-cols-2 gap-3 w-full">
-          {ROLE_CARDS.map(({ role, label, icon }) => (
+          {appRoles.map(({ role, label, icon }) => (
             <button
               key={role}
               type="button"

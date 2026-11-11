@@ -408,7 +408,7 @@ export default function NuevoGastoPage() {
         {!imageUrl && (
           <div className="mt-3 border-t border-border pt-3">
             <p className="text-xs text-text-secondary mb-2">
-              {ocrDone ? 'Foto ya adjunta desde escáner' : 'Foto del recibo (sin OCR)'}
+              {ocrDone ? 'Foto adjunta' : 'Adjuntar sin escanear'}
             </p>
             {!ocrDone && (
               <PhotoCapture
@@ -430,8 +430,6 @@ export default function NuevoGastoPage() {
 
       {/* ── General info ────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-border p-4 shadow-sm flex flex-col gap-3">
-        <p className="text-sm font-semibold text-text">Datos Generales</p>
-
         {/* Tipo */}
         <div>
           <label className="text-xs text-text-secondary mb-1 block">Tipo</label>
@@ -449,8 +447,9 @@ export default function NuevoGastoPage() {
 
         {/* Proveedor */}
         <div>
-          <label className="text-xs text-text-secondary mb-1 block">Proveedor</label>
+          <label htmlFor="expense-supplier" className="text-xs text-text-secondary mb-1 block">Proveedor</label>
           <input
+            id="expense-supplier"
             value={proveedor}
             onChange={(e) => setProveedor(e.target.value)}
             placeholder="Nombre del proveedor"
@@ -459,31 +458,9 @@ export default function NuevoGastoPage() {
           />
         </div>
 
-        {/* RFC */}
-        <div>
-          <label className="text-xs text-text-secondary mb-1 block">RFC Proveedor (opcional)</label>
-          <input
-            value={rfcProveedor}
-            onChange={(e) => setRfcProveedor(e.target.value.toUpperCase())}
-            placeholder="RFC-XXXXXX-XXX"
-            className="w-full border border-border rounded-lg px-3 py-2 text-sm font-mono"
-          />
-        </div>
-
-        {/* Folio */}
-        <div>
-          <label className="text-xs text-text-secondary mb-1 block">Folio / Factura (opcional)</label>
-          <input
-            value={folioFactura}
-            onChange={(e) => setFolioFactura(e.target.value)}
-            placeholder="A-04821"
-            className="w-full border border-border rounded-lg px-3 py-2 text-sm"
-          />
-        </div>
-
         {/* Unidad(es) */}
         <div>
-          <label className="text-xs text-text-secondary mb-1 block">Unidad(es)</label>
+          <label htmlFor={unitMode === 'single' ? 'expense-unit' : 'expense-unit-split'} className="text-xs text-text-secondary mb-1 block">Unidad</label>
 
           {/* Mode toggle */}
           <div className="flex gap-2 mb-2">
@@ -509,6 +486,7 @@ export default function NuevoGastoPage() {
 
           {unitMode === 'single' ? (
             <select
+              id="expense-unit"
               value={unidad}
               onChange={(e) => setUnidad(e.target.value)}
               className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-white"
@@ -551,6 +529,7 @@ export default function NuevoGastoPage() {
 
               {/* Add unit picker */}
               <select
+                id="expense-unit-split"
                 value={splitPickerValue}
                 onChange={(e) => addSplitUnit(e.target.value)}
                 className="w-full border border-dashed border-border rounded-lg px-3 py-1.5 text-sm text-text-secondary bg-white"
@@ -576,17 +555,6 @@ export default function NuevoGastoPage() {
           )}
         </div>
 
-        {/* OT (optional) */}
-        <div>
-          <label className="text-xs text-text-secondary mb-1 block">OT relacionada (opcional)</label>
-          <input
-            value={otId}
-            onChange={(e) => setOtId(e.target.value.toUpperCase())}
-            placeholder="OT-2026-044"
-            className="w-full border border-border rounded-lg px-3 py-2 text-sm font-mono"
-          />
-        </div>
-
         {/* Método de pago */}
         <div>
           <label className="text-xs text-text-secondary mb-1 block">Método de Pago</label>
@@ -602,16 +570,55 @@ export default function NuevoGastoPage() {
         </div>
       </div>
 
+      <details className="rounded-xl border border-border bg-white px-4 shadow-sm">
+        <summary className="flex min-h-11 cursor-pointer items-center text-sm font-semibold text-amber">Más detalles</summary>
+        <div className="grid gap-3 pb-4">
+          {/* RFC */}
+          <div>
+            <label className="text-xs text-text-secondary mb-1 block">RFC Proveedor (opcional)</label>
+            <input
+              value={rfcProveedor}
+              onChange={(e) => setRfcProveedor(e.target.value.toUpperCase())}
+              placeholder="RFC-XXXXXX-XXX"
+              className="w-full border border-border rounded-lg px-3 py-2 text-sm font-mono"
+            />
+          </div>
+
+          {/* Folio */}
+          <div>
+            <label className="text-xs text-text-secondary mb-1 block">Folio / Factura (opcional)</label>
+            <input
+              value={folioFactura}
+              onChange={(e) => setFolioFactura(e.target.value)}
+              placeholder="A-04821"
+              className="w-full border border-border rounded-lg px-3 py-2 text-sm"
+            />
+          </div>
+
+          {/* OT (optional) */}
+          <div>
+            <label className="text-xs text-text-secondary mb-1 block">OT relacionada (opcional)</label>
+            <input
+              value={otId}
+              onChange={(e) => setOtId(e.target.value.toUpperCase())}
+              placeholder="OT-2026-044"
+              className="w-full border border-border rounded-lg px-3 py-2 text-sm font-mono"
+            />
+          </div>
+        </div>
+      </details>
+
       {/* ── Totales ──────────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-border p-4 shadow-sm flex flex-col gap-3">
         <p className="text-sm font-semibold text-text">Totales</p>
         <div className="grid grid-cols-3 gap-2">
           <div>
-            <label className="text-xs text-text-secondary mb-1 block">Subtotal</label>
+            <label htmlFor="expense-subtotal" className="text-xs text-text-secondary mb-1 block">Subtotal</label>
             <input
               type="number"
               step="0.01"
               min="0"
+              id="expense-subtotal"
               value={subtotal || ''}
               onChange={(e) => handleSubtotalChange(parseFloat(e.target.value) || 0)}
               placeholder="0.00"
@@ -700,7 +707,7 @@ export default function NuevoGastoPage() {
                 />
               </div>
               <div>
-                <label className="text-xs text-text-secondary mb-1 block">Subtotal</label>
+                <span className="text-xs text-text-secondary mb-1 block">Subtotal</span>
                 <div className="w-full border border-border rounded-lg px-2 py-2 text-sm bg-gray-50">
                   ${item.subtotal.toFixed(2)}
                 </div>

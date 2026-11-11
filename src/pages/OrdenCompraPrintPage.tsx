@@ -160,6 +160,20 @@ export default function OrdenCompraPrintPage() {
           color-adjust: exact !important;
         }
 
+        @media screen and (max-width: 540px) {
+          .po-toolbar { position: static; gap: 8px; flex-wrap: wrap; }
+          .po-page { padding: 16px; overflow-wrap: anywhere; }
+          .po-page .po-heading { flex-direction: column; gap: 12px; }
+          .po-page .po-title { margin-left: 0; text-align: left; }
+          .po-page .po-title > p { font-size: 24px !important; }
+          .po-page .po-title table { margin-left: 0; }
+          .po-page table { table-layout: fixed; }
+          .po-page th, .po-page td { padding: 4px 2px !important; }
+          .po-page .po-summary { grid-template-columns: minmax(0, 1fr) !important; gap: 12px !important; }
+          .po-page .po-summary > div { padding-left: 0; }
+          .po-page .po-vendor, .po-page [data-testid="purchase-approval-provenance"] > div { min-width: 0 !important; max-width: 100%; }
+        }
+
         @media print {
           /* Use a 0 page margin so the .po-page's own padding controls the
              printable border — keeps proportions identical to screen. */
@@ -189,7 +203,7 @@ export default function OrdenCompraPrintPage() {
       `}</style>
 
       {/* Toolbar — hidden when printing */}
-      <div className="no-print sticky top-0 z-10 bg-gray-100 border-b border-gray-200 px-4 py-3 flex items-center justify-between">
+      <div className="po-toolbar no-print sticky top-0 z-10 bg-gray-100 border-b border-gray-200 px-4 py-3 flex items-center justify-between">
         <Link
           to="/admin/ordenes-compra"
           className="inline-flex items-center gap-1 text-sm text-gray-700 hover:text-gray-900"
@@ -211,7 +225,7 @@ export default function OrdenCompraPrintPage() {
         style={{ maxWidth: '8.5in', fontFamily: 'Arial, Helvetica, sans-serif' }}
       >
         {/* Header row: logo (left) + title + boxes (right) */}
-        <div className="flex items-start justify-between mb-6">
+        <div className="po-heading flex items-start justify-between mb-6">
           {/* ULTRATK logo block */}
           <div className="flex flex-col items-start" style={{ width: 200 }}>
             <div
@@ -226,7 +240,7 @@ export default function OrdenCompraPrintPage() {
           </div>
 
           {/* Title + boxes */}
-          <div className="flex-1 text-right ml-6">
+          <div className="po-title flex-1 text-right ml-6">
             <p
               className="font-extrabold tracking-tight"
               style={{ color: RED, fontSize: 38, lineHeight: 1 }}
@@ -272,7 +286,7 @@ export default function OrdenCompraPrintPage() {
 
         {/* VENDEDOR red banner */}
         <div
-          className="text-white font-bold uppercase tracking-wide text-[11px] px-3 py-1 mb-2"
+          className="po-vendor text-white font-bold uppercase tracking-wide text-[11px] px-3 py-1 mb-2"
           style={{ backgroundColor: RED, width: 280 }}
         >
           VENDEDOR
@@ -332,7 +346,7 @@ export default function OrdenCompraPrintPage() {
         </table>
 
         {/* Comments + totals */}
-        <div className="grid mb-10" style={{ gridTemplateColumns: '55% 45%', gap: 0 }}>
+        <div className="po-summary grid mb-10" style={{ gridTemplateColumns: '55% 45%', gap: 0 }}>
           <div>
             <div
               className="px-3 py-1 font-bold text-[11px]"

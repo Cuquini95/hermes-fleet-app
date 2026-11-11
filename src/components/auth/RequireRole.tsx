@@ -1,5 +1,6 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../../stores/auth-store';
+import { activeApp } from '../../apps/active-app';
 import { ROLE_HOME } from '../../types/roles';
 import type { AppRole } from '../../types/roles';
 
@@ -14,6 +15,7 @@ interface RequireRoleProps {
  * Redirect to role home if authenticated but not in the allowed roles list.
  */
 export default function RequireRole({ roles, children }: RequireRoleProps) {
+  const location = useLocation();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const role = useAuthStore((s) => s.role);
   const sessionChecked = useAuthStore((s) => s.sessionChecked);
@@ -23,11 +25,11 @@ export default function RequireRole({ roles, children }: RequireRoleProps) {
   }
 
   if (!isAuthenticated || !role) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login" state={{ from: location.pathname + location.search }} replace />;
   }
 
   if (roles.length > 0 && !roles.includes(role)) {
-    return <Navigate to={ROLE_HOME[role]} replace />;
+    return <Navigate to={activeApp ? '/' : ROLE_HOME[role]} replace />;
   }
 
   return <>{children}</>;

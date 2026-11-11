@@ -31,7 +31,7 @@ function StatusPillRow({ current }: { current: OTEstado }) {
   const currentIdx = allStatuses.indexOf(current);
 
   return (
-    <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1">
+    <div className="flex gap-1.5 flex-wrap pb-1 -mx-1 px-1">
       {allStatuses.map((s, idx) => {
         const isCurrent = s === current;
         const isPast = idx < currentIdx;
@@ -246,7 +246,7 @@ export default function WorkOrderDetailPage() {
         {photos.length > 0 && (
           <div>
             <p className="text-xs text-text-secondary mb-1">Fotos</p>
-            <div className="flex gap-2 overflow-x-auto">
+            <div className="flex gap-2 flex-wrap">
               {photos.map((url, i) => (
                 <img
                   key={i}

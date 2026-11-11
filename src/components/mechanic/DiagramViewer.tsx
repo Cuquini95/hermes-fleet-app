@@ -81,7 +81,7 @@ export default function DiagramViewer() {
         />
       </div>
 
-      <div className="flex gap-2 overflow-x-auto pb-2 mb-4 scrollbar-none">
+      <div className="flex gap-2 flex-wrap pb-2 mb-4">
         {EQUIPMENT_FILTERS.map((filter) => (
           <button
             key={filter}
