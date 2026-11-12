@@ -4,6 +4,8 @@ import { canonicalTab } from './hermes-google-sheets.js';
 const route = '/rest/v1/hermes_preview_operations';
 const workspace = 'panama-demo';
 const date = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Panama', day: '2-digit', month: '2-digit', year: 'numeric' });
+export const PANAMA_DEMO_ISSUER = Object.freeze({ id: 'TP_PA_DEMO', name: 'Trans Plus Panamá · Prueba', currency: 'USD',
+  taxLabel: 'ITBMS', taxBps: 700, template: 'transplus', address: 'Panamá · Dirección simulada', phone: '', taxId: 'RUC-DEMO' });
 
 function initialData() {
   const today = date.format(new Date());
@@ -33,7 +35,7 @@ function initialData() {
       ['Proveedor de prueba', 'RUC-QA-001', 'Almacén de prueba', 'Panamá', '', '', '', '', '']],
     'Órdenes de Compra': [['OC_ID', 'FECHA', 'PROVEEDOR', 'IDENTIFICACION', 'DIRECCION', 'UNIDAD'],
       ['OC-DEMO-001', today, 'Proveedor de prueba', 'RUC-QA-001', 'Panamá', 'QA-DZ203', '150.00', '10.50', '0.00', '0.00', '160.50',
-        'Aprobada', 'Compra simulada', 'Gerencia QA', today, 'demo-oc-001', JSON.stringify({ id: 'TP_PA', name: 'Trans Plus Panamá · Prueba', currency: 'USD' }),
+        'Aprobada', 'Compra simulada', 'Gerencia QA', today, 'demo-oc-001', JSON.stringify(PANAMA_DEMO_ISSUER),
         '00000000-0000-4000-8000-000000000001', new Date().toISOString()]],
     OC_Lineas: [['OC_ID', 'ITEM', 'DESCRIPCION', 'CANTIDAD', 'PRECIO_UNITARIO', 'TOTAL'],
       ['OC-DEMO-001', '1', 'Filtro hidráulico de prueba', '2', '75.00', '150.00', 'OC-DEMO-001-L1', '', '', 'QA-FILTRO-001', '0', '[]']],

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { PANAMA_DEMO_ISSUER } from './hermes-panama-demo.js';
 
 export const PURCHASE_TABS = Object.freeze({
   orders: 'Órdenes de Compra',
@@ -97,7 +98,9 @@ function requireUnit(session, value) {
   return unit;
 }
 
-function configuredIssuers(panama = false) {
+function configuredIssuers(session) {
+  const panama = session.project === 'tmf-panama';
+  if (panama && session.previewDemo === true) return [PANAMA_DEMO_ISSUER];
   const source = process.env.HERMES_PURCHASE_ISSUERS_JSON;
   if (!source) return panama ? [] : [DEFAULT_ISSUER];
   try {
@@ -357,7 +360,7 @@ async function saveOrder(body, session, sheets, tx) {
     error(409, 'El folio ya existe en cabeceras o partidas. Se requiere conciliación.');
   }
   const unit = requireUnit(session, body.unit);
-  const issuer = configuredIssuers(session.project === 'tmf-panama').find((item) => item.id === body.entity);
+  const issuer = configuredIssuers(session).find((item) => item.id === body.entity);
   if (!issuer) error(400, 'Selecciona una entidad emisora configurada.');
   const vendors = entries(vendorRows).map(({ row }) => vendorRecord(row)).filter((vendor) =>
     vendor.name && upper(vendor.name) === upper(body.vendorName) && upper(vendor.rfc) === upper(body.vendorRfc));
@@ -654,7 +657,7 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
       return ok({
         orders: rows.filter(({ row }) => canUseUnit(session, row[5]))
           .map(({ row }) => orderRecord(row, linked.get(upper(row[0])) || [])).reverse(),
-        vendors, orphanFolios, issuers: configuredIssuers(panama), canApprove: session.canApprovePurchases === true,
+        vendors, orphanFolios, issuers: configuredIssuers(session), canApprove: session.canApprovePurchases === true,
       });
     }
     tx = mutate(action, body, session, sheets);
