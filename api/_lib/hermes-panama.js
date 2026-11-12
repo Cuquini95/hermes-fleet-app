@@ -75,7 +75,8 @@ function visibleRecords(rows, spec, session) {
     .filter(row => {
       const unit = keyOf(row[unitIndex]);
       return (!spec.country || keyOf(row[countryIndex]) === 'PANAMA')
-        && /^[A-Z]{1,7}[- ]?\d{1,7}$/.test(unit) && (session.allUnits || allowed.has(unit));
+        && (session.previewDemo ? /^QA-[A-Z]{1,7}\d{1,7}$/ : /^[A-Z]{1,7}[- ]?\d{1,7}$/).test(unit)
+        && (session.allUnits || allowed.has(unit));
     })
     .map(row => Object.fromEntries(columns.map(([key, col]) => [key, String(row[col] ?? '').trim()])))
     .filter(record => !Object.hasOwn(spec.columns, 'id') || record.id);

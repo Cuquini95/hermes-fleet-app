@@ -18,6 +18,7 @@ interface SessionProfile {
   canApprovePurchases: boolean;
   canReceivePurchases?: boolean;
   canReviewPanamaHse?: boolean;
+  previewDemo?: boolean;
 }
 
 interface AuthState extends Omit<SessionProfile, 'role' | 'unitScope' | 'canReceivePurchases' | 'canReviewPanamaHse'> {
@@ -37,6 +38,7 @@ const cleared = {
   userId: '', userName: '', role: null, project: '', projects: [], assignedUnits: [], unitScope: null,
   allUnits: false, canApprovePurchases: false, canReceivePurchases: false, canReviewPanamaHse: false,
   isAuthenticated: false, loginFailure: null,
+  previewDemo: false,
 };
 
 function validProfile(value: unknown): value is SessionProfile {
@@ -58,6 +60,7 @@ function validProfile(value: unknown): value is SessionProfile {
 function authenticatedProfile(profile: SessionProfile) {
   return {
     ...profile,
+    previewDemo: profile.previewDemo === true,
     canReceivePurchases: profile.canReceivePurchases === true,
     canReviewPanamaHse: profile.canReviewPanamaHse === true,
     isAuthenticated: true,

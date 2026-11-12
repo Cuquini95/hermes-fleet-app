@@ -12,6 +12,7 @@ export default function Header() {
   const location = useLocation();
   const userName = useAuthStore((s) => s.userName);
   const role = useAuthStore((s) => s.role);
+  const previewDemo = useAuthStore((s) => s.previewDemo);
   const logout = useAuthStore((s) => s.logout);
   const [leaving, setLeaving] = useState(false);
   const [logoutError, setLogoutError] = useState(false);
@@ -75,7 +76,7 @@ export default function Header() {
         <div className="flex min-w-0 flex-col leading-tight">
           <span className="truncate text-white font-semibold text-sm">{userName}</span>
           {role && (
-            <span className="text-white/60 text-xs">{ROLE_LABELS[role]}</span>
+            <span className="truncate text-xs text-white/75">{ROLE_LABELS[role]}{previewDemo ? ' · Datos de prueba' : ''}</span>
           )}
         </div>
       </div>

@@ -2,6 +2,7 @@ const ROLES = new Set(['operador', 'mecanico', 'jefe_taller', 'coordinador', 'su
 const PROJECT = /^[a-z0-9][a-z0-9_-]{0,79}$/;
 const UUID = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i;
 const UNIT = /^[a-z\d][a-z\d ._/-]{0,39}$/i;
+const PREVIEW_EMAIL = /^hermes-pa-demo-(?:p(?:0[1-9]|1\d|2[0-8])|verify-[a-f0-9]{12})@example\.com$/;
 const PROFILE_FIELDS = 'user_id,email,user_name,role,projects,assigned_units,unit_scope,active,can_approve_purchases';
 const profileFields = (project) => project === 'tmf-panama' ? PROFILE_FIELDS + ',can_receive_purchases,can_review_panama_hse' : PROFILE_FIELDS;
 
@@ -48,6 +49,9 @@ export function normalizeRosterProfile(row, project) {
     || row.assigned_units.some((unit) => typeof unit !== 'string' || !UNIT.test(unit))) return null;
 
   const panamaOnly = project === 'tmf-panama' && row.projects.every((item) => item === project);
+  const demo = PREVIEW_EMAIL.test(row.email);
+  if (demo && (process.env.VERCEL_ENV !== 'preview' || !panamaOnly || row.unit_scope !== 'assigned'
+    || row.assigned_units.length === 0 || row.assigned_units.some(unit => !unit.startsWith('QA-')))) return null;
   return {
     userId: row.user_id.toLowerCase(),
     userName: row.user_name.trim(),
@@ -61,6 +65,7 @@ export function normalizeRosterProfile(row, project) {
     canReceivePurchases: panamaOnly && row.can_receive_purchases === true,
     canReviewPanamaHse: panamaOnly && ['supervisor', 'gerencia'].includes(row.role)
       && row.can_review_panama_hse === true,
+    ...(demo ? { previewDemo: true } : {}),
   };
 }
 
@@ -154,6 +159,7 @@ export async function listWorkshopMechanics(session, unitId) {
   return (await response.json())
     .map((row) => normalizeRosterProfile(row, config.project))
     .filter((profile) => profile?.role === 'mecanico' && (unitId === undefined || hasIdentityUnit(profile, unitId)))
+    .filter(profile => Boolean(profile.previewDemo) === Boolean(session.previewDemo))
     .filter((profile) => session.allUnits || profile.allUnits || session.assignedUnits.some((unit) => hasIdentityUnit(profile, unit)))
     .map(({ userId, userName, role, allUnits, assignedUnits }) => ({
       userId, userName, role, allUnits,

@@ -36,6 +36,35 @@ test('production workflow writes are restricted to their named handlers, preview
   assert.equal(writes, 0);
 });
 
+test('Panama mock profiles use the isolated source for health, inventory and writes', async () => {
+  let session = { ...operator, project: 'tmf-panama', previewDemo: true, assignedUnits: ['QA-DZ203'] };
+  const calls = [];
+  const demoSheets = { read: async () => [['#', 'UNIDAD'], ['1', 'QA-DZ203'], ['2', 'QA-EX999']] };
+  const gate = createHermesGateway({
+    sheets: { read: async () => { throw new Error('Sheets unconfigured'); } }, demoSheets,
+    sessionReader: async () => session, enablePanamaOperations: true, writeEnabled: false,
+    dispatchWorkshop: async ({ sheets }) => {
+      calls.push(sheets);
+      return { status: 201, body: { otId: 'QA-OT-1' } };
+    },
+  });
+  const health = response();
+  await gate({ method: 'GET', query: { path: 'health' } }, health);
+  assert.equal(health.statusCode, 200);
+  assert.equal(health.body.dataMode, 'demo');
+  const fleet = response();
+  await gate({ method: 'GET', query: { path: 'api/sheets/read', tab: '01 Inventario' } }, fleet);
+  assert.deepEqual(fleet.body.data, [['#', 'UNIDAD'], ['1', 'QA-DZ203'], []]);
+  const demoWrite = response();
+  await gate({ method: 'POST', query: { path: 'api/workshop/report' } }, demoWrite);
+  assert.equal(demoWrite.statusCode, 201);
+  session = { ...session, previewDemo: false };
+  const realWrite = response();
+  await gate({ method: 'POST', query: { path: 'api/workshop/report' } }, realWrite);
+  assert.equal(realWrite.statusCode, 503);
+  assert.deepEqual(calls, [demoSheets]);
+});
+
 test('mechanics must use the assignment-scoped workshop read for orders and history', async () => {
   const gate = createHermesGateway({
     sheets: { read: async () => assert.fail('No broad source query for a mechanic') },
