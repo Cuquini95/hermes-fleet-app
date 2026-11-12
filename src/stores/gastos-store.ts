@@ -1,8 +1,6 @@
 import { create } from 'zustand';
-import { readRange, appendRow, updateCell, SHEET_TABS } from '../lib/sheets-api';
-import { useCatalogoStore } from './catalogo-store';
+import { purchaseRead, purchaseWrite } from '../lib/purchasing-api';
 import type { OcrLineItem } from '../lib/sheets-api';
-import { mexicoDate, mexicoTime } from '../lib/date-utils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -31,6 +29,7 @@ export interface GastoCompra {
   metodo_pago: MetodoPago;
   items: string;       // human-readable line items, e.g. "Filtro aceite x2 $450 | Bujías x4 $280"
   imagen_url: string;
+  receipt_group: string;
   status: GastoStatus;
 }
 
@@ -42,11 +41,9 @@ export interface NuevoGastoPayload {
   subtotal: number;
   iva: number;
   total: number;
-  unidad: string;
   ot_id: string;
   metodo_pago: MetodoPago;
   imagen_url: string;
-  solicitante: string;
   line_items: OcrLineItem[];
 }
 
@@ -59,7 +56,7 @@ interface GastosState {
   error: string | null;
   fetched: boolean;
   fetchGastos: () => Promise<void>;
-  saveGasto: (payload: NuevoGastoPayload) => Promise<string>;
+  saveGasto: (payload: NuevoGastoPayload, allocations: { unit: string; amount: string }[]) => Promise<string[]>;
   deleteGasto: (gastoId: string) => Promise<void>;
 }
 
@@ -90,39 +87,21 @@ function parseGastoRow(row: string[]): GastoCompra | null {
     metodo_pago:   (row[13] ?? 'Efectivo') as MetodoPago,
     items:         row[14] ?? '',
     imagen_url:    row[15] ?? '',
+    receipt_group: row[17] ?? '',
     status:        (row[16] ?? 'Aprobado') as GastoStatus,
   };
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+let sessionOwner = '';
+let generation = 0;
 
-function makeGastoId(): string {
-  const now = new Date();
-  const ym = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const rand = crypto.randomUUID().replace(/-/g, '').slice(0, 4).toUpperCase();
-  return `GST-${ym}-${rand}`;
+export function setGastosSession(owner: string) {
+  if (sessionOwner === owner) return;
+  sessionOwner = owner;
+  generation++;
+  useGastosStore.setState({ gastos: [], loading: false, saving: false, error: null, fetched: false });
 }
 
-/**
- * Serialize line items as a readable string for the single Items column.
- * Example: "Filtro aceite x2 $450.00 | Bujías x4 $280.00"
- */
-function serializeItems(items: OcrLineItem[]): string {
-  return items
-    .filter((i) => i.description.trim())
-    .map((i) => {
-      const desc = i.part_number ? `[${i.part_number}] ${i.description}` : i.description;
-      return `${desc} x${i.qty} $${i.subtotal.toFixed(2)}`;
-    })
-    .join(' | ');
-}
-
-// ── Store ─────────────────────────────────────────────────────────────────────
-
-/**
- * Expenses (gastos) store: list plus create/update/delete actions backed by the sheets API.
- * Tracks loading/saving/error states and an initial-fetched flag for first-paint cache hits.
- */
 export const useGastosStore = create<GastosState>((set, get) => ({
   gastos: [],
   loading: false,
@@ -132,9 +111,11 @@ export const useGastosStore = create<GastosState>((set, get) => ({
 
   fetchGastos: async () => {
     if (get().loading) return;
+    const startedIn = generation;
     set({ loading: true, error: null });
     try {
-      const rows = await readRange(SHEET_TABS.GASTOS);
+      const { rows } = await purchaseRead<{ rows: string[][] }>('expenses');
+      if (startedIn !== generation) return;
       const gastos: GastoCompra[] = [];
       for (const row of rows) {
         const g = parseGastoRow(row);
@@ -142,90 +123,37 @@ export const useGastosStore = create<GastosState>((set, get) => ({
       }
       set({ gastos, loading: false, fetched: true });
     } catch (err: unknown) {
+      if (startedIn !== generation) return;
       const message = err instanceof Error ? err.message : 'Error al cargar gastos';
-      set({ error: message, loading: false, fetched: true });
+      set({ gastos: [], error: message, loading: false, fetched: true });
     }
   },
 
-  saveGasto: async (payload: NuevoGastoPayload): Promise<string> => {
+  saveGasto: async (payload, allocations) => {
+    const startedIn = generation;
     set({ saving: true, error: null });
-    const gastoId = makeGastoId();
-    const fecha = mexicoDate();
-    const hora = mexicoTime();
-
     try {
-      await appendRow(SHEET_TABS.GASTOS, [
-        gastoId,                          // A: Gasto_ID
-        fecha,                            // B: Fecha
-        hora,                             // C: Hora
-        payload.tipo,                     // D: Tipo
-        payload.proveedor,                // E: Proveedor
-        payload.rfc_proveedor,            // F: RFC_Proveedor
-        payload.folio_factura,            // G: Folio_Factura
-        payload.subtotal.toFixed(2),      // H: Subtotal
-        payload.iva.toFixed(2),           // I: IVA
-        payload.total.toFixed(2),         // J: Total
-        payload.unidad,                   // K: Unidad
-        payload.ot_id,                    // L: OT_ID
-        payload.solicitante,              // M: Solicitante
-        payload.metodo_pago,              // N: Metodo_Pago
-        serializeItems(payload.line_items), // O: Items
-        payload.imagen_url,               // P: Imagen_URL
-        'Aprobado',                       // Q: Status
-      ]);
-
-      const newGasto: GastoCompra = {
-        gasto_id:      gastoId,
-        fecha,
-        hora,
-        tipo:          payload.tipo,
-        proveedor:     payload.proveedor,
-        rfc_proveedor: payload.rfc_proveedor,
-        folio_factura: payload.folio_factura,
-        subtotal:      payload.subtotal,
-        iva:           payload.iva,
-        total:         payload.total,
-        unidad:        payload.unidad,
-        ot_id:         payload.ot_id,
-        solicitante:   payload.solicitante,
-        metodo_pago:   payload.metodo_pago,
-        items:         serializeItems(payload.line_items),
-        imagen_url:    payload.imagen_url,
-        status:        'Aprobado',
-      };
-
-      set((state) => ({
-        gastos: [newGasto, ...state.gastos],
-        saving: false,
-      }));
-
-      // Sync line items to price catalog (non-blocking)
-      const itemsWithPrice = payload.line_items.filter(
-        (i) => i.description.trim() && (i.unit_price > 0 || i.subtotal > 0)
-      );
-      if (itemsWithPrice.length > 0) {
-        useCatalogoStore.getState().syncLineItems(itemsWithPrice, payload.proveedor);
-      }
-
-      return gastoId;
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error al guardar gasto';
-      set({ error: message, saving: false });
-      throw err;
+      const { ids } = await purchaseWrite<{ ids: string[] }>('expense-save', {
+        expense: {
+          ...payload,
+          subtotal: payload.subtotal.toFixed(2),
+          iva: payload.iva.toFixed(2),
+          total: payload.total.toFixed(2),
+        },
+        allocations,
+      });
+      if (startedIn !== generation) throw new DOMException('Cambió la sesión', 'AbortError');
+      set({ fetched: false });
+      return ids;
+    } finally {
+      if (startedIn === generation) set({ saving: false });
     }
   },
 
-  deleteGasto: async (gastoId: string): Promise<void> => {
-    // Optimistically remove from local state
-    set((state) => ({
-      gastos: state.gastos.filter((g) => g.gasto_id !== gastoId),
-    }));
-    try {
-      // Mark as "Eliminado" in the sheet (col 0 = Gasto_ID, col 16 = Status)
-      await updateCell(SHEET_TABS.GASTOS, 0, gastoId, 16, 'Eliminado');
-    } catch (err: unknown) {
-      // If sheet update fails, restore the row on next fetch — not critical
-      console.error('Failed to mark gasto as Eliminado in sheet:', err);
-    }
+  deleteGasto: async (id) => {
+    const startedIn = generation;
+    const { removed } = await purchaseWrite<{ removed: string[] }>('expense-delete', { id });
+    if (startedIn !== generation) return;
+    set((state) => ({ gastos: state.gastos.filter((gasto) => !removed.includes(gasto.gasto_id)) }));
   },
 }));

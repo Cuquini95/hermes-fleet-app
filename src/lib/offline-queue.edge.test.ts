@@ -97,6 +97,7 @@ function makeSubmission(
 ) {
   return {
     id,
+    ownerId: 'qa-user',
     type,
     data: { tab: 'Combustible', values: [`row-${id}`, 'val'] },
     timestamp: new Date().toISOString(),
@@ -106,9 +107,11 @@ function makeSubmission(
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 describe('offline-queue edge cases', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.stubGlobal('navigator', { onLine: true });
     vi.resetModules();
+    const { setOfflineQueueSession } = await import('./offline-queue');
+    setOfflineQueueSession('qa-user');
   });
 
   afterEach(() => {
@@ -231,7 +234,7 @@ describe('offline-queue edge cases', () => {
   it('malformed queue entries (missing tab/values) are skipped, not retried', async () => {
     const submissions = [
       // Malformed: data lacks tab and values
-      { id: 1, type: 'fuel', data: { note: 'no tab or values' }, timestamp: '2026-04-21T00:00:00Z' },
+      { id: 1, ownerId: 'qa-user', type: 'fuel', data: { note: 'no tab or values' }, timestamp: '2026-04-21T00:00:00Z' },
       // Valid
       makeSubmission(2),
     ];
@@ -313,6 +316,7 @@ describe('offline-queue edge cases', () => {
   it('replays a queued CMMS meter handoff without writing a duplicate sheet row', async () => {
     const submission = {
       id: 77,
+      ownerId: 'qa-user',
       type: 'cmms_meter' as const,
       data: {
         readings: [{
@@ -340,5 +344,20 @@ describe('offline-queue edge cases', () => {
     expect(result).toEqual({ succeeded: 1, failed: 0 });
     expect(mockHandoffMeterReadings).toHaveBeenCalledWith(submission.data.readings);
     expect(mockAppendRow).not.toHaveBeenCalled();
+  });
+
+  it('retains unclaimed and other users’ submissions without replaying them', async () => {
+    const { openFn, store } = makeIDBStub([
+      makeSubmission(1),
+      { ...makeSubmission(2), ownerId: 'other-user' },
+      { ...makeSubmission(3), ownerId: undefined },
+    ]);
+    vi.stubGlobal('indexedDB', { open: openFn });
+    mockAppendRow.mockResolvedValue(undefined);
+
+    const { flushQueue } = await import('./offline-queue');
+    expect(await flushQueue()).toEqual({ succeeded: 1, failed: 0 });
+    expect(mockAppendRow).toHaveBeenCalledExactlyOnceWith('Combustible', ['row-1', 'val'], 'qa-user');
+    expect(store.map(row => row.id)).toEqual([2, 3]);
   });
 });

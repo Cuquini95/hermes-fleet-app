@@ -1,18 +1,11 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { z } from 'zod';
 import { useEquipmentList } from '../hooks/useEquipmentList';
-import { generateNextOTId } from '../lib/ot-generator';
 import { calculatePriority } from '../lib/priority-calculator';
-import { mexicoDate, mexicoTime } from '../lib/date-utils';
-import { appendRow, SHEET_TABS } from '../lib/sheets-api';
-import { sendPushEvent } from '../lib/push-notifications';
-import { useOnlineStatus } from '../hooks/useOnlineStatus';
-import { queueSubmission, flushQueue } from '../lib/offline-queue';
-import { fallaSavedMessage, uploadFallaPhotos } from '../lib/falla-submit';
-import { cmmsSeverityFromHermesPriority, reportCmmsDamage, type CmmsDamageReport } from '../lib/cmms-events';
-import { useAuthStore } from '../stores/auth-store';
+import { saveWorkshopCapture } from '../lib/offline-queue';
+import { WorkshopApiError } from '../lib/workshop-api';
 import AutoPriorityIndicator from '../components/falla/AutoPriorityIndicator';
 import PhotoCapture from '../components/ui/PhotoCapture';
 import ConfirmModal from '../components/ui/ConfirmModal';
@@ -45,16 +38,12 @@ interface PhotoItem {
 
 export default function FallaPage() {
   const navigate = useNavigate();
-  const userName = useAuthStore((s) => s.userName);
   const equipment = useEquipmentList();
-  const isOnline = useOnlineStatus();
-
-  useEffect(() => {
-    if (isOnline) {
-      flushQueue().catch(() => {});
-    }
-  }, [isOnline]);
-
+  const mutationId = useRef('');
+  const sending = useRef(false);
+  const [saving, setSaving] = useState(false);
+  const [pending, setPending] = useState('');
+  const [saved, setSaved] = useState(false);
   const [unidad, setUnidad] = useState('');
   const [tipoFalla, setTipoFalla] = useState('');
   const [descripcion, setDescripcion] = useState('');
@@ -101,7 +90,7 @@ export default function FallaPage() {
   }, []);
 
   function handleSubmitIntent() {
-    if (!canSubmit) return;
+    if (!canSubmit || saving || saved) return;
     setShowConfirm(true);
   }
 
@@ -112,158 +101,43 @@ export default function FallaPage() {
   }
 
   async function handleConfirm() {
+    if (sending.current || saved || !canSubmit) return;
+    sending.current = true;
+    setSaving(true);
     setShowConfirm(false);
-    const otId = await generateNextOTId();
-    const priorityValue = priority ?? 'MEDIA';
-
-    const photoFiles = photos.map((p) => p.file);
-    let photoSummary = { urls: [] as string[] };
-    if (isOnline && photoFiles.length > 0) {
-      try {
-        photoSummary = await uploadFallaPhotos(photoFiles);
-      } catch (error) {
-        const message = error instanceof Error
-          ? error.message
-          : 'No se pudieron subir todas las fotos. Revisa Supabase o la conexión e intenta de nuevo.';
-        showToast(message, 'error');
+    mutationId.current ||= crypto.randomUUID();
+    try {
+      const response = await saveWorkshopCapture<{ otId: string }>({
+        endpoint: 'report',
+        mutationId: mutationId.current,
+        input: {
+          unit: unidad, type: tipoFalla, description: descripcion.trim(), canMove: puedeMoverse,
+          customer: clienteAfectado, location: ubicacion, downtime,
+        },
+        photos: photos.map(({ file }) => ({ file })),
+      });
+      if (response.kind === 'pending') {
+        setPending(response.reason);
         return;
       }
-    }
-    const photoUrls = photoSummary.urls;
-    const observacionesBase = `Ubicación: ${ubicacion}. Cliente: ${clienteAfectado}. Puede moverse: ${puedeMoverse ? 'Sí' : 'No'}`;
-    const observaciones = observacionesBase;
-    const fotoUrl = photoUrls.join(', ');
-    const cmmsDamage: CmmsDamageReport = {
-      assetId: unidad,
-      title: `${tipoFalla || 'Falla reportada'} - ${unidad}`.slice(0, 180),
-      severity: cmmsSeverityFromHermesPriority(priorityValue),
-      description: descripcion.trim(),
-      photoUrl: photoUrls[0],
-      relatedWorkOrderId: otId,
-      downtime,
-      reason: `Hermes reportado por ${userName || 'Operador'}: ${observaciones}`,
-      externalEventId: `hermes-falla-${otId}`,
-    };
-
-    // Sheet has 15 cols: FECHA HORA UNIDAD TIPO_AVERIA DESCRIPCION SEVERIDAD TECNICO
-    //   TIEMPO_PARO COSTO_ESTIMADO ESTADO SOLUCION OBSERVACIONES PROVEEDOR_PIEZA OT_ID Foto_URL
-    const averiaRow = [
-      mexicoDate(),      // FECHA
-      mexicoTime(),      // HORA
-      unidad,            // UNIDAD
-      tipoFalla,         // TIPO AVERÍA
-      descripcion,       // DESCRIPCIÓN
-      priorityValue,     // SEVERIDAD
-      userName,          // TÉCNICO
-      downtime,          // TIEMPO PARO (hrs)
-      '',                // COSTO ESTIMADO
-      'Abierta',         // ESTADO
-      '',                // SOLUCIÓN
-      observaciones,     // OBSERVACIONES
-      '',                // PROVEEDOR PIEZA
-      otId,              // OT_ID
-      fotoUrl,           // Foto_URL
-    ];
-
-    const otRow = [
-      String(Date.now()), // ROW_ID
-      otId,               // OT_ID
-      mexicoDate(),       // FECHA
-      unidad,             // UNIDAD
-      tipoFalla,          // TIPO_AVERIA
-      descripcion,        // DESCRIPCION
-      priorityValue,      // SEVERIDAD
-      priorityValue,      // PRIORIDAD
-      '',                 // MECANICO
-      'Abierta',          // ESTADO
-      fotoUrl,            // FOTO_URL
-      otId,               // AVERIA_REF
-      '',                 // PARTES
-      '',                 // COSTO_ESTIMADO
-      '',                 // FECHA_CIERRE
-      observaciones,      // OBSERVACIONES
-      '0',                // PROGRESO
-    ];
-
-    if (isOnline) {
-      // Selected photos must have durable URLs before the report can be saved.
-      showToast(fallaSavedMessage(otId));
-
-      // Push notification to fleet manager / workshop
-      sendPushEvent('nueva_falla', { ot_id: otId, unidad, tipo: tipoFalla, prioridad: priorityValue });
-
-      const backgroundWrites = [
-        {
-          label: 'Averias',
-          run: () => appendRow(SHEET_TABS.AVERIAS, averiaRow),
-          retry: () => queueSubmission({ type: 'falla', data: { tab: SHEET_TABS.AVERIAS, values: averiaRow }, timestamp: new Date().toISOString() }),
-        },
-        {
-          label: 'Ordenes Trabajo',
-          run: () => appendRow(SHEET_TABS.ORDENES_TRABAJO, otRow),
-          retry: () => queueSubmission({ type: 'falla', data: { tab: SHEET_TABS.ORDENES_TRABAJO, values: otRow }, timestamp: new Date().toISOString() }),
-        },
-        {
-          label: 'CMMS',
-          run: () => reportCmmsDamage(cmmsDamage),
-          retry: () => queueSubmission({ type: 'cmms_damage', data: { cmmsDamage }, timestamp: new Date().toISOString() }),
-        },
-      ];
-
-      Promise.allSettled(backgroundWrites.map((write) => write.run())).then((results) => {
-        results.forEach((result, index) => {
-          const write = backgroundWrites[index];
-          if (write && result.status === 'rejected') {
-            console.error(`Background write failed (${write.label}):`, result.reason);
-            write.retry().catch(() => {});
-          }
-        });
-      });
-    } else {
-      queueSubmission({
-        type: 'falla',
-        data: {
-          tab: SHEET_TABS.AVERIAS,
-          values: averiaRow,
-          photoFiles,
-          photoBucket: 'falla-photos',
-          photoColumnIndex: 14,
-        },
-        timestamp: new Date().toISOString(),
-      })
-        .catch((err: unknown) => console.error('Queue failed (averias):', err));
-      queueSubmission({
-        type: 'falla',
-        data: {
-          tab: SHEET_TABS.ORDENES_TRABAJO,
-          values: otRow,
-          photoFiles,
-          photoBucket: 'falla-photos',
-          photoColumnIndex: 10,
-        },
-        timestamp: new Date().toISOString(),
-      })
-        .catch((err: unknown) => console.error('Queue failed (ordenes_trabajo):', err));
-      queueSubmission({
-        type: 'cmms_damage',
-        data: {
-          cmmsDamage,
-          photoFiles,
-          photoBucket: 'falla-photos',
-        },
-        timestamp: new Date().toISOString(),
-      })
-        .catch((err: unknown) => console.error('Queue failed (cmms_damage):', err));
-      showToast(photoFiles.length > 0
-        ? 'Averia guardada - fotos se subiran al reconectarse'
-        : 'Averia guardada - se sincronizara al reconectarse');
+      setPending('');
+      setSaved(true);
+      showToast(`OT creada. ${response.result.otId} disponible en Órdenes`);
+    } catch (error) {
+      if (error instanceof WorkshopApiError && error.status === 400) {
+        mutationId.current = '';
+        setPending('');
+      }
+      showToast(error instanceof Error ? error.message : 'No se pudo preparar el reporte', 'error');
+    } finally {
+      sending.current = false;
+      setSaving(false);
     }
   }
 
   function handleToastDismiss() {
-    const shouldNavigateBack = toastType === 'success';
     setToastVisible(false);
-    if (shouldNavigateBack) navigate(-1);
+    if (toastType === 'success') navigate(-1);
   }
 
   return (
@@ -295,6 +169,7 @@ export default function FallaPage() {
         <h1 className="text-xl font-bold text-text">Reportar Falla</h1>
       </div>
 
+      <fieldset disabled={saving || !!pending || saved} className="min-w-0">
       {/* Form card */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-border flex flex-col gap-4">
         {/* Unidad */}
@@ -429,15 +304,22 @@ export default function FallaPage() {
         </div>
       </div>
 
+      </fieldset>
+      {pending && (
+        <p role="status" className="mt-3 rounded-xl bg-amber/10 p-3 text-sm text-text">
+          Guardado pendiente. {pending}
+        </p>
+      )}
+
       {/* Submit */}
       <button
         type="button"
-        onClick={handleSubmitIntent}
-        disabled={!canSubmit}
+        onClick={pending ? handleConfirm : handleSubmitIntent}
+        disabled={!canSubmit || saving || saved}
         className="mt-4 w-full bg-amber text-white rounded-xl py-4 font-semibold text-lg disabled:opacity-40 disabled:cursor-not-allowed transition-opacity btn-press"
         style={{ minHeight: 52 }}
       >
-        Enviar Reporte
+        {saving ? 'Guardando…' : pending ? 'Reintentar' : 'Enviar Reporte'}
       </button>
     </div>
   );

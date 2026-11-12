@@ -107,6 +107,7 @@ function RootRedirect() {
 export default function App() {
   const initRealtime = useWorkOrderStore((s) => s.initRealtime);
   const role = useAuthStore((s) => s.role) ?? undefined;
+  const userId = useAuthStore((s) => s.userId);
   const validateSession = useAuthStore((s) => s.validateSession);
 
   useEffect(() => {
@@ -114,16 +115,18 @@ export default function App() {
   }, [validateSession]);
 
   useEffect(() => {
+    if (!userId) return;
     const handleOnline = () => { flushQueue().catch(() => {}); };
     window.addEventListener('online', handleOnline);
     if (navigator.onLine) handleOnline();
     return () => { window.removeEventListener('online', handleOnline); };
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
+    if (!userId) return;
     const cleanup = initRealtime();
     return cleanup;
-  }, [initRealtime]);
+  }, [initRealtime, userId]);
 
   return (
     <Routes>
@@ -159,7 +162,7 @@ export default function App() {
         <Route path="/workorders/:otId" element={<RequireRole roles={WORKSHOP}><PageBoundary role={role}><S><WorkOrderDetailPage /></S></PageBoundary></RequireRole>} />
         <Route path="/workorders"       element={<RequireRole roles={WORKSHOP}><PageBoundary role={role}><S><WorkOrdersPage /></S></PageBoundary></RequireRole>} />
         <Route path="/pm"               element={<RequireRole roles={ADMIN}><PageBoundary role={role}><S><PMSchedulePage /></S></PageBoundary></RequireRole>} />
-        <Route path="/pm-order"         element={<RequireRole roles={ADMIN}><PageBoundary role={role}><S><PMWorkOrderPage /></S></PageBoundary></RequireRole>} />
+        <Route path="/pm-order"         element={<RequireRole roles={MANAGEMENT}><PageBoundary role={role}><S><PMWorkOrderPage /></S></PageBoundary></RequireRole>} />
         <Route path="/calendar"         element={<RequireRole roles={CALENDAR_ACCESS}><PageBoundary role={role}><S><CalendarPage /></S></PageBoundary></RequireRole>} />
 
         {/* Parts & manuals */}

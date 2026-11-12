@@ -1,40 +1,61 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { randomBytes, scryptSync } from 'node:crypto';
-import { readSession, signSession, verifyRolePin, verifySession } from './session-auth.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { issueSession, readSession, requireSession, revokeSession, verifySession } from './session-auth.js';
+import { createHermesIdentityFixture } from '../../tests/helpers/hermes-auth-fixture.js';
 
-beforeEach(() => {
-  process.env.HERMES_AUTH_SECRET = 'test-only-secret-with-more-than-32-characters';
-});
+function useFixture(options) {
+  const fixture = createHermesIdentityFixture(options);
+  for (const [key, value] of Object.entries(fixture.env)) vi.stubEnv(key, value);
+  vi.stubGlobal('fetch', vi.fn(fixture.fetchIdentity));
+  return fixture;
+}
 
 afterEach(() => {
-  delete process.env.HERMES_AUTH_SECRET;
-  delete process.env.HERMES_PIN_HASH_OPERADOR;
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
-describe('Hermes server session security', () => {
-  it('signs and verifies an expiring role session', () => {
-    const token = signSession('operador');
-    expect(verifySession(token)).toMatchObject({ role: 'operador', v: 1 });
+describe('employee session', () => {
+  it('keeps only the employee identity and session ID in the cookie', async () => {
+    const fixture = useFixture({ role: 'operador', unitScope: 'assigned', assignedUnits: ['CA20'] });
+    const token = await issueSession(fixture.membership.user_id);
+    const claims = verifySession(token);
+    expect(claims).toMatchObject({ v: 2, sub: fixture.membership.user_id });
+    expect(claims).not.toHaveProperty('role');
+    expect([...fixture.sessions.keys()].every((value) => /^[a-f0-9]{64}$/.test(value))).toBe(true);
+    const req = { headers: { cookie: `hermes_session=${token}` } };
+    expect(await readSession(req)).toMatchObject({ role: 'operador', unitScope: 'assigned', assignedUnits: ['CA20'] });
   });
 
-  it('rejects a modified token', () => {
-    const token = signSession('operador');
-    expect(verifySession(`${token}x`)).toBeNull();
+  it('checks the current roster for a role change and revocation', async () => {
+    const fixture = useFixture({ role: 'mecanico' });
+    const req = { headers: { cookie: fixture.cookie } };
+    expect((await readSession(req)).role).toBe('mecanico');
+    fixture.membership.role = 'supervisor';
+    expect((await readSession(req)).role).toBe('supervisor');
+    fixture.membership.active = false;
+    expect(await readSession(req)).toBeNull();
+    fixture.membership.active = true;
+    await revokeSession(req);
+    expect(await readSession(req)).toBeNull();
   });
 
-  it('reads only the HttpOnly session cookie value supplied by the request', () => {
-    const token = signSession('mecanico');
-    expect(readSession({ headers: { cookie: `other=1; hermes_session=${token}` } })).toMatchObject({ role: 'mecanico' });
+  it('rejects a current session assigned to a different project', async () => {
+    const fixture = useFixture({ projects: ['otro'] });
+    expect(await readSession({ headers: { cookie: fixture.cookie } })).toBeNull();
   });
 
-  it('compares configured role PIN hashes without storing plaintext PINs', () => {
-    const salt = randomBytes(16).toString('hex');
-    process.env.HERMES_PIN_HASH_OPERADOR = `${salt}:${scryptSync('4567', salt, 64).toString('hex')}`;
-    expect(verifyRolePin('operador', '4567')).toBe(true);
-    expect(verifyRolePin('operador', '7654')).toBe(false);
+  it('rejects a protected action for a role without permission', async () => {
+    const fixture = useFixture({ role: 'operador' });
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+    expect(await requireSession({ headers: { cookie: fixture.cookie } }, res, ['gerencia'])).toBeNull();
+    expect(res.status).toHaveBeenCalledWith(403);
   });
 
-  it('fails closed when a role PIN hash is not configured', () => {
-    expect(() => verifyRolePin('operador', '4567')).toThrow(/not configured/);
+  it('does not infer buying approval from the Gerencia role', async () => {
+    const fixture = useFixture({ role: 'gerencia' });
+    const req = { headers: { cookie: fixture.cookie } };
+    expect((await readSession(req)).canApprovePurchases).toBe(false);
+    fixture.membership.can_approve_purchases = true;
+    expect((await readSession(req)).canApprovePurchases).toBe(true);
   });
 });

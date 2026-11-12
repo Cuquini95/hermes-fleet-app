@@ -2,7 +2,7 @@
 import { precacheAndRoute, cleanupOutdatedCaches } from 'workbox-precaching';
 import { clientsClaim } from 'workbox-core';
 import { registerRoute } from 'workbox-routing';
-import { CacheFirst, NetworkFirst } from 'workbox-strategies';
+import { CacheFirst } from 'workbox-strategies';
 import { ExpirationPlugin } from 'workbox-expiration';
 
 declare const self: ServiceWorkerGlobalScope;
@@ -26,14 +26,9 @@ registerRoute(
   }),
 );
 
-// Hermes API parts/diagrams — network-first, 24h fallback
-registerRoute(
-  ({ url }) => /\/hermes-api\/(parts|diagrams)\//i.test(url.pathname),
-  new NetworkFirst({
-    cacheName: 'hermes-api-cache',
-    plugins: [new ExpirationPlugin({ maxEntries: 50, maxAgeSeconds: 24 * 60 * 60 })],
-  }),
-);
+// Data authenticated by a person must never be replayed for the next person
+// who signs in on the same device.
+self.addEventListener('activate', event => event.waitUntil(caches.delete('hermes-api-cache')));
 
 // ── Web Push ──────────────────────────────────────────────────────────────────
 

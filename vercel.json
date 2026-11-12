@@ -1,9 +1,13 @@
 {
+  "functions": {
+    "api/hermes-ai/photo_to_failure.js": { "maxDuration": 30 }
+  },
   "rewrites": [
     { "source": "/hermes-api/ai/diagnose", "destination": "/api/hermes-ai/diagnose" },
     { "source": "/hermes-api/ai/manual_lookup", "destination": "/api/hermes-ai/manual_lookup" },
     { "source": "/hermes-api/ai/photo_to_failure", "destination": "/api/hermes-ai/photo_to_failure" },
-    { "source": "/hermes-api/:path*", "destination": "/api/hermes/:path*" },
+    { "source": "/hermes-api/api/ocr/receipt", "destination": "/api/hermes-ai/photo_to_failure?mode=receipt" },
+    { "source": "/hermes-api/:path*", "destination": "/api/hermes-sheets-gate?path=:path*" },
     { "source": "/((?!api/|assets/|signature-tomas\\.png$).*)", "destination": "/index.html" }
   ],
   "headers": [

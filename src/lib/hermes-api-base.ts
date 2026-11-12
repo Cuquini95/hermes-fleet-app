@@ -10,6 +10,7 @@ function trimTrailingSlash(value: string): string {
 }
 
 export function resolveHermesApiBase(env: HermesApiEnv = import.meta.env): string {
+  if (env.PROD) return LOCAL_HERMES_API_BASE;
   const configured = env.VITE_HERMES_API_URL?.trim();
   if (configured) {
     return trimTrailingSlash(configured);

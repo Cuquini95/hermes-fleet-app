@@ -64,7 +64,7 @@ function createCombinedSignal(...signals: AbortSignal[]): AbortSignal {
   return ctrl.signal;
 }
 
-// ── Read-side localStorage cache (30s TTL) ────────────────────────────────────
+// ── Read cache within the active sign-in ────────────────────────────────────
 
 const CACHE_TTL_MS = 30_000;
 
@@ -73,47 +73,48 @@ interface CacheEntry {
   expiresAt: number;
 }
 
-function getCachedTab(tab: string): string[][] | null {
+const tabCache = new Map<string, CacheEntry>();
+let cacheOwner = '';
+let cacheGeneration = 0;
+
+export function setSheetSession(owner: string) {
+  if (owner !== cacheOwner) {
+    cacheOwner = owner;
+    cacheGeneration++;
+    tabCache.clear();
+  }
   try {
-    const raw = localStorage.getItem(`hermes_tab_${tab}`);
-    if (!raw) return null;
-    const entry = JSON.parse(raw) as CacheEntry;
-    if (Date.now() > entry.expiresAt) {
-      localStorage.removeItem(`hermes_tab_${tab}`);
-      return null;
-    }
-    return entry.data;
-  } catch {
+    const keys = Object.keys(globalThis.localStorage ?? {});
+    for (const key of keys) if (key.startsWith('hermes_tab_')) globalThis.localStorage.removeItem(key);
+  } catch { /* a browser may disable storage */ }
+}
+
+function getCachedTab(tab: string): string[][] | null {
+  const entry = tabCache.get(tab);
+  if (!entry || entry.expiresAt <= Date.now()) {
+    tabCache.delete(tab);
     return null;
   }
+  return entry.data;
 }
 
 function setCachedTab(tab: string, data: string[][]): void {
-  try {
-    const entry: CacheEntry = { data, expiresAt: Date.now() + CACHE_TTL_MS };
-    localStorage.setItem(`hermes_tab_${tab}`, JSON.stringify(entry));
-  } catch {
-    // localStorage full — not critical
-  }
+  if (cacheOwner) tabCache.set(tab, { data, expiresAt: Date.now() + CACHE_TTL_MS });
 }
 
 function invalidateCachedTab(tab: string): void {
-  try {
-    localStorage.removeItem(`hermes_tab_${tab}`);
-  } catch {
-    // not critical
-  }
+  tabCache.delete(tab);
 }
 
 // ── API functions ─────────────────────────────────────────────────────────────
 
 /** Append a new row to the given sheet tab. Invalidates the local cache for that tab on success. */
-export async function appendRow(tab: string, values: string[]): Promise<void> {
+export async function appendRow(tab: string, values: string[], expectedUserId = cacheOwner): Promise<void> {
   invalidateCachedTab(tab);
   const response = await fetchWithRetry(`${HERMES_API}/api/sheets/append`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tab, values }),
+    body: JSON.stringify({ tab, values, ...(expectedUserId ? { expectedUserId } : {}) }),
   });
   if (!response.ok) {
     const text = await response.text();
@@ -179,7 +180,7 @@ export async function syncExistingHorometros(): Promise<CmmsMeterHandoffResult> 
 
 /**
  * Read all rows from a sheet tab.
- * - Served from localStorage cache if data is <30s old.
+ * - Served from the active session's memory cache if data is <30s old.
  * - Supports optional limit/offset for server-side pagination (VPS >= 2.0).
  * - Pass signal to cancel in-flight request when component unmounts.
  */
@@ -189,6 +190,7 @@ export async function readRange(
   limit?: number,
   offset?: number,
 ): Promise<string[][]> {
+  const startedIn = cacheGeneration;
   // Return cached data when no pagination is requested
   if (limit === undefined && offset === undefined) {
     const cached = getCachedTab(tab);
@@ -209,6 +211,7 @@ export async function readRange(
     throw new Error(`Sheets API error ${response.status}: ${text}`);
   }
   const data = await response.json();
+  if (startedIn !== cacheGeneration) throw new DOMException('Cambió la sesión', 'AbortError');
   const rows: string[][] = data.data || [];
 
   // Cache only full fetches (no pagination)
@@ -399,24 +402,21 @@ async function fileToBase64Raw(file: File): Promise<string> {
   });
 }
 
-/**
- * Send a receipt image **or PDF** to the VPS OCR endpoint.
- * VPS exposes: POST /api/ocr/receipt  { image_base64, media_type }
- * Returns structured receipt data.
- */
+/** Read a receipt image or PDF through the same-origin OCR endpoint. */
 export async function ocrReceipt(file: File): Promise<OcrReceiptResult> {
   const isPdf = file.type === 'application/pdf';
+  if (isPdf && file.size > 2.5 * 1024 * 1024) throw new Error('El PDF supera 2.5 MB.');
   const image_base64 = isPdf ? await fileToBase64Raw(file) : await compressToBase64(file);
-  const media_type   = isPdf ? 'application/pdf' : 'image/jpeg';
-
-  const response = await fetchWithRetry(`${HERMES_API}/api/ocr/receipt`, {
+  const media_type = isPdf ? 'application/pdf' : 'image/jpeg';
+  const response = await fetch('/hermes-api/api/ocr/receipt', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(30000),
     body: JSON.stringify({ image_base64, media_type }),
   });
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`OCR error ${response.status}: ${text}`);
+    const data = await response.json().catch(() => ({}));
+    throw new Error(typeof data.error === 'string' ? data.error : 'No se pudo leer el recibo.');
   }
   return response.json() as Promise<OcrReceiptResult>;
 }
@@ -472,42 +472,32 @@ export interface PriceChange {
   new_price: number;
   pct_change: number;
   supplier: string;
+  source_date?: string;
 }
 
-export interface PriceImportResult {
+export interface PriceComparison {
+  compared: number;
+  unmatched: string[];
+  price_comparisons: PriceChange[];
   price_changes: PriceChange[];
   telegram_sent: boolean;
-  telegram_reason?: string;
 }
 
-/**
- * Upsert parts from a supplier quote into the server-side supplier_catalog.json.
- * Returns any price changes detected (existing part with different price).
- * Returns empty array on failure — non-blocking, does not throw on failure.
- */
-export async function importPartsFromQuote(
+export async function comparePartsQuote(
   supplier: string,
-  parts: PartImportEntry[]
-): Promise<PriceImportResult> {
-  const partsWithNumbers = parts.filter((p) => p.part_number.trim() !== '');
-  if (partsWithNumbers.length === 0) return { price_changes: [], telegram_sent: false };
-  try {
-    const res = await fetchWithRetry('/api/parts/import', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ supplier, parts: partsWithNumbers }),
-    });
-    if (!res.ok) return { price_changes: [], telegram_sent: false, telegram_reason: `http_${res.status}` };
-    const data = await res.json();
-    return {
-      price_changes: (data.price_changes as PriceChange[]) ?? [],
-      telegram_sent: data.telegram_sent === true,
-      telegram_reason: typeof data.telegram_reason === 'string' ? data.telegram_reason : undefined,
-    };
-  } catch {
-    // Non-critical — parts import failure should never block gasto save
-    return { price_changes: [], telegram_sent: false, telegram_reason: 'request_failed' };
-  }
+  parts: PartImportEntry[],
+  options: { expenseIds?: string[]; notify?: boolean } = {},
+): Promise<PriceComparison> {
+  const validParts = parts.filter((part) => part.part_number.trim() && part.unit_price > 0);
+  if (validParts.length === 0) return { compared: 0, unmatched: [], price_comparisons: [], price_changes: [], telegram_sent: false };
+  const response = await fetch('/api/parts/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(20000),
+    body: JSON.stringify({ supplier, parts: validParts, expense_ids: options.expenseIds, notify: options.notify }),
+  });
+  if (!response.ok) throw new Error('No se pudo verificar el historial de precios.');
+  return response.json() as Promise<PriceComparison>;
 }
 
 /**

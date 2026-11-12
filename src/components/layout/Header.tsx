@@ -1,4 +1,5 @@
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
 import { ArrowLeft, Bell, LogOut, ShoppingCart } from 'lucide-react';
 import { useAuthStore } from '../../stores/auth-store';
 import { useCartStore } from '../../stores/cart-store';
@@ -12,6 +13,8 @@ export default function Header() {
   const userName = useAuthStore((s) => s.userName);
   const role = useAuthStore((s) => s.role);
   const logout = useAuthStore((s) => s.logout);
+  const [leaving, setLeaving] = useState(false);
+  const [logoutError, setLogoutError] = useState(false);
 
   // Show the back arrow on every page EXCEPT the role-home (where back would
   // either loop or take you to /login). The arrow uses navigate(-1) which
@@ -36,9 +39,13 @@ export default function Header() {
   const canSeeCart = role === 'jefe_taller' || role === 'gerencia';
   const canSeeAlerts = role === 'jefe_taller' || role === 'coordinador' || role === 'supervisor' || role === 'gerencia';
 
-  const handleLogout = () => {
-    logout();
-    navigate('/login');
+  const handleLogout = async () => {
+    setLeaving(true);
+    setLogoutError(false);
+    const success = await logout();
+    setLeaving(false);
+    if (success) window.location.replace('/login');
+    else setLogoutError(true);
   };
 
   return (
@@ -47,7 +54,7 @@ export default function Header() {
       style={{ height: 64, backgroundColor: '#162252' }}
     >
       {/* Left: back arrow (when not at role-home) + avatar + user info */}
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 items-center gap-3">
         {!isRoleHome && (
           <button
             type="button"
@@ -65,8 +72,8 @@ export default function Header() {
           className="shrink-0 rounded"
           style={{ width: 36, height: 36 }}
         />
-        <div className="flex flex-col leading-tight">
-          <span className="text-white font-semibold text-sm">{userName}</span>
+        <div className="flex min-w-0 flex-col leading-tight">
+          <span className="truncate text-white font-semibold text-sm">{userName}</span>
           {role && (
             <span className="text-white/60 text-xs">{ROLE_LABELS[role]}</span>
           )}
@@ -74,7 +81,7 @@ export default function Header() {
       </div>
 
       {/* Right: health + cart (JT only) + bell + logout */}
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         <ApiHealthDot />
         {canSeeCart && (
           <button
@@ -116,12 +123,14 @@ export default function Header() {
 
         <button
           onClick={handleLogout}
+          disabled={leaving}
           className="text-white/80 hover:text-white transition-colors focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-navy rounded"
           aria-label="Cerrar sesión"
         >
           <LogOut size={22} />
         </button>
       </div>
+      {logoutError && <p role="alert" className="absolute right-3 top-full rounded-b-lg bg-white p-3 text-sm text-red-700 shadow">No se pudo cerrar la sesión. Intenta de nuevo.</p>}
     </header>
   );
 }

@@ -7,7 +7,7 @@ import OTCard from '../ui/OTCard';
 
 export default function MechanicHome() {
   const navigate = useNavigate();
-  const { workorders, fetched, fetchWorkOrders, loading } = useWorkOrderStore();
+  const { workorders, fetched, fetchWorkOrders, loading, error } = useWorkOrderStore();
 
   useEffect(() => {
     if (!fetched) fetchWorkOrders();
@@ -22,13 +22,13 @@ export default function MechanicHome() {
       <div className="flex gap-3 mb-2">
         <KPICard
           icon={<Wrench size={20} />}
-          value={loading ? '…' : activeOTs.length}
+          value={error ? '—' : loading || !fetched ? '…' : activeOTs.length}
           label="OTs Activas"
           color="#2563EB"
         />
         <KPICard
           icon={<Package size={20} />}
-          value={loading ? '…' : waitingParts}
+          value={error ? '—' : loading || !fetched ? '…' : waitingParts}
           label="Esperando Pieza"
           color="#EA580C"
         />
@@ -36,7 +36,7 @@ export default function MechanicHome() {
 
       {/* Mis Órdenes Activas */}
       <h2 className="font-semibold text-lg text-text mt-6 mb-3">Órdenes Activas</h2>
-      {loading ? (
+      {error ? <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p> : loading || !fetched ? (
         <div className="text-center py-8 text-text-secondary text-sm">Cargando…</div>
       ) : activeOTs.length > 0 ? (
         activeOTs.map((ot) => (

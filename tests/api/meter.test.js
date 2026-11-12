@@ -34,7 +34,7 @@ describe('CMMS meter handoff endpoint', () => {
         HOSTED_CMMS_SUPABASE_SERVICE_KEY: 'service-key',
         CMMS_HERMES_FALLBACK_ORGANIZATION_ID: 'org-a',
       },
-      authorize: () => ({ role: 'supervisor' }),
+      authorize: () => ({ role: 'supervisor', allUnits: true }),
       rateLimit: () => false,
     });
     const res = createResponse();

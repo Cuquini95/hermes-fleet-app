@@ -21,6 +21,7 @@
  * instead of double-counting.
  */
 import { requireSession } from './session-auth.js';
+import { hasIdentityUnit } from './hermes-identity.js';
 import { rejectIfRateLimited } from './rate-limit.js';
 
 const MAX_BODY_BYTES = 256 * 1024;
@@ -94,10 +95,10 @@ export function createMeterHandler({
       return res.status(405).json({ detail: 'Method not allowed.' });
     }
 
-    const session = authorize(req, res, METER_ROLES);
+    const session = await authorize(req, res, METER_ROLES);
     if (!session) return undefined;
 
-    if (rateLimit(req, res, { scope: 'cmms-meter', limit: 120 }, session.role)) return undefined;
+    if (rateLimit(req, res, { scope: 'cmms-meter', limit: 120 }, session.userId)) return undefined;
 
     const supabaseUrl = cleanEnvValue(
       env.HOSTED_CMMS_SUPABASE_URL || env.SUPABASE_URL,
@@ -140,6 +141,9 @@ export function createMeterHandler({
     }
     if (normalized.length === 0) {
       return res.status(400).json({ detail: 'No valid readings supplied.', rejected });
+    }
+    if (normalized.some((reading) => !hasIdentityUnit(session, reading.unit))) {
+      return res.status(403).json({ detail: 'Unidad fuera de tu asignación' });
     }
 
     const readings = dedupeLatestPerUnit(normalized);

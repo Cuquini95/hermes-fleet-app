@@ -1,5 +1,3 @@
-import type { StickerInspectionTemplate } from '../types/sticker-inspection';
-
 const COMMON_SAFETY = [
   {
     id: 'combustible_fugas',
@@ -59,9 +57,9 @@ const COMMON_SAFETY = [
     hardStop: true,
     failureGuidance: 'Debe cumplir cuando hay dano estructural severo.',
   },
-] satisfies StickerInspectionTemplate['items'];
+];
 
-export const STICKER_INSPECTION_TEMPLATES: StickerInspectionTemplate[] = [
+export const STICKER_INSPECTION_TEMPLATES = [
   {
     id: 'excavadora',
     label: 'Excavadora',
@@ -238,7 +236,7 @@ export const STICKER_INSPECTION_TEMPLATES: StickerInspectionTemplate[] = [
   },
 ];
 
-export function getStickerTemplate(templateId: string): StickerInspectionTemplate {
+export function getStickerTemplate(templateId) {
   const fallback = STICKER_INSPECTION_TEMPLATES[0];
   if (!fallback) throw new Error('No sticker inspection templates configured');
   return STICKER_INSPECTION_TEMPLATES.find((template) => template.id === templateId) ?? fallback;

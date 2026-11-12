@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
 
-vi.mock('zustand/middleware', async () => {
-  const actual = await vi.importActual<typeof import('zustand/middleware')>('zustand/middleware');
-  return { ...actual, persist: (config: unknown) => config };
-});
-
 const { useAuthStore } = await import('./auth-store');
+
+const operatorProfile = {
+  userId: '00000000-0000-4000-8000-000000000001', userName: 'Operadora de prueba', role: 'operador',
+  project: 'tcm', projects: ['tcm'], assignedUnits: ['CA22'], unitScope: 'assigned', allUnits: false,
+  canApprovePurchases: false,
+};
 
 function resetStore() {
   useAuthStore.setState({
@@ -37,26 +38,26 @@ describe('auth-store — server-backed session', () => {
     expect(source).not.toMatch(/pin:\s*['"]\d{4}/);
   });
 
-  it('rejects malformed PINs without calling the server', async () => {
+  it('rejects missing personal credentials without calling the server', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    await expect(useAuthStore.getState().login('operador', '12')).resolves.toBe(false);
+    await expect(useAuthStore.getState().login('operador', 'fixture-password')).resolves.toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('uses the server response as the authenticated profile', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(200, {
-      role: 'mecanico', userName: 'Mecánico', assignedUnits: [],
-    })));
-    await expect(useAuthStore.getState().login('mecanico', '4567')).resolves.toBe(true);
+    const request = vi.fn().mockResolvedValue(response(200, { ...operatorProfile, role: 'mecanico' }));
+    vi.stubGlobal('fetch', request);
+    await expect(useAuthStore.getState().login('operadora@example.test', 'fixture-password')).resolves.toBe(true);
+    expect(JSON.parse(request.mock.calls[0][1].body)).toEqual({ email: 'operadora@example.test', password: 'fixture-password' });
     expect(useAuthStore.getState()).toMatchObject({
-      role: 'mecanico', userName: 'Mecánico', isAuthenticated: true, sessionChecked: true,
+      role: 'mecanico', userName: 'Operadora de prueba', isAuthenticated: true, sessionChecked: true,
     });
   });
 
   it('fails closed on invalid credentials', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(401, { error: 'invalid' })));
-    await expect(useAuthStore.getState().login('operador', '4567')).resolves.toBe(false);
+    await expect(useAuthStore.getState().login('operadora@example.test', 'fixture-password')).resolves.toBe(false);
     expect(useAuthStore.getState().isAuthenticated).toBe(false);
   });
 
@@ -71,7 +72,7 @@ describe('auth-store — server-backed session', () => {
 
   it('restores only a profile validated by the server', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(200, {
-      role: 'supervisor', userName: 'Supervisor', assignedUnits: ['CA22'],
+      ...operatorProfile, role: 'supervisor',
     })));
     await useAuthStore.getState().validateSession();
     expect(useAuthStore.getState()).toMatchObject({
@@ -84,5 +85,12 @@ describe('auth-store — server-backed session', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(204)));
     await useAuthStore.getState().logout();
     expect(useAuthStore.getState()).toMatchObject({ role: null, isAuthenticated: false });
+  });
+
+  it('keeps the employee in control when logout cannot be confirmed', async () => {
+    useAuthStore.setState({ role: 'operador', userName: 'Operadora de prueba', isAuthenticated: true });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(503)));
+    await expect(useAuthStore.getState().logout()).resolves.toBe(false);
+    expect(useAuthStore.getState().isAuthenticated).toBe(true);
   });
 });

@@ -71,3 +71,18 @@ export default defineConfig([
   },
 ])
 ```
+
+## Recuperación de Partes
+
+La búsqueda usa `12 Inventario Rep.`. La verificación usa el último gasto aprobado del mismo proveedor y número de parte en `02 Gastos`. Los gastos creados en la misma captura se excluyen de la comparación. La consulta de una cotización es de lectura y no envía alertas.
+
+Para habilitar el acceso directo a Google Sheets en el servidor, define `HERMES_GOOGLE_SHEETS_ID` y `HERMES_GOOGLE_SERVICE_ACCOUNT_JSON`. Concede acceso de lector a esa cuenta de servicio en la hoja correspondiente. La credencial va en las variables privadas de Vercel. Usa una copia privada de pruebas para validar la conexión antes de conectar la hoja operativa.
+
+Define `HERMES_EXPENSE_PRICE_CURRENCY=MXN` después de confirmar que la hoja de gastos contiene precios en MXN. Configura `TELEGRAM_BOT_TOKEN` y `TELEGRAM_PRICE_ALERT_CHAT_ID` para enviar cambios de precio al guardar un gasto. Durante la validación usa un chat de pruebas. Para el acceso a datos operativos, el inicio de sesión debe vincular una identidad verificada con un rol autorizado.
+
+El lector de fotos y PDF de recibos usa `OPENROUTER_API_KEY` y `HERMES_RECEIPT_OCR_MODEL` en Vercel. Selecciona un modelo compatible con imágenes y salida JSON. Valida con un recibo de prueba y revisa los datos extraídos antes de guardar.
+
+```sh
+npx vitest run api/_lib/hermes-part-prices.test.js api/_lib/hermes-part-route.test.js api/_lib/hermes-receipt-ocr.test.js
+npm run build
+```

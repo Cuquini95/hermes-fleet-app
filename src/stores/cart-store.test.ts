@@ -67,6 +67,12 @@ describe('cart-store', () => {
       getStore().addItem({ ...SAMPLE_PART, part_number: 'F002-999' });
       expect(getStore().items).toHaveLength(2);
     });
+
+    it('keeps the same SKU on separate lines for separate units', () => {
+      getStore().addItem(SAMPLE_PART);
+      getStore().addItem({ ...SAMPLE_PART, equipment: 'CA21' });
+      expect(getStore().items.map(item => item.equipment)).toEqual(['CA20', 'CA21']);
+    });
   });
 
   // removeItem

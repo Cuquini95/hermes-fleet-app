@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Wrench,
@@ -20,13 +20,10 @@ import { useAuthStore } from '../stores/auth-store';
 import { useWorkOrderStore } from '../stores/workorder-store';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
 import { useEquipmentList } from '../hooks/useEquipmentList';
+import { requestWorkshop, type WorkshopMechanic } from '../lib/workshop-api';
 import KPICard from '../components/ui/KPICard';
 import EquipmentCard from '../components/ui/EquipmentCard';
 import OTCard from '../components/ui/OTCard';
-
-// TODO: Move this to a constants file or fetch from a personnel sheet.
-// Currently hardcoded — update when headcount changes.
-const MECANICOS_HEADCOUNT = 12;
 
 interface ActionCard {
   label: string;
@@ -39,6 +36,7 @@ const ACTION_CARDS: ActionCard[] = [
   { label: 'PM',       icon: <Clock        size={32} className="text-amber" />, path: '/pm' },
   { label: 'Partes',   icon: <Package      size={32} className="text-amber" />, path: '/parts' },
   { label: 'Orden PM', icon: <CalendarCheck size={32} className="text-amber" />, path: '/pm-order' },
+  { label: 'Calendario', icon: <CalendarCheck size={32} className="text-amber" />, path: '/calendar' },
   { label: 'Sticker 15d', icon: <BadgeCheck size={32} className="text-amber" />, path: '/sticker-inspection' },
   { label: 'Manuales', icon: <BookOpen     size={32} className="text-amber" />, path: '/manuals' },
   { label: 'Diagramas',icon: <FileImage    size={32} className="text-amber" />, path: '/diagrams' },
@@ -52,7 +50,7 @@ export default function WorkshopHomePage() {
   const equipment = useEquipmentList();
 
   // ── Real OT data ────────────────────────────────────────────────────────
-  const { workorders, fetched, fetchWorkOrders, loading: otLoading } = useWorkOrderStore();
+  const { workorders, fetched, fetchWorkOrders, loading: otLoading, error: otError } = useWorkOrderStore();
 
   useEffect(() => {
     if (!fetched) fetchWorkOrders();
@@ -60,6 +58,7 @@ export default function WorkshopHomePage() {
 
   const otsActivas   = workorders.filter((ot) => ot.estado !== 'Completado');
   const otsEnProceso = workorders.filter((ot) => ot.estado === 'En Reparación');
+  const otsPorRecibir = otsActivas.filter((ot) => ['Abierta', 'En Espera de Asignación'].includes(ot.estado));
 
   // ── En Taller: unique units with active OTs, resolved from catalog ──────
   const unitsEnTaller = [...new Set(otsActivas.map((ot) => ot.unidad).filter(Boolean))];
@@ -69,34 +68,31 @@ export default function WorkshopHomePage() {
 
   // ── Partes Pendientes from Cotizaciones_Pendientes ──────────────────────
   const [partesPendientes, setPartesPendientes] = useState<number | null>(null);
+  const [partsError, setPartsError] = useState(false);
+  const [mechanicCount, setMechanicCount] = useState<number | null>(null);
 
-  useEffect(() => {
-    readRange(SHEET_TABS.COTIZACIONES)
-      .then((rows) => {
-        const count = rows.slice(1).filter((r) => (r[6] ?? '').trim() === 'Pendiente').length;
-        setPartesPendientes(count);
-      })
-      .catch(() => setPartesPendientes(0));
+  const refreshIndicators = useCallback(() => {
+    setPartsError(false);
+    void readRange(SHEET_TABS.COTIZACIONES)
+      .then((rows) => setPartesPendientes(rows.filter((row) => (row[6] ?? '').trim() === 'Pendiente').length))
+      .catch(() => { setPartesPendientes(null); setPartsError(true); });
+    void requestWorkshop<{ mechanics: WorkshopMechanic[] }>('mechanics')
+      .then(({ mechanics }) => setMechanicCount(mechanics.length))
+      .catch(() => setMechanicCount(null));
   }, []);
 
-  // ── Refresh all ─────────────────────────────────────────────────────────
+  useEffect(refreshIndicators, [refreshIndicators]);
+
   function handleRefresh() {
-    useWorkOrderStore.setState({ fetched: false });
-    fetchWorkOrders();
-    setPartesPendientes(null);
-    readRange(SHEET_TABS.COTIZACIONES)
-      .then((rows) => {
-        const count = rows.slice(1).filter((r) => (r[6] ?? '').trim() === 'Pendiente').length;
-        setPartesPendientes(count);
-      })
-      .catch(() => setPartesPendientes(0));
+    void fetchWorkOrders();
+    refreshIndicators();
   }
 
   // ── Greeting ────────────────────────────────────────────────────────────
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Buenos días' : hour < 18 ? 'Buenas tardes' : 'Buenas noches';
 
-  const isLoading = otLoading || partesPendientes === null;
+  const isLoading = otLoading;
 
   return (
     <div className="flex flex-col py-4 animate-fade-up">
@@ -120,25 +116,25 @@ export default function WorkshopHomePage() {
       <div className="grid grid-cols-2 gap-3 mb-4">
         <KPICard
           icon={<HardHat size={20} />}
-          value={otLoading ? '…' : equiposTaller.length}
+          value={otError ? '—' : otLoading || !fetched ? '…' : unitsEnTaller.length}
           label="En Taller"
           color="#DC2626"
         />
         <KPICard
           icon={<ClipboardList size={20} />}
-          value={otLoading ? '…' : otsActivas.length}
+          value={otError ? '—' : otLoading || !fetched ? '…' : otsActivas.length}
           label="OTs Activas"
           color="#2563EB"
         />
         <KPICard
           icon={<Users size={20} />}
-          value={MECANICOS_HEADCOUNT}
+          value={mechanicCount ?? '—'}
           label="Mecánicos"
           color="#16A34A"
         />
         <KPICard
           icon={<PackageSearch size={20} />}
-          value={partesPendientes === null ? '…' : partesPendientes}
+          value={partsError ? '—' : partesPendientes ?? '…'}
           label="Partes Pendientes"
           color="#F59E0B"
         />
@@ -159,10 +155,22 @@ export default function WorkshopHomePage() {
         ))}
       </div>
 
+      {otError && <p role="alert" className="mb-3 rounded-xl bg-red-50 p-3 text-sm text-red-700">{otError}</p>}
+      {partsError && <p role="status" className="mb-3 text-sm text-text-secondary">Partes pendientes sin datos.</p>}
+
+      <h2 className="font-semibold text-text mt-2 mb-3">OTs por recibir</h2>
+      <div className="mb-4">
+        {!otLoading && fetched && !otError && (
+          otsPorRecibir.length > 0 ? otsPorRecibir.map((ot) => (
+            <OTCard key={ot.ot_id} workorder={ot} onClick={() => navigate(`/workorders/${ot.ot_id}`)} />
+          )) : <p className="text-sm text-text-secondary">Sin órdenes abiertas por recibir.</p>
+        )}
+      </div>
+
       {/* En el Taller Ahora */}
       <h2 className="font-semibold text-text mt-2 mb-3">En el Taller Ahora</h2>
       <div className="flex flex-col gap-3 mb-6">
-        {otLoading ? (
+        {otError ? null : otLoading || !fetched ? (
           <div className="text-center py-6 text-text-secondary text-sm">Cargando…</div>
         ) : equiposTaller.length > 0 ? (
           equiposTaller.map((equipment) => (
@@ -178,7 +186,7 @@ export default function WorkshopHomePage() {
       {/* OTs en Proceso */}
       <h2 className="font-semibold text-text mt-2 mb-3">OTs en Proceso</h2>
       <div className="flex flex-col">
-        {otLoading ? (
+        {otError ? null : otLoading || !fetched ? (
           <div className="text-center py-6 text-text-secondary text-sm">Cargando…</div>
         ) : otsEnProceso.length > 0 ? (
           otsEnProceso.map((ot) => (

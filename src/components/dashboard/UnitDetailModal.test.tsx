@@ -71,8 +71,8 @@ describe('UnitDetailModal — empty state messaging', () => {
 
 // ── Averia state split: open vs closed ───────────────────────────────────────
 describe('UnitDetailModal — open/closed averia filtering', () => {
-  it('filters open averias where estado is "abierta"', () => {
-    expect(source).toContain("estado.toLowerCase() === 'abierta'");
+  it('uses the shared open-order predicate for active repairs', () => {
+    expect(source).toContain('averias?.filter(isOpenAveria)');
   });
 
   it('filters closed averias as the inverse of open', () => {

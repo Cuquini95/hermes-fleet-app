@@ -6,11 +6,14 @@ import {
   Wrench,
   ShieldAlert,
   ShieldOff,
+  BadgeCheck,
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import KPICard from '../components/ui/KPICard';
 import EquipmentCard from '../components/ui/EquipmentCard';
+import { useFleetDispatch } from '../hooks/useFleetDispatch';
+import { useEquipmentStore } from '../stores/equipment-store';
 
 interface ActionCard {
   label: string;
@@ -21,19 +24,23 @@ interface ActionCard {
 const ACTION_CARDS: ActionCard[] = [
   { label: 'Equipos', icon: <Truck size={32} className="text-amber" />, path: '/fleet' },
   { label: 'Alertas', icon: <AlertTriangle size={32} className="text-amber" />, path: '/alerts' },
+  { label: 'Sticker 15 días', icon: <BadgeCheck size={32} className="text-amber" />, path: '/sticker-inspection' },
 ];
 
 export default function SupervisorHomePage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
-  const equipment = useEquipmentList();
+  const fleet = useEquipmentList();
+  const { effectiveEquipment: equipment, verified, message, loading, refresh } = useFleetDispatch(fleet);
+  const equipmentFetched = useEquipmentStore((state) => state.fetched);
+  const ready = verified && equipmentFetched;
 
   const total = equipment.length;
   const operativo = equipment.filter((e) => e.status === 'operativo').length;
   const alerta = equipment.filter((e) => e.status === 'alerta').length;
   const taller = equipment.filter((e) => e.status === 'taller').length;
   const inactivo = equipment.filter((e) => e.status === 'inactivo').length;
-  const disponibilidad = total > 0 ? Math.round(((operativo + alerta) / total) * 100) : 0;
+  const disponibilidad = total > 0 ? Math.round((operativo / total) * 100) : 0;
 
   const equiposTaller = equipment.filter((e) => e.status === 'taller');
   const equiposAlerta = equipment.filter((e) => e.status === 'alerta');
@@ -57,29 +64,33 @@ export default function SupervisorHomePage() {
       <div className="grid grid-cols-2 gap-3 mb-4">
         <KPICard
           icon={<Activity size={20} />}
-          value={`${disponibilidad}%`}
+          value={ready && total > 0 ? `${disponibilidad}%` : '—'}
           label="Disponibilidad"
           color="#16A34A"
         />
         <KPICard
           icon={<Wrench size={20} />}
-          value={taller}
+          value={ready ? taller : '—'}
           label="En Taller"
           color="#DC2626"
         />
         <KPICard
           icon={<ShieldAlert size={20} />}
-          value={alerta}
+          value={ready ? alerta : '—'}
           label="Alertas"
           color="#F59E0B"
         />
         <KPICard
           icon={<ShieldOff size={20} />}
-          value={inactivo}
+          value={equipmentFetched ? inactivo : '—'}
           label="Inactivos"
           color="#9CA3AF"
         />
       </div>
+
+      {message && <p role="status" className="mb-3 text-sm text-text-secondary">{message}</p>}
+      {!ready && !message && <p className="mb-3 text-sm text-text-secondary">Verificando disponibilidad…</p>}
+      <button type="button" disabled={loading} onClick={() => void refresh()} className="self-start mb-3 text-sm font-medium text-amber">Actualizar bloqueos</button>
 
       {/* Quick actions 2-column grid */}
       <div className="grid grid-cols-2 gap-3 mb-6">
@@ -103,13 +114,13 @@ export default function SupervisorHomePage() {
           equiposTaller.map((equipment) => (
             <EquipmentCard key={equipment.unit_id} equipment={equipment} />
           ))
-        ) : (
+        ) : ready ? (
           <div className="bg-green-50 border border-success rounded-lg p-3">
             <p className="text-sm font-medium text-success text-center">
-              Todos los equipos operativos ✓
+              Sin equipos en taller
             </p>
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* Equipos en Alerta */}
@@ -119,13 +130,13 @@ export default function SupervisorHomePage() {
           equiposAlerta.map((equipment) => (
             <EquipmentCard key={equipment.unit_id} equipment={equipment} />
           ))
-        ) : (
+        ) : ready ? (
           <div className="bg-green-50 border border-success rounded-lg p-3">
             <p className="text-sm font-medium text-success text-center">
-              Sin alertas activas ✓
+              Sin equipos en alerta
             </p>
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   );

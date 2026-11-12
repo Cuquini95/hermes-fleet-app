@@ -1,24 +1,31 @@
 export type OTPriority = 'CRITICA' | 'ALTA' | 'MEDIA' | 'BAJA';
-export type OTEstado = 'Abierta' | 'En Reparación' | 'Esperando Pieza' | 'Resuelta' | 'Completado';
+export type OTEstado = 'Abierta' | 'En Espera de Asignación' | 'En Reparación' | 'Esperando Pieza' | 'Resuelta' | 'Completado';
 
 export const OT_STATUS_FLOW: OTEstado[] = ['Abierta', 'En Reparación', 'Esperando Pieza', 'Resuelta', 'Completado'];
 
-export type OTStatusField = 'estado' | 'mecanico_asignado' | 'progreso' | 'observaciones' | 'costo_estimado' | 'prioridad';
+export type OTStatusField = 'estado' | 'mecanico_asignado' | 'progreso' | 'observaciones' | 'costo_estimado' | 'prioridad' | 'foto_url';
 
 export interface StatusLogEntry {
   timestamp: string;
   ot_id: string;
-  field: OTStatusField;
+  field: OTStatusField | 'programacion';
   old_value: string;
   new_value: string;
   changed_by: string;
   role: string;
+  actorId?: string;
 }
 
 export function getNextStatuses(current: OTEstado): OTEstado[] {
-  const idx = OT_STATUS_FLOW.indexOf(current);
-  if (idx < 0) return OT_STATUS_FLOW;
-  return OT_STATUS_FLOW.slice(idx);
+  const next: Record<OTEstado, OTEstado[]> = {
+    Abierta: ['En Reparación', 'Esperando Pieza'],
+    'En Espera de Asignación': ['En Reparación', 'Esperando Pieza'],
+    'En Reparación': ['Esperando Pieza', 'Resuelta'],
+    'Esperando Pieza': ['En Reparación', 'Resuelta'],
+    Resuelta: ['En Reparación', 'Completado'],
+    Completado: [],
+  };
+  return [current, ...(next[current] ?? [])];
 }
 
 export interface WorkOrder {
@@ -30,6 +37,7 @@ export interface WorkOrder {
   severidad: string;
   prioridad: OTPriority;
   mecanico_asignado: string;
+  mecanico_usuario_id?: string;
   estado: OTEstado;
   foto_url: string;
   averia_ref: string;
@@ -49,6 +57,7 @@ export const PRIORITY_CONFIG: Record<OTPriority, { color: string; bg: string; la
 
 export const ESTADO_CONFIG: Record<OTEstado, { color: string; bg: string }> = {
   'Abierta': { color: '#3B82F6', bg: '#DBEAFE' },
+  'En Espera de Asignación': { color: '#3B82F6', bg: '#DBEAFE' },
   'En Reparación': { color: '#2563EB', bg: '#FEF3C7' },
   'Esperando Pieza': { color: '#EA580C', bg: '#FFEDD5' },
   'Resuelta': { color: '#8B5CF6', bg: '#EDE9FE' },

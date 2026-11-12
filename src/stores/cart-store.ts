@@ -1,5 +1,7 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { createJSONStorage, persist } from 'zustand/middleware';
+
+let cartOwner = '';
 
 export interface CartItem {
   cartId: string;
@@ -30,9 +32,9 @@ export const useCartStore = create<CartStore>()(
 
       addItem: (part) =>
         set((state) => {
-          // If same part_number already in cart (catalog parts), bump qty
+          // Each unit has its own line, even when it uses the same catalog part.
           if (!part.isManual) {
-            const existing = state.items.find((i) => i.part_number === part.part_number && !i.isManual);
+            const existing = state.items.find((i) => i.part_number === part.part_number && i.equipment === part.equipment && !i.isManual);
             if (existing) {
               return {
                 items: state.items.map((i) =>
@@ -55,6 +57,22 @@ export const useCartStore = create<CartStore>()(
 
       clearCart: () => set({ items: [] }),
     }),
-    { name: 'hermes-cart-v1' }
+    {
+      name: 'hermes-cart-v2',
+      skipHydration: true,
+      storage: createJSONStorage(() => ({
+        getItem: (key) => cartOwner ? globalThis.localStorage?.getItem(`${key}:${cartOwner}`) ?? null : null,
+        setItem: (key, value) => { if (cartOwner) globalThis.localStorage?.setItem(`${key}:${cartOwner}`, value); },
+        removeItem: (key) => { if (cartOwner) globalThis.localStorage?.removeItem(`${key}:${cartOwner}`); },
+      })),
+    }
   )
 );
+
+export function setCartSession(owner: string) {
+  if (owner === cartOwner) return;
+  cartOwner = '';
+  useCartStore.setState({ items: [] });
+  cartOwner = owner;
+  if (owner) void useCartStore.persist.rehydrate();
+}

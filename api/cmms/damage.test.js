@@ -1,17 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import handler from './damage.js';
-import { signSession } from '../_lib/session-auth.js';
-
-beforeEach(() => {
-  process.env.HERMES_AUTH_SECRET = 'test-only-secret-with-more-than-32-characters';
-});
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import handler from '../_lib/cmms-damage.js';
+vi.mock('../_lib/session-auth.js', () => ({
+  requireSession: async () => ({ role: 'operador', allUnits: true }),
+}));
 
 afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.CMMS_API_BASE;
   delete process.env.CMMS_HERMES_INGEST_SECRET;
   delete process.env.CMMS_HERMES_SYSTEM_TOKEN;
-  delete process.env.HERMES_AUTH_SECRET;
 });
 
 describe('CMMS damage proxy', () => {
@@ -83,7 +80,7 @@ function authorizedRequest(body) {
   return {
     method: 'POST',
     body,
-    headers: { cookie: `hermes_session=${signSession('operador')}` },
+    headers: {},
   };
 }
 

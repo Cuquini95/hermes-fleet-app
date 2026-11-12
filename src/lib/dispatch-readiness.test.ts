@@ -82,4 +82,28 @@ describe('buildDispatchReadinessMap', () => {
     expect(readiness?.level).toBe('ok');
     expect(readiness?.label).toBe('Sticker vigente');
   });
+
+  it('keeps a green sticker blocked until a supervisor approves the inspection', () => {
+    const map = buildDispatchReadinessMap([
+      stickerRow({ 10: 'pendiente_supervisor', 13: 'no' }),
+    ], [], today);
+    expect(map.get('EX-01')?.level).toBe('blocked');
+    expect(map.get('EX-01')?.reason).toContain('pendiente de aprobación');
+  });
+
+  it('blocks a conditional sticker when a commitment expires', () => {
+    const map = buildDispatchReadinessMap([
+      stickerRow({ 12: 'yellow', 17: '2026-07-06' }),
+    ], [], today);
+    expect(map.get('EX-01')?.level).toBe('blocked');
+  });
+
+  it('preserves an unresolved failed DVIR even after a later passing inspection', () => {
+    const map = buildDispatchReadinessMap([], [
+      dvirRow({ 2: '05/07/2026', 22: 'reprobado', 26: 'Pendiente' }),
+      dvirRow(),
+    ], today);
+    expect(map.get('EX-01')?.level).toBe('blocked');
+  });
+
 });

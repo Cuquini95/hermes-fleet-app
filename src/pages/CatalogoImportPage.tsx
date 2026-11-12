@@ -12,7 +12,7 @@ import {
   PackagePlus,
 } from 'lucide-react';
 import { ocrReceipt } from '../lib/sheets-api';
-import { importPartsFromQuote } from '../lib/sheets-api';
+import { comparePartsQuote } from '../lib/sheets-api';
 import type { OcrLineItem, PriceChange } from '../lib/sheets-api';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -39,9 +39,9 @@ export default function CatalogoImportPage() {
   const [importing, setImporting] = useState(false);
   const [importDone, setImportDone] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
-  const [priceChanges, setPriceChanges] = useState<PriceChange[]>([]);
-  const [telegramSent, setTelegramSent] = useState(false);
-  const [importedCount, setImportedCount] = useState(0);
+  const [priceComparisons, setPriceComparisons] = useState<PriceChange[]>([]);
+  const [comparedCount, setComparedCount] = useState(0);
+  const [unmatchedParts, setUnmatchedParts] = useState<string[]>([]);
 
   const fileRef   = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -105,10 +105,10 @@ export default function CatalogoImportPage() {
   async function handleImport() {
     setImportError(null);
     const validLines = lineItems.filter(
-      (l) => l.part_number.trim() !== '' && l.description.trim() !== ''
+      (l) => l.part_number.trim() !== '' && l.unit_price > 0
     );
     if (validLines.length === 0) {
-      setImportError('Agrega al menos una parte con número y descripción.');
+      setImportError('Agrega al menos una parte con número y precio unitario.');
       return;
     }
     if (!supplier.trim()) {
@@ -118,7 +118,7 @@ export default function CatalogoImportPage() {
 
     setImporting(true);
     try {
-      const result = await importPartsFromQuote(
+      const result = await comparePartsQuote(
         supplier.trim(),
         validLines.map((l) => ({
           part_number: l.part_number,
@@ -126,12 +126,12 @@ export default function CatalogoImportPage() {
           unit_price: l.unit_price,
         }))
       );
-      setImportedCount(validLines.length);
-      setPriceChanges(result.price_changes);
-      setTelegramSent(result.telegram_sent);
+      setComparedCount(result.compared);
+      setUnmatchedParts(result.unmatched);
+      setPriceComparisons(result.price_comparisons ?? result.price_changes);
       setImportDone(true);
     } catch {
-      setImportError('Error al importar. Intenta de nuevo.');
+      setImportError('No se pudo consultar el historial de precios.');
     } finally {
       setImporting(false);
     }
@@ -144,45 +144,28 @@ export default function CatalogoImportPage() {
       <div className="flex flex-col items-center py-10 gap-4 animate-fade-up">
         <CheckCircle size={56} className="text-success" />
         <p className="text-xl font-semibold text-text">
-          {importedCount} {importedCount === 1 ? 'parte importada' : 'partes importadas'}
+          {comparedCount} {comparedCount === 1 ? 'precio verificado' : 'precios verificados'}
         </p>
-        <p className="text-sm text-text-secondary">
-          Disponibles ahora en la búsqueda de Partes.
-        </p>
-
-        {priceChanges.length > 0 && (
-          <p className={`text-xs ${telegramSent ? 'text-green-600' : 'text-amber-600'}`}>
-            {telegramSent ? 'Alerta enviada por Telegram.' : 'Cambio detectado; Telegram no esta configurado en este despliegue.'}
-          </p>
+        {unmatchedParts.length > 0 && (
+          <p className="text-sm text-text-secondary">Sin historial del mismo proveedor para {unmatchedParts.join(', ')}.</p>
         )}
 
-        {/* Price change alert */}
-        {priceChanges.length > 0 && (
-          <div className="w-full max-w-sm bg-amber-50 border border-amber-300 rounded-xl p-4 shadow-sm">
-            <div className="flex items-center gap-2 mb-3">
-              <AlertCircle size={18} className="text-amber-600 shrink-0" />
-              <p className="text-sm font-bold text-amber-800">⚠️ Cambio de precios detectado</p>
-            </div>
-            <p className="text-xs text-amber-700 mb-3">
-              Estos productos tenían un precio diferente en el catálogo.
-            </p>
+        {priceComparisons.length > 0 && (
+          <div className="w-full max-w-sm rounded-xl border border-border bg-white p-4 shadow-sm">
+            <h2 className="mb-3 text-sm font-semibold">Historial del proveedor</h2>
             <div className="flex flex-col gap-2">
-              {priceChanges.map((ch) => {
-                const up = ch.pct_change > 0;
+              {priceComparisons.map((comparison) => {
+                const difference = comparison.pct_change;
+                const changeLabel = difference === 0 ? 'Sin cambio' : `${difference > 0 ? '+' : ''}${difference}%`;
                 return (
-                  <div key={ch.part_number} className="bg-white rounded-lg border border-amber-200 p-3 text-xs">
-                    <p className="font-semibold text-text">{ch.part_number}</p>
-                    <p className="text-text-secondary truncate">{ch.description}</p>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="text-text-secondary line-through">
-                        ${ch.old_price.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-                      </span>
-                      <span className="text-text font-medium">
-                        ${ch.new_price.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-                      </span>
-                      <span className={`font-bold ${up ? 'text-red-600' : 'text-green-600'}`}>
-                        {up ? '▲' : '▼'} {Math.abs(ch.pct_change)}%
-                      </span>
+                  <div key={comparison.part_number} className="rounded-lg border border-border p-3 text-xs">
+                    <p className="break-words font-semibold">{comparison.part_number}</p>
+                    <p className="break-words text-text-secondary">{comparison.description}</p>
+                    <p className="mt-1 text-text-secondary">{comparison.supplier}{comparison.source_date ? ` · ${comparison.source_date}` : ''}</p>
+                    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                      <span>Anterior ${comparison.old_price.toFixed(2)}</span>
+                      <span>Actual ${comparison.new_price.toFixed(2)}</span>
+                      <span className={difference > 0 ? 'font-bold text-red-700' : difference < 0 ? 'font-bold text-green-700' : 'font-semibold'}>{changeLabel}</span>
                     </div>
                   </div>
                 );
@@ -198,13 +181,13 @@ export default function CatalogoImportPage() {
               setOcrDone(false);
               setSupplier('');
               setLineItems([emptyLine()]);
-              setPriceChanges([]);
-              setTelegramSent(false);
-              setImportedCount(0);
+              setPriceComparisons([]);
+              setComparedCount(0);
+              setUnmatchedParts([]);
             }}
             className="px-5 py-2.5 rounded-xl border border-border text-sm font-medium text-text"
           >
-            Importar otra
+            Verificar otra
           </button>
           <button
             onClick={() => navigate('/parts')}
@@ -226,7 +209,7 @@ export default function CatalogoImportPage() {
         <button type="button" onClick={() => navigate(-1)} className="p-1 -ml-1">
           <ChevronLeft size={22} className="text-text-secondary" />
         </button>
-        <h1 className="text-xl font-bold text-text">Importar al Catálogo</h1>
+        <h1 className="text-xl font-bold text-text">Verificar precios</h1>
       </div>
 
       {/* ── Upload section ──────────────────────────────────────────────── */}
@@ -376,15 +359,14 @@ export default function CatalogoImportPage() {
         className="w-full py-3.5 rounded-xl bg-amber text-white font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-60"
       >
         {importing ? (
-          <><Loader2 size={18} className="animate-spin" /> Importando…</>
+          <><Loader2 size={18} className="animate-spin" /> Verificando…</>
         ) : (
-          <><PackagePlus size={18} /> Importar al Catálogo</>
+          <><PackagePlus size={18} /> Verificar precios</>
         )}
       </button>
 
       <p className="text-center text-xs text-text-secondary -mt-2 pb-4">
-        Solo se importan partes con número de parte y descripción.
-        Los precios se actualizan si ya existen en el catálogo.
+        Se compara el mismo número de parte y proveedor.
       </p>
     </div>
   );

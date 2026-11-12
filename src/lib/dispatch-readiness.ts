@@ -1,7 +1,7 @@
 import type { Equipment } from '../types/equipment';
 
 export type DispatchReadinessLevel = 'ok' | 'restricted' | 'blocked';
-export type DispatchReadinessSource = 'sticker' | 'dvir' | 'none';
+export type DispatchReadinessSource = 'sticker' | 'dvir' | 'averia' | 'none';
 
 export interface UnitDispatchReadiness {
   unitId: string;
@@ -29,6 +29,7 @@ interface StickerRecord {
   canDispatch: string;
   approvalState: string;
   expiresOn: string;
+  firstDue: string;
   timestamp: number;
 }
 
@@ -116,7 +117,8 @@ function parseStickerRows(rows: string[][]): Map<string, StickerRecord> {
       canDispatch: (row[13] ?? '').trim().toLowerCase(),
       expiresOn: (row[14] ?? '').trim(),
       approvalState: (row[10] ?? '').trim().toLowerCase(),
-      timestamp: parseSheetDateTime(row[3] ?? '', row[4] ?? ''),
+      firstDue: (row[17] ?? '').trim(),
+      timestamp: parseSheetDateTime(row[3] ?? '', row[4] ?? '') || Date.parse(row[2] ?? '') || 0,
     });
   }
   return latestByUnit(records);
@@ -136,12 +138,19 @@ function parseDvirRows(rows: string[][]): Map<string, DvirRecord> {
       timestamp: parseSheetDateTime(row[2] ?? '', row[3] ?? ''),
     });
   }
-  return latestByUnit(records);
+  const latest = latestByUnit(records);
+  const unresolved = latestByUnit(records.filter((record) => record.result === 'reprobado'
+    && ['pendiente', 'abierta', 'en reparación', 'en proceso'].includes(record.actionState)));
+  for (const [unit, record] of unresolved) {
+    if (latest.get(unit)?.result !== 'reprobado') latest.set(unit, record);
+  }
+  return latest;
 }
 
 function readinessFromSticker(record: StickerRecord, today: Date): UnitDispatchReadiness {
   const color = record.finalColor;
   const canDispatch = record.canDispatch;
+  const pending = record.approvalState === 'pendiente' || record.approvalState === 'pendiente_supervisor';
 
   if (isBeforeToday(record.expiresOn, today)) {
     return {
@@ -156,28 +165,29 @@ function readinessFromSticker(record: StickerRecord, today: Date): UnitDispatchR
     };
   }
 
-  if (color === 'red' || color === 'rojo' || canDispatch === 'no') {
+  if (color === 'red' || color === 'rojo' || canDispatch === 'no' || pending || isBeforeToday(record.firstDue, today)) {
+    const reason = color === 'red' || color === 'rojo'
+      ? 'rechazado'
+      : pending ? 'pendiente de aprobación' : isBeforeToday(record.firstDue, today) ? 'con compromiso vencido' : 'sin autorización de despacho';
     return {
       unitId: record.unitId,
       level: 'blocked',
       source: 'sticker',
       label: 'No despachar',
-      reason: `Sticker ${record.folio || 'sin folio'} rechazado`,
+      reason: `Sticker ${record.folio || 'sin folio'} ${reason}`,
       effectiveStatus: 'taller',
       folio: record.folio,
       expiresOn: record.expiresOn,
     };
   }
 
-  if (color === 'yellow' || color === 'amarillo' || record.approvalState === 'pendiente') {
+  if (color === 'yellow' || color === 'amarillo') {
     return {
       unitId: record.unitId,
       level: 'restricted',
       source: 'sticker',
       label: 'Despacho restringido',
-      reason: record.approvalState === 'pendiente'
-        ? `Sticker ${record.folio || 'sin folio'} pendiente de aprobacion`
-        : `Sticker ${record.folio || 'sin folio'} condicionado`,
+      reason: `Sticker ${record.folio || 'sin folio'} condicionado`,
       effectiveStatus: 'alerta',
       folio: record.folio,
       expiresOn: record.expiresOn,
@@ -274,7 +284,8 @@ export function applyDispatchReadiness(
   unit: Equipment,
   readiness: UnitDispatchReadiness | undefined,
 ): Equipment {
-  if (!readiness?.effectiveStatus) return unit;
+  if (!readiness?.effectiveStatus || unit.status === 'inactivo') return unit;
+  if (unit.status === 'taller' && readiness.effectiveStatus !== 'taller') return unit;
   return {
     ...unit,
     status: readiness.effectiveStatus,

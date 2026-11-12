@@ -1,421 +1,174 @@
-/**
- * Printable Orden de Compra — visual replica of ULTRATK's Excel template:
- *   - Red ULTRATK logo block (top-left)
- *   - Big red "ORDEN DE COMPRA" title (top-right)
- *   - Red FECHA / OC # boxes
- *   - Red VENDEDOR banner with white text
- *   - Red items table header band
- *   - Right-aligned totals stack (SUBTOTAL / IVA / ENVIO / OTROS / TOTAL)
- *   - Grey "Comentarios" banner + signature line
- *
- * Uses native window.print() — browsers offer "Save as PDF" in the dialog.
- */
+import { useEffect, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import { ArrowLeft, Printer } from 'lucide-react';
+import { displayMoney, isApprovalRecorded, purchaseOrder, type PurchaseOrder } from '../lib/purchasing-api';
 
-import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { Printer, ArrowLeft } from 'lucide-react'
-import { readRange, SHEET_TABS } from '../lib/sheets-api'
-
-const COMPANY = {
-  name: 'ULTRATK SA DE CV',
-  street: 'Juarez 312, Revolucion',
-  city: 'Tecalitlan, Jalisco',
-  phone: 'Tel: 314-115-1515',
-}
-
-const RED = '#E2231A'
-const TABLE_MIN_ROWS = 8
-
-/** OC states where the buyer has authorized the document. */
-const SIGNED_STATES = new Set(['Aprobada', 'Recibida', 'Pagada'])
-
-interface OCHeader {
-  oc_id: string
-  fecha: string
-  proveedor_nombre: string
-  proveedor_rfc: string
-  proveedor_direccion: string
-  unidad: string
-  subtotal: number
-  iva: number
-  envio: number
-  otros: number
-  total: number
-  estado: string
-  comentarios: string
-  aprobada_por: string
-  fecha_entrega: string
-}
-
-interface OCLine {
-  numero: number
-  descripcion: string
-  cantidad: number
-  precio_unitario: number
-  total: number
-}
-
-function num(v: string | undefined): number {
-  return parseFloat((v ?? '').replace(/,/g, '')) || 0
-}
-function fmt(n: number): string {
-  return n.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
-function fmtOrDash(n: number): string {
-  return n > 0 ? fmt(n) : '-'
+function dateLabel(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value.split('-').reverse().join('/') : value || '—';
 }
 
 export default function OrdenCompraPrintPage() {
-  const { ocId = '' } = useParams<{ ocId: string }>()
-  const [header, setHeader] = useState<OCHeader | null>(null)
-  const [lines, setLines] = useState<OCLine[]>([])
-  const [error, setError] = useState<string | null>(null)
-  const [loaded, setLoaded] = useState(false)
+  const { ocId = '' } = useParams();
+  const [order, setOrder] = useState<PurchaseOrder | null>(null);
+  const [failure, setFailure] = useState('');
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        const [hdrRows, lineRows] = await Promise.all([
-          readRange(SHEET_TABS.ORDENES_COMPRA),
-          readRange(SHEET_TABS.OC_LINEAS),
-        ])
-        if (cancelled) return
-
-        const match = hdrRows
-          .slice(1)
-          .find((r) => (r[0] ?? '').trim().toUpperCase() === ocId.toUpperCase())
-        if (!match) {
-          setError(`OC ${ocId} no encontrada.`)
-          setLoaded(true)
-          return
-        }
-        setHeader({
-          oc_id: (match[0] ?? '').trim(),
-          fecha: (match[1] ?? '').trim(),
-          proveedor_nombre: (match[2] ?? '').trim(),
-          proveedor_rfc: (match[3] ?? '').trim(),
-          proveedor_direccion: (match[4] ?? '').trim(),
-          unidad: (match[5] ?? '').trim(),
-          subtotal: num(match[6]),
-          iva: num(match[7]),
-          envio: num(match[8]),
-          otros: num(match[9]),
-          total: num(match[10]),
-          estado: (match[11] ?? '').trim(),
-          comentarios: (match[12] ?? '').trim(),
-          aprobada_por: (match[13] ?? '').trim(),
-          fecha_entrega: (match[14] ?? '').trim(),
-        })
-
-        const matchingLines = lineRows
-          .slice(1)
-          .filter((r) => (r[0] ?? '').trim().toUpperCase() === ocId.toUpperCase())
-          .map<OCLine>((r) => ({
-            numero: parseInt((r[1] ?? '0').trim(), 10) || 0,
-            descripcion: (r[2] ?? '').trim(),
-            cantidad: num(r[3]),
-            precio_unitario: num(r[4]),
-            total: num(r[5]),
-          }))
-          .sort((a, b) => a.numero - b.numero)
-        setLines(matchingLines)
-        setLoaded(true)
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err))
-          setLoaded(true)
-        }
+    const controller = new AbortController();
+    purchaseOrder(ocId, controller.signal).then(({ order: record }) => setOrder(record)).catch((cause) => {
+      if (!controller.signal.aborted) {
+        setFailure(cause instanceof Error ? cause.message : 'No se pudo leer la orden.');
       }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [ocId])
+    });
+    return () => controller.abort();
+  }, [ocId, attempt]);
 
-  if (!loaded) return <div className="p-8 text-sm text-gray-500">Cargando OC {ocId}…</div>
-  if (error || !header) {
+  if (failure) {
     return (
-      <div className="p-8">
-        <Link to="/admin/ordenes-compra" className="text-sm text-blue-600 hover:underline">← Volver</Link>
-        <p className="mt-4 text-red-700 bg-red-50 border border-red-200 rounded p-3 text-sm">
-          {error ?? 'OC no encontrada'}
-        </p>
+      <div className="space-y-3 p-4">
+        <Link className="text-sm font-semibold text-blue-800" to="/admin/ordenes-compra">Volver a órdenes</Link>
+        <p className="rounded-lg bg-red-50 p-3 text-red-800" role="alert">{failure}</p>
+        <button className="text-sm font-semibold text-blue-800" type="button" onClick={() => {
+          setFailure('');
+          setAttempt((previous) => previous + 1);
+        }}>Reintentar</button>
       </div>
-    )
+    );
   }
 
-  // Pad table to a minimum number of visual rows to mimic the Excel grid feel
-  const blankRows = Math.max(0, TABLE_MIN_ROWS - lines.length)
+  if (!order || order.folio.toUpperCase() !== ocId.toUpperCase()) return <p className="p-4 text-sm text-slate-600">Cargando la orden…</p>;
+
+  const issuer = order.issuer;
+  const authorized = isApprovalRecorded(order);
+  const ultratk = issuer?.template === 'ultratk';
+  const accent = ultratk ? '#C91D17' : '#182133';
+  const amount = (value: string) => issuer ? displayMoney(value, issuer.currency) : value || '—';
+  const totals: [string, string][] = [
+    ['Subtotal', order.subtotal],
+    [issuer?.taxLabel || 'Impuesto', order.tax],
+    ['Envío', order.shipping],
+    ['Otros cargos', order.other],
+    ['Total', order.total],
+  ];
+  const approvedAt = authorized ? new Intl.DateTimeFormat('es-MX', {
+    dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Mexico_City',
+  }).format(new Date(order.approvedAt)) : '';
 
   return (
     <>
       <style>{`
-        /* Force background colors to render in PDF / printer output.
-           Without this, browsers strip red banners (ULTRATK logo, VENDEDOR
-           bar, items table header) and they print as outlines only. */
-        .po-page, .po-page * {
-          -webkit-print-color-adjust: exact !important;
-          print-color-adjust: exact !important;
-          color-adjust: exact !important;
-        }
-
+        .po-document { font-family: Arial, Helvetica, sans-serif; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+        .po-document th, .po-document td { padding: 5px 6px; }
         @media print {
-          /* Use a 0 page margin so the .po-page's own padding controls the
-             printable border — keeps proportions identical to screen. */
-          @page { size: letter; margin: 0; }
-          html, body { background: white !important; margin: 0 !important; padding: 0 !important; }
-
-          /* Hide everything except the PO page. */
-          body * { visibility: hidden !important; }
-          .po-page, .po-page * { visibility: visible !important; }
-
-          /* Pin the PO page to the printable area at letter width. */
-          .po-page {
-            position: absolute !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 8.5in !important;
-            max-width: 8.5in !important;
-            margin: 0 !important;
-            box-shadow: none !important;
-            border: none !important;
-            background: white !important;
+          @page { size: letter; margin: 12mm; }
+          html, body { background: white !important; margin: 0 !important; overflow: visible !important; }
+          body * { visibility: hidden; }
+          .po-document, .po-document * { visibility: visible; }
+          .po-toolbar { display: none !important; }
+          .po-document {
+            position: absolute; top: 0; left: 0; width: 100%; max-width: none !important;
+            margin: 0 !important; padding: 0 !important; box-shadow: none !important;
           }
-
-          table, tr, .po-page { page-break-inside: avoid; }
-          html { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+          .po-document .po-table { overflow: visible; }
+          .po-document .po-table table { min-width: 0; }
+          .po-document .po-heading { grid-template-columns: 1fr 1fr; }
+          .po-document .po-section, .po-document tr { break-inside: avoid; }
+          .po-document thead { display: table-header-group; }
         }
       `}</style>
-
-      {/* Toolbar — hidden when printing */}
-      <div className="no-print sticky top-0 z-10 bg-gray-100 border-b border-gray-200 px-4 py-3 flex items-center justify-between">
-        <Link
-          to="/admin/ordenes-compra"
-          className="inline-flex items-center gap-1 text-sm text-gray-700 hover:text-gray-900"
-        >
-          <ArrowLeft size={16} /> Volver
+      <div className="po-toolbar flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 py-3">
+        <Link to="/admin/ordenes-compra" className="inline-flex items-center gap-1 text-sm font-semibold text-slate-700">
+          <ArrowLeft size={16} aria-hidden /> Volver
         </Link>
-        <button
-          type="button"
-          onClick={() => window.print()}
-          className="inline-flex items-center gap-2 rounded-lg bg-blue-600 text-white text-sm font-semibold px-4 py-2 hover:bg-blue-700"
-        >
-          <Printer size={16} /> Imprimir / Guardar como PDF
+        <button type="button" onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white">
+          <Printer size={16} aria-hidden /> Imprimir / Guardar como PDF
         </button>
       </div>
 
-      {/* PO page */}
-      <div
-        className="po-page bg-white shadow-md mx-auto my-6 px-12 py-10 text-[12px] text-gray-900"
-        style={{ maxWidth: '8.5in', fontFamily: 'Arial, Helvetica, sans-serif' }}
-      >
-        {/* Header row: logo (left) + title + boxes (right) */}
-        <div className="flex items-start justify-between mb-6">
-          {/* ULTRATK logo block */}
-          <div className="flex flex-col items-start" style={{ width: 200 }}>
-            <div
-              className="flex flex-col items-center justify-center text-white font-extrabold tracking-tight"
-              style={{ backgroundColor: RED, width: 200, height: 78, padding: '8px 4px' }}
-            >
-              <span style={{ fontSize: 30, lineHeight: 1 }}>ULTRATK</span>
-              <span style={{ fontSize: 8, letterSpacing: '0.15em', marginTop: 4 }}>
-                INGENIERIA·CONSTRUCCION
-              </span>
-            </div>
+      <article className="po-document mx-auto my-4 max-w-[8.5in] bg-white p-4 text-xs text-slate-900 shadow sm:p-8">
+        <header className="po-heading po-section grid gap-3 border-b-2 pb-3 sm:grid-cols-2" style={{ borderColor: accent }}>
+          <div className="min-w-0">
+            {ultratk && <p className="mb-2 inline-block rounded px-3 py-1 text-xl font-black tracking-tight text-white" style={{ backgroundColor: accent }}>ULTRATK</p>}
+            {issuer?.template === 'transplus' && <img className="mb-2 h-10 w-auto max-w-[160px] object-contain" src="/logo-transplus.svg" alt="Trans Plus" />}
+            <p className="font-bold">{issuer?.name || 'Entidad emisora por confirmar'}</p>
+            {issuer?.address && <p>{issuer.address}</p>}
+            {issuer?.taxId && <p>Registro fiscal {issuer.taxId}</p>}
+            {issuer?.phone && <p>{issuer.phone}</p>}
           </div>
-
-          {/* Title + boxes */}
-          <div className="flex-1 text-right ml-6">
-            <p
-              className="font-extrabold tracking-tight"
-              style={{ color: RED, fontSize: 38, lineHeight: 1 }}
-            >
-              ORDEN DE COMPRA
-            </p>
-            <table className="ml-auto mt-3 text-[11px]" style={{ borderCollapse: 'collapse' }}>
-              <tbody>
-                <tr>
-                  <td className="pr-3 font-semibold text-right">FECHA</td>
-                  <td>
-                    <span
-                      className="inline-block px-3 py-1 font-mono text-center"
-                      style={{ border: `1.5px solid ${RED}`, minWidth: 110 }}
-                    >
-                      {header.fecha || ''}
-                    </span>
-                  </td>
-                </tr>
-                <tr>
-                  <td className="pr-3 font-semibold text-right pt-1">OC #</td>
-                  <td className="pt-1">
-                    <span
-                      className="inline-block px-3 py-1 font-mono text-center"
-                      style={{ border: `1.5px solid ${RED}`, minWidth: 110 }}
-                    >
-                      {header.oc_id}
-                    </span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+          <div className="min-w-0 sm:text-right">
+            <h1 className="text-xl font-black uppercase tracking-tight sm:text-2xl" style={{ color: accent }}>Orden de compra</h1>
+            <p className="mt-1 break-words font-mono text-sm font-bold">{order.folio}</p>
+            <p className="mt-1 font-semibold">{order.status}</p>
           </div>
-        </div>
+        </header>
 
-        {/* Buyer info block */}
-        <div className="mb-6 leading-tight">
-          <p className="font-semibold">{COMPANY.name}</p>
-          <p>{COMPANY.street}</p>
-          <p>{COMPANY.city}</p>
-          <p>{COMPANY.phone}</p>
-        </div>
+        <section className="po-section grid grid-cols-2 gap-x-3 gap-y-2 border-b border-slate-300 py-3">
+          <div className="col-span-2 min-w-0 sm:col-span-1">
+            <h2 className="font-bold uppercase">Proveedor</h2>
+            <p className="break-words">{order.vendorName}</p>
+            {order.vendorRfc && <p>Registro fiscal {order.vendorRfc}</p>}
+            <p className="break-words">{order.vendorAddress}</p>
+          </div>
+          <dl className="col-span-2 grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-2 sm:col-span-1">
+            <dt className="font-semibold">Unidad</dt><dd className="break-words">{order.unit || '—'}</dd>
+            <dt className="font-semibold">Fecha de la orden</dt><dd>{dateLabel(order.date)}</dd>
+            <dt className="font-semibold">Fecha de entrega</dt><dd>{dateLabel(order.deliveryDate)}</dd>
+            {order.requestedBy && <><dt className="font-semibold">Registrada por</dt><dd>{order.requestedBy}</dd></>}
+          </dl>
+        </section>
 
-        {/* VENDEDOR red banner */}
-        <div
-          className="text-white font-bold uppercase tracking-wide text-[11px] px-3 py-1 mb-2"
-          style={{ backgroundColor: RED, width: 280 }}
-        >
-          VENDEDOR
-        </div>
-        <div className="mb-6 leading-tight">
-          <p className="font-semibold">{header.proveedor_nombre || '—'}</p>
-          {header.proveedor_rfc && <p>{header.proveedor_rfc}</p>}
-          {header.proveedor_direccion && (
-            <p className="whitespace-pre-line">{header.proveedor_direccion}</p>
-          )}
-        </div>
-
-        {/* Items table — explicit 1px black borders that survive print engines.
-            Empty cells get a non-breaking space so their bottom border doesn't
-            collapse, and every row is locked at 26px height. */}
-        <table
-          className="w-full mb-2"
-          style={{ fontSize: 11, borderCollapse: 'collapse', border: '1px solid #000' }}
-        >
-          <thead>
-            <tr style={{ backgroundColor: RED, color: 'white' }}>
-              <th style={{ ...thStyle, width: '8%' }}>ITEM #</th>
-              <th style={{ ...thStyle, width: '38%' }}>DESCRIPCION</th>
-              <th style={{ ...thStyle, width: '12%' }}>CANTIDAD</th>
-              <th style={{ ...thStyle, width: '21%' }}>PRECIO UNITARIO</th>
-              <th style={{ ...thStyle, width: '21%' }}>TOTAL</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lines.map((l) => (
-              <tr key={l.numero} style={{ height: 26 }}>
-                <td style={{ ...tdStyle, textAlign: 'center' }}>{l.numero}</td>
-                <td style={tdStyle}>{l.descripcion}</td>
-                <td style={{ ...tdStyle, textAlign: 'center' }}>
-                  {l.cantidad > 0 ? l.cantidad.toLocaleString('es-MX') : '-'}
-                </td>
-                <td style={{ ...tdStyle, textAlign: 'right' }} className="tabular-nums">
-                  {l.precio_unitario > 0 ? fmt(l.precio_unitario) : '-'}
-                </td>
-                <td style={{ ...tdStyle, textAlign: 'right', backgroundColor: '#F3F3F3' }} className="tabular-nums">
-                  {fmtOrDash(l.total)}
-                </td>
+        <div className="po-table mt-3 overflow-x-auto">
+          <table className="w-full table-fixed border-collapse text-[10px] sm:text-xs">
+            <thead style={{ backgroundColor: accent, color: '#FFFFFF' }}>
+              <tr>
+                <th scope="col" className="w-[8%] text-left">N.º</th>
+                <th scope="col" className="w-[40%] text-left">Descripción</th>
+                <th scope="col" className="w-[12%] text-right">Cant.</th>
+                <th scope="col" className="w-[20%] text-right">Precio unit.</th>
+                <th scope="col" className="w-[20%] text-right">Importe</th>
               </tr>
-            ))}
-            {Array.from({ length: blankRows }).map((_, i) => (
-              <tr key={`blank-${i}`} style={{ height: 26 }}>
-                <td style={tdStyle}>&nbsp;</td>
-                <td style={tdStyle}>&nbsp;</td>
-                <td style={tdStyle}>&nbsp;</td>
-                <td style={tdStyle}>&nbsp;</td>
-                <td style={{ ...tdStyle, textAlign: 'right', backgroundColor: '#F3F3F3' }} className="tabular-nums">
-                  -
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        {/* Comments + totals */}
-        <div className="grid mb-10" style={{ gridTemplateColumns: '55% 45%', gap: 0 }}>
-          <div>
-            <div
-              className="px-3 py-1 font-bold text-[11px]"
-              style={{ backgroundColor: '#D9D9D9', borderTop: '1px solid #888', borderLeft: '1px solid #888', borderRight: '1px solid #888' }}
-            >
-              Comentarios
-            </div>
-            <div
-              className="px-3 py-2 text-[11px] whitespace-pre-line"
-              style={{ minHeight: 80, border: '1px solid #888', borderTop: 'none' }}
-            >
-              {header.comentarios || 'Precios en Pesos Mexicanos'}
-            </div>
-          </div>
-          <div className="pl-6">
-            <table className="w-full text-[11px]" style={{ borderCollapse: 'collapse' }}>
-              <tbody>
-                <TotalRow label="SUBTOTAL" value={fmt(header.subtotal)} />
-                <TotalRow label="IVA" value={fmt(header.iva)} />
-                <TotalRow label="ENVIO" value={fmtOrDash(header.envio)} />
-                <TotalRow label="OTROS" value={fmtOrDash(header.otros)} />
-                <tr>
-                  <td className="px-2 py-2 text-right font-extrabold" style={{ borderTop: '2px solid #000' }}>
-                    TOTAL
+            </thead>
+            <tbody>
+              {order.lines.map((line) => (
+                <tr key={line.id} className="border-b border-slate-300 align-top">
+                  <td>{line.number}</td>
+                  <td className="break-words">
+                    {line.description}
+                    {line.partNumber && <p className="font-mono text-[10px]">{line.partNumber}</p>}
+                    {line.requestId && <p className="break-words text-[10px]">Pedido {line.requestId}</p>}
                   </td>
-                  <td className="px-2 py-2 text-right font-extrabold tabular-nums" style={{ borderTop: '2px solid #000' }}>
-                    $ {fmt(header.total)}
-                  </td>
+                  <td className="break-words text-right tabular-nums">{line.quantity}</td>
+                  <td className="break-words text-right tabular-nums">{amount(line.unitPrice)}</td>
+                  <td className="break-words text-right tabular-nums">{amount(line.total)}</td>
                 </tr>
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </table>
         </div>
 
-        {/* Approval provenance — never embed a reusable personal signature asset. */}
-        <div className="mt-12" data-testid="purchase-approval-provenance">
-          <div
-            className="inline-block px-4 py-3"
-            style={{
-              minWidth: 320,
-              border: `1.5px solid ${SIGNED_STATES.has(header.estado) ? '#166534' : '#6B7280'}`,
-              backgroundColor: SIGNED_STATES.has(header.estado) ? '#F0FDF4' : '#F9FAFB',
-            }}
-          >
-            <p className="text-[10px] font-extrabold uppercase tracking-widest">
-              {SIGNED_STATES.has(header.estado) ? 'Autorización digital registrada' : 'Pendiente de autorización'}
-            </p>
-            <p className="mt-2 text-[11px] font-bold uppercase">
-              {header.aprobada_por || 'Responsable de aprobación no registrado'}
-            </p>
-            <p className="mt-1 text-[10px] text-gray-700">
-              Estado: {header.estado || 'Sin estado'} · OC: {header.oc_id}
-            </p>
-            <p className="mt-1 text-[9px] text-gray-600">
-              La validez de esta autorización depende del registro auditable de la orden; esta impresión no contiene una firma reutilizable.
-            </p>
+        <section className="po-section mt-3 grid items-start gap-3 sm:grid-cols-[1fr_auto]">
+          <div className="min-w-0">
+            {order.comments && <><h2 className="font-bold">Observaciones</h2><p className="whitespace-pre-wrap break-words">{order.comments}</p></>}
           </div>
-        </div>
-      </div>
+          <dl className="min-w-0 sm:min-w-48">
+            {totals.map(([label, value], index) => (
+              <div key={label} className={`flex justify-between gap-3 px-2 py-1 ${index === totals.length - 1 ? 'font-bold text-white' : 'border-b border-slate-200'}`}
+                style={index === totals.length - 1 ? { backgroundColor: accent } : undefined}>
+                <dt>{label}</dt><dd className="text-right tabular-nums">{amount(value)}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+
+        <footer className="po-section mt-5 border-t border-slate-300 pt-2">
+          {authorized ? (
+            <div data-testid="purchase-approval-provenance">
+              <p className="font-bold">Autorización digital registrada</p>
+              <p>{order.approvedBy} · {approvedAt} · {order.folio}</p>
+            </div>
+          ) : <p className="font-semibold">Aprobación digital pendiente de comprobar</p>}
+        </footer>
+      </article>
     </>
-  )
-}
-
-// Inline style constants — explicit pixel borders that survive both screen
-// rendering and the browser print pipeline (some engines drop sub-pixel
-// borders or strip Tailwind's default border-color when going to PDF).
-const thStyle: React.CSSProperties = {
-  border: '1px solid #000',
-  padding: '6px 8px',
-  textAlign: 'center',
-  fontWeight: 700,
-}
-const tdStyle: React.CSSProperties = {
-  border: '1px solid #000',
-  padding: '4px 8px',
-  verticalAlign: 'middle',
-}
-
-function TotalRow({ label, value }: { label: string; value: string }) {
-  return (
-    <tr>
-      <td className="px-2 py-1 text-right font-semibold text-gray-700">{label}</td>
-      <td className="px-2 py-1 text-right tabular-nums">{value}</td>
-    </tr>
-  )
+  );
 }

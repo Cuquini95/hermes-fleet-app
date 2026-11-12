@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Wrench, RefreshCw } from 'lucide-react';
 import { useEquipmentList } from '../hooks/useEquipmentList';
@@ -6,6 +6,8 @@ import { getNextPM } from '../data/pm-rules';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
 import { SkeletonList } from '../components/ui/Skeleton';
 import EmptyState from '../components/ui/EmptyState';
+import { useAuthStore } from '../stores/auth-store';
+import { orderHistoryTime } from '../stores/workorder-store';
 
 interface PMEntry {
   unit_id: string;
@@ -25,22 +27,20 @@ interface PMEntry {
  */
 async function fetchLatestHorometros(): Promise<Record<string, number>> {
   const rows = await readRange(SHEET_TABS.HOROMETROS);
-  const latest: Record<string, { hours: number; date: string }> = {};
+  const latest: Record<string, { hours: number; timestamp: number }> = {};
 
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i];
-    if (!row) continue;
+  for (const row of rows) {
     const unidad = (row[2] ?? '').trim();   // UNIDAD column
-    const fecha = (row[0] ?? '').trim();     // FECHA column
+    const timestamp = orderHistoryTime(`${row[0] ?? ''} ${row[1] ?? ''}`.trim());
     const horoStr = (row[6] ?? '').trim();   // HORÓMETRO column
     const horo = parseFloat(horoStr);
 
-    if (!unidad || isNaN(horo) || horo <= 0) continue;
+    if (!unidad || !timestamp || isNaN(horo) || horo < 0) continue;
 
     // Keep the most recent reading per unit
     const existing = latest[unidad];
-    if (!existing || fecha >= existing.date || horo > existing.hours) {
-      latest[unidad] = { hours: horo, date: fecha };
+    if (!existing || timestamp >= existing.timestamp) {
+      latest[unidad] = { hours: horo, timestamp };
     }
   }
 
@@ -76,11 +76,13 @@ function getCountdownText(hrs: number): string {
 export default function PMSchedulePage() {
   const navigate = useNavigate();
   const equipment = useEquipmentList();
+  const role = useAuthStore((state) => state.role);
+  const canCreate = role === 'jefe_taller' || role === 'coordinador' || role === 'gerencia';
   const [entries, setEntries] = useState<PMEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  async function loadPMData() {
+  const loadPMData = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -121,11 +123,11 @@ export default function PMSchedulePage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [equipment]);
 
   useEffect(() => {
-    loadPMData();
-  }, []);
+    void loadPMData();
+  }, [loadPMData]);
 
   return (
     <div className="flex flex-col pb-4 animate-fade-up">
@@ -151,8 +153,14 @@ export default function PMSchedulePage() {
 
       {/* Info banner */}
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4 text-xs text-blue-700">
-        Mostrando equipos con PM a menos de 50 horas. Datos de horómetro desde Google Sheets.
+        Equipos con PM a menos de 50 horas. Se usa el último horómetro registrado cuando está disponible.
       </div>
+
+      {canCreate && (
+        <button type="button" onClick={() => navigate('/pm-order')} className="mb-4 rounded-xl bg-amber px-4 py-3 text-sm font-semibold text-white">
+          Nueva Orden PM
+        </button>
+      )}
 
       {loading && <SkeletonList count={4} />}
 
@@ -217,6 +225,16 @@ export default function PMSchedulePage() {
                     <span className="text-sm font-semibold text-text">{entry.pmLevel}</span>
                   </div>
                 </div>
+
+                {canCreate && (
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/pm-order?${new URLSearchParams({ unidad: entry.unit_id, nivel: entry.pmLevel })}`)}
+                    className="mb-2 text-sm font-semibold text-amber"
+                  >
+                    Orden PM para {entry.unit_id}
+                  </button>
+                )}
 
                 {/* PM target */}
                 <p className="text-sm text-text-secondary mb-1">

@@ -349,7 +349,10 @@ export function normalizePartResult(raw: RawPartResult): PartResult {
 export async function searchParts(query: string, equipo?: string, signal?: AbortSignal): Promise<PartResult[]> {
   const params: Record<string, string> = { q: query };
   if (equipo) params.equipo = equipo;
-  const raw = await hermesGet('/parts', z.array(rawPartResultSchema), params, signal);
+  const endpoint = '/api/parts/import';
+  const response = await fetch(`${endpoint}?${new URLSearchParams(params)}`, { signal });
+  if (!response.ok) throw new Error('No se pudo leer el inventario de repuestos.');
+  const raw = await parseHermesResponse(response, z.array(rawPartResultSchema), endpoint);
   return raw.map(normalizePartResult).filter((part) => part.part_number);
 }
 

@@ -71,7 +71,8 @@ describe('flushQueue mutex guard', () => {
 
   it('concurrent flushQueue calls do not double-process — second call returns {0,0}', async () => {
     // Dynamically import a fresh module instance (resetModules clears the flushing flag)
-    const { flushQueue } = await import('./offline-queue');
+    const { flushQueue, setOfflineQueueSession } = await import('./offline-queue');
+    setOfflineQueueSession('qa-user');
 
     // Fire two concurrent flushQueue calls. The queue is empty so both resolve
     // fast, but the second one should be blocked by the mutex.

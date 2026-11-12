@@ -1,75 +1,43 @@
 import assert from 'node:assert/strict';
-import { scryptSync } from 'node:crypto';
-import { afterEach, beforeEach, test } from 'node:test';
+import { test } from 'node:test';
+import login from '../../api/auth/login.js';
 
-const SECRET = 'hermes-auth-prod-test-secret-32chars-min!!';
-const PIN = '2468';
-const PIN_SALT = 'release-qa-salt';
+test('a confirmed employee receives the authorized roster profile and a private session', async (t) => {
+  const email = 'mechanic@example.test';
+  const userId = '00000000-0000-4000-8000-000000000001';
+  for (const [key, value] of Object.entries({
+    HERMES_AUTH_SECRET: 'fixture-only-session-signing-material-32bytes',
+    HERMES_AUTH_SUPABASE_URL: 'http://127.0.0.1:58888',
+    HERMES_AUTH_SUPABASE_PUBLISHABLE_KEY: 'fixture-publishable',
+    HERMES_AUTH_SUPABASE_SERVICE_ROLE_KEY: 'fixture-service',
+    HERMES_AUTH_PROJECT: 'tcm',
+  })) {
+    const original = process.env[key];
+    process.env[key] = value;
+    t.after(() => { if (original === undefined) delete process.env[key]; else process.env[key] = original; });
+  }
 
-function mockRequest(method, body) {
-  return { method, body, headers: {}, on() {} };
-}
-
-function mockResponse() {
-  const state = { statusCode: 0, body: '', headers: {} };
-  return {
-    state,
-    setHeader(key, value) {
-      state.headers[key] = value;
-    },
-    status(code) {
-      state.statusCode = code;
-      return this;
-    },
-    json(payload) {
-      state.body = JSON.stringify(payload);
-      return this;
-    },
-    end(payload) {
-      state.body = payload;
-    },
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    switch (new URL(url).pathname) {
+      case '/auth/v1/token': return Response.json({ user: { id: userId, email, email_confirmed_at: '2026-11-01T00:00:00Z' } });
+      case '/rest/v1/hermes_memberships': return Response.json([{
+        user_id: userId, email, user_name: 'Mecánico de prueba', role: 'mecanico', projects: ['tcm'],
+        assigned_units: ['CA20'], unit_scope: 'assigned', active: true, can_approve_purchases: false,
+      }]);
+      case '/rest/v1/hermes_sessions': return new Response(null, { status: 201 });
+      default: throw new Error('Unexpected fixture request');
+    }
+  });
+  const headers = new Map();
+  const result = {};
+  const res = {
+    setHeader(name, value) { headers.set(name, value); },
+    status(code) { result.status = code; return this; },
+    json(body) { result.body = body; return this; },
   };
-}
-
-beforeEach(() => {
-  process.env.HERMES_AUTH_SECRET = SECRET;
-  process.env.HERMES_PIN_HASH_OPERADOR = `${PIN_SALT}:${scryptSync(PIN, PIN_SALT, 64).toString('hex')}`;
-});
-
-afterEach(() => {
-  delete process.env.HERMES_AUTH_SECRET;
-  delete process.env.HERMES_PIN_HASH_OPERADOR;
-});
-
-test('rejects non-POST methods', async () => {
-  const { default: handler } = await import(`../../api/auth/login.js?t=${Date.now()}`);
-  const res = mockResponse();
-  await handler(mockRequest('GET'), res);
-  assert.equal(res.state.statusCode, 405);
-});
-
-test('fails closed when session signing secret is missing', async () => {
-  delete process.env.HERMES_AUTH_SECRET;
-  const { default: handler } = await import(`../../api/auth/login.js?t=${Date.now() + 1}`);
-  const res = mockResponse();
-  await handler(mockRequest('POST', { role: 'operador' }), res);
-  assert.equal(res.state.statusCode, 503);
-});
-
-test('rejects unknown roles with 401', async () => {
-  const { default: handler } = await import(`../../api/auth/login.js?t=${Date.now() + 2}`);
-  const res = mockResponse();
-  await handler(mockRequest('POST', { role: 'admin' }), res);
-  assert.equal(res.state.statusCode, 401);
-  assert.match(res.state.body, /inv/i);
-});
-
-test('issues an HttpOnly session cookie for a valid role without a PIN', async () => {
-  const { default: handler } = await import(`../../api/auth/login.js?t=${Date.now() + 3}`);
-  const res = mockResponse();
-  await handler(mockRequest('POST', { role: 'operador' }), res);
-  assert.equal(res.state.statusCode, 200);
-  const parsed = JSON.parse(res.state.body);
-  assert.equal(parsed.role, 'operador');
-  assert.match(String(res.state.headers['Set-Cookie']), /^hermes_session=/);
+  await login({ method: 'POST', body: { email, password: 'fixture-password' }, headers: {} }, res);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.userId, userId);
+  assert.equal(result.body.role, 'mecanico');
+  assert.match(headers.get('Set-Cookie'), /HttpOnly; Secure; SameSite=Strict/);
 });

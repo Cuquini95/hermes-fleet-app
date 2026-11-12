@@ -1,7 +1,3 @@
-/**
- * @fileoverview Monolithic by design (> 400 LOC).
- * Multi-tab data management surface (equipment, operators, customers, trips). Kept monolithic: tabs share filter/search state and CRUD handlers; splitting would require lifting state and prop-drilling through 4+ child views with no independent reuse.
- */
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Search,
@@ -10,12 +6,10 @@ import {
   AlertCircle,
   Database,
   Loader2,
-  Pencil,
   Copy,
   Check,
-  Trash2,
 } from 'lucide-react';
-import { readRange, updateCell, deleteRow } from '../lib/sheets-api';
+import { readRange } from '../lib/sheets-api';
 import { useAnalyticsStore } from '../stores/analyticsStore';
 import AnalyticsModal from '../components/analytics/AnalyticsModal';
 
@@ -97,9 +91,9 @@ const COLLECTIONS: [Collection, ...Collection[]] = [
     tab: '02 Gastos',
     emptyMessage: 'Aún no hay gastos registrados',
     columns: [
-      { label: 'Fecha',       index: 0, sticky: true, minWidth: '110px' },
-      { label: 'ID Gasto',    index: 1, mono: true, hideOnMobile: true },
-      { label: 'Fecha Doc',   index: 2, hideOnMobile: true, minWidth: '110px' },
+      { label: 'Fecha',       index: 1, sticky: true, minWidth: '110px' },
+      { label: 'ID Gasto',    index: 0, mono: true, hideOnMobile: true },
+      { label: 'Hora',        index: 2, hideOnMobile: true, minWidth: '70px' },
       { label: 'Tipo',        index: 3 },
       { label: 'Proveedor',   index: 4, minWidth: '160px' },
       { label: 'RFC',         index: 5, mono: true, hideOnMobile: true },
@@ -111,7 +105,7 @@ const COLLECTIONS: [Collection, ...Collection[]] = [
       { label: 'OT Ref',      index: 11, mono: true, hideOnMobile: true },
       { label: 'Solicitante', index: 12, hideOnMobile: true },
       { label: 'Método',      index: 13, hideOnMobile: true },
-      { label: 'Status',      index: 14, badge: 'status' },
+      { label: 'Status',      index: 16, badge: 'status' },
     ],
   },
   {
@@ -221,7 +215,7 @@ function isRowEmpty(row: string[]): boolean {
 function looksLikeHeaderRow(row: string[], columns: ColumnDef[]): boolean {
   // If the first cell contains the expected header name (e.g. "Fecha"),
   // treat this row as a header that should be skipped.
-  const first = (row[0] || '').toLowerCase().trim();
+  const first = (row[columns[0]?.index ?? 0] || '').toLowerCase().trim();
   if (!first) return false;
   const expected = columns[0]?.label.toLowerCase().trim() ?? '';
   if (!expected) return false;
@@ -318,10 +312,6 @@ const PAGE_SIZE = 50;
 
 type TabCache = Record<string, string[][]>;
 
-type EditingCell = { rowIndex: number; colIndex: number; value: string } | null;
-type SavingCell = { rowIndex: number; colIndex: number } | null;
-type FlashCell = { rowIndex: number; colIndex: number; type: 'success' | 'error' } | null;
-
 export default function DataManagerPage() {
   const [activeId, setActiveId] = useState<string>(COLLECTIONS[0].id);
   const [cache, setCache] = useState<TabCache>({});
@@ -329,14 +319,7 @@ export default function DataManagerPage() {
   const [errors, setErrors] = useState<Record<string, string | null>>({});
   const [search, setSearch] = useState('');
   const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE);
-  const [editingCell, setEditingCell] = useState<EditingCell>(null);
-  const [savingCell, setSavingCell] = useState<SavingCell>(null);
-  const [flashCell, setFlashCell] = useState<FlashCell>(null);
-  const [toast, setToast] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
@@ -366,13 +349,9 @@ export default function DataManagerPage() {
     }
   }, [active, cache, loadingTabs, errors, loadTab]);
 
-  // Reset search, editing, and pagination when switching tabs
+  // Reset search and pagination when switching tabs
   useEffect(() => {
     setSearch('');
-    setEditingCell(null);
-    setSavingCell(null);
-    setFlashCell(null);
-    setSelectedRows(new Set());
     setDisplayLimit(PAGE_SIZE);
   }, [activeId]);
 
@@ -461,122 +440,6 @@ export default function DataManagerPage() {
     downloadCSV(`${active.id}-${stamp}.csv`, active.columns, visibleRows);
   }
 
-  function handleCellClick(rowIndex: number, colIndex: number, value: string) {
-    // Block if already saving this cell or a different cell is being edited
-    if (savingCell) return;
-    setEditingCell({ rowIndex, colIndex, value });
-  }
-
-  function handleCellChange(value: string) {
-    setEditingCell((prev) => (prev ? { ...prev, value } : prev));
-  }
-
-  function handleCellCancel() {
-    setEditingCell(null);
-  }
-
-  async function handleCellSave(rowIndex: number, colIndex: number, newValue: string) {
-    const sourceRow = visibleRows[rowIndex];
-    if (!sourceRow) { setEditingCell(null); return; }
-
-    const targetCol = active.columns[colIndex];
-    if (!targetCol) { setEditingCell(null); return; }
-    const originalValue = sourceRow[targetCol.index] ?? '';
-    if (newValue === originalValue) { setEditingCell(null); return; }
-
-    // Use the sticky (first) column as search key
-    const keyCol = active.columns.find((c) => c.sticky) ?? active.columns[0];
-    if (!keyCol) { setEditingCell(null); return; }
-    const keyValue = sourceRow[keyCol.index];
-    if (!keyValue) { setEditingCell(null); return; }
-
-    setEditingCell(null);
-    setSavingCell({ rowIndex, colIndex });
-
-    try {
-      await updateCell(active.tab, keyCol.index, keyValue, targetCol.index, newValue);
-      // Update local cache
-      setCache((prev) => {
-        const tabRows = prev[active.id];
-        if (!tabRows) return prev;
-        // Find all rows matching the key and update the first one that also matches the original value
-        let updated = false;
-        const nextRows = tabRows.map((r) => {
-          if (!updated && (r[keyCol.index] ?? '') === keyValue && (r[targetCol.index] ?? '') === originalValue) {
-            updated = true;
-            const newRow = [...r];
-            while (newRow.length <= targetCol.index) newRow.push('');
-            newRow[targetCol.index] = newValue;
-            return newRow;
-          }
-          return r;
-        });
-        return { ...prev, [active.id]: nextRows };
-      });
-      setFlashCell({ rowIndex, colIndex, type: 'success' });
-      setTimeout(() => setFlashCell(null), 1000);
-    } catch (err: unknown) {
-      setFlashCell({ rowIndex, colIndex, type: 'error' });
-      const msg = err instanceof Error ? err.message : 'Error al guardar';
-      setToast(msg);
-      setTimeout(() => setFlashCell(null), 1000);
-      setTimeout(() => setToast(null), 3000);
-    } finally {
-      setSavingCell(null);
-    }
-  }
-
-  function toggleRowSelection(rowIndex: number) {
-    setSelectedRows(prev => {
-      const next = new Set(prev);
-      if (next.has(rowIndex)) next.delete(rowIndex);
-      else next.add(rowIndex);
-      return next;
-    });
-  }
-
-  function toggleSelectAll() {
-    if (selectedRows.size === visibleRows.length) {
-      setSelectedRows(new Set());
-    } else {
-      setSelectedRows(new Set(visibleRows.map((_, i) => i)));
-    }
-  }
-
-  async function handleDeleteSelected() {
-    if (selectedRows.size === 0) return;
-    setIsDeleting(true);
-    setShowDeleteConfirm(false);
-
-    // Build match keys: use first 3 columns of each collection as composite key
-    const keyColIndices = active.columns.slice(0, 3).map(c => c.index);
-
-    let successCount = 0;
-    for (const rowIndex of Array.from(selectedRows).sort((a, b) => b - a)) {
-      const row = visibleRows[rowIndex];
-      if (!row) continue;
-      const match: Record<string, string> = {};
-      keyColIndices.forEach(idx => {
-        match[String(idx)] = row[idx] ?? '';
-      });
-      try {
-        await deleteRow(active.tab, match);
-        successCount++;
-      } catch {
-        // continue deleting others
-      }
-    }
-
-    // Refresh cache
-    setCache(prev => ({ ...prev, [active.id]: undefined as unknown as string[][] }));
-    setSelectedRows(new Set());
-    setIsDeleting(false);
-    setToast(successCount > 0 ? `${successCount} registro(s) eliminado(s)` : 'No se pudo eliminar');
-    setTimeout(() => setToast(null), 3000);
-    // Reload
-    loadTab(active);
-  }
-
   return (
     <div className="-mx-4 -my-0 min-h-full bg-[#F1F5F9] text-[#1A2B2B]">
       {/* ── Header ────────────────────────────────────────────────────────── */}
@@ -586,7 +449,7 @@ export default function DataManagerPage() {
           <h1 className="text-xl font-bold tracking-tight">Gestor de Datos</h1>
         </div>
         <p className="text-xs text-[#6B7280]">
-          Tu reemplazo para Airtable · Explora, filtra y exporta cada colección de la flota
+          Consulta, filtra y exporta registros. Para corregir un registro, abre el módulo donde se capturó.
         </p>
       </div>
 
@@ -655,20 +518,6 @@ export default function DataManagerPage() {
           )}
         </div>
 
-        {selectedRows.size > 0 && (
-          <button
-            type="button"
-            onClick={() => setShowDeleteConfirm(true)}
-            disabled={isDeleting}
-            className="flex items-center gap-1.5 px-3 h-9 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-700 transition-colors disabled:opacity-50"
-          >
-            <Trash2 size={14} />
-            <span className="hidden sm:inline">
-              {isDeleting ? 'Eliminando…' : `Eliminar (${selectedRows.size})`}
-            </span>
-          </button>
-        )}
-
         <button
           type="button"
           onClick={() => loadTab(active)}
@@ -735,20 +584,7 @@ export default function DataManagerPage() {
           <EmptyState message={search ? 'Sin resultados para tu búsqueda' : active.emptyMessage} />
         ) : (
           <>
-            <DataTable
-              columns={active.columns}
-              rows={pagedRows}
-              editingCell={editingCell}
-              savingCell={savingCell}
-              flashCell={flashCell}
-              onCellClick={handleCellClick}
-              onCellChange={handleCellChange}
-              onCellSave={handleCellSave}
-              onCellCancel={handleCellCancel}
-              selectedRows={selectedRows}
-              onToggleRow={toggleRowSelection}
-              onToggleAll={toggleSelectAll}
-            />
+            <DataTable columns={active.columns} rows={pagedRows} />
             {/* Infinite scroll sentinel — visible when user scrolls near the bottom */}
             {hasMore && (
               <div ref={sentinelRef} className="flex justify-center items-center py-4 text-xs text-[#6B7280]">
@@ -760,39 +596,6 @@ export default function DataManagerPage() {
         )}
       </div>
 
-      {toast && (
-        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-[#1A2B2B] text-white text-xs px-4 py-2.5 rounded-xl shadow-lg max-w-xs text-center">
-          {toast}
-        </div>
-      )}
-
-      {showDeleteConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full">
-            <h3 className="text-base font-bold text-[#1A2B2B] mb-2">
-              ¿Eliminar {selectedRows.size} registro(s)?
-            </h3>
-            <p className="text-sm text-[#6B7280] mb-5">
-              Esta acción eliminará las filas seleccionadas de Google Sheets y PocketBase. No se puede deshacer.
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowDeleteConfirm(false)}
-                className="flex-1 py-2 rounded-xl border border-[#E5E7EB] text-sm font-semibold text-[#6B7280] hover:bg-[#F1F5F9]"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleDeleteSelected}
-                className="flex-1 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold hover:bg-red-700"
-              >
-                Sí, eliminar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <AnalyticsModal open={analyticsOpen} onClose={() => setAnalyticsOpen(false)} />
     </div>
   );
@@ -800,49 +603,13 @@ export default function DataManagerPage() {
 
 // ── Sub-components ───────────────────────────────────────────────────────────
 
-interface DataTableProps {
-  columns: ColumnDef[];
-  rows: string[][];
-  editingCell: EditingCell;
-  savingCell: SavingCell;
-  flashCell: FlashCell;
-  onCellClick: (rowIndex: number, colIndex: number, value: string) => void;
-  onCellChange: (value: string) => void;
-  onCellSave: (rowIndex: number, colIndex: number, value: string) => void;
-  onCellCancel: () => void;
-  selectedRows: Set<number>;
-  onToggleRow: (rowIndex: number) => void;
-  onToggleAll: () => void;
-}
-
-function DataTable({
-  columns,
-  rows,
-  editingCell,
-  savingCell,
-  flashCell,
-  onCellClick,
-  onCellChange,
-  onCellSave,
-  onCellCancel,
-  selectedRows,
-  onToggleRow,
-  onToggleAll,
-}: DataTableProps) {
+function DataTable({ columns, rows }: { columns: ColumnDef[]; rows: string[][] }) {
   return (
     <div className="rounded-xl border border-[#E5E7EB] bg-white overflow-hidden shadow-sm">
       <div className="overflow-x-auto">
         <table className="min-w-full border-collapse text-sm">
           <thead className="sticky top-0 z-10">
             <tr className="bg-[#F8FAFC]">
-              <th className="w-10 px-3 py-3 border-b-2 border-[#162252]/20 bg-[#F8FAFC]">
-                <input
-                  type="checkbox"
-                  checked={rows.length > 0 && selectedRows.size === rows.length}
-                  onChange={onToggleAll}
-                  className="w-4 h-4 rounded accent-[#162252] cursor-pointer"
-                />
-              </th>
               {columns.map((col, i) => (
                 <th
                   key={i}
@@ -864,40 +631,10 @@ function DataTable({
             {rows.map((row, ri) => (
               <tr
                 key={ri}
-                className={`group transition-colors ${
-                  selectedRows.has(ri)
-                    ? 'bg-blue-50 ring-1 ring-inset ring-blue-200'
-                    : ri % 2 === 0 ? 'bg-white' : 'bg-[#F8FAFC]'
-                } hover:bg-[#EFF6FF]`}
+                className={`group transition-colors ${ri % 2 === 0 ? 'bg-white' : 'bg-[#F8FAFC]'} hover:bg-[#EFF6FF]`}
               >
-                <td className="w-10 px-3 py-2">
-                  <input
-                    type="checkbox"
-                    checked={selectedRows.has(ri)}
-                    onChange={() => onToggleRow(ri)}
-                    className="w-4 h-4 rounded accent-[#162252] cursor-pointer"
-                  />
-                </td>
                 {columns.map((col, ci) => {
                   const raw = row[col.index] ?? '';
-                  const isEditable = !col.sticky && !col.badge;
-                  const isEditing =
-                    editingCell?.rowIndex === ri && editingCell?.colIndex === ci;
-                  const isSaving =
-                    savingCell?.rowIndex === ri && savingCell?.colIndex === ci;
-                  const flash =
-                    flashCell?.rowIndex === ri && flashCell?.colIndex === ci
-                      ? flashCell.type
-                      : null;
-
-                  // Background classes for flash state
-                  let flashClass = '';
-                  if (flash === 'success') {
-                    flashClass = 'bg-[#F0FDF4] ring-1 ring-inset ring-[#16A34A]';
-                  } else if (flash === 'error') {
-                    flashClass = 'bg-[#FEF2F2] ring-1 ring-inset ring-[#DC2626]';
-                  }
-
                   const baseClasses = [
                     'relative px-3 py-2.5 text-[#1A2B2B] border-b border-[#F3F4F6] whitespace-nowrap transition-colors',
                     col.align === 'right' ? 'text-right' : 'text-left',
@@ -908,58 +645,11 @@ function DataTable({
                         } group-hover:bg-[#EFF6FF]`
                       : '',
                     col.hideOnMobile ? 'hidden md:table-cell' : '',
-                    isEditable && !isEditing && !isSaving
-                      ? 'cursor-pointer hover:bg-[#EFF6FF] hover:ring-1 hover:ring-inset hover:ring-[#162252]/30'
-                      : '',
-                    isEditing
-                      ? 'bg-white ring-2 ring-inset ring-[#162252] shadow-sm'
-                      : '',
-                    flashClass,
                   ].join(' ');
 
-                  if (isEditing && editingCell) {
-                    return (
-                      <td key={ci} className={baseClasses}>
-                        <EditableInput
-                          value={editingCell.value}
-                          align={col.align}
-                          mono={col.mono}
-                          onChange={onCellChange}
-                          onSave={(v) => onCellSave(ri, ci, v)}
-                          onCancel={onCellCancel}
-                        />
-                      </td>
-                    );
-                  }
-
-                  if (isSaving) {
-                    return (
-                      <td key={ci} className={baseClasses}>
-                        <span className="inline-flex items-center gap-1.5 text-[#9CA3AF]">
-                          <Loader2 size={12} className="animate-spin" />
-                          <span className="text-xs">{raw || '—'}</span>
-                        </span>
-                      </td>
-                    );
-                  }
-
                   return (
-                    <td
-                      key={ci}
-                      className={`group/cell ${baseClasses}`}
-                      onClick={
-                        isEditable
-                          ? () => onCellClick(ri, ci, raw)
-                          : undefined
-                      }
-                    >
+                    <td key={ci} className={baseClasses}>
                       {renderCell(raw, col)}
-                      {isEditable && (
-                        <Pencil
-                          size={11}
-                          className="absolute top-1 right-1 text-[#162252]/60 opacity-0 group-hover/cell:opacity-100 transition-opacity pointer-events-none"
-                        />
-                      )}
                     </td>
                   );
                 })}
@@ -969,78 +659,6 @@ function DataTable({
         </table>
       </div>
     </div>
-  );
-}
-
-interface EditableInputProps {
-  value: string;
-  align?: ColumnAlign;
-  mono?: boolean;
-  onChange: (value: string) => void;
-  onSave: (value: string) => void;
-  onCancel: () => void;
-}
-
-function EditableInput({
-  value,
-  align,
-  mono,
-  onChange,
-  onSave,
-  onCancel,
-}: EditableInputProps) {
-  const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
-  const isLongText = value.length > 40;
-
-  useEffect(() => {
-    const el = inputRef.current;
-    if (el) {
-      el.focus();
-      if ('select' in el) el.select();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const baseClasses = [
-    'w-full border-0 outline-none bg-transparent text-[#1A2B2B] text-sm p-0',
-    align === 'right' ? 'text-right' : 'text-left',
-    mono ? 'font-mono text-[13px]' : '',
-  ].join(' ');
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      onSave((e.target as HTMLInputElement | HTMLTextAreaElement).value);
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      onCancel();
-    }
-  }
-
-  if (isLongText) {
-    return (
-      <textarea
-        ref={inputRef as React.RefObject<HTMLTextAreaElement>}
-        value={value}
-        rows={2}
-        onChange={(e) => onChange(e.target.value)}
-        onBlur={(e) => onSave(e.target.value)}
-        onKeyDown={handleKeyDown}
-        className={`${baseClasses} resize-none`}
-      />
-    );
-  }
-
-  return (
-    <input
-      ref={inputRef as React.RefObject<HTMLInputElement>}
-      type="text"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      onBlur={(e) => onSave(e.target.value)}
-      onKeyDown={handleKeyDown}
-      className={baseClasses}
-    />
   );
 }
 

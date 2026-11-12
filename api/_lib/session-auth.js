@@ -1,79 +1,94 @@
-import { createHmac, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import {
+  identityConfig, insertIdentitySession, isIdentityUserId, resolveIdentitySession, revokeIdentitySession,
+} from './hermes-identity.js';
 
-const ROLES = new Set(['operador', 'mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia']);
 const SESSION_SECONDS = 8 * 60 * 60;
-
-function base64url(value) {
-  return Buffer.from(value).toString('base64url');
-}
-
-function secret() {
-  const value = process.env.HERMES_AUTH_SECRET;
-  if (!value || value.length < 32) throw new Error('HERMES_AUTH_SECRET is not configured');
-  return value;
-}
+const SESSION_ID = /^[\w-]{43}$/;
 
 function signature(payload) {
-  return createHmac('sha256', secret()).update(payload).digest('base64url');
+  const secret = process.env.HERMES_AUTH_SECRET?.trim();
+  if (!secret || secret.length < 32) throw new Error('HERMES_AUTH_SECRET is not configured');
+  return createHmac('sha256', secret).update(payload).digest('base64url');
 }
 
-export function signSession(role) {
-  if (!ROLES.has(role)) throw new Error('Invalid role');
-  const now = Math.floor(Date.now() / 1000);
-  const payload = base64url(JSON.stringify({ v: 1, role, iat: now, exp: now + SESSION_SECONDS }));
+export function signSession({ userId, sessionId, issuedAt = Math.floor(Date.now() / 1000) }) {
+  if (!isIdentityUserId(userId) || !SESSION_ID.test(sessionId)) throw new Error('Invalid employee session');
+  const claims = { v: 2, sub: userId.toLowerCase(), sid: sessionId, iat: issuedAt, exp: issuedAt + SESSION_SECONDS };
+  const payload = Buffer.from(JSON.stringify(claims)).toString('base64url');
   return `${payload}.${signature(payload)}`;
 }
 
 export function verifySession(token) {
-  if (!token || typeof token !== 'string') return null;
-  const [payload, supplied] = token.split('.');
-  if (!payload || !supplied) return null;
-  const expected = signature(payload);
-  const a = Buffer.from(supplied);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
-  const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-  if (claims.v !== 1 || !ROLES.has(claims.role) || claims.exp <= Math.floor(Date.now() / 1000)) return null;
-  return claims;
+  if (typeof token !== 'string' || !token || token.length > 2048) return null;
+  const [payload, supplied, extra] = token.split('.');
+  if (!payload || !supplied || extra !== undefined) return null;
+  try {
+    const expected = Buffer.from(signature(payload));
+    const actual = Buffer.from(supplied);
+    if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return null;
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    const now = Math.floor(Date.now() / 1000);
+    if (claims.v !== 2 || !isIdentityUserId(claims.sub) || !SESSION_ID.test(claims.sid)
+      || !Number.isInteger(claims.iat) || !Number.isInteger(claims.exp) || claims.iat > now + 30
+      || claims.exp !== claims.iat + SESSION_SECONDS || claims.exp <= now) return null;
+    return claims;
+  } catch { return null; }
 }
 
-export function readSession(req) {
-  const cookies = String(req.headers.cookie || '').split(';').map((part) => part.trim());
+function sessionClaims(req) {
+  const cookies = String(req.headers?.cookie || '').split(';').map((part) => part.trim());
   const value = cookies.find((part) => part.startsWith('hermes_session='))?.slice('hermes_session='.length);
-  try {
-    return verifySession(value);
-  } catch {
+  return verifySession(value);
+}
+
+export function sessionHash(sessionId) {
+  return createHash('sha256').update(sessionId).digest('hex');
+}
+
+export async function issueSession(userId, config = identityConfig()) {
+  const sessionId = randomBytes(32).toString('base64url');
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const token = signSession({ userId, sessionId, issuedAt });
+  await insertIdentitySession(config, sessionHash(sessionId), userId, issuedAt + SESSION_SECONDS);
+  return token;
+}
+
+export async function readSession(req) {
+  const claims = sessionClaims(req);
+  if (!claims) return null;
+  return resolveIdentitySession(identityConfig(), sessionHash(claims.sid), claims.sub);
+}
+
+export async function requireSession(req, res, allowedRoles) {
+  let session;
+  try { session = await readSession(req); }
+  catch {
+    res.status(503).json({ error: 'No se pudo verificar la sesión. Intenta de nuevo.' });
     return null;
   }
-}
-
-export function requireSession(req, res, allowedRoles) {
-  const claims = readSession(req);
-  if (!claims) {
+  if (!session) {
     res.status(401).json({ error: 'Sesión inválida' });
     return null;
   }
-  if (allowedRoles && !allowedRoles.includes(claims.role)) {
+  if (allowedRoles && !allowedRoles.includes(session.role)) {
     res.status(403).json({ error: 'Acción no autorizada para este rol' });
     return null;
   }
-  return claims;
+  return session;
 }
 
-export function isRole(role) {
-  return ROLES.has(role);
+export async function revokeSession(req) {
+  const claims = sessionClaims(req);
+  if (claims) await revokeIdentitySession(identityConfig(), sessionHash(claims.sid), claims.sub);
 }
 
-export function verifyRolePin(role, pin) {
-  if (!ROLES.has(role) || !/^\d{4,8}$/.test(pin || '')) return false;
-  const key = `HERMES_PIN_HASH_${role.toUpperCase()}`;
-  const configured = process.env[key];
-  if (!configured) throw new Error(`${key} is not configured`);
-  const [salt, expectedHex] = configured.split(':');
-  if (!salt || !expectedHex) throw new Error(`${key} has an invalid format`);
-  const actual = scryptSync(pin, salt, 64);
-  const expected = Buffer.from(expectedHex, 'hex');
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
+export function isSameOriginAuthRequest(req) {
+  if (req.headers?.['sec-fetch-site'] === 'cross-site') return false;
+  const origin = req.headers?.origin;
+  if (!origin) return true;
+  try { return new URL(origin).host === req.headers.host; }
+  catch { return false; }
 }
 
 export function sessionCookie(token) {
@@ -81,13 +96,3 @@ export function sessionCookie(token) {
 }
 
 export const clearSessionCookie = 'hermes_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0';
-
-export function roleProfile(role) {
-  const labels = {
-    operador: 'Operador', mecanico: 'Mecánico', jefe_taller: 'Jefe de Taller',
-    coordinador: 'Coordinador', supervisor: 'Supervisor', gerencia: 'Gerencia',
-  };
-  const units = String(process.env[`HERMES_ASSIGNED_UNITS_${role.toUpperCase()}`] || '')
-    .split(',').map((unit) => unit.trim()).filter(Boolean);
-  return { role, userName: labels[role], assignedUnits: units };
-}

@@ -2,15 +2,14 @@
  * @fileoverview Monolithic by design (> 400 LOC).
  * PM work-order creation with templated task list and equipment binding.
  */
-import { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Wrench, Package, Clock, CheckCircle, AlertTriangle } from 'lucide-react';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { getNextPM } from '../data/pm-rules';
 import { getCumulativePMParts, getAvailablePMLevels, type PMPart } from '../data/pm-parts-catalog';
-import { generateNextOTId } from '../lib/ot-generator';
-import { mexicoDate } from '../lib/date-utils';
-import { appendRow, SHEET_TABS } from '../lib/sheets-api';
+import { mexicoDateInput } from '../lib/date-utils';
+import { requestWorkshop, WorkshopApiError, mechanicCoversUnit, type WorkshopMechanic } from '../lib/workshop-api';
 import { useAuthStore } from '../stores/auth-store';
 import { printPMOrder } from '../lib/print-pm-order';
 import ConfirmModal from '../components/ui/ConfirmModal';
@@ -41,10 +40,20 @@ export default function PMWorkOrderPage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
   const equipment = useEquipmentList();
+  const [params] = useSearchParams();
 
-  const [unidad, setUnidad] = useState('');
-  const [pmLevel, setPmLevel] = useState('');
-  const [mecanico, setMecanico] = useState('');
+  const [unidad, setUnidad] = useState(() => params.get('unidad') ?? '');
+  const [pmLevel, setPmLevel] = useState(() => params.get('nivel') ?? '');
+  const [mechanicId, setMechanicId] = useState('');
+  const [mechanics, setMechanics] = useState<WorkshopMechanic[]>([]);
+  const [mechanicsError, setMechanicsError] = useState('');
+  const [scheduledDate, setScheduledDate] = useState(mexicoDateInput);
+  const [hoursOverride, setHoursOverride] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState('');
+  const mutationId = useRef('');
+  const sending = useRef(false);
   const [observaciones, setObservaciones] = useState('');
   const [showConfirm, setShowConfirm] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
@@ -77,104 +86,70 @@ export default function PMWorkOrderPage() {
     return groupByCategory(partsKit.parts);
   }, [partsKit]);
 
-  const canSubmit = unidad !== '' && pmLevel !== '';
+  const estimatedHours = hoursOverride || String(partsKit?.totalEstimatedHours ?? '');
+  const canSubmit = !!selectedEquipment && availableLevels.includes(pmLevel) && !!scheduledDate && Number(estimatedHours) >= 0.25 && Number(estimatedHours) <= 240;
+
+  useEffect(() => {
+    let active = true;
+    requestWorkshop<{ mechanics: WorkshopMechanic[] }>('mechanics')
+      .then(({ mechanics }) => { if (active) setMechanics(mechanics); })
+      .catch((err: unknown) => { if (active) setMechanicsError(err instanceof Error ? err.message : 'Padrón no disponible'); });
+    return () => { active = false; };
+  }, []);
 
   function handleUnitChange(newUnit: string) {
     setUnidad(newUnit);
     setPmLevel('');
+    setMechanicId('');
+    setHoursOverride('');
   }
 
   function handleLevelSelect(level: string) {
     setPmLevel(level);
+    setHoursOverride('');
   }
 
   function useSuggested() {
-    if (suggestedLevel) setPmLevel(suggestedLevel);
+    if (suggestedLevel) handleLevelSelect(suggestedLevel);
   }
 
   function handleSubmitIntent() {
-    if (!canSubmit) return;
+    if (!canSubmit || saving || printData) return;
     setShowConfirm(true);
   }
 
   async function handleConfirm() {
+    if (sending.current || !canSubmit || printData) return;
+    sending.current = true;
     setShowConfirm(false);
+    setSaving(true);
+    setError('');
+    mutationId.current ||= crypto.randomUUID();
 
-    const otId = await generateNextOTId();
-    const date = mexicoDate();
-    const partsListStr = partsKit
-      ? partsKit.parts.map((p) => `${p.partNumber} x${p.quantity}`).join(', ')
-      : '';
-    const levelsStr = partsKit ? partsKit.levelsIncluded.join('+') : pmLevel;
-
-    // Write to Ordenes Mantenimiento tab
+    const levelsIncluded = partsKit?.levelsIncluded ?? [pmLevel];
     try {
-      await appendRow(SHEET_TABS.ORDENES_MANTENIMIENTO, [
-        otId,                              // OT_ID
-        date,                              // FECHA
-        unidad,                            // UNIDAD
-        model,                             // MODELO
-        pmLevel,                           // NIVEL PM
-        levelsStr,                         // NIVELES INCLUIDOS
-        String(selectedEquipment?.current_horometro ?? ''), // HORÓMETRO
-        `Mantenimiento Preventivo ${pmLevel}. Incluye: ${levelsStr}`, // DESCRIPCIÓN
-        String(partsKit?.totalEstimatedHours ?? ''),  // HORAS ESTIMADAS
-        mecanico || 'Por asignar',         // MECÁNICO
-        userName,                          // AUTORIZADO POR
-        'Programada',                      // ESTADO
-        partsListStr,                      // PARTES NECESARIAS
-        observaciones,                     // OBSERVACIONES
-      ]);
-    } catch (err) {
-      console.error('Sheets append failed (Ordenes Mantenimiento):', err);
-    }
-
-    // Write to Historial PM
-    try {
-      await appendRow(SHEET_TABS.HISTORIAL_PM, [
-        date,                                     // FECHA
-        otId,                                     // OT_ID
-        unidad,                                   // UNIDAD
-        model,                                    // MODELO
-        pmLevel,                                  // NIVEL PM
-        levelsStr,                                // NIVELES INCLUIDOS
-        String(selectedEquipment?.current_horometro ?? ''), // HORÓMETRO
-        String(partsKit?.totalEstimatedHours ?? ''),        // HORAS ESTIMADAS
-        mecanico || 'Por asignar',                // MECÁNICO
-        userName,                                 // AUTORIZADO POR
-        'Programada',                             // ESTADO
-        partsListStr,                             // PARTES
-        observaciones,                            // OBSERVACIONES
-      ]);
-    } catch (err) {
-      console.error('Sheets append failed (PM History):', err);
-    }
-
-    // Save print data so user can trigger PDF on click
-    if (partsKit) {
-      setPrintData({
-        otId,
-        date,
-        unidad,
-        model,
-        pmLevel,
-        levelsIncluded: partsKit.levelsIncluded,
-        horometro: selectedEquipment?.current_horometro ?? 0,
-        estimatedHours: partsKit.totalEstimatedHours,
-        mecanico,
-        autorizadoPor: userName,
-        observaciones,
-        parts: partsKit.parts,
+      const { otId, schedule } = await requestWorkshop<{ otId: string; schedule: string[] }>('pm', {
+        mutationId: mutationId.current, unit: unidad, level: pmLevel, includedLevels: levelsIncluded.join('+'),
+        hours: estimatedHours, mechanicId, scheduledDate, notes: observaciones,
+        parts: partsKit?.parts.map((part) => `${part.partNumber} x${part.quantity}`).join(', ') ?? '',
       });
+      setPending(false);
+      setPrintData({
+        otId, date: schedule[1] ?? scheduledDate, unidad, model, pmLevel, levelsIncluded,
+        horometro: selectedEquipment?.current_horometro ?? 0, estimatedHours: Number(estimatedHours),
+        mecanico: schedule[4] ?? '', autorizadoPor: userName, observaciones, parts: partsKit?.parts ?? [],
+      });
+      setToastMessage(`${otId} programada en Calendario para ${scheduledDate}`);
+      setToastVisible(true);
+    } catch (err) {
+      const definitive = err instanceof WorkshopApiError && [400, 403, 404, 409].includes(err.status);
+      if (definitive) mutationId.current = '';
+      setPending(!definitive);
+      setError(err instanceof Error ? err.message : 'No se pudo confirmar la Orden de PM');
+    } finally {
+      sending.current = false;
+      setSaving(false);
     }
-
-    setToastMessage(`${otId} — PM ${pmLevel} programado para ${unidad}`);
-    setToastVisible(true);
-  }
-
-  function handleToastDismiss() {
-    setToastVisible(false);
-    navigate(-1);
   }
 
   return (
@@ -182,13 +157,13 @@ export default function PMWorkOrderPage() {
       <SuccessToast
         message={toastMessage}
         visible={toastVisible}
-        onDismiss={handleToastDismiss}
+        onDismiss={() => setToastVisible(false)}
       />
 
       <ConfirmModal
         open={showConfirm}
         title="Activar Orden de Mantenimiento"
-        message={`¿Generar OT de ${pmLevel} para ${unidad} (${model})?\n\nSe ordenarán ${partsKit?.parts.length ?? 0} refacciones automáticamente.`}
+        message={`¿Programar ${pmLevel} para ${unidad} el ${scheduledDate}?`}
         onConfirm={handleConfirm}
         onCancel={() => setShowConfirm(false)}
       />
@@ -204,10 +179,11 @@ export default function PMWorkOrderPage() {
         </button>
         <div>
           <h1 className="text-xl font-bold text-text">Orden de PM</h1>
-          <p className="text-xs text-text-secondary">Genera OT + ordena refacciones automáticamente</p>
+          <p className="text-xs text-text-secondary">Programa la OT en el Calendario de Taller</p>
         </div>
       </div>
 
+      <fieldset disabled={saving || pending || !!printData} className="min-w-0">
       {/* Step 1: Select Unit */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-border mb-4">
         <div className="flex items-center gap-2 mb-3">
@@ -354,7 +330,7 @@ export default function PMWorkOrderPage() {
       )}
 
       {/* Step 4: Assign mechanic + notes */}
-      {partsKit && partsKit.parts.length > 0 && (
+      {pmLevel && (
         <div className="bg-white rounded-xl p-4 shadow-sm border border-border mb-4">
           <div className="flex items-center gap-2 mb-3">
             <div className="w-6 h-6 rounded-full bg-amber text-white flex items-center justify-center text-xs font-bold">4</div>
@@ -362,16 +338,24 @@ export default function PMWorkOrderPage() {
           </div>
 
           <div className="flex flex-col gap-3">
-            <div className="flex flex-col gap-1">
-              <label className="text-sm font-medium text-text-secondary">Mecánico (opcional)</label>
-              <input
-                type="text"
-                value={mecanico}
-                onChange={(e) => setMecanico(e.target.value)}
-                placeholder="Nombre del mecánico asignado"
-                className="w-full rounded-xl border border-border p-3 text-sm text-text bg-white"
-              />
-            </div>
+            <label className="flex flex-col gap-1 text-sm font-medium text-text-secondary">
+              Fecha programada
+              <input type="date" value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)} className="min-w-0 w-full rounded-xl border border-border p-3 text-text bg-white" />
+            </label>
+            <label className="flex flex-col gap-1 text-sm font-medium text-text-secondary">
+              Horas estimadas
+              <input type="number" min="0.25" max="240" step="0.25" value={estimatedHours} onChange={(e) => setHoursOverride(e.target.value)} className="w-full rounded-xl border border-border p-3 text-text bg-white" />
+            </label>
+            <label className="flex flex-col gap-1 text-sm font-medium text-text-secondary">
+              Mecánico (opcional)
+              <select value={mechanicId} onChange={(e) => setMechanicId(e.target.value)} className="w-full rounded-xl border border-border p-3 text-text bg-white">
+                <option value="">Sin asignar</option>
+                {mechanics.filter((mechanic) => mechanicCoversUnit(mechanic, unidad)).map((mechanic) => (
+                  <option key={mechanic.userId} value={mechanic.userId}>{mechanic.userName}</option>
+                ))}
+              </select>
+            </label>
+            {mechanicsError && <p className="text-xs text-text-secondary">{mechanicsError}</p>}
 
             <div className="flex flex-col gap-1">
               <label className="text-sm font-medium text-text-secondary">Observaciones</label>
@@ -397,6 +381,14 @@ export default function PMWorkOrderPage() {
         </div>
       )}
 
+      </fieldset>
+      {error && <p role="alert" className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+      {printData && (
+        <button type="button" onClick={() => navigate('/calendar')} className="mb-3 w-full rounded-xl border border-amber p-3 text-sm font-semibold text-amber">
+          Abrir Calendario
+        </button>
+      )}
+
       {/* Submit */}
       {/* Submit or Print */}
       {printData ? (
@@ -412,13 +404,13 @@ export default function PMWorkOrderPage() {
       ) : (
         <button
           type="button"
-          onClick={handleSubmitIntent}
-          disabled={!canSubmit}
+          onClick={pending ? handleConfirm : handleSubmitIntent}
+          disabled={!canSubmit || saving}
           className="w-full bg-amber text-white rounded-xl py-4 font-semibold text-lg disabled:opacity-40 disabled:cursor-not-allowed transition-opacity flex items-center justify-center gap-2 btn-press"
           style={{ minHeight: 52 }}
         >
           <Wrench size={20} />
-          Activar Orden de PM
+          {saving ? 'Guardando…' : pending ? 'Reintentar' : 'Activar Orden de PM'}
         </button>
       )}
     </div>

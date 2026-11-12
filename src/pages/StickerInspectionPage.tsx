@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -21,18 +21,16 @@ import {
   colorClass,
   colorLabel,
   evaluateStickerInspection,
-  statusLabel,
 } from '../lib/sticker-inspection';
 import { printSticker } from '../lib/sticker-print';
-import { mexicoDateCompact, mexicoDateInput, mexicoTimeCompact, mexicoTimeInput } from '../lib/date-utils';
-import { appendRow, SHEET_TABS } from '../lib/sheets-api';
-import { tryUploadPhotos } from '../lib/photo-upload-safe';
-import { queueSubmission, flushQueue } from '../lib/offline-queue';
+import { mexicoDateInput, mexicoTimeInput } from '../lib/date-utils';
+import { saveWorkshopCapture } from '../lib/offline-queue';
+import { requestWorkshop, WorkshopApiError } from '../lib/workshop-api';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { useAuthStore } from '../stores/auth-store';
 import PhotoCapture from '../components/ui/PhotoCapture';
-import SuccessToast from '../components/ui/SuccessToast';
+import SuccessToast, { type ToastType } from '../components/ui/SuccessToast';
 
 interface PhotoItem {
   file: File;
@@ -58,6 +56,10 @@ interface StickerRecord {
   supervisor: string;
   qrText: string;
   findingsSummary: string;
+  approvalState: string;
+  canDispatch: boolean;
+  photos: string[];
+  findings: StickerFindingRecord[];
 }
 
 interface StickerFindingRecord {
@@ -69,10 +71,11 @@ interface StickerFindingRecord {
   dueDate: string;
   canOperate: boolean;
   hardStop: boolean;
+  photos: string[];
 }
 
 const COMPANY_DEFAULT = 'TCM';
-const PHOTO_COLUMN_INDEX = 16;
+const COLORS: StickerColor[] = ['green', 'yellow', 'red'];
 const STATUS_OPTIONS: { value: StickerInspectionStatus; label: string }[] = [
   { value: 'cumple', label: 'Cumple' },
   { value: 'condicionado', label: 'Cond.' },
@@ -95,28 +98,6 @@ function buildInitialResponses(items: StickerInspectionItem[], baseDate: string)
   );
 }
 
-function formatInputDate(inputDate: string): string {
-  if (!inputDate) return '';
-  const [year, month, day] = inputDate.split('-');
-  return day && month && year ? `${day}/${month}/${year}` : inputDate;
-}
-
-function getFindingSummary(items: StickerInspectionItem[], responses: Record<string, ItemResponse>): string {
-  const findings = items
-    .map((item) => ({ item, response: responses[item.id] }))
-    .filter(({ response }) => response?.status === 'condicionado' || response?.status === 'no_cumple');
-
-  if (findings.length === 0) return 'Sin hallazgos abiertos.';
-
-  return findings
-    .slice(0, 4)
-    .map(({ item, response }) => {
-      if (!response) return `${item.section} - ${item.label}`;
-      return `${statusLabel(response.status ?? 'no_aplica')}: ${item.section} - ${response.comment || item.label}`;
-    })
-    .join(' | ');
-}
-
 function hasEvidenceGap(items: StickerInspectionItem[], responses: Record<string, ItemResponse>): boolean {
   return items.some((item) => {
     const response = responses[item.id];
@@ -128,30 +109,10 @@ function hasEvidenceGap(items: StickerInspectionItem[], responses: Record<string
   });
 }
 
-function buildFindingRecords(
-  items: StickerInspectionItem[],
-  responses: Record<string, ItemResponse>,
-): StickerFindingRecord[] {
-  return items
-    .map((item) => ({ item, response: responses[item.id] }))
-    .filter(({ response }) => response?.status === 'condicionado' || response?.status === 'no_cumple')
-    .map(({ item, response }) => ({
-      itemId: item.id,
-      section: item.section,
-      label: item.label,
-      status: response?.status ?? 'no_aplica',
-      comment: response?.comment ?? '',
-      dueDate: response?.dueDate ?? '',
-      canOperate: response?.canOperate ?? true,
-      hardStop: item.hardStop === true,
-    }));
-}
-
 export default function StickerInspectionPage() {
   const navigate = useNavigate();
   const equipment = useEquipmentList();
   const isOnline = useOnlineStatus();
-  const userName = useAuthStore((s) => s.userName) || 'Inspector';
   const role = useAuthStore((s) => s.role);
   const canSupervisorApprove = role === 'supervisor' || role === 'gerencia';
 
@@ -166,7 +127,16 @@ export default function StickerInspectionPage() {
   const [overrideReason, setOverrideReason] = useState('');
   const [supervisorApproval, setSupervisorApproval] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [pending, setPending] = useState('');
+  const captureId = useRef('');
+  const submittingRef = useRef(false);
+  const [reviewList, setReviewList] = useState<StickerRecord[]>([]);
+  const [reviewError, setReviewError] = useState('');
+  const [reviewBusy, setReviewBusy] = useState('');
+  const reviewIds = useRef(new Map<string, string>());
+  const reviewing = useRef(false);
   const [toastMessage, setToastMessage] = useState('');
+  const [toastType, setToastType] = useState<ToastType>('success');
   const [toastVisible, setToastVisible] = useState(false);
   const [lastSticker, setLastSticker] = useState<StickerRecord | null>(null);
 
@@ -177,11 +147,19 @@ export default function StickerInspectionPage() {
     setSupervisorApproval(false);
   }, [fecha, template]);
 
-  useEffect(() => {
-    if (isOnline) flushQueue().catch(() => {});
-  }, [isOnline]);
+  const refreshReviews = useCallback(async () => {
+    if (!canSupervisorApprove) return;
+    setReviewError('');
+    try {
+      const { stickers } = await requestWorkshop<{ stickers: StickerRecord[] }>('stickers');
+      setReviewList(stickers);
+    } catch (error) {
+      setReviewError(error instanceof Error ? error.message : 'No se pudieron consultar las inspecciones');
+    }
+  }, [canSupervisorApprove]);
 
-  const selectedEquipment = equipment.find((eq) => eq.unit_id === unitId);
+  useEffect(() => { void refreshReviews(); }, [refreshReviews]);
+
   const inspectionInputs = useMemo(
     () =>
       template.items.map((item) => {
@@ -211,7 +189,7 @@ export default function StickerInspectionPage() {
   const evidenceGap = hasEvidenceGap(template.items, responses);
   const overrideNeedsReason = finalColor !== decision.recommendedColor && overrideReason.trim() === '';
   const canSubmit =
-    !submitting &&
+    !submitting && !lastSticker &&
     unitId.trim() !== '' &&
     company.trim() !== '' &&
     answeredCount === template.items.length &&
@@ -266,165 +244,78 @@ export default function StickerInspectionPage() {
     });
   }, []);
 
+  function showToast(message: string, type: ToastType = 'success') {
+    setToastMessage(message);
+    setToastType(type);
+    setToastVisible(true);
+  }
+
   async function handleSubmit() {
-    if (!canSubmit) return;
-
+    if (!canSubmit || submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
-    const now = new Date();
-    const folio = `${template.folioPrefix}-${mexicoDateCompact(now)}-${mexicoTimeCompact(now)}`;
-    const expiryDate = addDaysToInputDate(fecha, 15);
-    const approved = canSupervisorApprove && supervisorApproval;
-    const approvalState = approved ? 'aprobado_supervisor' : 'pendiente_supervisor';
-    const findingsSummary = getFindingSummary(template.items, responses);
-    const allPhotoFiles = template.items.flatMap((item) => responses[item.id]?.photos.map((photo) => photo.file) ?? []);
-    const findingRecords = buildFindingRecords(template.items, responses);
-
-    const payload = {
-      version: 1,
-      source: 'hermes_sticker_inspection',
-      sourceFiles: [template.sourceFile],
-      rules: {
-        colors: ['green', 'yellow', 'red'],
-        noOrangeSticker: true,
-        hardStopsBlockDispatch: true,
-        submittedRecordsLocked: true,
-      },
-      decision: {
-        recommendedColor: decision.recommendedColor,
-        finalColor,
-        overrideReason: overrideReason.trim(),
-        canDispatch: finalColor !== 'red',
-        badges: decision.badges,
-      },
-      findings: findingRecords,
-    };
-
-    let photoUrls: string[] = [];
-    if (isOnline) {
-      photoUrls = await tryUploadPhotos(allPhotoFiles, 'sticker-inspection-photos');
-    }
-
-    const row = [
-      '',
-      folio,
-      `${fecha} ${hora}`,
-      formatInputDate(fecha),
-      hora.length === 5 ? `${hora}:00` : hora,
-      unitId,
-      selectedEquipment?.model ?? '',
-      template.label,
-      userName,
-      approved ? userName : '',
-      approvalState,
-      decision.recommendedColor,
-      finalColor,
-      finalColor === 'red' ? 'no' : 'yes',
-      formatInputDate(expiryDate),
-      findingsSummary,
-      photoUrls.join(', '),
-      JSON.stringify(payload),
-    ];
-
-    const findingRows = findingRecords.map((finding) => [
-      '',
-      folio,
-      `${fecha} ${hora}`,
-      unitId,
-      selectedEquipment?.model ?? '',
-      template.label,
-      finding.section,
-      finding.itemId,
-      finding.label,
-      finding.status,
-      finding.comment,
-      finding.dueDate,
-      finding.canOperate ? 'yes' : 'no',
-      finding.hardStop ? 'critical' : finalColor === 'red' ? 'high' : 'medium',
-      approvalState,
-      formatInputDate(expiryDate),
-    ]);
-
+    captureId.current ||= crypto.randomUUID();
     try {
-      if (isOnline) {
-        appendRow(SHEET_TABS.INSPECCION_STICKERS, row).catch((err: unknown) => {
-          console.error('Background write failed (sticker inspection):', err);
-          queueSubmission({
-            type: 'sticker_inspection',
-            data: {
-              tab: SHEET_TABS.INSPECCION_STICKERS,
-              values: row,
-              photoFiles: allPhotoFiles,
-              photoBucket: 'sticker-inspection-photos',
-              photoColumnIndex: PHOTO_COLUMN_INDEX,
-            },
-            timestamp: new Date().toISOString(),
-          }).catch(() => {});
-        });
-        for (const findingRow of findingRows) {
-          appendRow(SHEET_TABS.INSPECCION_HALLAZGOS, findingRow).catch((err: unknown) => {
-            console.error('Background write failed (sticker finding):', err);
-            queueSubmission({
-              type: 'sticker_inspection',
-              data: {
-                tab: SHEET_TABS.INSPECCION_HALLAZGOS,
-                values: findingRow,
-              },
-              timestamp: new Date().toISOString(),
-            }).catch(() => {});
-          });
-        }
-      } else {
-        await queueSubmission({
-          type: 'sticker_inspection',
-          data: {
-            tab: SHEET_TABS.INSPECCION_STICKERS,
-            values: row,
-            photoFiles: allPhotoFiles,
-            photoBucket: 'sticker-inspection-photos',
-            photoColumnIndex: PHOTO_COLUMN_INDEX,
-          },
-          timestamp: new Date().toISOString(),
-        });
-        for (const findingRow of findingRows) {
-          await queueSubmission({
-            type: 'sticker_inspection',
-            data: {
-              tab: SHEET_TABS.INSPECCION_HALLAZGOS,
-              values: findingRow,
-            },
-            timestamp: new Date().toISOString(),
-          });
-        }
+      const result = await saveWorkshopCapture<StickerRecord>({
+        endpoint: 'sticker',
+        mutationId: captureId.current,
+        input: {
+          unit: unitId, templateId, company, date: fecha, time: hora, finalColor, overrideReason,
+          approve: canSupervisorApprove && supervisorApproval,
+          checks: template.items.map(({ id }) => {
+            const answer = responses[id]!;
+            return { itemId: id, status: answer.status, comment: answer.comment, canOperate: answer.canOperate, dueDate: answer.dueDate };
+          }),
+        },
+        photos: template.items.flatMap(({ id }) => responses[id]!.photos.map(({ file }) => ({ file, itemId: id }))),
+      });
+      if (result.kind === 'pending') {
+        setPending(result.reason);
+        return;
       }
-
-      const stickerRecord = {
-        folio,
-        color: finalColor,
-        unitId,
-        company,
-        inspectionDate: formatInputDate(fecha),
-        expiryDate: formatInputDate(expiryDate),
-        inspector: userName,
-        supervisor: approved ? userName : '',
-        qrText: `hermes://inspection/${folio}`,
-        findingsSummary,
-      };
-
-      setLastSticker(stickerRecord);
-      setToastMessage(
-        approved
-          ? `Sticker ${colorLabel(finalColor)} listo: ${folio}`
-          : `Inspeccion ${folio} enviada a supervisor`,
-      );
-      setToastVisible(true);
+      setPending('');
+      setLastSticker(result.result);
+      showToast(result.result.approvalState === 'aprobado_supervisor'
+        ? `Sticker ${colorLabel(result.result.color)} guardado. ${result.result.folio}`
+        : `Inspección ${result.result.folio} guardada y pendiente de revisión`);
+      void refreshReviews();
+    } catch (error) {
+      if (error instanceof WorkshopApiError && error.status === 400) {
+        captureId.current = '';
+        setPending('');
+      }
+      showToast(error instanceof Error ? error.message : 'No se pudo confirmar la inspección', 'error');
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
+    }
+  }
+
+  async function approveSticker(folio: string) {
+    if (reviewing.current) return;
+    reviewing.current = true;
+    setReviewBusy(folio);
+    setReviewError('');
+    const mutationId = reviewIds.current.get(folio) ?? crypto.randomUUID();
+    reviewIds.current.set(folio, mutationId);
+    try {
+      const receipt = await requestWorkshop<StickerRecord>('stickerreview', { mutationId, folio });
+      reviewIds.current.delete(folio);
+      setLastSticker(receipt);
+      setReviewList((items) => items.filter((item) => item.folio !== folio));
+      showToast(`Revisión registrada. ${receipt.folio}`);
+    } catch (error) {
+      if (error instanceof WorkshopApiError && [400, 403, 404, 409].includes(error.status)) reviewIds.current.delete(folio);
+      setReviewError(error instanceof Error ? error.message : 'No se pudo confirmar la revisión');
+    } finally {
+      reviewing.current = false;
+      setReviewBusy('');
     }
   }
 
   return (
     <div className="flex flex-col pb-6 animate-fade-up">
-      <SuccessToast message={toastMessage} visible={toastVisible} onDismiss={() => setToastVisible(false)} />
+      <SuccessToast message={toastMessage} visible={toastVisible} type={toastType} onDismiss={() => setToastVisible(false)} />
 
       <div className="flex items-center gap-3 mb-4">
         <button
@@ -441,6 +332,41 @@ export default function StickerInspectionPage() {
         </div>
       </div>
 
+      {canSupervisorApprove && (
+        <section className="mb-4 rounded-xl border border-border bg-white p-4">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-text">Inspecciones por revisar</h2>
+            <button type="button" onClick={() => void refreshReviews()} className="text-sm font-medium text-amber">Actualizar</button>
+          </div>
+          {reviewError && <p role="alert" className="text-sm text-critical">{reviewError}</p>}
+          {reviewList.length === 0 && !reviewError && <p className="text-sm text-text-secondary">Sin inspecciones pendientes.</p>}
+          {reviewList.map((item) => (
+            <details key={item.folio} className="mb-2 rounded-lg border border-border p-3">
+              <summary className="cursor-pointer text-sm font-semibold text-text">{item.unitId} · {colorLabel(item.color)} · {item.folio}</summary>
+              <p className="my-2 text-xs text-text-secondary">{item.inspectionDate} · {item.inspector}</p>
+              {item.findings.map((finding) => (
+                <div key={finding.itemId} className="mb-2 text-sm text-text">
+                  <p>{finding.label} {finding.comment}</p>
+                  {finding.dueDate && <p className="text-xs text-text-secondary">Compromiso {finding.dueDate}</p>}
+                  <div className="flex flex-wrap gap-2">
+                    {finding.photos.map((url) => <a key={url} href={url} target="_blank" rel="noreferrer" className="text-xs font-semibold text-amber">Ver evidencia</a>)}
+                  </div>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => void approveSticker(item.folio)}
+                disabled={!!reviewBusy}
+                className="mt-2 rounded-lg bg-amber px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {reviewBusy === item.folio ? 'Guardando…' : 'Aprobar revisión'}
+              </button>
+            </details>
+          ))}
+        </section>
+      )}
+
+      <fieldset disabled={submitting || !!pending || !!lastSticker} className="min-w-0">
       <div className="grid grid-cols-3 gap-2 mb-4">
         <StatusTile icon={<ClipboardCheck size={18} />} label="Respondidos" value={`${answeredCount}/${template.items.length}`} />
         <StatusTile icon={<FileText size={18} />} label="Hallazgos" value={String(findingsCount)} />
@@ -513,14 +439,14 @@ export default function StickerInspectionPage() {
 
         <Field label="Color final">
           <select value={finalColor} onChange={(event) => setFinalColor(event.target.value as StickerColor)} className="field-input bg-white">
-            <option value="green">Verde - Aprobado</option>
-            <option value="yellow">Amarillo - Condicionado</option>
-            <option value="red">Rojo - Rechazado</option>
+            {COLORS.slice(COLORS.indexOf(decision.recommendedColor)).map((color) => (
+              <option key={color} value={color}>{colorLabel(color)}</option>
+            ))}
           </select>
         </Field>
 
         {finalColor !== decision.recommendedColor && (
-          <Field label="Justificacion del override">
+          <Field label="Justificación del cambio">
             <textarea
               value={overrideReason}
               onChange={(event) => setOverrideReason(event.target.value)}
@@ -539,7 +465,7 @@ export default function StickerInspectionPage() {
               onChange={(event) => setSupervisorApproval(event.target.checked)}
               className="w-5 h-5"
             />
-            <span className="text-sm font-medium text-text">Aprobar como supervisor y habilitar sticker</span>
+            <span className="text-sm font-medium text-text">Aprobar inspección como supervisor</span>
           </label>
         )}
       </section>
@@ -569,12 +495,12 @@ export default function StickerInspectionPage() {
                   </div>
 
                   <div className="grid grid-cols-4 gap-1 mt-3">
-                    {STATUS_OPTIONS.map((option) => (
+                    {STATUS_OPTIONS.filter((option) => !item.hardStop || option.value !== 'no_aplica').map((option) => (
                       <button
                         key={option.value}
                         type="button"
                         onClick={() => updateStatus(item, option.value)}
-                        className={`rounded-lg px-2 text-xs font-semibold border transition-colors ${
+                        className={`rounded-lg px-1 text-xs font-semibold border transition-colors ${
                           response.status === option.value
                             ? 'bg-amber text-white border-amber'
                             : 'bg-white text-text-secondary border-border'
@@ -632,16 +558,18 @@ export default function StickerInspectionPage() {
         ))}
       </div>
 
+      </fieldset>
+      {pending && <p role="status" className="mt-3 rounded-lg bg-amber/10 p-3 text-sm text-text">Guardado pendiente. {pending}</p>}
       <button
         type="button"
         onClick={handleSubmit}
         disabled={!canSubmit}
         className="mt-5 w-full bg-amber text-white rounded-xl py-4 font-semibold text-base disabled:opacity-40 disabled:cursor-not-allowed transition-opacity btn-press"
       >
-        {submitting ? 'Guardando...' : canSupervisorApprove && supervisorApproval ? 'Aprobar y generar sticker' : 'Enviar a aprobacion'}
+        {submitting ? 'Guardando…' : pending ? 'Reintentar' : canSupervisorApprove && supervisorApproval ? 'Aprobar inspección' : 'Guardar para revisión'}
       </button>
 
-      {lastSticker && (
+      {lastSticker?.approvalState === 'aprobado_supervisor' && (
         <button
           type="button"
           onClick={() => printSticker(lastSticker)}

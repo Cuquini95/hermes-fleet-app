@@ -36,7 +36,7 @@ interface CalendarGridProps {
   mechanics: string[];
   entries: ScheduleEntry[];
   workorders: WorkOrder[];
-  onCellClick: (mechanic: string, date: Date) => void;
+  onCellClick?: (mechanic: string, date: Date) => void;
   onCardClick: (entry: ScheduleEntry) => void;
 }
 
@@ -166,7 +166,7 @@ export default function CalendarGrid({
 
         {/* ── Mechanic rows ── */}
         {mechanics.map((mechanic) => (
-          <>
+          <React.Fragment key={mechanic}>
             {/* Mechanic label cell */}
             <div
               key={`label-${mechanic}`}
@@ -187,9 +187,9 @@ export default function CalendarGrid({
               return (
                 <div
                   key={`${mechanic}-${di}`}
-                  className="bg-white p-1.5 relative cursor-pointer hover:bg-slate-50 transition-colors"
+                  className={`bg-white p-1.5 relative ${onCellClick ? 'cursor-pointer hover:bg-slate-50 transition-colors' : ''}`}
                   style={{ minHeight: 80 }}
-                  onClick={() => onCellClick(mechanic, day)}
+                  onClick={onCellClick ? () => onCellClick(mechanic, day) : undefined}
                 >
                   {/* Overload badge */}
                   {overloaded && (
@@ -235,7 +235,7 @@ export default function CalendarGrid({
                 </div>
               );
             })}
-          </>
+          </React.Fragment>
         ))}
       </div>
     </div>

@@ -1,22 +1,17 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { z } from 'zod';
 import type { DVIRCheck, CheckStatus } from '../types/dvir';
 import { DVIR_SYSTEMS } from '../data/dvir-systems';
 import { useEquipmentList } from '../hooks/useEquipmentList';
-import { generateNextOTId } from '../lib/ot-generator';
-import { mexicoDateInput, mexicoTimeInput, mexicoDateCompact, mexicoTimeCompact } from '../lib/date-utils';
-import { appendRow, SHEET_TABS } from '../lib/sheets-api';
-import { tryUploadPhotos } from '../lib/photo-upload-safe';
-import { sendPushEvent } from '../lib/push-notifications';
-import { useOnlineStatus } from '../hooks/useOnlineStatus';
-import { queueSubmission, flushQueue } from '../lib/offline-queue';
-import { useAuthStore } from '../stores/auth-store';
+import { mexicoDateInput, mexicoTimeInput } from '../lib/date-utils';
+import { saveWorkshopCapture } from '../lib/offline-queue';
+import { WorkshopApiError } from '../lib/workshop-api';
 import SystemCheckRow from '../components/dvir/SystemCheckRow';
 import DVIRResultBanner from '../components/dvir/DVIRResultBanner';
 import ConfirmModal from '../components/ui/ConfirmModal';
-import SuccessToast from '../components/ui/SuccessToast';
+import SuccessToast, { type ToastType } from '../components/ui/SuccessToast';
 
 const dvirSchema = z.object({
   unit_id: z.string().min(1, 'Selecciona una unidad'),
@@ -43,15 +38,12 @@ function buildInitialChecks(): CheckState[] {
 
 export default function DVIRPage() {
   const navigate = useNavigate();
-  const userName = useAuthStore((s) => s.userName);
   const equipment = useEquipmentList();
-  const isOnline = useOnlineStatus();
-
-  useEffect(() => {
-    if (isOnline) {
-      flushQueue().catch(() => {});
-    }
-  }, [isOnline]);
+  const mutationId = useRef('');
+  const sending = useRef(false);
+  const [saving, setSaving] = useState(false);
+  const [pending, setPending] = useState('');
+  const [saved, setSaved] = useState(false);
   const [fecha, setFecha] = useState(mexicoDateInput());
   const [hora, setHora] = useState(mexicoTimeInput());
   const [unit_id, setUnitId] = useState('');
@@ -61,6 +53,7 @@ export default function DVIRPage() {
   const [observations, setObservations] = useState('');
   const [showConfirm, setShowConfirm] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
+  const [toastType, setToastType] = useState<ToastType>('success');
   const [toastVisible, setToastVisible] = useState(false);
 
   const allChecked = checks.every((c) => c.status !== null);
@@ -104,92 +97,56 @@ export default function DVIRPage() {
   }, []);
 
   function handleSubmitIntent() {
-    if (!canSubmit) return;
+    if (!canSubmit || saving || saved) return;
     setShowConfirm(true);
   }
 
+  function showToast(message: string, type: ToastType = 'success') {
+    setToastMessage(message);
+    setToastType(type);
+    setToastVisible(true);
+  }
+
   async function handleConfirm() {
+    if (sending.current || saved || !canSubmit) return;
+    sending.current = true;
+    setSaving(true);
     setShowConfirm(false);
-
-    const fallaCount = checks.filter((c) => c.status === 'falla').length;
-    const alertaCount = checks.filter((c) => c.status === 'alerta').length;
-    const okCount = checks.filter((c) => c.status === 'ok').length;
-
-    let result: string;
-    if (fallaCount > 0) result = 'reprobado';
-    else if (alertaCount > 0) result = 'condicional';
-    else result = 'aprobado';
-
-    let otId: string | null = null;
-    if (fallaCount > 0) {
-      otId = await generateNextOTId();
-    }
-
-    const now = new Date();
-    const date = fecha.split('-').reverse().join('/');      // dd/MM/yyyy
-    const time = hora.length === 5 ? hora + ':00' : hora;  // HH:mm:ss
-    const inspId = `INS-${mexicoDateCompact(now)}-${mexicoTimeCompact(now)}`;
-    const selectedEquipment = equipment.find((eq) => eq.unit_id === unit_id);
-    const modelo = selectedEquipment?.model ?? '';
-
-    // Photo upload must complete first — URL goes in the row
-    const allPhotos = checks.flatMap((c) => c.photos.map((p) => p.file));
-    const photoUrls = await tryUploadPhotos(allPhotos, 'dvir-photos');
-    const photoUrlStr = photoUrls.join(', ');
-
-    const row = [
-      '',                                    // # (auto-number)
-      inspId,                                // INSP_ID
-      date,                                  // FECHA
-      time,                                  // HORA
-      unit_id,                               // CÓDIGO UNIDAD
-      modelo,                                // MODELO
-      userName,                              // OPERADOR
-      type,                                  // TIPO
-      String(horometro),                     // HORÓMETRO
-      ...checks.map((c) => c.status || 'N/A'), // MOTOR through TREN RODAJE (dynamic cols)
-      `${okCount}/${checks.length}`,         // SCORE TOTAL
-      result,                                // RESULTADO
-      observations,                          // DEFECTOS ENCONTRADOS
-      photoUrlStr,                           // FOTO_URL
-      otId || '',                            // ACCIÓN REQUERIDA
-      otId ? 'Pendiente' : '',               // ESTADO ACCIÓN
-      userName,                              // FIRMA_OPERADOR
-    ];
-
-    if (isOnline) {
-      // Show success immediately — sheet write happens in background
-      if (otId) {
-        setToastMessage(`Inspección registrada — OT ${otId} generada`);
-      } else {
-        setToastMessage(`Inspección registrada — Score: ${okCount}/${checks.length}`);
-      }
-      setToastVisible(true);
-
-      // Push notification to supervisor when DVIR is deficient
-      if (result === 'reprobado') {
-        sendPushEvent('dvir_deficiente', { unidad: unit_id, score: `${okCount}/${checks.length}`, ot_id: otId ?? '' });
-      }
-
-      appendRow(SHEET_TABS.INSPECCIONES, row).catch((err: unknown) => {
-        console.error('Background write failed (DVIR):', err);
-        queueSubmission({ type: 'dvir', data: { tab: SHEET_TABS.INSPECCIONES, values: row }, timestamp: new Date().toISOString() }).catch(() => {});
+    mutationId.current ||= crypto.randomUUID();
+    try {
+      const response = await saveWorkshopCapture<{ otId?: string; inspectionId: string; score: string }>({
+        endpoint: 'dvir',
+        mutationId: mutationId.current,
+        input: {
+          unit: unit_id, date: fecha, time: hora, type, meter: horometro,
+          checks: checks.map(({ status, notes }) => ({ status, notes })), observations,
+        },
+        photos: checks.flatMap((check) => check.photos.map(({ file }) => ({ file }))),
       });
-    } else {
-      queueSubmission({ type: 'dvir', data: { tab: SHEET_TABS.INSPECCIONES, values: row }, timestamp: new Date().toISOString() })
-        .catch((err: unknown) => console.error('Queue failed:', err));
-      if (otId) {
-        setToastMessage(`Inspección guardada — OT ${otId} se sincronizará al reconectarse ✓`);
-      } else {
-        setToastMessage(`Inspección guardada — se sincronizará al reconectarse ✓`);
+      if (response.kind === 'pending') {
+        setPending(response.reason);
+        return;
       }
-      setToastVisible(true);
+      setPending('');
+      setSaved(true);
+      showToast(response.result.otId
+        ? `Inspección registrada. OT creada ${response.result.otId}`
+        : `Inspección registrada. ${response.result.inspectionId} (${response.result.score})`);
+    } catch (error) {
+      if (error instanceof WorkshopApiError && error.status === 400) {
+        mutationId.current = '';
+        setPending('');
+      }
+      showToast(error instanceof Error ? error.message : 'No se pudo preparar la inspección', 'error');
+    } finally {
+      sending.current = false;
+      setSaving(false);
     }
   }
 
   function handleToastDismiss() {
     setToastVisible(false);
-    navigate(-1);
+    if (toastType === 'success') navigate(-1);
   }
 
   return (
@@ -198,6 +155,7 @@ export default function DVIRPage() {
         message={toastMessage}
         visible={toastVisible}
         onDismiss={handleToastDismiss}
+        type={toastType}
       />
 
       <ConfirmModal
@@ -220,6 +178,7 @@ export default function DVIRPage() {
         <h1 className="text-xl font-bold text-text">Checklist</h1>
       </div>
 
+      <fieldset disabled={saving || !!pending || saved} className="min-w-0">
       {/* Unit & type card */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-border mb-4 flex flex-col gap-3">
         {/* Fecha / Hora */}
@@ -338,15 +297,22 @@ export default function DVIRPage() {
       {/* Result banner */}
       <DVIRResultBanner checks={checks} />
 
+      </fieldset>
+      {pending && (
+        <p role="status" className="mt-3 rounded-xl bg-amber/10 p-3 text-sm text-text">
+          Guardado pendiente. {pending}
+        </p>
+      )}
+
       {/* Submit */}
       <button
         type="button"
-        onClick={handleSubmitIntent}
-        disabled={!canSubmit}
+        onClick={pending ? handleConfirm : handleSubmitIntent}
+        disabled={!canSubmit || saving || saved}
         className="mt-4 w-full bg-amber text-white rounded-xl py-4 font-semibold text-lg disabled:opacity-40 disabled:cursor-not-allowed transition-opacity btn-press"
         style={{ minHeight: 52 }}
       >
-        Enviar Inspección
+        {saving ? 'Guardando…' : pending ? 'Reintentar' : 'Enviar Inspección'}
       </button>
     </div>
   );
