@@ -52,4 +52,14 @@ describe('recovered part prices', () => {
       compared: 1, changes: [], comparisons: [{ part_number: 'OEM-1', old_price: 100, new_price: 100, pct_change: 0 }],
     });
   });
+
+  it('filters Komatsu parts whose compatibility only names D155 and HM400', () => {
+    const inventory = [
+      ['FLT-QA-1', 'Filtro de aceite', 'OEM-QA-1', '', 'pza', 4, 4, 28, 112, '', 'D155/HM400'],
+      ['FLT-QA-2', 'Filtro de aceite', 'OEM-QA-2', '', 'pza', 4, 6, 22, 88, '', 'Cat 740B'],
+    ];
+    expect(searchInventory(inventory, 'filtro', 'Komatsu').map((part) => part.part_number)).toEqual(['FLT-QA-1']);
+    expect(searchInventory(inventory, 'OEM-QA-1', 'HM400')[0]?.stock_quantity).toBe(4);
+    expect(searchInventory(inventory, 'OEM-QA-1', 'Cat')).toEqual([]);
+  });
 });

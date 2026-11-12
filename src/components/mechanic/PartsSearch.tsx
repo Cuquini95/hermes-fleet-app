@@ -6,7 +6,7 @@ import { expandQuery } from '../../lib/parts-dictionary';
 import { useAuthStore } from '../../stores/auth-store';
 import PartCard from './PartCard';
 
-const EQUIPMENT_FILTERS = ['Todos', 'Komatsu', 'CAT', 'Doosan', 'Mack'];
+const EQUIPMENT_FILTERS = ['Todos', 'Komatsu', 'CAT', 'Doosan', 'Mack', 'D155', 'HM400', '740B', 'DA40'];
 
 /** Merge results from multiple queries, deduplicating by part_number */
 function mergeResults(arrays: PartResult[][]): PartResult[] {

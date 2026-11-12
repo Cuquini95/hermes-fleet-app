@@ -5,6 +5,8 @@ const text = (value) => String(value ?? '').trim();
 const key = (value) => text(value).toUpperCase();
 const searchKey = (value) => key(value).normalize('NFD').replace(/\p{Diacritic}/gu, '');
 const round = (value) => Math.round(value * 100) / 100;
+// Some inventory rows list these Komatsu model families without the brand.
+const equipmentFamilies = new Map([['KOMATSU', ['KOMATSU', 'D155', 'HM400']]]);
 
 function positive(value) {
   const number = Number(value);
@@ -14,6 +16,7 @@ function positive(value) {
 export function searchInventory(rows, query, equipment) {
   const term = searchKey(query);
   const equipmentTerm = searchKey(equipment);
+  const equipmentTerms = equipmentFamilies.get(equipmentTerm) ?? [equipmentTerm];
   const compact = (value) => searchKey(value).replace(/[^A-Z0-9]/g, '');
   const partTerm = compact(query);
   if (!term) return [];
@@ -22,7 +25,7 @@ export function searchInventory(rows, query, equipment) {
     if (!text(number) || !text(description)) return [];
     const alternatives = text(cross).split(/[,;\n]+/).map(text).filter(Boolean);
     const compatible = text(machines).split(/[,;\n]+/).map(text).filter(Boolean);
-    if (equipmentTerm && !compatible.some((model) => searchKey(model).includes(equipmentTerm))) return [];
+    if (equipmentTerm && !compatible.some((model) => equipmentTerms.some((name) => searchKey(model).includes(name)))) return [];
     const [sku, oemCode, ...aliases] = [number, oem, ...alternatives].map(compact);
     const exact = partTerm && [sku, oemCode, ...aliases].includes(partTerm);
     const codes = partTerm && [sku, oemCode, ...aliases].some((code) => code.includes(partTerm));
