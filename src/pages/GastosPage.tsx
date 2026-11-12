@@ -75,14 +75,12 @@ function monthLabel(year: number, month: number): string {
 }
 
 // ── Filter gastos to a specific year/month ──────────────────────────────────
-// fecha is stored as "dd/MM/yyyy" — compare month and year parts directly
-
 function filterByMonth(gastos: GastoCompra[], year: number, month: number): GastoCompra[] {
   return gastos.filter((g) => {
     if (g.status === 'Eliminado') return false;
-    const parts = g.fecha.split('/');
-    if (parts.length !== 3) return false;
-    return parseInt(parts[1] ?? '0') === month && parseInt(parts[2] ?? '0') === year;
+    if (/^(?:(?:TEST|QA|DEMO)(?:[-_\s]|$)|\[SWARM-TEST\])/i.test(g.gasto_id.trim())) return false;
+    const date = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(g.fecha.trim());
+    return !!date && Number(date[2]) === month && Number(date[3]) === year;
   });
 }
 
@@ -508,10 +506,10 @@ export default function GastosPage() {
           {loading && (
             <div className="text-center py-10 text-sm text-text-secondary">Cargando…</div>
           )}
-          {!loading && gastos.length === 0 && (
-            <div className="text-center py-10 text-sm text-text-secondary">Sin gastos registrados</div>
+          {!loading && monthly.length === 0 && (
+            <div className="text-center py-10 text-sm text-text-secondary">Sin gastos este mes</div>
           )}
-          {gastos.filter((g) => g.status !== 'Eliminado').slice().reverse().map((g) => (
+          {monthly.slice().reverse().map((g) => (
             <GastoRow
               key={g.gasto_id}
               gasto={g}
