@@ -43,7 +43,7 @@ export default function CoordinatorHomePage() {
   const navigate  = useNavigate();
   const userName  = useAuthStore((s) => s.userName);
   const equipment = useEquipmentList();
-  const { workorders, fetched, fetchWorkOrders, loading } = useWorkOrderStore();
+  const { workorders, fetched, fetchWorkOrders, loading, error } = useWorkOrderStore();
 
   useEffect(() => {
     if (!fetched) fetchWorkOrders();
@@ -80,7 +80,7 @@ export default function CoordinatorHomePage() {
           <p className="text-text-secondary text-sm mt-0.5">Coordinador de Mantenimiento</p>
         </div>
         <button
-          onClick={() => useWorkOrderStore.setState({ fetched: false })}
+          onClick={() => void fetchWorkOrders()}
           className="p-2 rounded-full"
           style={{ color: '#162252' }}
           aria-label="Actualizar"
@@ -93,13 +93,13 @@ export default function CoordinatorHomePage() {
       <div className="grid grid-cols-2 gap-3 mb-4">
         <KPICard
           icon={<ClipboardList size={20} />}
-          value={loading ? '…' : openOTs.length}
+          value={error ? '—' : loading || !fetched ? '…' : openOTs.length}
           label="OTs Abiertas"
           color="#2563EB"
         />
         <KPICard
           icon={<Flame size={20} />}
-          value={loading ? '…' : criticalOTs.length}
+          value={error ? '—' : loading || !fetched ? '…' : criticalOTs.length}
           label="OTs Críticas"
           color="#DC2626"
         />
@@ -135,7 +135,7 @@ export default function CoordinatorHomePage() {
       {/* OTs Pendientes */}
       <h2 className="font-semibold text-text mt-2 mb-3">OTs Pendientes</h2>
       <div className="flex flex-col">
-        {loading ? (
+        {error ? <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p> : loading || !fetched ? (
           <div className="text-center py-6 text-text-secondary text-sm">Cargando…</div>
         ) : openOTs.length > 0 ? (
           openOTs.map((ot) => (

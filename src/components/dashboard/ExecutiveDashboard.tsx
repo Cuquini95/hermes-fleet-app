@@ -51,12 +51,15 @@ export default function ExecutiveDashboard() {
         style={pullIndicatorStyle}
       />
       {/* Tab pills */}
-      <div className="flex items-center gap-2 mb-5">
+      <div className="flex flex-wrap items-center gap-2 mb-5">
         {TABS.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => tab.id === 'datos' ? navigate('/data') : setActiveTab(tab.id)}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+            onClick={() => {
+              if (tab.id === 'pedidos' || tab.id === 'datos') navigate(tab.id === 'pedidos' ? '/pedidos' : '/data');
+              else setActiveTab(tab.id);
+            }}
+            className={`px-3 py-1.5 rounded-full text-sm sm:px-4 font-medium transition-colors ${
               activeTab === tab.id
                 ? 'text-white'
                 : 'bg-card border border-border text-text-secondary hover:text-text'
@@ -79,6 +82,8 @@ export default function ExecutiveDashboard() {
       {/* General tab */}
       {activeTab === 'general' && (
         <div className="flex flex-col gap-4">
+          {data.error && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{data.error}</p>}
+
           {/* KPI row */}
           {data.loading ? (
             <div className="grid grid-cols-2 gap-3">
@@ -91,26 +96,26 @@ export default function ExecutiveDashboard() {
             <div className="grid grid-cols-2 gap-3">
               <KPICard
                 icon={<Activity size={20} />}
-                value={`${data.availability}%`}
+                value={data.availability === null ? '—' : `${data.availability}%`}
                 label="Disponibilidad"
                 color="#16A34A"
               />
               <KPICard
                 icon={<AlertTriangle size={20} />}
-                value={data.criticalOTs}
+                value={data.criticalOTs ?? '—'}
                 label="OTs Críticas"
                 color="#DC2626"
               />
               <KPICard
                 icon={<Fuel size={20} />}
                 value={data.avgConsumption}
-                label="Consumo Promedio"
+                label="Diésel promedio por carga"
                 color="#2563EB"
               />
               <KPICard
                 icon={<Bell size={20} />}
-                value={String(data.alertsToday)}
-                label="Alertas Hoy"
+                value={data.alertsToday ?? '—'}
+                label="Averías hoy"
                 color="#F59E0B"
               />
             </div>
@@ -120,7 +125,7 @@ export default function ExecutiveDashboard() {
           <FleetGrid equipment={equipment} />
 
           {/* Availability chart */}
-          <AvailabilityChart data={data.availabilityTrend} />
+          <AvailabilityChart data={data.availabilityTrend} loading={data.loading} />
 
           {/* Daily actions */}
           <AccionesDelDia />
@@ -178,12 +183,6 @@ export default function ExecutiveDashboard() {
       {/* Briefing tab */}
       {activeTab === 'briefing' && <BriefingCard />}
 
-      {/* Pedidos tab */}
-      {activeTab === 'pedidos' && (
-        <div className="flex items-center justify-center py-16">
-          <p className="text-text-secondary">Pedidos de Repuestos — Próximamente</p>
-        </div>
-      )}
     </div>
   );
 }

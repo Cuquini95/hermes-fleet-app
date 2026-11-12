@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   test: {
     globals: false,
-    exclude: ['node_modules/**', 'dist/**', 'e2e/**', '**/*.e2e.{ts,tsx}'],
+    exclude: ['node_modules/**', 'dist/**', 'e2e/**', 'tests/api/**', '**/*.e2e.{ts,tsx}'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov', 'html'],

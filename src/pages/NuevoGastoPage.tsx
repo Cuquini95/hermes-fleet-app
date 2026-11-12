@@ -15,13 +15,11 @@ import {
   ChevronLeft,
   ScanLine,
 } from 'lucide-react';
-import { useAuthStore } from '../stores/auth-store';
 import { useGastosStore } from '../stores/gastos-store';
 import { ocrReceipt, comparePartsQuote } from '../lib/sheets-api';
 import type { GastoTipo, MetodoPago } from '../stores/gastos-store';
 import type { OcrLineItem, PriceChange } from '../lib/sheets-api';
-import { uploadPhoto } from '../lib/photo-upload';
-import { tryUploadPhotos } from '../lib/photo-upload-safe';
+import { canAttachExpenseReceipt, uploadExpenseReceipt } from '../lib/purchasing-api';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import PhotoCapture from '../components/ui/PhotoCapture';
 
@@ -40,7 +38,6 @@ function emptyLine(): OcrLineItem {
 
 export default function NuevoGastoPage() {
   const navigate = useNavigate();
-  const userName = useAuthStore((s) => s.userName);
   const equipment = useEquipmentList();
   const { saveGasto, saving } = useGastosStore();
 
@@ -60,15 +57,28 @@ export default function NuevoGastoPage() {
   const [otId, setOtId] = useState('');
   const [metodoPago, setMetodoPago] = useState<MetodoPago>('Efectivo');
   const [lineItems, setLineItems] = useState<OcrLineItem[]>([emptyLine()]);
-  const [imageUrl, setImageUrl] = useState('');
+  const receipt = useRef<{ file: File; operationId: string; uploadedUrl: string } | null>(null);
+  const [attachmentName, setAttachmentName] = useState('');
   const [receiptPhotos, setReceiptPhotos] = useState<PhotoItem[]>([]);
 
-  const handleReceiptCapture = useCallback((file: File) => {
-    const preview = URL.createObjectURL(file);
-    setReceiptPhotos([{ file, preview }]); // only one receipt photo
+  const selectReceipt = useCallback((file: File) => {
+    receipt.current = { file, operationId: crypto.randomUUID(), uploadedUrl: '' };
+    setAttachmentName(file.name);
+    setReceiptPhotos((previous) => {
+      if (previous[0]) URL.revokeObjectURL(previous[0].preview);
+      return [];
+    });
   }, []);
 
+  const handleReceiptCapture = useCallback((file: File) => {
+    selectReceipt(file);
+    const preview = URL.createObjectURL(file);
+    setReceiptPhotos([{ file, preview }]);
+  }, [selectReceipt]);
+
   const handleReceiptRemove = useCallback(() => {
+    receipt.current = null;
+    setAttachmentName('');
     setReceiptPhotos((prev) => {
       if (prev[0]) URL.revokeObjectURL(prev[0].preview);
       return [];
@@ -104,43 +114,25 @@ export default function NuevoGastoPage() {
   // ── OCR ───────────────────────────────────────────────────────────────────
 
   async function handleFile(file: File) {
+    selectReceipt(file);
     setOcrLoading(true);
     setOcrError(null);
     setOcrDone(false);
     try {
-      // Run OCR and photo upload in parallel — upload failure is non-blocking
-      const [ocrResult, uploadResult] = await Promise.allSettled([
-        ocrReceipt(file),
-        uploadPhoto(file, 'receipts', `gastos/${Date.now()}`),
-      ]);
-
-      if (ocrResult.status === 'fulfilled') {
-        const result = ocrResult.value;
-        setProveedor(result.proveedor || '');
-        setRfcProveedor(result.rfc_proveedor || '');
-        setFolioFactura(result.folio_factura || '');
-        setSubtotal(result.subtotal || 0);
-        setIva(result.iva || 0);
-        setTotal(result.total || 0);
-        if (result.tipo) setTipo(result.tipo as GastoTipo);
-        if (result.line_items?.length > 0) {
-          setLineItems(result.line_items);
-        }
-        setOcrDone(true);
-      } else {
-        const msg = ocrResult.reason instanceof Error ? ocrResult.reason.message : '';
-        if (msg.includes('404') || msg.includes('Not Found')) {
-          setOcrError('El servicio OCR aún no está activo en el servidor. Completa los datos manualmente.');
-        } else if (msg.includes('fetch') || msg.includes('network') || msg.includes('Failed')) {
-          setOcrError('Sin conexión al servidor. Completa los datos manualmente.');
-        } else {
-          setOcrError('No se pudo leer el recibo. Completa los datos manualmente.');
-        }
-      }
-
-      // Save photo URL if upload succeeded (non-blocking — gasto saves even if upload failed)
-      if (uploadResult.status === 'fulfilled') {
-        setImageUrl(uploadResult.value);
+      const result = await ocrReceipt(file);
+      if (receipt.current?.file !== file) return;
+      setProveedor(result.proveedor || '');
+      setRfcProveedor(result.rfc_proveedor || '');
+      setFolioFactura(result.folio_factura || '');
+      setSubtotal(result.subtotal || 0);
+      setIva(result.iva || 0);
+      setTotal(result.total || 0);
+      if (result.tipo) setTipo(result.tipo as GastoTipo);
+      if (result.line_items?.length) setLineItems(result.line_items);
+      setOcrDone(true);
+    } catch {
+      if (receipt.current?.file === file) {
+        setOcrError('No se pudo leer el recibo. El archivo sigue adjunto y puedes capturar los datos manualmente.');
       }
     } finally {
       setOcrLoading(false);
@@ -149,7 +141,8 @@ export default function NuevoGastoPage() {
 
   function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (file) handleFile(file);
+    if (file) void handleFile(file);
+    e.target.value = '';
   }
 
   // ── Line item helpers ─────────────────────────────────────────────────────
@@ -214,12 +207,13 @@ export default function NuevoGastoPage() {
     setPriceMessage('');
 
     try {
-      // If OCR didn't upload a photo but user manually captured one, upload it now
-      let finalImageUrl = imageUrl;
-      const firstReceipt = receiptPhotos[0];
-      if (!finalImageUrl && firstReceipt) {
-        const urls = await tryUploadPhotos([firstReceipt.file], 'receipts');
-        finalImageUrl = urls[0] ?? '';
+      const selectedReceipt = receipt.current;
+      if (selectedReceipt && !selectedReceipt.uploadedUrl) {
+        try {
+          selectedReceipt.uploadedUrl = await uploadExpenseReceipt(selectedReceipt.file, selectedReceipt.operationId);
+        } catch {
+          throw new Error('No se confirmó el adjunto del recibo. Reintenta con el mismo archivo.');
+        }
       }
 
       const commonFields = {
@@ -229,26 +223,14 @@ export default function NuevoGastoPage() {
         folio_factura: folioFactura,
         ot_id: otId,
         metodo_pago: metodoPago,
-        imagen_url: finalImageUrl,
-        solicitante: userName,
-        line_items: lineItems.filter((l) => l.description.trim() !== ''),
+        imagen_url: selectedReceipt?.uploadedUrl ?? '',
+        line_items: lineItems.filter((line) => line.description.trim()),
+        subtotal, iva, total,
       };
-
-      const expenseIds: string[] = [];
-      if (unitMode === 'single') {
-        expenseIds.push(await saveGasto({ ...commonFields, subtotal, iva, total, unidad }));
-      } else {
-        for (const entry of splitEntries) {
-          const proportion = total > 0 ? entry.amount / total : 1 / splitEntries.length;
-          expenseIds.push(await saveGasto({
-            ...commonFields,
-            unidad: entry.unitId,
-            total: entry.amount,
-            subtotal: parseFloat((subtotal * proportion).toFixed(2)),
-            iva: parseFloat((iva * proportion).toFixed(2)),
-          }));
-        }
-      }
+      const allocations = unitMode === 'single'
+        ? [{ unit: unidad, amount: total.toFixed(2) }]
+        : splitEntries.map(({ unitId, amount }) => ({ unit: unitId, amount: amount.toFixed(2) }));
+      const expenseIds = await saveGasto(commonFields, allocations);
 
       if (tipo === 'Refaccion' && commonFields.line_items.some((line) => line.part_number && line.unit_price > 0)) {
         try {
@@ -342,7 +324,7 @@ export default function NuevoGastoPage() {
   const unitIds = ['FLOTA', ...equipment.map((e) => e.unit_id)];
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col py-4 gap-4 animate-fade-up">
+    <form onSubmit={handleSubmit} className="flex min-w-0 flex-col py-4 gap-4 animate-fade-up">
       {/* Header */}
       <div className="flex items-center gap-2 mb-1">
         <button type="button" onClick={() => navigate(-1)} className="p-1 -ml-1" aria-label="Volver">
@@ -356,84 +338,80 @@ export default function NuevoGastoPage() {
         <p className="text-sm font-semibold text-text mb-3 flex items-center gap-2">
           <ScanLine size={16} /> Escanear Recibo / Factura
         </p>
-        <div className="flex gap-3">
-          {/* Camera */}
-          <button
-            type="button"
-            onClick={() => cameraRef.current?.click()}
-            className="flex-1 flex flex-col items-center gap-1 border-2 border-dashed border-border rounded-lg py-4 text-text-secondary hover:border-amber transition-colors"
-          >
-            <Camera size={22} />
-            <span className="text-xs">Cámara</span>
-          </button>
-          <input
-            ref={cameraRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={handleFileInput}
-          />
-
-          {/* Gallery */}
-          <button
-            type="button"
-            onClick={() => fileRef.current?.click()}
-            className="flex-1 flex flex-col items-center gap-1 border-2 border-dashed border-border rounded-lg py-4 text-text-secondary hover:border-amber transition-colors"
-          >
-            <Upload size={22} />
-            <span className="text-xs">Galería / PDF</span>
-          </button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*,application/pdf"
-            className="hidden"
-            onChange={handleFileInput}
-          />
-        </div>
-
-        {/* OCR feedback */}
-        {ocrLoading && (
-          <div className="flex items-center gap-2 mt-3 text-sm text-text-secondary">
-            <Loader2 size={16} className="animate-spin" />
-            Leyendo recibo…
-          </div>
-        )}
-        {ocrDone && !ocrLoading && (
-          <div className="flex items-center gap-2 mt-3 text-sm text-success">
-            <CheckCircle size={16} />
-            Datos extraídos — revisa y corrige si es necesario
-          </div>
-        )}
-        {ocrError && (
-          <div className="flex items-center gap-2 mt-3 text-sm text-red-600">
-            <AlertCircle size={16} />
-            {ocrError}
-          </div>
-        )}
-
-        {/* Standalone photo (no OCR) — shown only when imageUrl not set by OCR */}
-        {!imageUrl && (
-          <div className="mt-3 border-t border-border pt-3">
-            <p className="text-xs text-text-secondary mb-2">
-              {ocrDone ? 'Foto ya adjunta desde escáner' : 'Foto del recibo (sin OCR)'}
-            </p>
-            {!ocrDone && (
-              <PhotoCapture
-                photos={receiptPhotos}
-                onCapture={handleReceiptCapture}
-                onRemove={() => handleReceiptRemove()}
-                multiple={false}
+        {canAttachExpenseReceipt ? (
+          <>
+            <div className="flex gap-3">
+              {/* Camera */}
+              <button
+                type="button"
+                onClick={() => cameraRef.current?.click()}
+                className="flex-1 flex flex-col items-center gap-1 border-2 border-dashed border-border rounded-lg py-4 text-text-secondary hover:border-amber transition-colors"
+              >
+                <Camera size={22} />
+                <span className="text-xs">Cámara</span>
+              </button>
+              <input
+                ref={cameraRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={handleFileInput}
               />
+
+              {/* Gallery */}
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                className="flex-1 flex flex-col items-center gap-1 border-2 border-dashed border-border rounded-lg py-4 text-text-secondary hover:border-amber transition-colors"
+              >
+                <Upload size={22} />
+                <span className="text-xs">Galería / PDF</span>
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*,application/pdf"
+                className="hidden"
+                onChange={handleFileInput}
+              />
+            </div>
+
+            {/* OCR feedback */}
+            {ocrLoading && (
+              <div className="flex items-center gap-2 mt-3 text-sm text-text-secondary">
+                <Loader2 size={16} className="animate-spin" />
+                Leyendo recibo…
+              </div>
             )}
-          </div>
-        )}
-        {imageUrl && (
-          <div className="mt-3 border-t border-border pt-3 flex items-center gap-2 text-xs text-success">
-            <CheckCircle size={14} />
-            Foto subida correctamente
-          </div>
+            {ocrDone && !ocrLoading && (
+              <div className="flex items-center gap-2 mt-3 text-sm text-success">
+                <CheckCircle size={16} />
+                Datos extraídos — revisa y corrige si es necesario
+              </div>
+            )}
+            {ocrError && (
+              <div className="flex items-center gap-2 mt-3 text-sm text-red-600">
+                <AlertCircle size={16} />
+                {ocrError}
+              </div>
+            )}
+
+            <div className="mt-3 border-t border-border pt-3">
+              {attachmentName ? (
+                <div className="flex items-center justify-between gap-3 text-xs text-text-secondary">
+                  <span className="min-w-0 break-words">Recibo seleccionado {attachmentName}</span>
+                  <button type="button" className="shrink-0 font-semibold text-red-700" onClick={handleReceiptRemove}>Quitar recibo</button>
+                </div>
+              ) : (
+                <PhotoCapture photos={receiptPhotos} onCapture={handleReceiptCapture} onRemove={handleReceiptRemove} multiple={false} />
+              )}
+            </div>
+          </>
+        ) : (
+          <p className="mt-2 rounded-lg bg-amber-50 p-2 text-xs text-amber-900">
+            Adjuntos pendientes de activar. Conserva el recibo en el canal vigente de Compras y registra los datos del gasto aquí.
+          </p>
         )}
       </div>
 
@@ -614,7 +592,7 @@ export default function NuevoGastoPage() {
       {/* ── Totales ──────────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-border p-4 shadow-sm flex flex-col gap-3">
         <p className="text-sm font-semibold text-text">Totales</p>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-3 gap-2 [&>div]:min-w-0">
           <div>
             <label className="text-xs text-text-secondary mb-1 block">Subtotal</label>
             <input
@@ -681,11 +659,10 @@ export default function NuevoGastoPage() {
             <input
               value={item.description}
               onChange={(e) => updateLine(i, { description: e.target.value })}
-              placeholder="Descripción *"
+              placeholder="Descripción de la partida"
               className="w-full border border-border rounded-lg px-3 py-2 text-sm"
-              required
             />
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-3 gap-2 [&>div]:min-w-0">
               <div>
                 <label className="text-xs text-text-secondary mb-1 block">Cant.</label>
                 <input
@@ -738,7 +715,7 @@ export default function NuevoGastoPage() {
       {/* ── Submit ───────────────────────────────────────────────────────── */}
       <button
         type="submit"
-        disabled={saving || submitting || (unitMode === 'multi' && !splitOk)}
+        disabled={saving || submitting || ocrLoading || (unitMode === 'multi' && !splitOk)}
         className="w-full bg-amber text-white font-semibold rounded-xl py-3.5 flex items-center justify-center gap-2 disabled:opacity-60"
       >
         {saving || submitting ? (

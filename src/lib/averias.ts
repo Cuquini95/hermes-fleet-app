@@ -16,7 +16,7 @@ export interface AveriaEntry {
 }
 
 const URL_RE = /^https?:\/\//i;
-const OT_RE = /\bOT-\d{8}-\d{4}-[a-z0-9]{4}\b/i;
+const OT_RE = /\bOT-(?:\d{8}-\d{4}-[a-z0-9]{4}|[a-z0-9]+)\b/i;
 
 function isUrl(value: string): boolean {
   return URL_RE.test(value.trim());
@@ -27,7 +27,7 @@ function extractOtId(value: string): string {
 }
 
 function stripOtFromObservaciones(value: string): string {
-  return value.replace(/\s*\|\s*OT:\s*OT-\d{8}-\d{4}-[a-z0-9]{4}\b/i, '').trim();
+  return value.replace(/\s*\|\s*OT:\s*OT-(?:\d{8}-\d{4}-[a-z0-9]{4}|[a-z0-9]+)\b/i, '').trim();
 }
 
 export function parseAveriaRow(row: string[]): AveriaEntry | null {
@@ -58,8 +58,12 @@ export function parseAveriaRow(row: string[]): AveriaEntry | null {
   };
 }
 
+const OPEN_STATES = new Set(['abierta', 'abierto', 'pendiente', 'en proceso', 'en reparacion',
+  'esperando pieza', 'en espera de asignacion', 'resuelta']);
+
 export function isOpenAveria(averia: AveriaEntry): boolean {
-  return averia.estado.trim().toLowerCase() === 'abierta';
+  const state = averia.estado.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return OPEN_STATES.has(state);
 }
 
 export function openAveriaUnitSet(rows: string[][]): Set<string> {

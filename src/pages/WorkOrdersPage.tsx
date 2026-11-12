@@ -7,9 +7,9 @@ import { SkeletonList } from '../components/ui/Skeleton';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import PullIndicator from '../components/ui/PullIndicator';
 
-type FilterKey = 'Todas' | 'CRITICA' | 'ALTA' | 'MEDIA' | 'Abierta' | 'En Reparación' | 'Esperando Pieza' | 'Resuelta';
+type FilterKey = 'Todas' | 'CRITICA' | 'ALTA' | 'MEDIA' | 'Abierta' | 'En Reparación' | 'Esperando Pieza' | 'Resuelta' | 'Completado';
 
-const FILTER_OPTIONS: FilterKey[] = ['Todas', 'CRITICA', 'ALTA', 'MEDIA', 'Abierta', 'En Reparación', 'Esperando Pieza', 'Resuelta'];
+const FILTER_OPTIONS: FilterKey[] = ['Todas', 'CRITICA', 'ALTA', 'MEDIA', 'Abierta', 'En Reparación', 'Esperando Pieza', 'Resuelta', 'Completado'];
 
 const FILTER_LABELS: Record<FilterKey, string> = {
   Todas: 'Todas',
@@ -20,6 +20,7 @@ const FILTER_LABELS: Record<FilterKey, string> = {
   'En Reparación': 'En Reparación',
   'Esperando Pieza': 'Esperando Pieza',
   Resuelta: 'Resuelta',
+  Completado: 'Cerradas',
 };
 
 export default function WorkOrdersPage() {
@@ -36,13 +37,11 @@ export default function WorkOrdersPage() {
     }
   }, [fetched, fetchWorkOrders]);
 
-  // Never show completed OTs in the app — they stay in the sheet only
-  const active = workorders.filter((ot) => ot.estado !== 'Completado');
-  const filtered = filter === 'Todas'
-    ? active
-    : active.filter((ot) =>
-        ot.prioridad === filter || ot.prioridad?.toUpperCase() === filter || ot.estado === filter
-      );
+  const filtered = workorders.filter((ot) => {
+    if (filter === 'Todas') return true;
+    if (filter === 'Abierta' && ot.estado === 'En Espera de Asignación') return true;
+    return ot.prioridad?.toUpperCase() === filter || ot.estado === filter;
+  });
 
   if (loading && !fetched) {
     return (

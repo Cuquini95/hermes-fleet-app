@@ -17,9 +17,10 @@ interface ChartPoint {
 
 interface AvailabilityChartProps {
   data: ChartPoint[];
+  loading?: boolean;
 }
 
-export default function AvailabilityChart({ data }: AvailabilityChartProps) {
+export default function AvailabilityChart({ data, loading = false }: AvailabilityChartProps) {
   const hasData = data.length > 0 && data.some((point) => point.total && point.total > 0);
 
   return (
@@ -29,7 +30,7 @@ export default function AvailabilityChart({ data }: AvailabilityChartProps) {
       </h3>
       {!hasData ? (
         <div className="flex h-[200px] items-center justify-center rounded-lg border border-dashed border-border text-sm text-text-secondary">
-          Cargando disponibilidad real...
+          {loading ? 'Cargando disponibilidad…' : 'Disponibilidad sin datos'}
         </div>
       ) : (
         <ResponsiveContainer width="100%" height={200}>

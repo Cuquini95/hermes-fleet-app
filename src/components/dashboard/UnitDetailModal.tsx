@@ -5,16 +5,18 @@
  */
 
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { X, AlertCircle, FileText, Clock, User as UserIcon, Wrench } from 'lucide-react'
 import { readRange, SHEET_TABS } from '../../lib/sheets-api'
 import StatusDot from '../ui/StatusDot'
 import type { Equipment } from '../../types/equipment'
 import { firstPhotoUrl, isOpenAveria, parseAveriaRow, type AveriaEntry } from '../../lib/averias'
-import type { UnitDispatchReadiness } from '../../lib/dispatch-readiness'
+import { applyDispatchReadiness, type UnitDispatchReadiness } from '../../lib/dispatch-readiness'
 
 interface UnitDetailModalProps {
   unit: Equipment
   dispatchReadiness?: UnitDispatchReadiness
+  verified?: boolean
   onClose: () => void
 }
 
@@ -23,6 +25,7 @@ const STATUS_LABEL: Record<Equipment['status'], string> = {
   alerta: 'En traslado / alerta',
   taller: 'En taller / reparación',
   inactivo: 'Inactivo',
+  no_verificado: 'Por verificar',
 }
 
 const SEV_BADGE: Record<string, string> = {
@@ -32,7 +35,7 @@ const SEV_BADGE: Record<string, string> = {
   BAJA: 'bg-yellow-100 text-yellow-700 border-yellow-200',
 }
 
-export default function UnitDetailModal({ unit, dispatchReadiness, onClose }: UnitDetailModalProps) {
+export default function UnitDetailModal({ unit, dispatchReadiness, verified = true, onClose }: UnitDetailModalProps) {
   const [averias, setAverias] = useState<AveriaEntry[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -59,17 +62,21 @@ export default function UnitDetailModal({ unit, dispatchReadiness, onClose }: Un
 
   const open = averias?.filter(isOpenAveria) ?? []
   const closed = averias?.filter((a) => !isOpenAveria(a)) ?? []
-  const effectiveStatus: Equipment['status'] = open.length > 0
+  const status = applyDispatchReadiness(unit, dispatchReadiness).status
+  const effectiveStatus = !verified && open.length > 0 && status !== 'inactivo'
     ? 'taller'
-    : dispatchReadiness?.effectiveStatus ?? unit.status
+    : !verified && status === 'operativo' ? 'no_verificado' : status
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto"
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Detalle de ${unit.unit_id}`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -183,7 +190,8 @@ export default function UnitDetailModal({ unit, dispatchReadiness, onClose }: Un
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -294,7 +302,7 @@ function AveriaCard({ averia, muted }: AveriaCardProps) {
           </span>
         )}
         {averia.estado && (
-          <span className={`inline-flex items-center gap-1 font-medium ${averia.estado.toLowerCase() === 'abierta' ? 'text-red-700' : 'text-gray-500'}`}>
+          <span className={`inline-flex items-center gap-1 font-medium ${isOpenAveria(averia) ? 'text-red-700' : 'text-gray-500'}`}>
             <FileText size={11} /> {averia.estado}
           </span>
         )}

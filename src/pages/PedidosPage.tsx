@@ -2,8 +2,8 @@
  * @fileoverview Monolithic by design (> 400 LOC).
  * Parts-orders workflow page — one cohesive list+detail flow with shared inventory lookup state.
  */
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useRef } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   ShoppingCart,
   Plus,
@@ -23,39 +23,15 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { useCartStore, type CartItem } from '../stores/cart-store';
-import { appendRow, readRange, updateCell, SHEET_TABS } from '../lib/sheets-api';
+import { purchaseRequests, purchaseWrite, type PurchaseRequestLine } from '../lib/purchasing-api';
 import { useEquipmentList } from '../hooks/useEquipmentList';
-import { mexicoDate, mexicoTime } from '../lib/date-utils';
 import { useCatalogoStore } from '../stores/catalogo-store';
-
-// ── Sheet columns for Cotizaciones_Pendientes (matching actual Sheet headers) ─
-// A(0)  Fecha
-// B(1)  Part_Number
-// C(2)  Descripcion
-// D(3)  Equipo
-// E(4)  Qty
-// F(5)  Dealer          ← source / OEM / Manual
-// G(6)  Status          ← Pendiente / Pedido / Completado
-// H(7)  Precio_Recibido ← blank on submit; supplier fills later
-// I(8)  Fecha_Respuesta ← blank on submit; supplier fills later
-// J(9)  PEDIDO_ID       ← tracking reference
-// K(10) Hora
-// L(11) Solicitante
-// M(12) Urgencia
-// N(13) Notas
-// O(14) Total
 
 const URGENCIA_CONFIG = {
   Normal:  { color: '#16A34A', bg: '#F0FDF4' },
   Urgente: { color: '#D97706', bg: '#FFFBEB' },
   Crítico: { color: '#DC2626', bg: '#FEF2F2' },
 } as const;
-
-let _pedidoSeq = 1;
-function newPedidoId(): string {
-  const d = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  return `PED-${d}-${String(_pedidoSeq++).padStart(3, '0')}`;
-}
 
 // ── Manual part form ─────────────────────────────────────────────────────────
 interface ManualForm {
@@ -78,32 +54,12 @@ const emptyManual = (): ManualForm => ({
   notes: '',
 });
 
-// ── Submitted order row (read from sheet) ────────────────────────────────────
-interface PedidoRow {
-  id: string;
-  pedidoId: string;
-  fecha: string;
-  hora: string;
-  solicitante: string;
-  partNum: string;
-  descripcion: string;
-  equipo: string;
-  cantidad: string;
-  precioUnit: string;
-  total: string;
-  urgencia: string;
-  fuente: string;
-  notas: string;
-  estado: string;
-}
-
-type Tab = 'carrito' | 'historial';
+type Tab = 'carrito' | 'pendientes' | 'historial';
 
 // ════════════════════════════════════════════════════════════════════════════
 export default function PedidosPage() {
   const navigate = useNavigate();
   const role = useAuthStore((s) => s.role);
-  const userName = useAuthStore((s) => s.userName);
   const equipment = useEquipmentList();
   const { items, removeItem, updateItem, clearCart } = useCartStore();
 
@@ -112,119 +68,56 @@ export default function PedidosPage() {
 
   const { fetchCatalogo, fetched: catalogFetched } = useCatalogoStore();
 
-  const [tab, setTab] = useState<Tab>(isGerencia ? 'historial' : 'carrito');
+  const [tab, setTab] = useState<Tab>(isJT ? 'carrito' : isGerencia ? 'pendientes' : 'historial');
   const [showManual, setShowManual] = useState(false);
   const [manual, setManual] = useState<ManualForm>(emptyManual());
   const [manualErrors, setManualErrors] = useState<Partial<ManualForm>>({});
   const [submitting, setSubmitting] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
-  const [historial, setHistorial] = useState<PedidoRow[]>([]);
+  const [submitted, setSubmitted] = useState('');
+  const submitLock = useRef(false);
+  const historialQuery = useRef<AbortController | null>(null);
+  const [historial, setHistorial] = useState<PurchaseRequestLine[]>([]);
   const [loadingHistorial, setLoadingHistorial] = useState(false);
-  const [historialLoaded, setHistorialLoaded] = useState(false);
   const [historialError, setHistorialError] = useState(false);
-  const [submitError, setSubmitError] = useState(false);
+  const [submitError, setSubmitError] = useState('');
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
+
+  const visibleRows = tab === 'pendientes' ? historial.filter((row) => row.estado !== 'Completado') : historial;
 
   const totalItems = items.reduce((s, i) => s + i.quantity, 0);
   const totalPrice = items.reduce((s, i) => s + i.quantity * i.unit_price, 0);
 
   // ── Load historial ────────────────────────────────────────────────────────
-  async function loadHistorial(force = false) {
-    if (historialLoaded && !force) return;
+  async function loadHistorial() {
+    historialQuery.current?.abort();
+    const controller = new AbortController();
+    historialQuery.current = controller;
     setLoadingHistorial(true);
     setHistorialError(false);
     try {
-      const rows = await readRange(SHEET_TABS.COTIZACIONES);
-      if (rows.length === 0) { setHistorial([]); setHistorialLoaded(true); return; }
-
-      // ── Discover column positions from the header row ──────────────────
-      const headers = (rows[0] ?? []).map((h) => (h ?? '').toLowerCase().trim());
-      const col = (keys: string[]): number =>
-        keys.reduce((found, k) => found !== -1 ? found : headers.findIndex((h) => h.includes(k)), -1);
-
-      const iDate   = col(['fecha']);
-      const iPart   = col(['part_number', 'part number', 'part#', 'numero', 'número']);
-      const iDesc   = col(['descripcion', 'descripción', 'description']);
-      const iEquip  = col(['equipo', 'equipment', 'unidad']);
-      const iQty    = col(['qty', 'cantidad', 'quantity']);
-      const iDealer = col(['dealer', 'fuente', 'source', 'origen']);
-      const iStatus = col(['status', 'estado', 'estatus']);
-      const iPrice  = col(['precio_recibido', 'precio recibido', 'price', 'precio']);
-      const iPedId  = col(['pedido_id', 'pedido id', 'pedidoid', 'folio']);
-      const iHora   = col(['hora', 'time', 'hour']);
-      const iSolic  = col(['solicitante', 'solicitado', 'requested by', 'usuario']);
-      const iUrg    = col(['urgencia', 'urgency', 'prioridad']);
-      const iNotes  = col(['notas', 'notes', 'nota', 'observaciones']);
-      const iTotal  = col(['total']);
-
-      // Safe cell reader — falls back to hardcoded fallback index if header not found
-      const cell = (r: string[], dynamicIdx: number, fallback: number) =>
-        r[dynamicIdx !== -1 ? dynamicIdx : fallback] ?? '';
-
-      const VALID_STATUSES = new Set(['Pendiente', 'Pedido', 'Completado']);
-
-      const data = rows.slice(1).flatMap((r, idx) => {
-        const pedidoId = cell(r, iPedId, 9);
-        const estado   = cell(r, iStatus, 6);
-        const partNum  = cell(r, iPart, 1);
-
-        // Skip completely blank rows
-        if (!pedidoId && !partNum) return [];
-
-        // Skip rows with unrecognised status values (corrupted legacy data)
-        if (estado && !VALID_STATUSES.has(estado)) return [];
-
-        // Guard numeric fields — reject strings that look like names
-        const rawQty   = cell(r, iQty, 4);
-        const rawTotal = cell(r, iTotal, 14);
-        const cantidad = /^\d+(\.\d+)?$/.test(rawQty.trim())    ? rawQty   : '';
-        const total    = /^\d+(\.\d+)?$/.test(rawTotal.trim())  ? rawTotal : '';
-
-        return [{
-          id:          String(idx),
-          pedidoId:    pedidoId || `ROW-${idx}`,
-          fecha:       cell(r, iDate, 0),
-          hora:        cell(r, iHora, 10),
-          solicitante: cell(r, iSolic, 11),
-          partNum,
-          descripcion: cell(r, iDesc, 2),
-          equipo:      cell(r, iEquip, 3),
-          cantidad,
-          precioUnit:  cell(r, iPrice, 7),
-          total,
-          urgencia:    cell(r, iUrg, 12),
-          fuente:      cell(r, iDealer, 5),
-          notas:       cell(r, iNotes, 13),
-          estado:      estado || 'Pendiente',
-        }];
-      });
-      setHistorial(data.reverse()); // newest first
-      setHistorialLoaded(true);
+      const { items: rows } = await purchaseRequests(controller.signal);
+      if (controller.signal.aborted) return;
+      setHistorial(rows);
     } catch {
+      if (controller.signal.aborted) return;
       setHistorialError(true);
       setHistorial([]);
     } finally {
-      setLoadingHistorial(false);
+      if (!controller.signal.aborted) setLoadingHistorial(false);
     }
   }
 
   // Auto-load historial on mount (Gerencia starts on historial tab directly)
   useEffect(() => {
-    loadHistorial();
-    if (!catalogFetched) fetchCatalogo();
+    void loadHistorial();
+    if (isJT && !catalogFetched) void fetchCatalogo();
+    return () => historialQuery.current?.abort();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function handleTabChange(t: Tab) {
     setTab(t);
-    if (t === 'historial') loadHistorial();
-  }
-
-  // ── Status change (Gerencia only) ─────────────────────────────────────────
-  function handleStatusChange(rowId: string, newStatus: string) {
-    setHistorial((prev) =>
-      prev.map((r) => (r.id === rowId ? { ...r, estado: newStatus } : r))
-    );
+    if (t !== 'carrito') void loadHistorial();
   }
 
   // ── Manual part validation ────────────────────────────────────────────────
@@ -232,7 +125,7 @@ export default function PedidosPage() {
     const e: Partial<ManualForm> = {};
     if (!manual.part_number.trim()) e.part_number = 'Requerido';
     if (!manual.description.trim()) e.description = 'Requerido';
-    if (!manual.quantity || isNaN(Number(manual.quantity)) || Number(manual.quantity) < 1) e.quantity = 'Mín 1';
+    if (!manual.quantity || isNaN(Number(manual.quantity)) || Number(manual.quantity) < 0.001) e.quantity = 'Mínimo 0.001';
     setManualErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -255,43 +148,25 @@ export default function PedidosPage() {
     setShowManual(false);
   }
 
-  // ── Submit cart → Sheet ───────────────────────────────────────────────────
   async function handleSubmit() {
-    if (items.length === 0) return;
+    if (items.length === 0 || submitLock.current) return;
+    const missingUnit = items.find((item) => !item.equipment);
+    if (missingUnit) {
+      setExpandedItem(missingUnit.cartId);
+      setSubmitError('Selecciona la unidad de cada partida antes de enviar.');
+      return;
+    }
+    submitLock.current = true;
     setSubmitting(true);
-    setSubmitError(false);
-    const fecha = mexicoDate();
-    const hora = mexicoTime();
-    const pedidoId = newPedidoId();
-
+    setSubmitError('');
     try {
-      await Promise.all(
-        items.map((item) =>
-          appendRow(SHEET_TABS.COTIZACIONES, [
-            fecha,                                              // A: Fecha
-            item.part_number,                                   // B: Part_Number
-            item.description,                                   // C: Descripcion
-            item.equipment,                                     // D: Equipo
-            String(item.quantity),                              // E: Qty
-            item.isManual ? 'Manual' : item.source,             // F: Dealer
-            'Pendiente',                                        // G: Status
-            '',                                                 // H: Precio_Recibido (proveedor llena)
-            '',                                                 // I: Fecha_Respuesta (proveedor llena)
-            pedidoId,                                           // J: PEDIDO_ID
-            hora,                                               // K: Hora
-            userName,                                           // L: Solicitante
-            item.urgencia,                                      // M: Urgencia
-            item.notes,                                         // N: Notas
-            (item.quantity * item.unit_price).toFixed(2),       // O: Total
-          ])
-        )
-      );
+      const { folio } = await purchaseWrite<{ folio: string }>('request-submit', { items });
       clearCart();
-      setSubmitted(true);
-      setHistorialLoaded(false); // force reload next time
-    } catch {
-      setSubmitError(true);
+      setSubmitted(folio);
+    } catch (cause) {
+      setSubmitError(cause instanceof Error ? cause.message : 'No se confirmó el envío. Reintenta con las mismas partidas.');
     } finally {
+      submitLock.current = false;
       setSubmitting(false);
     }
   }
@@ -303,17 +178,17 @@ export default function PedidosPage() {
         <CheckCircle2 size={64} color="#16A34A" />
         <h2 className="text-2xl font-bold text-text text-center">Pedido Enviado</h2>
         <p className="text-text-secondary text-center text-sm">
-          El pedido fue registrado en el Sheet.<br />Gerencia recibirá la notificación.
+          Folio <span className="font-mono font-semibold">{submitted}</span>. Gerencia puede consultarlo en Pedidos Pendientes.
         </p>
         <button
-          onClick={() => { setSubmitted(false); navigate('/workshop'); }}
+          onClick={() => { setSubmitted(''); navigate('/workshop'); }}
           className="w-full py-3 rounded-xl font-semibold text-white"
           style={{ backgroundColor: '#162252' }}
         >
           Volver al Inicio
         </button>
         <button
-          onClick={() => { setSubmitted(false); handleTabChange('historial'); }}
+          onClick={() => { setSubmitted(''); handleTabChange('historial'); }}
           className="w-full py-3 rounded-xl font-semibold border"
           style={{ borderColor: '#162252', color: '#162252' }}
         >
@@ -324,7 +199,7 @@ export default function PedidosPage() {
   }
 
   return (
-    <div className="flex flex-col py-4 animate-fade-up">
+    <div className="flex min-w-0 flex-col py-4 animate-fade-up">
       {/* ── Header ── */}
       <div className="flex items-center gap-3 mb-5">
         <ShoppingCart size={24} color="#162252" />
@@ -357,6 +232,15 @@ export default function PedidosPage() {
             )}
           </button>
         )}
+        {isGerencia && (
+          <button
+            onClick={() => handleTabChange('pendientes')}
+            className="flex-1 flex items-center justify-center px-2 py-2.5 text-sm font-semibold"
+            style={{ backgroundColor: tab === 'pendientes' ? '#162252' : '#FFFFFF', color: tab === 'pendientes' ? '#FFFFFF' : '#6B7280' }}
+          >
+            Pedidos Pendientes
+          </button>
+        )}
         <button
           onClick={() => handleTabChange('historial')}
           className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold transition-colors"
@@ -366,13 +250,13 @@ export default function PedidosPage() {
           }}
         >
           <ClipboardList size={15} />
-          {isGerencia ? 'Pedidos Pendientes' : 'Historial'}
+          Historial
         </button>
       </div>
 
       {/* ════════════════════ CARRITO TAB ════════════════════ */}
       {tab === 'carrito' && isJT && (
-        <div className="flex flex-col gap-4">
+        <fieldset disabled={submitting} className="flex min-w-0 flex-col gap-4">
 
           {/* Empty carrito */}
           {items.length === 0 && !showManual && (
@@ -480,7 +364,7 @@ export default function PedidosPage() {
                 >
                   <WifiOff size={16} color="#DC2626" />
                   <p className="text-xs text-red-700 font-medium">
-                    Error al enviar — verifica la conexión e intenta de nuevo.
+                    {submitError}
                   </p>
                 </div>
               )}
@@ -502,11 +386,11 @@ export default function PedidosPage() {
               </button>
             </div>
           )}
-        </div>
+        </fieldset>
       )}
 
       {/* ════════════════════ HISTORIAL TAB ════════════════════ */}
-      {tab === 'historial' && (
+      {tab !== 'carrito' && (
         <div className="flex flex-col gap-3">
           {loadingHistorial && (
             <div className="flex justify-center py-10">
@@ -521,11 +405,11 @@ export default function PedidosPage() {
               <div className="text-center">
                 <p className="text-sm font-semibold text-text">Sin conexión al servidor</p>
                 <p className="text-xs text-text-secondary mt-1">
-                  No se pudieron cargar los pedidos.<br />Verifica el VPS e intenta de nuevo.
+                  No se pudieron cargar los pedidos. Reintenta la consulta.
                 </p>
               </div>
               <button
-                onClick={() => { setHistorialLoaded(false); loadHistorial(true); }}
+                onClick={() => void loadHistorial()}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-white text-sm"
                 style={{ backgroundColor: '#162252' }}
               >
@@ -536,14 +420,14 @@ export default function PedidosPage() {
           )}
 
           {/* Empty (loaded successfully but zero rows) */}
-          {!loadingHistorial && !historialError && historial.length === 0 && (
+          {!loadingHistorial && !historialError && visibleRows.length === 0 && (
             <div className="flex flex-col items-center gap-4 py-10">
               <ClipboardList size={48} color="#9CA3AF" />
               <p className="text-text-secondary text-center text-sm">
                 No hay pedidos registrados aún.
               </p>
               <button
-                onClick={() => loadHistorial(true)}
+                onClick={() => loadHistorial()}
                 className="flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-medium"
                 style={{ borderColor: '#162252', color: '#162252' }}
               >
@@ -553,19 +437,19 @@ export default function PedidosPage() {
             </div>
           )}
 
-          {historial.map((row) => (
+          {visibleRows.map((row) => (
             <PedidoRowCard
               key={row.id}
               row={row}
               isGerencia={isGerencia}
-              onStatusChange={handleStatusChange}
+              onStatusChange={() => loadHistorial()}
             />
           ))}
 
           {/* Refresh at bottom when results are showing */}
-          {!loadingHistorial && !historialError && historial.length > 0 && (
+          {!loadingHistorial && !historialError && visibleRows.length > 0 && (
             <button
-              onClick={() => loadHistorial(true)}
+              onClick={() => loadHistorial()}
               className="flex items-center justify-center gap-1.5 text-center text-sm py-2"
               style={{ color: '#2563EB' }}
             >
@@ -612,10 +496,10 @@ function CartItemCard({
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <span className="text-sm font-bold text-text">×{item.quantity}</span>
-          <button onClick={onToggle} className="p-1">
+          <button onClick={onToggle} aria-label={`Editar partida ${item.part_number}`} className="p-1">
             {expanded ? <ChevronUp size={16} color="#6B7280" /> : <ChevronDown size={16} color="#6B7280" />}
           </button>
-          <button onClick={onRemove} className="p-1">
+          <button onClick={onRemove} aria-label={`Quitar partida ${item.part_number}`} className="p-1">
             <Trash2 size={16} color="#DC2626" />
           </button>
         </div>
@@ -628,6 +512,7 @@ function CartItemCard({
           <div>
             <label className="block text-xs font-semibold text-text-secondary mb-1">Equipo / Unidad</label>
             <select
+              aria-label={`Unidad ${item.part_number}`}
               value={item.equipment}
               onChange={(e) => onUpdate({ equipment: e.target.value })}
               className="w-full border border-border rounded-lg px-3 py-2 text-sm text-text bg-white"
@@ -643,9 +528,11 @@ function CartItemCard({
               <label className="block text-xs font-semibold text-text-secondary mb-1">Cantidad</label>
               <input
                 type="number"
-                min={1}
+                min="0.001"
+                step="0.001"
+                aria-label={`Cantidad ${item.part_number}`}
                 value={item.quantity}
-                onChange={(e) => onUpdate({ quantity: Math.max(1, Number(e.target.value)) })}
+                onChange={(e) => onUpdate({ quantity: Number(e.target.value) })}
                 className="w-full border border-border rounded-lg px-3 py-2 text-sm text-text bg-white"
               />
             </div>
@@ -746,6 +633,7 @@ function ManualPartForm({
           <label className="block text-xs font-semibold text-text-secondary mb-1">N° de Parte *</label>
           <input
             type="text"
+            aria-label="Número de parte manual"
             value={form.part_number}
             onChange={(e) => handlePartNumberInput(e.target.value)}
             placeholder="Ej: 6745-11-3102"
@@ -757,7 +645,9 @@ function ManualPartForm({
           <label className="block text-xs font-semibold text-text-secondary mb-1">Cantidad *</label>
           <input
             type="number"
-            min={1}
+            min="0.001"
+            step="0.001"
+            aria-label="Cantidad manual"
             value={form.quantity}
             onChange={f('quantity')}
             className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-white text-text"
@@ -770,6 +660,7 @@ function ManualPartForm({
         <label className="block text-xs font-semibold text-text-secondary mb-1">Descripción *</label>
         <input
           type="text"
+          aria-label="Descripción manual"
           value={form.description}
           onChange={(e) => handleSearchInput(e.target.value)}
           placeholder="Nombre o descripción de la parte"
@@ -839,6 +730,7 @@ function ManualPartForm({
       <div>
         <label className="block text-xs font-semibold text-text-secondary mb-1">Equipo / Unidad</label>
         <select
+          aria-label="Unidad manual"
           value={form.equipment}
           onChange={f('equipment')}
           className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-white text-text"
@@ -904,25 +796,29 @@ function PedidoRowCard({
   isGerencia,
   onStatusChange,
 }: {
-  row: PedidoRow;
+  row: PurchaseRequestLine;
   isGerencia: boolean;
-  onStatusChange: (id: string, newStatus: string) => void;
+  onStatusChange: () => Promise<void>;
 }) {
   const [updating, setUpdating] = useState(false);
+  const [updateError, setUpdateError] = useState('');
+  const updateLock = useRef(false);
   const urgCfg = (URGENCIA_CONFIG as Record<string, { color: string; bg: string }>)[row.urgencia] ?? URGENCIA_CONFIG.Normal;
   const sCfg = STATUS_STYLE[row.estado] ?? STATUS_STYLE.Pendiente ?? { color: '#000', bg: '#fff', border: '#ccc' };
   const nextStatus = STATUS_NEXT[row.estado] ?? null;
 
   async function handleAdvance() {
-    if (!nextStatus || updating) return;
+    if (!nextStatus || updateLock.current || row.ocFolio) return;
+    updateLock.current = true;
     setUpdating(true);
+    setUpdateError('');
     try {
-      // Column J (index 9) = PEDIDO_ID, Column G (index 6) = Status
-      await updateCell(SHEET_TABS.COTIZACIONES, 9, row.pedidoId, 6, nextStatus);
-      onStatusChange(row.id, nextStatus);
-    } catch {
-      // silently fail — state not updated
+      await purchaseWrite('request-status', { id: row.id, version: row.version, status: nextStatus });
+      await onStatusChange();
+    } catch (cause) {
+      setUpdateError(cause instanceof Error ? cause.message : 'No se confirmó el cambio de estado.');
     } finally {
+      updateLock.current = false;
       setUpdating(false);
     }
   }
@@ -954,7 +850,7 @@ function PedidoRowCard({
             {row.pedidoId} · {row.fecha} · {row.solicitante}
           </p>
         </div>
-        <div className="flex gap-4 text-xs text-text-secondary mb-3">
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-secondary mb-3">
           {row.equipo && <span>📍 {row.equipo}</span>}
           <span>×{row.cantidad}</span>
           {row.total && <span className="font-semibold text-text">${row.total}</span>}
@@ -962,8 +858,18 @@ function PedidoRowCard({
         </div>
         {row.notas && <p className="text-xs text-text-secondary mb-3 italic">{row.notas}</p>}
 
-        {/* Gerencia status action */}
-        {isGerencia && nextStatus && (
+        {updateError && <p role="alert" className="mb-2 text-xs text-red-700">{updateError}</p>}
+        {row.ocFolio && (isGerencia ? (
+          <Link className="block py-2 text-sm font-semibold text-blue-800" to={`/admin/ordenes-compra/${encodeURIComponent(row.ocFolio)}`}>
+            Ver OC {row.ocFolio}
+          </Link>
+        ) : <p className="py-2 text-sm text-text-secondary">OC {row.ocFolio}</p>)}
+        {isGerencia && nextStatus && !row.ocFolio && (
+          <Link className="block rounded-lg bg-slate-900 px-3 py-2 mb-2 text-center text-sm font-semibold text-white" to={`/admin/ordenes-compra?partida=${encodeURIComponent(row.id)}`}>
+            Convertir a OC
+          </Link>
+        )}
+        {isGerencia && nextStatus && !row.ocFolio && (
           <button
             onClick={handleAdvance}
             disabled={updating}

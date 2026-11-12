@@ -14,26 +14,39 @@ function positive(value) {
 export function searchInventory(rows, query, equipment) {
   const term = searchKey(query);
   const equipmentTerm = searchKey(equipment);
+  const compact = (value) => searchKey(value).replace(/[^A-Z0-9]/g, '');
+  const partTerm = compact(query);
   if (!term) return [];
   const results = rows.flatMap((row) => {
-    const [number, description, oem, cross, , stock, minimum, price, , , machines, , , supplier] = row;
+    const [number, description, oem, cross, , stock, minimum, price, , , machines, updated, , supplier] = row;
     if (!text(number) || !text(description)) return [];
-    const searchable = [number, description, oem, cross, machines, supplier].map(searchKey);
-    if (!searchable.some((value) => value.includes(term))) return [];
-    if (equipmentTerm && !searchable.some((value) => value.includes(equipmentTerm))) return [];
+    const alternatives = text(cross).split(/[,;\n]+/).map(text).filter(Boolean);
+    const compatible = text(machines).split(/[,;\n]+/).map(text).filter(Boolean);
+    if (equipmentTerm && !compatible.some((model) => searchKey(model).includes(equipmentTerm))) return [];
+    const [sku, oemCode, ...aliases] = [number, oem, ...alternatives].map(compact);
+    const exact = partTerm && [sku, oemCode, ...aliases].includes(partTerm);
+    const codes = partTerm && [sku, oemCode, ...aliases].some((code) => code.includes(partTerm));
+    const nameMatches = searchKey(description).includes(term);
+    const related = [machines, supplier].some((value) => searchKey(value).includes(term));
+    if (!exact && !codes && !nameMatches && !related) return [];
     return [{
-      part_number: text(number),
-      description: text(description),
-      oem_ref: text(oem),
-      stock_quantity: positive(stock),
-      stock_minimum: positive(minimum),
-      unit_price: positive(price),
-      supplier: text(supplier),
-      compatible_units: text(machines) ? [text(machines)] : [],
-      location: 'Inventario de repuestos',
+      rank: exact ? (sku === partTerm ? 0 : 1) : codes ? 2 : nameMatches ? 3 : 4,
+      part: {
+        part_number: text(number),
+        description: text(description),
+        oem_ref: text(oem),
+        alternatives,
+        stock_quantity: positive(stock),
+        stock_minimum: positive(minimum),
+        unit_price: positive(price),
+        supplier: text(supplier),
+        last_updated: text(updated),
+        compatible_units: compatible,
+        location: '12 Inventario Rep.',
+      },
     }];
   });
-  return results.slice(0, 30);
+  return results.sort((a, b) => a.rank - b.rank).slice(0, 30).map(({ part }) => part);
 }
 
 function dateKey(value) {
@@ -77,8 +90,7 @@ export function recoverExpensePrices(rows, supplier, excludedIds = []) {
 export function compareQuote(parts, supplier, prices) {
   const seen = new Set();
   const unmatched = [];
-  const changes = [];
-  let compared = 0;
+  const comparisons = [];
   for (const part of parts) {
     const partNumber = key(part?.part_number);
     const price = round(positive(part?.unit_price));
@@ -89,9 +101,7 @@ export function compareQuote(parts, supplier, prices) {
       unmatched.push(partNumber);
       continue;
     }
-    compared++;
-    if (historical.unitPrice === price) continue;
-    changes.push({
+    comparisons.push({
       part_number: partNumber,
       description: text(part.description) || historical.description,
       old_price: historical.unitPrice,
@@ -101,5 +111,6 @@ export function compareQuote(parts, supplier, prices) {
       source_date: historical.date,
     });
   }
-  return { compared, unmatched, changes };
+  const changes = comparisons.filter((comparison) => comparison.old_price !== comparison.new_price);
+  return { compared: comparisons.length, unmatched, comparisons, changes };
 }

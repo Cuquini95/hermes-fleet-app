@@ -52,10 +52,14 @@ describe('parseAveriaRow', () => {
     const units = openAveriaUnitSet([
       makeRow(),
       makeRow({ 2: 'CA22', 9: 'Cerrada' }),
+      makeRow({ 2: 'CA20', 9: 'En Reparación' }),
+      makeRow({ 2: 'CA21', 9: 'Resuelta' }),
     ]);
 
     expect(units.has('CV102')).toBe(true);
     expect(units.has('CA22')).toBe(false);
+    expect(units.has('CA20')).toBe(true);
+    expect(units.has('CA21')).toBe(true);
   });
 
   it('returns first photo URL when multiple photos are comma-separated', () => {

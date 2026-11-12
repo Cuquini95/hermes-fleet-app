@@ -1,33 +1,9 @@
-/**
- * CalendarPage — Workshop Scheduling View
- *
- * Roles: jefe_taller, coordinador, gerencia, supervisor
- *
- * Layout:
- *   - Header with week navigation (< Apr 13-19 >) + Hoy button
- *   - CalendarGrid: mechanics × days, OT cards per cell
- *   - Conflicts section: over-scheduled mechanics listed at the bottom
- *
- * Data sources:
- *   - workorder-store  → full OT data
- *   - WORKSHOP_SCHEDULE sheet tab → schedule entries for the week
- *
- * Sheet tab: WORKSHOP_SCHEDULE
- * Columns (0-based index):
- *   0: #
- *   1: FECHA_PROGRAMADA  (YYYY-MM-DD)
- *   2: OT_ID
- *   3: UNIDAD
- *   4: MECANICO
- *   5: HORAS_ESTIMADAS
- *   6: PRIORIDAD
- *   7: ESTADO
- *   8: NOTAS
- */
-
 import { useState, useEffect, useCallback } from 'react';
 import { ChevronLeft, ChevronRight, CalendarDays, AlertTriangle } from 'lucide-react';
-import { readRange, SHEET_TABS } from '../lib/sheets-api';
+import { createPortal } from 'react-dom';
+import { useAuthStore } from '../stores/auth-store';
+import { mexicoDateInput } from '../lib/date-utils';
+import { requestWorkshop, type WorkshopMechanic } from '../lib/workshop-api';
 import { useWorkOrderStore } from '../stores/workorder-store';
 import CalendarGrid from '../components/calendar/CalendarGrid';
 import AssignWorkModal from '../components/calendar/AssignWorkModal';
@@ -40,6 +16,7 @@ export interface ScheduleEntry {
   ot_id: string;
   unidad: string;
   mecanico: string;
+  mechanicId?: string;
   horas_estimadas: number;
   prioridad: OTPriority;
   estado: string;
@@ -47,16 +24,6 @@ export interface ScheduleEntry {
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-
-// Hardcoded mechanic list — replace with a PERSONAL tab read when available
-const DEFAULT_MECHANICS = [
-  'Sin asignar',
-  'Juan García',
-  'Pedro López',
-  'Carlos Martínez',
-  'Roberto Sánchez',
-  'Miguel Torres',
-];
 
 const DAILY_HOUR_CAP = 8;
 
@@ -84,8 +51,8 @@ function toISO(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
-function formatWeekLabel(monday: Date): string {
-  const friday = addDays(monday, 4);
+function formatWeekLabel(monday: Date, days: number): string {
+  const friday = addDays(monday, days - 1);
   const sameMonth = monday.getMonth() === friday.getMonth();
   const monthFmt = new Intl.DateTimeFormat('es-MX', { month: 'long' });
   if (sameMonth) {
@@ -105,7 +72,8 @@ function parseScheduleRow(row: string[]): ScheduleEntry | null {
     fecha_programada: fecha,
     ot_id: otId,
     unidad: row[3]?.trim() ?? '',
-    mecanico: row[4]?.trim() ?? 'Sin asignar',
+    mecanico: row[4]?.trim() || 'Sin asignar',
+    mechanicId: row[9]?.trim(),
     horas_estimadas: parseFloat(row[5] ?? '0') || 0,
     prioridad: (row[6]?.trim() as OTPriority) || 'MEDIA',
     estado: row[7]?.trim() || 'Programado',
@@ -124,6 +92,7 @@ interface ConflictItem {
 function buildConflicts(entries: ScheduleEntry[]): ConflictItem[] {
   const hourMap = new Map<string, number>();
   for (const e of entries) {
+    if (e.mecanico === 'Sin asignar' || e.estado === 'Completado') continue;
     const key = `${e.mecanico}||${e.fecha_programada}`;
     hourMap.set(key, (hourMap.get(key) ?? 0) + (e.horas_estimadas || 0));
   }
@@ -141,9 +110,15 @@ function buildConflicts(entries: ScheduleEntry[]): ConflictItem[] {
 
 export default function CalendarPage() {
   const { workorders, fetched, fetchWorkOrders } = useWorkOrderStore();
+  const role = useAuthStore((state) => state.role);
+  const canSchedule = role === 'jefe_taller' || role === 'coordinador' || role === 'gerencia';
+  const today = mexicoDateInput();
+  const localToday = new Date(`${today}T12:00:00`);
+  const [roster, setRoster] = useState<WorkshopMechanic[]>([]);
+  const [rosterError, setRosterError] = useState('');
 
-  const [weekMonday, setWeekMonday] = useState<Date>(() => getMondayOfWeek(new Date()));
-  const [showWeekend, setShowWeekend] = useState(false);
+  const [weekMonday, setWeekMonday] = useState<Date>(() => getMondayOfWeek(localToday));
+  const [showWeekend, setShowWeekend] = useState(() => [0, 6].includes(localToday.getDay()));
   const [entries, setEntries] = useState<ScheduleEntry[]>([]);
   const [loadingSchedule, setLoadingSchedule] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
@@ -151,7 +126,7 @@ export default function CalendarPage() {
   // Modal state
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMechanic, setModalMechanic] = useState('');
-  const [modalDate, setModalDate] = useState<Date>(new Date());
+  const [modalDate, setModalDate] = useState(today);
 
   // Detail drawer state (view/edit an existing entry)
   const [selectedEntry, setSelectedEntry] = useState<ScheduleEntry | null>(null);
@@ -169,30 +144,32 @@ export default function CalendarPage() {
   const weekStartISO = toISO(weekMonday);
   const weekEndISO = toISO(addDays(weekMonday, weekDays.length - 1));
 
-  // Fetch schedule for the visible week
   const fetchSchedule = useCallback(async () => {
     setLoadingSchedule(true);
     setScheduleError(null);
     try {
-      const rows = await readRange(SHEET_TABS.WORKSHOP_SCHEDULE);
-      const parsed = rows
-        .slice(1) // skip header row
-        .map(parseScheduleRow)
-        .filter((e): e is ScheduleEntry => e !== null)
-        .filter(
-          (e) => e.fecha_programada >= weekStartISO && e.fecha_programada <= weekEndISO
-        );
-      setEntries(parsed);
-    } catch (err: unknown) {
-      setScheduleError(err instanceof Error ? err.message : 'Error al cargar horario');
+      const { schedule } = await requestWorkshop<{ schedule: string[][] }>('schedule');
+      setEntries(schedule.map(parseScheduleRow).filter((entry): entry is ScheduleEntry => entry !== null));
+    } catch (error) {
+      setEntries([]);
+      setScheduleError(error instanceof Error ? error.message : 'Error al cargar calendario');
     } finally {
       setLoadingSchedule(false);
     }
-  }, [weekStartISO, weekEndISO]);
+  }, []);
 
   useEffect(() => {
-    fetchSchedule();
+    void fetchSchedule();
   }, [fetchSchedule]);
+
+  useEffect(() => {
+    if (!canSchedule) return;
+    let active = true;
+    requestWorkshop<{ mechanics: WorkshopMechanic[] }>('mechanics')
+      .then(({ mechanics }) => { if (active) setRoster(mechanics); })
+      .catch((error: unknown) => { if (active) setRosterError(error instanceof Error ? error.message : 'Padrón no disponible'); });
+    return () => { active = false; };
+  }, [canSchedule]);
 
   // Navigation
   function goToPrevWeek() {
@@ -202,37 +179,40 @@ export default function CalendarPage() {
     setWeekMonday((prev) => addDays(prev, 7));
   }
   function goToToday() {
-    setWeekMonday(getMondayOfWeek(new Date()));
+    setWeekMonday(getMondayOfWeek(localToday));
   }
 
-  // Derive unique mechanics from entries + default list
-  const mechanics = Array.from(
-    new Set([...DEFAULT_MECHANICS, ...entries.map((e) => e.mecanico)])
-  ).filter(Boolean);
+  const visibleEntries = entries
+    .filter((entry) => entry.fecha_programada >= weekStartISO && entry.fecha_programada <= weekEndISO)
+    .map((entry) => {
+      const order = workorders.find((wo) => wo.ot_id === entry.ot_id);
+      return order?.estado === 'Completado' ? { ...entry, estado: 'Completado' } : entry;
+    });
+  const mechanics = Array.from(new Set(['Sin asignar', ...roster.map((item) => item.userName), ...visibleEntries.map((entry) => entry.mecanico)]));
+  const conflicts = buildConflicts(visibleEntries);
 
-  // Conflicts
-  const conflicts = buildConflicts(entries);
-
-  // Cell click → open assign modal
   function handleCellClick(mechanic: string, date: Date) {
-    setModalMechanic(mechanic === 'Sin asignar' ? '' : mechanic);
-    setModalDate(date);
+    if (!canSchedule) return;
+    const matching = roster.filter((item) => item.userName === mechanic);
+    setModalMechanic(matching.length === 1 ? matching[0]!.userId : '');
+    setModalDate(toISO(date));
     setModalOpen(true);
   }
 
-  // Card click → show detail drawer
-  function handleCardClick(entry: ScheduleEntry) {
-    setSelectedEntry(entry);
-  }
-
-  // After a new assignment is saved, optimistically add it
-  function handleModalSave(entry: ScheduleEntry) {
-    setEntries((prev) => [...prev, entry]);
+  function handleModalSave(row: string[]) {
+    const entry = parseScheduleRow(row);
+    if (entry) {
+      setEntries((current) => [...current.filter((item) => item.ot_id !== entry.ot_id), entry]);
+      const date = new Date(`${entry.fecha_programada}T12:00:00`);
+      setWeekMonday(getMondayOfWeek(date));
+      if ([0, 6].includes(date.getDay())) setShowWeekend(true);
+    }
     setModalOpen(false);
+    void fetchWorkOrders();
   }
 
   const isCurrentWeek =
-    toISO(weekMonday) === toISO(getMondayOfWeek(new Date()));
+    toISO(weekMonday) === toISO(getMondayOfWeek(localToday));
 
   return (
     <div className="pb-6">
@@ -243,7 +223,7 @@ export default function CalendarPage() {
       </div>
 
       {/* ── Week navigation bar ───────────────────────────────────────────── */}
-      <div className="flex items-center justify-between mb-3 gap-2">
+      <div className="flex flex-wrap items-center justify-between mb-3 gap-2">
         <div className="flex items-center gap-1">
           <button
             type="button"
@@ -254,8 +234,8 @@ export default function CalendarPage() {
             <ChevronLeft size={18} />
           </button>
 
-          <span className="text-sm font-semibold text-slate-700 min-w-[180px] text-center capitalize">
-            {formatWeekLabel(weekMonday)}
+          <span className="text-sm font-semibold text-slate-700 text-center capitalize">
+            {formatWeekLabel(weekMonday, weekDays.length)}
           </span>
 
           <button
@@ -318,16 +298,52 @@ export default function CalendarPage() {
         </div>
       )}
 
-      {/* ── Calendar grid ─────────────────────────────────────────────────── */}
-      {!loadingSchedule && (
-        <CalendarGrid
-          weekDays={weekDays}
-          mechanics={mechanics}
-          entries={entries}
-          workorders={workorders}
-          onCellClick={handleCellClick}
-          onCardClick={handleCardClick}
-        />
+      {rosterError && <p className="mb-3 text-sm text-slate-600">{rosterError}</p>}
+      {canSchedule && !scheduleError && (
+        <button
+          type="button"
+          onClick={() => handleCellClick('', isCurrentWeek ? localToday : weekMonday)}
+          className="mb-3 w-full rounded-xl bg-[#162252] p-3 text-sm font-semibold text-white sm:w-auto"
+        >
+          Programar OT
+        </button>
+      )}
+      {!loadingSchedule && !scheduleError && (
+        <>
+          <div className="space-y-3 sm:hidden">
+            {weekDays.map((date) => {
+              const iso = toISO(date);
+              const dayEntries = visibleEntries.filter((entry) => entry.fecha_programada === iso);
+              return (
+                <section key={iso} className="rounded-xl border border-slate-200 bg-white p-3">
+                  <h2 className="mb-2 text-sm font-semibold capitalize text-slate-700">{date.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'short' })}</h2>
+                  {dayEntries.length === 0 ? <p className="text-xs text-slate-500">Sin órdenes programadas.</p> : (
+                    <ul className="space-y-2">
+                      {dayEntries.map((entry) => (
+                        <li key={entry.ot_id}>
+                          <button type="button" onClick={() => setSelectedEntry(entry)} className="w-full rounded-lg bg-slate-100 p-2 text-left text-sm text-[#162252]">
+                            <span className="block font-semibold">{entry.ot_id} · {entry.unidad}</span>
+                            <span className="block text-xs">{entry.mecanico} · {entry.horas_estimadas} h</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              );
+            })}
+          </div>
+          <div className="hidden sm:block">
+            <CalendarGrid
+              weekDays={weekDays}
+              mechanics={mechanics}
+              entries={visibleEntries}
+              workorders={workorders}
+              onCellClick={canSchedule ? handleCellClick : undefined}
+              onCardClick={setSelectedEntry}
+            />
+          </div>
+        </>
       )}
 
       {/* ── Conflicts section ──────────────────────────────────────────────── */}
@@ -359,13 +375,13 @@ export default function CalendarPage() {
       )}
 
       {/* ── Entry detail drawer ────────────────────────────────────────────── */}
-      {selectedEntry && (
+      {selectedEntry && createPortal(
         <div
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40"
+          className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-black/40"
           onClick={() => setSelectedEntry(null)}
         >
           <div
-            className="w-full sm:max-w-sm bg-white rounded-t-2xl sm:rounded-2xl shadow-xl p-5"
+            className="w-full sm:max-w-sm max-h-[calc(100dvh-1rem)] overflow-y-auto bg-white rounded-t-2xl sm:rounded-2xl shadow-xl p-5"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-3">
@@ -419,6 +435,7 @@ export default function CalendarPage() {
             </button>
           </div>
         </div>
+        , document.body
       )}
 
       {/* ── Assign Work Modal ──────────────────────────────────────────────── */}
@@ -426,7 +443,7 @@ export default function CalendarPage() {
         <AssignWorkModal
           mechanic={modalMechanic}
           date={modalDate}
-          mechanics={mechanics.filter((m) => m !== 'Sin asignar')}
+          mechanics={roster}
           workorders={workorders}
           onSave={handleModalSave}
           onClose={() => setModalOpen(false)}

@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, WifiOff, Languages, PackagePlus } from 'lucide-react';
 import { searchParts, type PartResult } from '../../lib/hermes-api';
 import { expandQuery } from '../../lib/parts-dictionary';
+import { useAuthStore } from '../../stores/auth-store';
 import PartCard from './PartCard';
 
 const EQUIPMENT_FILTERS = ['Todos', 'Komatsu', 'CAT', 'Doosan', 'Mack'];
@@ -24,25 +25,27 @@ function mergeResults(arrays: PartResult[][]): PartResult[] {
 
 export default function PartsSearch() {
   const navigate = useNavigate();
+  const role = useAuthStore((state) => state.role);
+  const canVerifyPrices = role === 'jefe_taller' || role === 'coordinador' || role === 'supervisor' || role === 'gerencia';
   const [query, setQuery] = useState('');
   const [selectedEquipo, setSelectedEquipo] = useState('Todos');
   const [results, setResults] = useState<PartResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState(false);
   const [bilingualHit, setBilingualHit] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const controller = new AbortController();
 
     if (!query.trim()) {
       setResults([]);
+      setLoading(false);
       setApiError(false);
       setBilingualHit(false);
       return;
     }
 
-    debounceRef.current = setTimeout(async () => {
+    const debounce = setTimeout(async () => {
       setLoading(true);
       setApiError(false);
       setBilingualHit(false);
@@ -54,9 +57,10 @@ export default function PartsSearch() {
 
         // Fire all translated queries in parallel
         const allResults = await Promise.all(
-          terms.map((term) => searchParts(term, equipo))
+          terms.map((term) => searchParts(term, equipo, controller.signal))
         );
 
+        if (controller.signal.aborted) return;
         const merged = mergeResults(allResults);
         setResults(merged);
 
@@ -65,15 +69,17 @@ export default function PartsSearch() {
           setBilingualHit(true);
         }
       } catch {
+        if (controller.signal.aborted) return;
         setResults([]);
         setApiError(true);
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     }, 500);
 
     return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
+      clearTimeout(debounce);
+      controller.abort();
     };
   }, [query, selectedEquipo]);
 
@@ -82,13 +88,15 @@ export default function PartsSearch() {
       {/* Header row with import button */}
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-xl font-bold text-text">Partes</h1>
-        <button
-          onClick={() => navigate('/parts/import')}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber text-white text-xs font-semibold"
-        >
-          <PackagePlus size={14} />
-          Verificar precios
-        </button>
+        {canVerifyPrices && (
+          <button
+            onClick={() => navigate('/parts/import')}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber text-white text-xs font-semibold"
+          >
+            <PackagePlus size={14} />
+            Verificar precios
+          </button>
+        )}
       </div>
 
       {/* Search bar */}
@@ -96,6 +104,7 @@ export default function PartsSearch() {
         <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-secondary" />
         <input
           type="text"
+          aria-label="Buscar repuesto"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Buscar en español o inglés — alternador / alternator…"

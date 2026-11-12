@@ -1,919 +1,391 @@
-/**
- * Admin · Órdenes de Compra
- *
- * PO format inspired by ULTRATK SA DE CV's Excel template:
- *   Header: OC #, fecha, vendedor (auto-fill from Proveedores)
- *   Body:   line items (item #, descripción, cantidad, precio unitario, total)
- *   Footer: subtotal, IVA 16 %, envío, otros, total + comentarios
- *
- * Two Sheets tabs:
- *   - 'Órdenes de Compra' — one row per OC (header + totals)
- *   - 'OC_Lineas'         — one row per line item, FK = OC_ID
- */
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { Plus, Printer, Trash2 } from 'lucide-react';
+import {
+  displayMoney, isApprovalRecorded, pendingQuantity, purchaseRead, purchaseRequests, purchaseWrite,
+  type PurchaseOrder, type PurchaseOverview, type PurchaseRequestLine,
+} from '../lib/purchasing-api';
 
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { Plus, Trash2, FileText, Printer, AlertTriangle, Pencil, X } from 'lucide-react'
-import { appendRow, readRange, updateCell, deleteRow, upsertRow, SHEET_TABS } from '../lib/sheets-api'
-
-const COMPANY = {
-  name: 'ULTRATK SA DE CV',
-  street: 'Juarez 312, Revolucion',
-  city: 'Tecalitlan, Jalisco',
-  phone: 'Tel: 314-115-1515',
+interface DraftLine {
+  key: string;
+  id?: string;
+  description: string;
+  partNumber: string;
+  quantity: string;
+  unitPrice: string;
+  requestLineId?: string;
 }
 
-const IVA_RATE = 0.16
-const ESTADOS = ['Borrador', 'Aprobada', 'Recibida', 'Pagada', 'Rechazada'] as const
-type EstadoOC = typeof ESTADOS[number]
-
-interface Vendor {
-  nombre: string
-  rfc: string
-  direccion: string
-  ciudad: string
-  estado: string
-  cp: string
-  telefono: string
-  email: string
-  contacto: string
+interface Draft {
+  folio: string;
+  version: string;
+  date: string;
+  deliveryDate: string;
+  vendor: string;
+  unit: string;
+  entity: string;
+  shipping: string;
+  other: string;
+  comments: string;
+  lines: DraftLine[];
 }
 
-interface LineItem {
-  descripcion: string
-  cantidad: string
-  precio_unitario: string
-}
+const input = 'w-full min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm';
+const button = 'rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium disabled:opacity-50';
+const primary = 'rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50';
+const blankLine = (): DraftLine => ({ key: crypto.randomUUID(), description: '', partNumber: '', quantity: '1', unitPrice: '' });
+const today = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Mexico_City' });
+const isoDate = (dmy: string) => {
+  const [day, month, year] = dmy.split('/');
+  return year && month && day ? year + '-' + month.padStart(2, '0') + '-' + day.padStart(2, '0') : dmy;
+};
+const blankDraft = (entity = ''): Draft => ({
+  folio: '', version: '', date: today(), deliveryDate: '', vendor: '', unit: 'FLOTA', entity,
+  shipping: '0', other: '0', comments: '', lines: [blankLine()],
+});
+const vendorKey = (name: string, rfc: string) => JSON.stringify([name, rfc]);
+const linkedLine = (line: PurchaseRequestLine): DraftLine => ({
+  key: crypto.randomUUID(),
+  description: line.descripcion,
+  partNumber: line.partNum,
+  quantity: line.cantidad,
+  unitPrice: line.precioUnit || line.unitPrice || '0',
+  requestLineId: line.id,
+});
 
-interface OCRow {
-  oc_id: string
-  fecha: string
-  proveedor: string
-  total: string
-  estado: string
-}
-
-const blankLine: LineItem = { descripcion: '', cantidad: '1', precio_unitario: '' }
-
-function todayIso(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-
-function toDDMMYYYY(iso: string): string {
-  if (!iso) return ''
-  const [y, m, d] = iso.split('-')
-  return `${d}/${m}/${y}`
-}
-
-/** DD/MM/YYYY → YYYY-MM-DD for <input type="date"> */
-function ddToISO(dmy: string): string {
-  if (!dmy) return todayIso()
-  const parts = dmy.split('/')
-  if (parts.length !== 3) return todayIso()
-  const [d, m, y] = parts
-  if (!d || !m || !y) return todayIso()
-  return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
-}
-
-function nextOcId(rows: string[][] | null): string {
-  if (!rows) return 'OC-001'
-  let max = 0
-  for (const r of rows) {
-    const match = /^OC-(\d+)$/.exec((r[0] ?? '').trim())
-    if (match && match[1]) max = Math.max(max, parseInt(match[1], 10))
-  }
-  return `OC-${String(max + 1).padStart(3, '0')}`
-}
-
-function parseVendor(row: string[]): Vendor {
-  return {
-    nombre:    (row[0] ?? '').trim(),
-    rfc:       (row[1] ?? '').trim(),
-    direccion: (row[2] ?? '').trim(),
-    ciudad:    (row[3] ?? '').trim(),
-    estado:    (row[4] ?? '').trim(),
-    cp:        (row[5] ?? '').trim(),
-    telefono:  (row[6] ?? '').trim(),
-    email:     (row[7] ?? '').trim(),
-    contacto:  (row[8] ?? '').trim(),
-  }
-}
-
-function parseOCRow(r: string[]): OCRow {
-  return {
-    oc_id:     (r[0]  ?? '').trim(),
-    fecha:     (r[1]  ?? '').trim(),
-    proveedor: (r[2]  ?? '').trim(),
-    total:     (r[10] ?? '').trim(),
-    estado:    (r[11] ?? '').trim(),
-  }
-}
-
-function estadoColor(s: string) {
-  switch (s) {
-    case 'Aprobada':  return 'border-green-300 text-green-700'
-    case 'Recibida':  return 'border-blue-300 text-blue-700'
-    case 'Pagada':    return 'border-teal-300 text-teal-700'
-    case 'Rechazada': return 'border-red-300 text-red-700'
-    default:          return 'border-gray-300 text-gray-600'
-  }
+function cents(value: string) {
+  return Math.round((Number(value.replace(/[$,\s]/g, '')) || 0) * 100);
 }
 
 export default function AdminOrdenesCompraPage() {
-  const formRef = useRef<HTMLFormElement>(null)
+  const [params, setParams] = useSearchParams();
+  const initialLine = params.get('partida') ?? '';
+  const [data, setData] = useState<PurchaseOverview | null>(null);
+  const [requests, setRequests] = useState<PurchaseRequestLine[]>([]);
+  const [draft, setDraft] = useState<Draft>(blankDraft);
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [receiving, setReceiving] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState('');
+  const locked = useRef(false);
+  const converted = useRef('');
+  const form = useRef<HTMLFormElement>(null);
 
-  // ── Loaded data ──────────────────────────────────────────────────────
-  const [vendors, setVendors]     = useState<Vendor[] | null>(null)
-  const [ocs, setOcs]             = useState<OCRow[] | null>(null)
-  const [ocRawRows, setOcRawRows] = useState<string[][] | null>(null)   // full raw rows for edit
-  const [error, setError]         = useState<string | null>(null)
-  const [success, setSuccess]     = useState<string | null>(null)
-
-  // ── Form state ───────────────────────────────────────────────────────
-  const [editOcId, setEditOcId]     = useState<string | null>(null)       // null = create, string = edit
-  const [loadingEdit, setLoadingEdit] = useState(false)
-  const [ocId, setOcId]             = useState('OC-001')
-  const [fecha, setFecha]           = useState(todayIso())
-  const [vendorIdx, setVendorIdx]   = useState<number>(-1)
-  const [unidad, setUnidad]         = useState('FLOTA')
-  const [lines, setLines]           = useState<LineItem[]>([{ ...blankLine }])
-  const [envio, setEnvio]           = useState('0')
-  const [otros, setOtros]           = useState('0')
-  const [estado, setEstado]         = useState<EstadoOC>('Borrador')
-  const [comentarios, setComentarios] = useState('')
-  const [fechaEntrega, setFechaEntrega] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-
-  // ── Inline status change + delete ───────────────────────────────────
-  const [changingEstado, setChangingEstado] = useState<string | null>(null)
-  const [confirmDelete, setConfirmDelete]   = useState<string | null>(null)
-  const [deleting, setDeleting]             = useState(false)
-
-  const selectedVendor: Vendor | null =
-    vendorIdx >= 0 && vendors ? (vendors[vendorIdx] ?? null) : null
-
-  // ── Load vendor catalog + OC list ────────────────────────────────────
-  async function load() {
-    setError(null)
+  const load = useCallback(async (signal?: AbortSignal) => {
+    setLoading(true);
     try {
-      const [vRows, ocRows] = await Promise.all([
-        readRange(SHEET_TABS.PROVEEDORES),
-        readRange(SHEET_TABS.ORDENES_COMPRA),
-      ])
-      const vendorList = vRows.slice(1).filter((r) => (r[0] ?? '').trim()).map(parseVendor)
-      setVendors(vendorList)
-
-      const dataRows = ocRows.slice(1).filter((r) => (r[0] ?? '').trim())
-      setOcRawRows(dataRows)
-      setOcs(dataRows.map(parseOCRow))
-      setOcId(nextOcId(dataRows))
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
-  }
-  useEffect(() => { void load() }, [])
-
-  // ── Totals ───────────────────────────────────────────────────────────
-  const subtotal = useMemo(
-    () => lines.reduce((sum, l) => sum + (parseFloat(l.cantidad) || 0) * (parseFloat(l.precio_unitario) || 0), 0),
-    [lines],
-  )
-  const iva      = subtotal * IVA_RATE
-  const envioNum = parseFloat(envio) || 0
-  const otrosNum = parseFloat(otros) || 0
-  const total    = subtotal + iva + envioNum + otrosNum
-
-  // ── Line item helpers ────────────────────────────────────────────────
-  function updateLine(i: number, patch: Partial<LineItem>) {
-    setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)))
-  }
-  function addLine() { setLines((prev) => [...prev, { ...blankLine }]) }
-  function removeLine(i: number) {
-    setLines((prev) => (prev.length === 1 ? prev : prev.filter((_, idx) => idx !== i)))
-  }
-
-  function resetForm(nextId?: string) {
-    setEditOcId(null)
-    setOcId(nextId ?? ocId)
-    setFecha(todayIso())
-    setVendorIdx(-1)
-    setUnidad('FLOTA')
-    setLines([{ ...blankLine }])
-    setEnvio('0')
-    setOtros('0')
-    setEstado('Borrador')
-    setComentarios('')
-    setFechaEntrega('')
-  }
-
-  // ── Load an existing OC into the form ────────────────────────────────
-  async function startEdit(targetId: string) {
-    const raw = ocRawRows?.find((r) => (r[0] ?? '').trim() === targetId)
-    if (!raw) { setError(`No se encontró ${targetId} en los datos cargados.`); return }
-
-    setLoadingEdit(true)
-    setError(null)
-    try {
-      // Populate header fields from raw row
-      // cols: 0=ocId 1=fecha 2=proveedor 3=rfc 4=dir 5=unidad 6=subtotal 7=iva 8=envio 9=otros 10=total 11=estado 12=comentarios 13='' 14=fechaEntrega
-      // ⚠️ Trim every value — trailing whitespace on the ocId would make upsert miss and duplicate the row.
-      setOcId((raw[0] ?? targetId).trim())
-      setFecha(ddToISO((raw[1] ?? '').trim()))
-      setUnidad((raw[5] ?? 'FLOTA').trim() || 'FLOTA')
-      setEnvio((raw[8] ?? '0').trim() || '0')
-      setOtros((raw[9] ?? '0').trim() || '0')
-      setEstado(((raw[11] ?? 'Borrador').trim() || 'Borrador') as EstadoOC)
-      setComentarios((raw[12] ?? '').trim())
-      setFechaEntrega(ddToISO((raw[14] ?? '').trim()))
-
-      // Match vendor by name
-      const vendorName = (raw[2] ?? '').trim()
-      const vIdx = vendors?.findIndex((v) => v.nombre === vendorName) ?? -1
-      setVendorIdx(vIdx)
-
-      // Load line items from OC_Lineas tab
-      const lineRows = await readRange(SHEET_TABS.OC_LINEAS)
-      const myLines = lineRows.filter((r) => (r[0] ?? '').trim() === targetId)
-      setLines(
-        myLines.length > 0
-          ? myLines.map((r) => ({
-              descripcion:    (r[2] ?? '').trim(),
-              cantidad:       r[3] ?? '1',
-              precio_unitario: r[4] ?? '',
-            }))
-          : [{ ...blankLine }],
-      )
-
-      setEditOcId(targetId)
-      // Scroll form into view
-      setTimeout(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setLoadingEdit(false)
-    }
-  }
-
-  // ── Submit: create or update ─────────────────────────────────────────
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setSuccess(null)
-    if (!selectedVendor) { setError('Selecciona un proveedor.'); return }
-    const validLines = lines.filter((l) => l.descripcion.trim() && parseFloat(l.cantidad) > 0)
-    if (validLines.length === 0) {
-      setError('Agrega al menos una línea con descripción y cantidad.')
-      return
-    }
-    setSubmitting(true)
-    setError(null)
-
-    // In edit mode, ALWAYS key off editOcId (trimmed at load time). Using the ocId state
-    // here risked a whitespace mismatch with the sheet key → upsert would fall through
-    // to append and create a duplicate row. This is the root cause of the "adds a new
-    // one when editing" bug reported on 2026-04-22.
-    const keyId = (editOcId ?? ocId).trim()
-
-    const headerValues = [
-      keyId,
-      toDDMMYYYY(fecha),
-      selectedVendor.nombre,
-      selectedVendor.rfc,
-      [selectedVendor.direccion, selectedVendor.ciudad, selectedVendor.estado, selectedVendor.cp]
-        .filter(Boolean).join(', '),
-      unidad.trim(),
-      subtotal.toFixed(2),
-      iva.toFixed(2),
-      envioNum.toFixed(2),
-      otrosNum.toFixed(2),
-      total.toFixed(2),
-      estado,
-      comentarios.trim(),
-      '',
-      toDDMMYYYY(fechaEntrega),
-    ]
-
-    try {
-      if (editOcId) {
-        // ── UPDATE MODE ──
-        // Use the exact same trimmed key for both the match and the value.
-        await upsertRow(SHEET_TABS.ORDENES_COMPRA, keyId, headerValues)
-        // Delete all existing line items. deleteRow throws when no match is found
-        // (see sheets-api.ts line 468), so we break on first miss. Max call count
-        // is (lineCount + 1). Must stay sequential to avoid backend race conditions.
-        for (let i = 0; i < 100; i++) {
-          try { await deleteRow(SHEET_TABS.OC_LINEAS, { '0': keyId }) }
-          catch { break }
-        }
-      } else {
-        // ── CREATE MODE ──
-        await appendRow(SHEET_TABS.ORDENES_COMPRA, headerValues)
+      const result = await purchaseRead<PurchaseOverview>('orders', undefined, signal);
+      if (signal?.aborted) return;
+      setData(result);
+      setDraft((old) => old.entity || result.issuers.length !== 1 ? old : { ...old, entity: result.issuers[0]?.id ?? '' });
+      try {
+        const { items } = await purchaseRequests(signal);
+        if (!signal?.aborted) setRequests(items);
+      } catch {
+        // Orders remain available while the linked request list is retried.
+        if (!signal?.aborted) setRequests([]);
       }
-
-      // Write line items in parallel — they're independent rows, safe to fan out.
-      // Previously this was a serial for-loop (N × 500ms round-trips) which was
-      // the main source of the edit-save lag. Now N appends complete in ~1 RTT.
-      await Promise.all(
-        validLines.map((l, i) => {
-          const cantidad = parseFloat(l.cantidad) || 0
-          const precio   = parseFloat(l.precio_unitario) || 0
-          return appendRow(SHEET_TABS.OC_LINEAS, [
-            keyId,
-            String(i + 1),
-            l.descripcion.trim(),
-            String(cantidad),
-            precio.toFixed(2),
-            (cantidad * precio).toFixed(2),
-          ])
-        }),
-      )
-
-      const totalFmt = total.toLocaleString('es-MX', { minimumFractionDigits: 2 })
-      setSuccess(
-        editOcId
-          ? `OC ${keyId} actualizada — Total $${totalFmt}`
-          : `OC ${keyId} creada con ${validLines.length} línea(s) — Total $${totalFmt}`,
-      )
-      await load()
-      resetForm()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+    } catch (reason) {
+      if (!signal?.aborted) setError(reason instanceof Error ? reason.message : 'No se pudieron leer las órdenes.');
     } finally {
-      setSubmitting(false)
+      if (!signal?.aborted) setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
+
+  useEffect(() => {
+    const selected = requests.find((line) => line.id === initialLine && !line.ocFolio && line.estado !== 'Completado');
+    if (!selected || converted.current === initialLine) return;
+    converted.current = initialLine;
+    setDraft((old) => ({ ...blankDraft(old.entity), unit: selected.equipo || 'FLOTA', lines: [linkedLine(selected)] }));
+  }, [initialLine, requests]);
+
+  const issuer = data?.issuers.find((entry) => entry.id === draft.entity);
+  const currency = issuer?.currency || 'MXN';
+  const vendor = data?.vendors.find((entry) => vendorKey(entry.name, entry.rfc) === draft.vendor);
+  const subtotal = draft.lines.reduce((sum, line) => sum + Math.round(Math.round((Number(line.quantity) || 0) * 1000) * cents(line.unitPrice) / 1000), 0);
+  const tax = Math.round(subtotal * (issuer?.taxBps || 0) / 10000);
+  const total = subtotal + tax + cents(draft.shipping) + cents(draft.other);
+  const openOrder = data?.orders.find((order) => order.folio === receiving);
+  const candidateLines = requests.filter((line) =>
+    line.estado !== 'Completado' && !line.ocFolio &&
+    (line.equipo || 'FLOTA').toUpperCase() === draft.unit.trim().toUpperCase() &&
+    !draft.lines.some((part) => part.requestLineId === line.id));
+
+  function setField<K extends keyof Draft>(key: K, value: Draft[K]) {
+    setDraft((old) => ({ ...old, [key]: value }));
   }
 
-  // ── Inline status change ─────────────────────────────────────────────
-  async function handleEstadoChange(targetId: string, newEstado: string) {
-    setChangingEstado(targetId)
-    setError(null)
+  function updateLine(key: string, patch: Partial<DraftLine>) {
+    setDraft((old) => ({ ...old, lines: old.lines.map((line) => line.key === key ? { ...line, ...patch } : line) }));
+  }
+
+  function resetDraft() {
+    setDraft(blankDraft(data?.issuers[0]?.id));
+    if (initialLine) setParams({}, { replace: true });
+  }
+
+  function edit(order: PurchaseOrder) {
+    setError('');
+    setReceiving('');
+    setDraft({
+      folio: order.folio, version: order.version, date: isoDate(order.date), deliveryDate: isoDate(order.deliveryDate),
+      vendor: vendorKey(order.vendorName, order.vendorRfc), unit: order.unit || 'FLOTA',
+      entity: order.issuer?.id || data?.issuers[0]?.id || '',
+      shipping: order.shipping.replace(/[$,\s]/g, '') || '0', other: order.other.replace(/[$,\s]/g, '') || '0', comments: order.comments,
+      lines: order.lines.length ? order.lines.map((line) => ({
+        ...line, key: line.id,
+        unitPrice: line.unitPrice.replace(/[$,\s]/g, ''), quantity: line.quantity.replace(/,/g, ''),
+      })) : [blankLine()],
+    });
+    form.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  async function run(action: string, payload: object, onSaved: (reply: { folio: string; total?: string; status?: string }) => void) {
+    if (locked.current) return;
+    locked.current = true;
+    setSaving(true);
+    setError('');
+    setMessage('');
     try {
-      await updateCell(SHEET_TABS.ORDENES_COMPRA, 0, targetId, 11, newEstado)
-      setSuccess(`${targetId} → ${newEstado}`)
-      await load()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      const reply = await purchaseWrite<{ folio: string; total?: string; status?: string }>(action, payload);
+      onSaved(reply);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'No se pudo confirmar. Reintenta con los mismos datos.');
     } finally {
-      setChangingEstado(null)
+      locked.current = false;
+      setSaving(false);
     }
   }
 
-  // ── Delete OC + its line items ───────────────────────────────────────
-  async function handleDelete(targetId: string) {
-    setDeleting(true)
-    setError(null)
-    try {
-      await deleteRow(SHEET_TABS.ORDENES_COMPRA, { '0': targetId })
-      for (let i = 0; i < 100; i++) {
-        try { await deleteRow(SHEET_TABS.OC_LINEAS, { '0': targetId }) }
-        catch { break }
-      }
-      setSuccess(`OC ${targetId} eliminada.`)
-      setConfirmDelete(null)
-      if (editOcId === targetId) resetForm()
-      await load()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-      setConfirmDelete(null)
-    } finally {
-      setDeleting(false)
-    }
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    if (!vendor) { setError('Selecciona un proveedor.'); return; }
+    const lines = draft.lines.map(({ id, description, partNumber, quantity, unitPrice, requestLineId }) => ({
+      id, description: description.trim(), partNumber, quantity, unitPrice, requestLineId,
+    }));
+    await run('order-save', {
+      folio: draft.folio || undefined, version: draft.version || undefined, date: draft.date,
+      deliveryDate: draft.deliveryDate, vendorName: vendor.name, vendorRfc: vendor.rfc, unit: draft.unit,
+      entity: draft.entity, shipping: draft.shipping || '0', other: draft.other || '0', comments: draft.comments, lines,
+    }, (reply) => {
+      setMessage(reply.folio + ' guardada · ' + displayMoney(reply.total || '0', currency));
+      resetDraft();
+    });
   }
 
-  // ── Render ───────────────────────────────────────────────────────────
+  function changeStatus(order: PurchaseOrder, status: string) {
+    return run('order-status', { folio: order.folio, version: order.version, status }, (reply) => {
+      setMessage(reply.folio + ' · ' + status);
+    });
+  }
+
+  function removeOrder(order: PurchaseOrder) {
+    return run('order-delete', { folio: order.folio, version: order.version }, (reply) => {
+      setConfirmDelete('');
+      if (draft.folio === order.folio) resetDraft();
+      setMessage(reply.folio + ' eliminada del listado. El historial se conserva.');
+    });
+  }
+
   return (
-    <div className="p-3 sm:p-4 max-w-5xl mx-auto">
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 mb-1">
-        <h1 className="text-xl sm:text-2xl font-bold">Órdenes de Compra</h1>
-        <Link
-          to="/admin/proveedores"
-          className="self-start text-sm rounded-lg border border-gray-300 px-3 py-1.5 hover:bg-gray-50"
-        >
-          Gestionar proveedores →
-        </Link>
+    <div className="mx-auto max-w-5xl p-3 pb-24 sm:p-4">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <h1 className="text-xl font-bold">Órdenes de Compra</h1>
+        <Link to="/admin/proveedores" className={button}>Proveedores</Link>
       </div>
-      <p className="text-sm text-gray-600 mb-4 sm:mb-6">
-        Crea órdenes de compra con formato profesional. Selecciona un proveedor del catálogo
-        y sus datos se llenan automáticamente.
-      </p>
-
-      {success && (
-        <div className="mb-4 rounded-lg bg-green-50 border border-green-200 text-green-800 px-3 py-2 text-sm flex items-center justify-between">
-          <span>{success}</span>
-          <button onClick={() => setSuccess(null)} className="ml-3 text-green-600 hover:text-green-800"><X size={14} /></button>
-        </div>
+      {error && <p role="alert" className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
+      {message && <p role="status" className="mb-3 rounded-lg bg-green-50 p-3 text-sm text-green-800">{message}</p>}
+      {!!data?.orphanFolios.length && (
+        <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+          Folios con partidas sin cabecera reservados para conciliación · {data.orphanFolios.join(', ')}
+        </p>
       )}
-      {error && (
-        <div className="mb-4 rounded-lg bg-red-50 border border-red-200 text-red-700 px-3 py-2 text-sm flex items-center justify-between">
-          <span>{error}</span>
-          <button onClick={() => setError(null)} className="ml-3 text-red-600 hover:text-red-800"><X size={14} /></button>
-        </div>
-      )}
-
-      {/* ── Edit mode banner ──────────────────────────────────────────── */}
-      {editOcId && (
-        <div className="mb-4 flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
-          <Pencil size={15} className="shrink-0" />
-          <span>Editando <strong>{editOcId}</strong> — modifica los campos y presiona <strong>Guardar cambios</strong></span>
-          <button
-            onClick={() => resetForm()}
-            className="ml-auto flex items-center gap-1 text-xs font-semibold text-amber-700 hover:text-amber-900"
-          >
-            <X size={13} /> Cancelar
-          </button>
-        </div>
-      )}
-
-      {/* ── PO-styled form ────────────────────────────────────────────── */}
-      <form ref={formRef} onSubmit={handleSubmit} className="bg-white rounded-xl border shadow-sm overflow-hidden mb-8">
-
-        {/* PO header band — stacks on mobile, side-by-side ≥ sm */}
-        <div className="bg-[#162252] text-white px-4 sm:px-5 py-3 sm:py-4 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
-          <div>
-            <p className="font-bold text-sm sm:text-base">{COMPANY.name}</p>
-            <p className="text-xs opacity-80">{COMPANY.street}</p>
-            <p className="text-xs opacity-80">{COMPANY.city} · {COMPANY.phone}</p>
-          </div>
-          <div className="sm:text-right">
-            <p className="text-xs opacity-80">ORDEN DE COMPRA</p>
-            <p className="font-mono text-base sm:text-lg">{ocId}</p>
-            <p className="text-xs opacity-80 mt-1">FECHA: {toDDMMYYYY(fecha) || '—'}</p>
-          </div>
-        </div>
-
-        {/* OC ID + Fecha + Unidad — stack on mobile */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 sm:p-4 border-b bg-gray-50">
-          <Input
-            label="OC #"
-            value={ocId}
-            onChange={setOcId}
-            required
-            disabled={!!editOcId}   // lock ID in edit mode
-          />
-          <Input label="Fecha" type="date" value={fecha} onChange={setFecha} required />
-          <Input label="Unidad asignada" value={unidad} onChange={setUnidad} />
-        </div>
-
-        {/* Vendedor */}
-        <div className="p-4 border-b">
-          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Vendedor</p>
-          <select
-            value={vendorIdx}
-            onChange={(e) => setVendorIdx(Number(e.target.value))}
-            className="w-full border rounded px-3 py-2 text-sm bg-white mb-3"
-            required
-          >
-            <option value={-1}>— Selecciona un proveedor —</option>
-            {vendors?.map((v, i) => (
-              <option key={i} value={i}>{v.nombre} {v.rfc ? `· ${v.rfc}` : ''}</option>
-            ))}
-          </select>
-
-          {selectedVendor && (
-            <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700">
-              <p className="font-semibold">{selectedVendor.nombre}</p>
-              {selectedVendor.rfc && <p>RFC: {selectedVendor.rfc}</p>}
-              {selectedVendor.direccion && <p>{selectedVendor.direccion}</p>}
-              {(selectedVendor.ciudad || selectedVendor.estado || selectedVendor.cp) && (
-                <p>
-                  {[selectedVendor.ciudad, selectedVendor.estado].filter(Boolean).join(', ')}
-                  {selectedVendor.cp ? ` C.P. ${selectedVendor.cp}` : ''}
-                </p>
-              )}
-              {selectedVendor.telefono && <p>Tel: {selectedVendor.telefono}</p>}
-              {selectedVendor.contacto && <p>Contacto: {selectedVendor.contacto}</p>}
-            </div>
-          )}
-
-          {vendors && vendors.length === 0 && (
-            <p className="text-xs text-amber-700 mt-2">
-              No hay proveedores en el catálogo.{' '}
-              <Link to="/admin/proveedores" className="underline">Agrega el primero</Link>.
-            </p>
-          )}
-        </div>
-
-        {/* Líneas — card layout on mobile, table layout ≥ md */}
-        <div className="p-3 sm:p-4 border-b">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Items</p>
-            <button type="button" onClick={addLine}
-              className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-800">
-              <Plus size={14} /> Agregar línea
-            </button>
-          </div>
-
-          {/* ── Mobile: stacked cards ───────────────────────────────── */}
-          <div className="md:hidden space-y-3">
-            {lines.map((line, i) => {
-              const lineTotal = (parseFloat(line.cantidad) || 0) * (parseFloat(line.precio_unitario) || 0)
-              return (
-                <div key={i} className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-semibold text-gray-500">Línea #{i + 1}</span>
-                    {lines.length > 1 && (
-                      <button type="button" onClick={() => removeLine(i)}
-                        className="text-gray-400 hover:text-red-600 active:text-red-700"
-                        aria-label={`Eliminar línea ${i + 1}`}>
-                        <Trash2 size={16} />
-                      </button>
-                    )}
-                  </div>
-                  <input
-                    type="text"
-                    value={line.descripcion}
-                    onChange={(e) => updateLine(i, { descripcion: e.target.value })}
-                    placeholder="Descripción del item"
-                    className="w-full border rounded px-2 py-2 text-sm mb-2 bg-white"
-                  />
-                  <div className="grid grid-cols-2 gap-2 mb-2">
-                    <label className="flex flex-col text-xs text-gray-600">
-                      <span className="mb-0.5">Cantidad</span>
-                      <input
-                        type="number" step="any" min="0" inputMode="decimal"
-                        value={line.cantidad}
-                        onChange={(e) => updateLine(i, { cantidad: e.target.value })}
-                        className="border rounded px-2 py-2 text-sm text-right bg-white"
-                      />
-                    </label>
-                    <label className="flex flex-col text-xs text-gray-600">
-                      <span className="mb-0.5">Precio Unit.</span>
-                      <input
-                        type="number" step="any" min="0" inputMode="decimal"
-                        value={line.precio_unitario}
-                        onChange={(e) => updateLine(i, { precio_unitario: e.target.value })}
-                        className="border rounded px-2 py-2 text-sm text-right bg-white"
-                      />
-                    </label>
-                  </div>
-                  <div className="flex items-center justify-between border-t border-gray-200 pt-2">
-                    <span className="text-xs font-semibold text-gray-500 uppercase">Total línea</span>
-                    <span className="font-mono tabular-nums text-sm font-semibold">
-                      ${lineTotal.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-
-          {/* ── Desktop (≥ md): original table ───────────────────────── */}
-          <table className="hidden md:table w-full text-xs">
-            <thead className="text-gray-500">
-              <tr>
-                <th className="text-left font-semibold pb-1 w-8">#</th>
-                <th className="text-left font-semibold pb-1">Descripción</th>
-                <th className="text-right font-semibold pb-1 w-20">Cant.</th>
-                <th className="text-right font-semibold pb-1 w-32">P. Unit.</th>
-                <th className="text-right font-semibold pb-1 w-32">Total</th>
-                <th className="w-8"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((line, i) => {
-                const lineTotal = (parseFloat(line.cantidad) || 0) * (parseFloat(line.precio_unitario) || 0)
-                return (
-                  <tr key={i} className="border-t">
-                    <td className="py-1 text-gray-500">{i + 1}</td>
-                    <td className="py-1 pr-2">
-                      <input
-                        type="text"
-                        value={line.descripcion}
-                        onChange={(e) => updateLine(i, { descripcion: e.target.value })}
-                        placeholder="Descripción del item"
-                        className="w-full border rounded px-2 py-1 text-sm"
-                      />
-                    </td>
-                    <td className="py-1 pr-2">
-                      <input
-                        type="number" step="any" min="0"
-                        value={line.cantidad}
-                        onChange={(e) => updateLine(i, { cantidad: e.target.value })}
-                        className="w-full border rounded px-2 py-1 text-sm text-right"
-                      />
-                    </td>
-                    <td className="py-1 pr-2">
-                      <input
-                        type="number" step="any" min="0"
-                        value={line.precio_unitario}
-                        onChange={(e) => updateLine(i, { precio_unitario: e.target.value })}
-                        className="w-full border rounded px-2 py-1 text-sm text-right"
-                      />
-                    </td>
-                    <td className="py-1 pr-2 text-right font-mono tabular-nums">
-                      ${lineTotal.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-                    </td>
-                    <td className="py-1 text-right">
-                      {lines.length > 1 && (
-                        <button type="button" onClick={() => removeLine(i)}
-                          className="text-gray-400 hover:text-red-600">
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Totals + comments — stack on mobile */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-3 sm:p-4 border-b">
-          <div>
-            <label className="block text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">
-              Comentarios
+      {loading && !data && <p role="status" className="text-sm text-gray-600">Cargando órdenes…</p>}
+      {!data && !loading && <button type="button" onClick={() => void load()} className={button}>Reintentar</button>}
+      {data && (
+        <form ref={form} onSubmit={save} className="mb-6 space-y-4 rounded-xl border border-gray-200 bg-white p-3 sm:p-4">
+          <h2 className="text-lg font-semibold">{draft.folio ? 'Editar ' + draft.folio : 'Nueva orden de compra'}</h2>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-sm">Entidad emisora
+              <select aria-label="Entidad emisora" required className={input} value={draft.entity} onChange={(event) => setField('entity', event.target.value)}>
+                <option value="">Seleccionar</option>
+                {data.issuers.map((entry) => <option key={entry.id} value={entry.id}>{entry.name} · {entry.currency}</option>)}
+              </select>
             </label>
-            <textarea
-              value={comentarios}
-              onChange={(e) => setComentarios(e.target.value)}
-              rows={4}
-              className="w-full border rounded px-2 py-1.5 text-sm"
-              placeholder="Precios en Pesos Mexicanos…"
-            />
-            <p className="text-xs text-gray-400 mt-1">Precios en Pesos Mexicanos · IVA 16%</p>
+            <label className="text-sm">Proveedor
+              <select aria-label="Proveedor" required className={input} value={draft.vendor} onChange={(event) => setField('vendor', event.target.value)}>
+                <option value="">Seleccionar</option>
+                {data.vendors.map((entry, index) => <option key={index} value={vendorKey(entry.name, entry.rfc)}>{entry.name}</option>)}
+              </select>
+              {vendor && <span className="block text-xs text-gray-600">{vendor.rfc} · {vendor.address}</span>}
+            </label>
+            <label className="text-sm">Fecha de la orden
+              <input type="date" required className={input} value={draft.date} onChange={(event) => setField('date', event.target.value)} />
+            </label>
+            <label className="text-sm">Fecha de entrega
+              <input type="date" className={input} value={draft.deliveryDate} onChange={(event) => setField('deliveryDate', event.target.value)} />
+            </label>
+            <label className="text-sm">Unidad
+              <input required className={input} value={draft.unit} onChange={(event) => setField('unit', event.target.value)} />
+            </label>
           </div>
-
-          <div className="bg-gray-50 rounded-lg p-3 text-sm">
-            <Row label="Subtotal" value={subtotal} />
-            <Row label="IVA (16%)" value={iva} />
-            <RowEditable label="Envío" value={envio} onChange={setEnvio} />
-            <RowEditable label="Otros" value={otros} onChange={setOtros} />
-            <div className="border-t mt-2 pt-2">
-              <Row label="TOTAL" value={total} bold />
-            </div>
-          </div>
-        </div>
-
-        {/* Estado + entrega — stack on mobile */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 sm:p-4 border-b bg-gray-50">
-          <div>
-            <label className="block text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Estado</label>
-            <select
-              value={estado}
-              onChange={(e) => setEstado(e.target.value as EstadoOC)}
-              className="w-full border rounded px-2 py-1.5 text-sm bg-white"
-            >
-              {ESTADOS.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>
-          <Input label="Fecha entrega (opcional)" type="date" value={fechaEntrega} onChange={setFechaEntrega} />
-        </div>
-
-        {/* Submit / Cancel — stack on mobile, side-by-side ≥ sm */}
-        <div className="p-3 sm:p-4 flex flex-col sm:flex-row gap-2 sm:gap-3">
-          <button
-            type="submit"
-            disabled={submitting}
-            className="flex-1 rounded-lg bg-blue-600 text-white font-semibold py-3 sm:py-2.5 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50"
-          >
-            {submitting
-              ? (editOcId ? 'Guardando cambios…' : 'Guardando…')
-              : editOcId
-                ? `Guardar cambios · $${total.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`
-                : `Crear OC · $${total.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`
-            }
-          </button>
-          {editOcId && (
-            <button
-              type="button"
-              onClick={() => resetForm()}
-              disabled={submitting}
-              className="rounded-lg border border-gray-300 px-5 py-3 sm:py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-            >
-              Cancelar
-            </button>
+          {candidateLines.length > 0 && (
+            <label className="block text-sm">Vincular partida del pedido
+              <select className={input} value="" onChange={(event) => {
+                const selected = candidateLines.find((line) => line.id === event.target.value);
+                if (!selected) return;
+                const prior = draft.lines.length === 1 && !draft.lines[0]?.description ? [] : draft.lines;
+                setField('lines', [...prior, linkedLine(selected)]);
+              }}>
+                <option value="">Seleccionar partida</option>
+                {candidateLines.map((line) => <option key={line.id} value={line.id}>{line.partNum} · {line.pedidoId || line.descripcion}</option>)}
+              </select>
+            </label>
           )}
-        </div>
-      </form>
-
-      {/* ── List of OCs ───────────────────────────────────────────────── */}
-      <h2 className="text-lg font-semibold mb-2">Órdenes registradas</h2>
-      {ocs === null && <p className="text-sm text-gray-500">Cargando…</p>}
-      {ocs !== null && ocs.length === 0 && (
-        <p className="text-sm text-gray-500">Sin órdenes todavía.</p>
-      )}
-      {ocs !== null && ocs.length > 0 && (
-        <>
-          {/* ── Mobile: card list ──────────────────────────────────── */}
-          <div className="md:hidden space-y-2">
-            {ocs.map((o) => (
-              <div
-                key={o.oc_id}
-                className={`rounded-xl border bg-white p-3 shadow-sm ${editOcId === o.oc_id ? 'border-amber-400 bg-amber-50' : 'border-gray-200'}`}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="font-mono text-sm font-semibold flex items-center gap-1">
-                    <FileText size={12} className="text-gray-400" />
-                    {o.oc_id}
-                  </span>
-                  <span className="font-mono tabular-nums text-sm font-semibold">
-                    ${parseFloat(o.total || '0').toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-                  </span>
+          <div className="space-y-3">
+            {draft.lines.map((line, index) => (
+              <fieldset key={line.key} className="space-y-2 rounded-lg border border-gray-200 p-3">
+                <legend className="px-1 text-sm font-semibold">Partida {index + 1}</legend>
+                {line.requestLineId && <p className="break-all text-xs text-blue-700">Partida de pedido · {line.partNumber} · {line.requestLineId}</p>}
+                <label className="block text-sm">Descripción
+                  <input aria-label={'Descripción ' + (index + 1)} required className={input} readOnly={Boolean(line.requestLineId)} value={line.description} onChange={(event) => updateLine(line.key, { description: event.target.value })} />
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="text-sm">Cantidad
+                    <input aria-label={'Cantidad ' + (index + 1)} type="number" min="0.001" step="0.001" required className={input} readOnly={Boolean(line.requestLineId)} value={line.quantity} onChange={(event) => updateLine(line.key, { quantity: event.target.value })} />
+                  </label>
+                  <label className="text-sm">Precio unitario
+                    <input aria-label={'Precio unitario ' + (index + 1)} type="number" min="0" step="0.01" required className={input} value={line.unitPrice} onChange={(event) => updateLine(line.key, { unitPrice: event.target.value })} />
+                  </label>
                 </div>
-                <p className="text-sm text-gray-700 truncate">{o.proveedor}</p>
-                <p className="text-xs text-gray-500 mb-2">{o.fecha}</p>
-
-                <div className="flex items-center justify-between gap-2 mb-2">
-                  <select
-                    value={o.estado}
-                    disabled={changingEstado === o.oc_id}
-                    onChange={(e) => void handleEstadoChange(o.oc_id, e.target.value)}
-                    className={`border rounded px-2 py-1 text-xs font-semibold bg-white cursor-pointer transition-opacity flex-1
-                      ${estadoColor(o.estado)}
-                      ${changingEstado === o.oc_id ? 'opacity-50' : ''}
-                    `}
-                  >
-                    {ESTADOS.map((s) => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </div>
-
-                <div className="flex items-center justify-between gap-2 border-t border-gray-100 pt-2">
-                  <Link
-                    to={`/admin/ordenes-compra/${encodeURIComponent(o.oc_id)}`}
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 active:text-blue-800"
-                  >
-                    <Printer size={13} /> Ver
-                  </Link>
-                  <button
-                    onClick={() => void startEdit(o.oc_id)}
-                    disabled={loadingEdit}
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 active:text-amber-900 disabled:opacity-50"
-                  >
-                    <Pencil size={13} /> Editar
-                  </button>
-                  <button
-                    onClick={() => setConfirmDelete(o.oc_id)}
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-red-600 active:text-red-800"
-                  >
-                    <Trash2 size={13} /> Eliminar
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">{displayMoney(Math.round(Math.round((Number(line.quantity) || 0) * 1000) * cents(line.unitPrice) / 1000) / 100, currency)}</span>
+                  <button type="button" aria-label={'Quitar partida ' + (index + 1)} disabled={draft.lines.length < 2} className={button} onClick={() => setField('lines', draft.lines.filter((entry) => entry.key !== line.key))}>
+                    <Trash2 size={16} />
                   </button>
                 </div>
-              </div>
+              </fieldset>
             ))}
+            <button type="button" className={button} onClick={() => setField('lines', [...draft.lines, blankLine()])}>
+              <Plus size={16} className="inline" /> Agregar partida
+            </button>
           </div>
-
-          {/* ── Desktop (≥ md): table ──────────────────────────────── */}
-          <div className="hidden md:block overflow-x-auto bg-white border rounded-lg">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-3 py-2 text-left font-semibold text-gray-600">OC #</th>
-                  <th className="px-3 py-2 text-left font-semibold text-gray-600">Fecha</th>
-                  <th className="px-3 py-2 text-left font-semibold text-gray-600">Proveedor</th>
-                  <th className="px-3 py-2 text-right font-semibold text-gray-600">Total</th>
-                  <th className="px-3 py-2 text-left font-semibold text-gray-600">Estado</th>
-                  <th className="px-3 py-2 text-right font-semibold text-gray-600">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {ocs.map((o) => (
-                  <tr key={o.oc_id} className={`hover:bg-gray-50 ${editOcId === o.oc_id ? 'bg-amber-50' : ''}`}>
-                    <td className="px-3 py-2 font-mono">
-                      <FileText size={12} className="inline mr-1 text-gray-400" />
-                      {o.oc_id}
-                    </td>
-                    <td className="px-3 py-2 text-gray-600">{o.fecha}</td>
-                    <td className="px-3 py-2">{o.proveedor}</td>
-                    <td className="px-3 py-2 text-right font-mono tabular-nums">
-                      ${parseFloat(o.total || '0').toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-                    </td>
-
-                    {/* Inline status dropdown */}
-                    <td className="px-3 py-2">
-                      <select
-                        value={o.estado}
-                        disabled={changingEstado === o.oc_id}
-                        onChange={(e) => void handleEstadoChange(o.oc_id, e.target.value)}
-                        className={`border rounded px-1.5 py-0.5 text-xs font-semibold bg-white cursor-pointer transition-opacity
-                          ${estadoColor(o.estado)}
-                          ${changingEstado === o.oc_id ? 'opacity-50' : ''}
-                        `}
-                      >
-                        {ESTADOS.map((s) => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </td>
-
-                    {/* Actions */}
-                    <td className="px-3 py-2 text-right">
-                      <div className="flex items-center justify-end gap-3">
-                        <Link
-                          to={`/admin/ordenes-compra/${encodeURIComponent(o.oc_id)}`}
-                          className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-800"
-                        >
-                          <Printer size={12} /> Ver / Imprimir
-                        </Link>
-                        <button
-                          onClick={() => void startEdit(o.oc_id)}
-                          disabled={loadingEdit}
-                          className="inline-flex items-center gap-1 text-xs font-semibold text-gray-500 hover:text-amber-700 transition-colors disabled:opacity-50"
-                          title={`Editar ${o.oc_id}`}
-                        >
-                          <Pencil size={13} /> Editar
-                        </button>
-                        <button
-                          onClick={() => setConfirmDelete(o.oc_id)}
-                          className="text-gray-400 hover:text-red-600 transition-colors"
-                          title={`Eliminar ${o.oc_id}`}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="text-sm">Envío
+              <input type="number" min="0" step="0.01" className={input} value={draft.shipping} onChange={(event) => setField('shipping', event.target.value)} />
+            </label>
+            <label className="text-sm">Otros cargos
+              <input type="number" min="0" step="0.01" className={input} value={draft.other} onChange={(event) => setField('other', event.target.value)} />
+            </label>
           </div>
-        </>
+          <label className="block text-sm">Comentarios
+            <textarea className={input} value={draft.comments} onChange={(event) => setField('comments', event.target.value)} />
+          </label>
+          <dl className="space-y-1 text-sm">
+            <div className="flex justify-between"><dt>Subtotal</dt><dd>{displayMoney(subtotal / 100, currency)}</dd></div>
+            <div className="flex justify-between"><dt>{issuer?.taxLabel || 'Impuesto'}</dt><dd>{displayMoney(tax / 100, currency)}</dd></div>
+            <div className="flex justify-between font-bold"><dt>Total</dt><dd>{displayMoney(total / 100, currency)}</dd></div>
+          </dl>
+          <div className="flex flex-wrap gap-2">
+            <button type="submit" disabled={saving || !vendor || !issuer} className={primary}>{saving ? 'Guardando…' : 'Guardar orden'}</button>
+            {draft.folio && <button type="button" className={button} onClick={resetDraft}>Cancelar edición</button>}
+          </div>
+        </form>
       )}
 
-      {/* ── Delete confirmation modal ─────────────────────────────────── */}
-      {confirmDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-sm rounded-2xl bg-white shadow-xl p-6">
-            <div className="flex items-start gap-3 mb-4">
-              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-100">
-                <AlertTriangle size={18} className="text-red-600" />
-              </span>
-              <div>
-                <p className="font-semibold text-gray-900">¿Eliminar {confirmDelete}?</p>
-                <p className="mt-1 text-sm text-gray-500">
-                  Se eliminará el encabezado y todas las líneas de esta OC.
-                  Esta acción no se puede deshacer.
-                </p>
+      <h2 className="mb-3 text-lg font-semibold">Órdenes guardadas</h2>
+      {data && !data.orders.length && <p className="text-sm text-gray-600">Sin órdenes guardadas.</p>}
+      <div className="space-y-3">
+        {data?.orders.map((order) => (
+          <article key={order.folio} className="space-y-2 rounded-xl border border-gray-200 bg-white p-3">
+            <div className="flex flex-wrap justify-between gap-2">
+              <h3 className="break-all font-semibold">{order.folio}</h3>
+              <span className="font-semibold">{displayMoney(order.total, order.issuer?.currency)}</span>
+            </div>
+            <p className="text-sm text-gray-600">{order.vendorName} · {order.unit} · {order.status} · Recepción {order.receiptStatus.toLowerCase()}</p>
+            {order.lines.some((line) => line.requestId) && <p className="break-all text-xs text-blue-700">Pedidos vinculados · {[...new Set(order.lines.map((line) => line.requestId).filter(Boolean))].join(', ')}</p>}
+            <div className="flex flex-wrap gap-2">
+              <Link className={button} to={'/admin/ordenes-compra/' + encodeURIComponent(order.folio)}><Printer size={15} className="inline" /> Ver / Imprimir</Link>
+              {order.status === 'Borrador' && <button type="button" className={button} disabled={saving} onClick={() => edit(order)}>Editar</button>}
+              {data.canApprove && order.status === 'Borrador' && (
+                <>
+                  <button type="button" className={primary} disabled={saving} onClick={() => void changeStatus(order, 'Aprobada')}>Aprobar</button>
+                  <button type="button" className={button} disabled={saving} onClick={() => void changeStatus(order, 'Rechazada')}>Rechazar</button>
+                </>
+              )}
+              {data.canApprove && isApprovalRecorded(order) && order.status !== 'Pagada' && <button type="button" className={button} disabled={saving} onClick={() => void changeStatus(order, 'Pagada')}>Marcar pagada</button>}
+              {isApprovalRecorded(order) && <button type="button" className={button} disabled={saving} onClick={() => setReceiving(receiving === order.folio ? '' : order.folio)}>Recepciones</button>}
+              {['Borrador', 'Rechazada'].includes(order.status) && <button type="button" className={button} disabled={saving} onClick={() => setConfirmDelete(order.folio)}>Eliminar orden</button>}
+            </div>
+            {confirmDelete === order.folio && (
+              <div className="flex flex-wrap gap-2 rounded-lg bg-red-50 p-2 text-sm">
+                <span className="w-full">Eliminar {order.folio} del listado</span>
+                <button type="button" className={button} disabled={saving} onClick={() => void removeOrder(order)}>Confirmar eliminación</button>
+                <button type="button" className={button} onClick={() => setConfirmDelete('')}>Cancelar</button>
               </div>
-            </div>
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => setConfirmDelete(null)}
-                disabled={deleting}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => void handleDelete(confirmDelete)}
-                disabled={deleting}
-                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
-              >
-                {deleting ? 'Eliminando…' : 'Sí, eliminar'}
-              </button>
-            </div>
-          </div>
+            )}
+            {openOrder?.folio === order.folio && (
+              <ReceptionForm key={openOrder.folio} order={openOrder} saving={saving} onReceive={(lineId, quantity, reference) =>
+                run('order-receive', { folio: openOrder.folio, version: openOrder.version, lineId, quantity, reference }, (reply) => {
+                  setMessage(reply.folio + ' · recepción registrada');
+                })} />
+            )}
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ReceptionForm({ order, saving, onReceive }: {
+  order: PurchaseOrder;
+  saving: boolean;
+  onReceive: (lineId: string, quantity: string, reference: string) => Promise<void>;
+}) {
+  const [selected, setSelected] = useState('');
+  const [quantity, setQuantity] = useState('');
+  const [reference, setReference] = useState('');
+  const available = order.lines.filter((line) => pendingQuantity(line) > 0);
+  const line = available.find((entry) => entry.id === selected) || available[0];
+  return (
+    <div className="space-y-3 rounded-lg border border-gray-200 p-3">
+      <h4 className="text-sm font-semibold">Recepción por partida</h4>
+      {order.lines.map((entry) => (
+        <div key={entry.id} className="text-sm">
+          <p>{entry.description} · Recibidas {entry.received} de {entry.quantity} · Pendientes {pendingQuantity(entry)}</p>
+          {entry.receipts.map((receipt) => (
+            <p key={receipt.id} className="pl-2 text-xs text-gray-600">{receipt.quantity} · {receipt.by} · {receipt.reference || receipt.at}</p>
+          ))}
         </div>
+      ))}
+      {line && (
+        <form className="space-y-2" onSubmit={async (event) => {
+          event.preventDefault();
+          await onReceive(line.id, quantity, reference);
+        }}>
+          <label className="block text-sm">Partida a recibir
+            <select className={input} value={line.id} onChange={(event) => setSelected(event.target.value)}>
+              {available.map((entry) => <option key={entry.id} value={entry.id}>{entry.description}</option>)}
+            </select>
+          </label>
+          <label className="block text-sm">Cantidad recibida
+            <input className={input} type="number" min="0.001" max={pendingQuantity(line)} step="0.001" required value={quantity} onChange={(event) => setQuantity(event.target.value)} />
+          </label>
+          <label className="block text-sm">Referencia
+            <input className={input} value={reference} onChange={(event) => setReference(event.target.value)} />
+          </label>
+          <button type="submit" disabled={saving} className={primary}>Registrar recepción</button>
+        </form>
       )}
     </div>
-  )
-}
-
-// ── Helpers ────────────────────────────────────────────────────────────
-
-interface InputProps {
-  label: string
-  value: string
-  onChange: (v: string) => void
-  type?: string
-  required?: boolean
-  disabled?: boolean
-}
-function Input({ label, value, onChange, type = 'text', required, disabled }: InputProps) {
-  return (
-    <label className="flex flex-col text-xs text-gray-700">
-      <span className="font-semibold mb-0.5">{label}{required && ' *'}</span>
-      <input
-        type={type}
-        value={value}
-        required={required}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        className="border rounded px-2 py-1.5 text-sm disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
-      />
-    </label>
-  )
-}
-
-function Row({ label, value, bold }: { label: string; value: number; bold?: boolean }) {
-  return (
-    <div className={`flex justify-between items-center py-0.5 ${bold ? 'font-bold text-base' : ''}`}>
-      <span className="text-gray-600">{label}</span>
-      <span className="font-mono tabular-nums">
-        ${value.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-      </span>
-    </div>
-  )
-}
-
-function RowEditable({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
-  return (
-    <div className="flex justify-between items-center py-0.5">
-      <span className="text-gray-600">{label}</span>
-      <input
-        type="number" step="any" min="0"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-24 border rounded px-2 py-0.5 text-sm text-right font-mono"
-      />
-    </div>
-  )
+  );
 }

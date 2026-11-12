@@ -15,7 +15,7 @@ export default function PartCard({ part }: PartCardProps) {
   const [added, setAdded] = useState(false);
 
   const canOrder = role === 'jefe_taller';
-  const alreadyInCart = cartItems.some((i) => i.part_number === part.part_number && !i.isManual);
+  const alreadyInCart = cartItems.some((i) => i.part_number === part.part_number && !i.isManual && !i.equipment);
 
   const needsOrder =
     part.stock_quantity === 0 || part.stock_quantity <= part.stock_minimum;
@@ -33,7 +33,7 @@ export default function PartCard({ part }: PartCardProps) {
       description: part.description,
       quantity: 1,
       unit_price: part.unit_price,
-      equipment: part.compatible_units[0] ?? part.supplier ?? '',
+      equipment: '',
       urgencia: part.stock_quantity === 0 ? 'Urgente' : 'Normal',
       notes: '',
       isManual: false,
@@ -54,9 +54,14 @@ export default function PartCard({ part }: PartCardProps) {
 
           <div className="flex gap-3 text-xs text-text-secondary mb-1 flex-wrap">
             <span>{part.oem_ref ? `OEM: ${part.oem_ref}` : 'OEM: -'}</span>
-            <span>Ubicacion: {part.location}</span>
+            <span>Fuente {part.location}</span>
+            <span>Mínimo {part.stock_minimum}</span>
             {part.supplier && <span>Proveedor: {part.supplier}</span>}
           </div>
+
+          {part.compatible_units.length > 0 && (
+            <p className="text-xs text-text-secondary">Compatibilidad {part.compatible_units.join(', ')}</p>
+          )}
 
           {part.alternatives.length > 0 && (
             <p className="text-xs text-amber">

@@ -1,4 +1,5 @@
 import { requireSession } from '../_lib/session-auth.js';
+import { hasIdentityUnit } from '../_lib/hermes-identity.js';
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 
@@ -7,7 +8,8 @@ export default async function handler(req, res) {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'Method not allowed' });
   }
-  if (!requireSession(req, res)) return;
+  const session = await requireSession(req, res);
+  if (!session) return;
 
   const baseUrl = process.env.OPSOS_INTAKE_URL;
   const secret = process.env.OPSOS_INTAKE_SECRET;
@@ -17,13 +19,18 @@ export default async function handler(req, res) {
 
   try {
     const body = await readJsonBody(req);
+    const unit = String(body.selectedUnit || '').trim();
+    const fieldUnit = String(body.fields?.equipment_or_unit_id || '').trim();
+    if ([unit, fieldUnit].some((id) => id && id !== 'General' && !hasIdentityUnit(session, id))) {
+      return res.status(403).json({ error: 'Unidad fuera de tu asignación' });
+    }
     const upstream = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/intake/messages`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${secret}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(toOpsosPayload(body)),
+      body: JSON.stringify(toOpsosPayload(body, session)),
       signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
     });
 
@@ -34,7 +41,7 @@ export default async function handler(req, res) {
   }
 }
 
-function toOpsosPayload(body = {}) {
+function toOpsosPayload(body, session) {
   const text = String(body.text || '');
   const selectedUnit = String(body.selectedUnit || '').trim();
   const fields = {
@@ -47,8 +54,8 @@ function toOpsosPayload(body = {}) {
   return {
     source_channel: 'hermes_chat',
     external_message_id: body.messageId || `hermes-chat-${Date.now()}`,
-    sender_ref: body.userRef || body.userName || 'hermes-chat',
-    submitted_by: body.userName ? `hermes_chat:${body.userName}` : '',
+    sender_ref: session.userId,
+    submitted_by: `hermes_chat:${session.userName}`,
     text,
     fields,
     media: body.photoBase64

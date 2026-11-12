@@ -1,30 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { WorkOrder, StatusLogEntry } from '../types/workorder';
 
-// ── Mock external dependencies before importing the store ────────────────────
-
-vi.mock('../lib/sheets-api', () => ({
-  readRange: vi.fn(),
-  appendRow: vi.fn().mockResolvedValue(undefined),
-  updateCell: vi.fn().mockResolvedValue(undefined),
-  SHEET_TABS: {
-    ORDENES_TRABAJO: 'ORDENES_TRABAJO',
-    OT_STATUS_LOG: 'OT_STATUS_LOG',
-    AVERIAS: 'Averías',
-  },
+vi.mock('../lib/workshop-api', () => ({
+  requestWorkshop: vi.fn(),
+  workshopActorId: () => 'staff-test',
+  WorkshopApiError: class extends Error { status = 503; },
 }));
 
-vi.mock('../lib/supabase', () => ({
-  supabase: null,
-}));
+vi.mock('./auth-store', () => ({ useAuthStore: { getState: () => ({ role: 'jefe_taller' }) } }));
 
-vi.mock('../lib/date-utils', () => ({
-  mexicoDate: vi.fn().mockReturnValue('05/04/2026'),
-  mexicoTime: vi.fn().mockReturnValue('10:30:00'),
-}));
-
-const { readRange } = await import('../lib/sheets-api');
+const { requestWorkshop } = await import('../lib/workshop-api');
 const { useWorkOrderStore } = await import('./workorder-store');
+
+function mockOrders(orders: string[][] = [], history: string[][] = []) {
+  vi.mocked(requestWorkshop).mockResolvedValueOnce({ orders, history });
+}
 
 // ── Helper row builders ───────────────────────────────────────────────────────
 
@@ -85,9 +75,7 @@ describe('useWorkOrderStore — fetchWorkOrders', () => {
   });
 
   it('parses valid OT rows into workorders', async () => {
-    vi.mocked(readRange)
-      .mockResolvedValueOnce([buildOTRow()]) // ORDENES_TRABAJO
-      .mockResolvedValueOnce([]);             // OT_STATUS_LOG
+    mockOrders([buildOTRow()], []);
 
     await useWorkOrderStore.getState().fetchWorkOrders();
 
@@ -100,16 +88,14 @@ describe('useWorkOrderStore — fetchWorkOrders', () => {
 
   it('skips rows whose OT_ID does not start with "OT-"', async () => {
     const invalidRow = buildOTRow({ 1: 'INVALID-001' });
-    vi.mocked(readRange)
-      .mockResolvedValueOnce([invalidRow])
-      .mockResolvedValueOnce([]);
+    mockOrders([invalidRow], []);
 
     await useWorkOrderStore.getState().fetchWorkOrders();
     expect(useWorkOrderStore.getState().workorders).toHaveLength(0);
   });
 
   it('sets fetched=true and loading=false after successful fetch', async () => {
-    vi.mocked(readRange).mockResolvedValue([]);
+    mockOrders();
     await useWorkOrderStore.getState().fetchWorkOrders();
 
     const state = useWorkOrderStore.getState();
@@ -117,23 +103,26 @@ describe('useWorkOrderStore — fetchWorkOrders', () => {
     expect(state.loading).toBe(false);
   });
 
-  it('still sets fetched=true and loading=false when both reads reject (allSettled)', async () => {
-    // fetchWorkOrders uses Promise.allSettled, so individual failures don't throw.
-    // The store proceeds with empty arrays and marks fetched=true.
-    vi.mocked(readRange).mockRejectedValue(new Error('Network failure'));
+  it('exposes a read failure to the page', async () => {
+    vi.mocked(requestWorkshop).mockRejectedValueOnce(new Error('Network failure'));
     await useWorkOrderStore.getState().fetchWorkOrders();
 
     const state = useWorkOrderStore.getState();
     expect(state.loading).toBe(false);
     expect(state.fetched).toBe(true);
-    // workorders and statusLog default to empty arrays on failure
+    expect(state.error).toBe('Network failure');
     expect(state.workorders).toHaveLength(0);
   });
 
-  it('does not fire a second fetch when loading=true', async () => {
-    useWorkOrderStore.setState({ loading: true });
+  it('keeps the newest refresh when reads finish out of order', async () => {
+    let finishPrevious!: (value: unknown) => void;
+    vi.mocked(requestWorkshop).mockImplementationOnce(() => new Promise((resolve) => { finishPrevious = resolve; }));
+    mockOrders([buildOTRow({ 9: 'En Reparación' })]);
+    const previous = useWorkOrderStore.getState().fetchWorkOrders();
     await useWorkOrderStore.getState().fetchWorkOrders();
-    expect(vi.mocked(readRange)).not.toHaveBeenCalled();
+    finishPrevious({ orders: [buildOTRow()], history: [] });
+    await previous;
+    expect(useWorkOrderStore.getState().workorders[0]!.estado).toBe('En Reparación');
   });
 });
 
@@ -145,9 +134,7 @@ describe('applyStatusLog — via fetchWorkOrders', () => {
 
   it('applies estado change from log to workorder', async () => {
     const otId = 'OT-20260405-1030-ab12';
-    vi.mocked(readRange)
-      .mockResolvedValueOnce([buildOTRow({ 1: otId, 9: 'Abierta' })])
-      .mockResolvedValueOnce([buildLogRow(otId, 'estado', 'Abierta', 'En Reparación')]);
+    mockOrders([buildOTRow({ 1: otId, 9: 'Abierta' })], [buildLogRow(otId, 'estado', 'Abierta', 'En Reparación')]);
 
     await useWorkOrderStore.getState().fetchWorkOrders();
     const wo = useWorkOrderStore.getState().workorders[0]!;
@@ -156,9 +143,7 @@ describe('applyStatusLog — via fetchWorkOrders', () => {
 
   it('applies mecanico_asignado change from log', async () => {
     const otId = 'OT-20260405-1030-ab12';
-    vi.mocked(readRange)
-      .mockResolvedValueOnce([buildOTRow({ 1: otId, 8: 'Juan' })])
-      .mockResolvedValueOnce([buildLogRow(otId, 'mecanico_asignado', 'Juan', 'Pedro')]);
+    mockOrders([buildOTRow({ 1: otId, 8: 'Juan' })], [buildLogRow(otId, 'mecanico_asignado', 'Juan', 'Pedro')]);
 
     await useWorkOrderStore.getState().fetchWorkOrders();
     expect(useWorkOrderStore.getState().workorders[0]!.mecanico_asignado).toBe('Pedro');
@@ -166,9 +151,7 @@ describe('applyStatusLog — via fetchWorkOrders', () => {
 
   it('applies progreso change from log (numeric)', async () => {
     const otId = 'OT-20260405-1030-ab12';
-    vi.mocked(readRange)
-      .mockResolvedValueOnce([buildOTRow({ 1: otId, 16: '0' })])
-      .mockResolvedValueOnce([buildLogRow(otId, 'progreso', '0', '75')]);
+    mockOrders([buildOTRow({ 1: otId, 16: '0' })], [buildLogRow(otId, 'progreso', '0', '75')]);
 
     await useWorkOrderStore.getState().fetchWorkOrders();
     expect(useWorkOrderStore.getState().workorders[0]!.progreso).toBe(75);
@@ -176,9 +159,7 @@ describe('applyStatusLog — via fetchWorkOrders', () => {
 
   it('applies prioridad change from log', async () => {
     const otId = 'OT-20260405-1030-ab12';
-    vi.mocked(readRange)
-      .mockResolvedValueOnce([buildOTRow({ 1: otId, 7: 'MEDIA' })])
-      .mockResolvedValueOnce([buildLogRow(otId, 'prioridad', 'MEDIA', 'CRITICA')]);
+    mockOrders([buildOTRow({ 1: otId, 7: 'MEDIA' })], [buildLogRow(otId, 'prioridad', 'MEDIA', 'CRITICA')]);
 
     await useWorkOrderStore.getState().fetchWorkOrders();
     expect(useWorkOrderStore.getState().workorders[0]!.prioridad).toBe('CRITICA');
@@ -186,9 +167,7 @@ describe('applyStatusLog — via fetchWorkOrders', () => {
 
   it('applies costo_estimado change from log (numeric)', async () => {
     const otId = 'OT-20260405-1030-ab12';
-    vi.mocked(readRange)
-      .mockResolvedValueOnce([buildOTRow({ 1: otId, 13: '0' })])
-      .mockResolvedValueOnce([buildLogRow(otId, 'costo_estimado', '0', '15000')]);
+    mockOrders([buildOTRow({ 1: otId, 13: '0' })], [buildLogRow(otId, 'costo_estimado', '0', '15000')]);
 
     await useWorkOrderStore.getState().fetchWorkOrders();
     expect(useWorkOrderStore.getState().workorders[0]!.costo_estimado).toBe(15000);
@@ -196,9 +175,7 @@ describe('applyStatusLog — via fetchWorkOrders', () => {
 
   it('applies log entries in timestamp order (earliest first)', async () => {
     const otId = 'OT-20260405-1030-ab12';
-    vi.mocked(readRange)
-      .mockResolvedValueOnce([buildOTRow({ 1: otId, 9: 'Abierta' })])
-      .mockResolvedValueOnce([
+    mockOrders([buildOTRow({ 1: otId, 9: 'Abierta' })], [
         // Deliberately out of order — later timestamp appears first in array
         buildLogRow(otId, 'estado', 'En Reparación', 'Resuelta', '2026-04-05 11:00:00'),
         buildLogRow(otId, 'estado', 'Abierta', 'En Reparación', '2026-04-05 10:35:00'),
@@ -211,9 +188,7 @@ describe('applyStatusLog — via fetchWorkOrders', () => {
 
   it('ignores log entries for unknown OT IDs', async () => {
     const otId = 'OT-20260405-1030-ab12';
-    vi.mocked(readRange)
-      .mockResolvedValueOnce([buildOTRow({ 1: otId, 9: 'Abierta' })])
-      .mockResolvedValueOnce([
+    mockOrders([buildOTRow({ 1: otId, 9: 'Abierta' })], [
         buildLogRow('OT-99999999-0000-zzzz', 'estado', 'Abierta', 'Resuelta'),
       ]);
 
@@ -255,73 +230,42 @@ describe('useWorkOrderStore — getWorkOrderById', () => {
   });
 });
 
-describe('useWorkOrderStore — updateOTField (optimistic)', () => {
+describe('useWorkOrderStore — updateOTField', () => {
+  const otId = 'OT-20260405-1030-ab12';
+
   beforeEach(() => {
     resetStore();
     vi.clearAllMocks();
   });
 
-  it('optimistically updates estado in the store immediately', async () => {
-    const wo: WorkOrder = {
-      ot_id: 'OT-20260405-1030-ab12',
-      fecha: '',
-      unidad: 'CA20',
-      tipo_averia: '',
-      descripcion: '',
-      severidad: '',
-      prioridad: 'MEDIA',
-      mecanico_asignado: '',
-      estado: 'Abierta',
-      foto_url: '',
-      averia_ref: '',
-      partes_necesarias: '',
-      costo_estimado: 0,
-      fecha_cierre: '',
-      observaciones: '',
-      progreso: 0,
-    };
-    useWorkOrderStore.setState({ workorders: [wo], fetched: true });
-
-    const { appendRow } = await import('../lib/sheets-api');
-    vi.mocked(appendRow).mockResolvedValue(undefined);
-
-    await useWorkOrderStore
-      .getState()
-      .updateOTField('OT-20260405-1030-ab12', 'estado', 'En Reparación', 'testUser', 'mecanico');
-
+  it('refreshes the order and actor history after a confirmed write', async () => {
+    const { updateOTField } = useWorkOrderStore.getState();
+    vi.mocked(requestWorkshop).mockResolvedValueOnce({ otId });
+    mockOrders([buildOTRow({ 9: 'En Reparación' })], [
+      buildLogRow(otId, 'estado', 'Abierta', 'En Reparación'),
+    ]);
+    await updateOTField(otId, 'estado', 'En Reparación');
+    expect(requestWorkshop).toHaveBeenCalledWith('transition', {
+      otId, field: 'estado', value: 'En Reparación', mutationId: expect.any(String),
+    });
     expect(useWorkOrderStore.getState().workorders[0]!.estado).toBe('En Reparación');
+    const entry: StatusLogEntry = useWorkOrderStore.getState().statusLog[0]!;
+    expect(entry.new_value).toBe('En Reparación');
+    expect(entry.changed_by).toBe('system');
   });
 
-  it('adds a new statusLog entry after update', async () => {
-    const wo: WorkOrder = {
-      ot_id: 'OT-20260405-1030-ab12',
-      fecha: '',
-      unidad: 'CA20',
-      tipo_averia: '',
-      descripcion: '',
-      severidad: '',
-      prioridad: 'MEDIA',
-      mecanico_asignado: '',
-      estado: 'Abierta',
-      foto_url: '',
-      averia_ref: '',
-      partes_necesarias: '',
-      costo_estimado: 0,
-      fecha_cierre: '',
-      observaciones: '',
-      progreso: 0,
-    };
-    useWorkOrderStore.setState({ workorders: [wo], statusLog: [] });
-
-    await useWorkOrderStore
-      .getState()
-      .updateOTField('OT-20260405-1030-ab12', 'estado', 'Resuelta', 'admin', 'admin');
-
-    const log = useWorkOrderStore.getState().statusLog;
-    expect(log).toHaveLength(1);
-    const entry: StatusLogEntry = log[0]!;
-    expect(entry.ot_id).toBe('OT-20260405-1030-ab12');
-    expect(entry.field).toBe('estado');
-    expect(entry.new_value).toBe('Resuelta');
+  it('preserves the last confirmed state and reuses the operation ID after disconnect', async () => {
+    mockOrders([buildOTRow()]);
+    await useWorkOrderStore.getState().fetchWorkOrders();
+    const { updateOTField } = useWorkOrderStore.getState();
+    vi.mocked(requestWorkshop).mockRejectedValueOnce(new Error('Conexión interrumpida'));
+    await expect(updateOTField(otId, 'estado', 'En Reparación')).rejects.toThrow('Conexión interrumpida');
+    expect(useWorkOrderStore.getState().workorders[0]!.estado).toBe('Abierta');
+    vi.mocked(requestWorkshop).mockResolvedValueOnce({ otId });
+    mockOrders([buildOTRow({ 9: 'En Reparación' })]);
+    await updateOTField(otId, 'estado', 'En Reparación');
+    const transitions = vi.mocked(requestWorkshop).mock.calls.filter(([endpoint]) => endpoint === 'transition');
+    expect(transitions).toHaveLength(2);
+    expect(transitions[0]?.[1]?.mutationId).toBe(transitions[1]?.[1]?.mutationId);
   });
 });

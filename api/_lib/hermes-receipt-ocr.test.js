@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readReceipt } from './hermes-receipt-ocr.js';
-import { signSession } from './session-auth.js';
+import { createHermesIdentityFixture } from '../../tests/helpers/hermes-auth-fixture.js';
 import handler from '../hermes-ai/photo_to_failure.js';
 
 const jpeg = { media_type: 'image/jpeg', image_base64: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64') };
@@ -44,8 +44,11 @@ describe('receipt OCR recovery', () => {
     vi.stubEnv('HERMES_RECEIPT_OCR_MODEL', '');
     const fetch = provider(invoice);
     await expect(readReceipt(jpeg)).rejects.toMatchObject({ status: 503 });
+    const fixture = createHermesIdentityFixture({ role: 'operador' });
+    for (const [key, value] of Object.entries(fixture.env)) vi.stubEnv(key, value);
+    vi.stubGlobal('fetch', vi.fn((url, init) => fixture.fetchIdentity(url, init) ?? fetch(url, init)));
     const res = { setHeader: vi.fn(), status: vi.fn().mockReturnThis(), json: vi.fn() };
-    await handler({ method: 'POST', query: { mode: 'receipt' }, headers: { cookie: `hermes_session=${signSession('operador')}` }, body: jpeg }, res);
+    await handler({ method: 'POST', query: { mode: 'receipt' }, headers: { cookie: fixture.cookie }, body: jpeg }, res);
     expect(res.status).toHaveBeenCalledWith(403);
     expect(fetch).not.toHaveBeenCalled();
   });

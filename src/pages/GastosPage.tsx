@@ -79,8 +79,11 @@ function filterByMonth(gastos: GastoCompra[], year: number, month: number): Gast
   return gastos.filter((g) => {
     if (g.status === 'Eliminado') return false;
     if (/^(?:(?:TEST|QA|DEMO)(?:[-_\s]|$)|\[SWARM-TEST\])/i.test(g.gasto_id.trim())) return false;
-    const date = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(g.fecha.trim());
-    return !!date && Number(date[2]) === month && Number(date[3]) === year;
+    const date = g.fecha.trim();
+    const iso = /^(\d{4})-(\d{2})-(\d{2})(?:T|$)/.exec(date);
+    if (iso) return Number(iso[2]) === month && Number(iso[1]) === year;
+    const local = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(date);
+    return !!local && Number(local[2]) === month && Number(local[3]) === year;
   });
 }
 
@@ -93,8 +96,7 @@ function byUnit(gastos: GastoCompra[]) {
   }
   return Object.entries(map)
     .map(([name, value]) => ({ name, value }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 12);
+    .sort((a, b) => b.value - a.value);
 }
 
 function byType(gastos: GastoCompra[]) {
@@ -195,14 +197,14 @@ export default function GastosPage() {
   const navigate = useNavigate();
   const role = useAuthStore((s) => s.role);
   const userName = useAuthStore((s) => s.userName);
-  const { gastos, loading, fetchGastos, deleteGasto } = useGastosStore();
+  const { gastos, loading, error, fetchGastos, deleteGasto } = useGastosStore();
 
   const [tab, setTab] = useState<Tab>('resumen');
 
   // ── Month selector state (defaults to current month) ─────────────────────
-  const now = new Date();
-  const [selectedYear, setSelectedYear]   = useState<number>(now.getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState<number>(now.getMonth() + 1);
+  const [, currentMonth = 1, currentYear = new Date().getFullYear()] = mexicoDate().split('/').map(Number);
+  const [selectedYear, setSelectedYear] = useState(currentYear);
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
 
   // ── Unit selection state (for PDF export) ────────────────────────────────
   const [selectedUnits, setSelectedUnits] = useState<Set<string>>(new Set());
@@ -211,8 +213,7 @@ export default function GastosPage() {
   const [generating, setGenerating] = useState<boolean>(false);
   const [toast, setToast] = useState<ToastState | null>(null);
 
-  const canCreate = role === 'gerencia' || role === 'supervisor' ||
-                    role === 'jefe_taller' || role === 'coordinador';
+  const canCreate = role === 'gerencia' || role === 'jefe_taller' || role === 'coordinador';
 
   useEffect(() => {
     fetchGastos();
@@ -223,15 +224,14 @@ export default function GastosPage() {
     [gastos, selectedYear, selectedMonth]
   );
   const totalMes  = monthly.reduce((s, g) => s + g.total, 0);
-  const unitData  = byUnit(monthly);
+  const unitData = useMemo(() => byUnit(monthly), [monthly]);
   const typeMap   = byType(monthly);
   const unitMax   = unitData[0]?.value ?? 0;
 
   // When the month or data changes, reset selected units to ALL visible
   useEffect(() => {
     setSelectedUnits(new Set(unitData.map((u) => u.name)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedYear, selectedMonth, unitData.length]);
+  }, [unitData]);
 
   // Auto-dismiss toast after 3 seconds
   useEffect(() => {
@@ -277,6 +277,17 @@ export default function GastosPage() {
       setToast({ kind: 'error', message: `No se pudo generar el PDF: ${msg}` });
     } finally {
       setGenerating(false);
+    }
+  }
+
+  async function handleDelete(gasto: GastoCompra) {
+    const scope = gasto.receipt_group ? 'el gasto completo y sus repartos' : 'este gasto';
+    if (!window.confirm(`¿Eliminar ${scope}?`)) return;
+    try {
+      await deleteGasto(gasto.gasto_id);
+      setToast({ kind: 'success', message: 'Gasto eliminado.' });
+    } catch (cause) {
+      setToast({ kind: 'error', message: cause instanceof Error ? cause.message : 'No se confirmó la eliminación.' });
     }
   }
 
@@ -335,6 +346,8 @@ export default function GastosPage() {
           )}
         </div>
       </div>
+
+      {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
 
       {/* Download PDF CTA */}
       {canCreate && monthly.length > 0 && (
@@ -483,7 +496,7 @@ export default function GastosPage() {
           )}
 
           {/* Empty state */}
-          {!loading && monthly.length === 0 && (
+          {!loading && !error && monthly.length === 0 && (
             <div className="bg-white rounded-xl border border-border p-8 text-center">
               <Receipt size={32} className="text-text-secondary mx-auto mb-2" />
               <p className="text-sm text-text-secondary">Sin gastos este mes</p>
@@ -506,7 +519,7 @@ export default function GastosPage() {
           {loading && (
             <div className="text-center py-10 text-sm text-text-secondary">Cargando…</div>
           )}
-          {!loading && monthly.length === 0 && (
+          {!loading && !error && monthly.length === 0 && (
             <div className="text-center py-10 text-sm text-text-secondary">Sin gastos este mes</div>
           )}
           {monthly.slice().reverse().map((g) => (
@@ -514,7 +527,7 @@ export default function GastosPage() {
               key={g.gasto_id}
               gasto={g}
               canDelete={canCreate}
-              onDelete={() => deleteGasto(g.gasto_id)}
+              onDelete={() => { void handleDelete(g); }}
             />
           ))}
         </div>
@@ -555,6 +568,9 @@ function GastoRow({
           <span style={{ color }}>{TYPE_ICONS_SM[gasto.tipo]}</span>
           {gasto.tipo}
         </p>
+        {/^https:\/\//i.test(gasto.imagen_url) && (
+          <a className="mt-1 inline-block text-xs font-semibold text-blue-800" href={gasto.imagen_url} target="_blank" rel="noreferrer">Abrir recibo</a>
+        )}
       </div>
       <div className="text-right flex items-center gap-3">
         <div>

@@ -34,6 +34,9 @@ function buildTelegramMessage(changes) {
 }
 
 async function sendTelegramPriceAlert(changes) {
+  if (process.env.HERMES_TELEGRAM_PRICE_ALERTS_ENABLED !== 'true') {
+    return { sent: false, reason: 'telegram_disabled' };
+  }
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_PRICE_ALERT_CHAT_ID;
 
@@ -61,49 +64,57 @@ async function sendTelegramPriceAlert(changes) {
 
 const WORKSHOP = ['mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
 
-export default async function handler(req, res) {
-  res.setHeader('Cache-Control', 'no-store');
-  if (req.method === 'OPTIONS') {
-    res.setHeader('Allow', 'GET, POST, OPTIONS');
-    return res.status(204).end();
-  }
-  if (req.method !== 'GET' && req.method !== 'POST') {
-    res.setHeader('Allow', 'GET, POST, OPTIONS');
-    return res.status(405).json({ error: 'Método no permitido' });
-  }
-  if (!requireSession(req, res, req.method === 'GET' ? WORKSHOP : WORKSHOP.slice(1))) return;
+export function createPartsHandler({ readRows = readHermesRows, sendAlert = sendTelegramPriceAlert } = {}) {
+  return async function handler(req, res) {
+    res.setHeader('Cache-Control', 'no-store');
+    if (req.method === 'OPTIONS') {
+      res.setHeader('Allow', 'GET, POST, OPTIONS');
+      return res.status(204).end();
+    }
+    if (req.method !== 'GET' && req.method !== 'POST') {
+      res.setHeader('Allow', 'GET, POST, OPTIONS');
+      return res.status(405).json({ error: 'Método no permitido' });
+    }
+    const session = await requireSession(req, res, req.method === 'GET' ? WORKSHOP : WORKSHOP.slice(1));
+    if (!session) return;
 
-  try {
-    if (req.method === 'GET') {
-      const query = String(req.query?.q ?? '').trim().slice(0, 120);
-      if (!query) return res.status(200).json([]);
-      return res.status(200).json(searchInventory(await readHermesRows(PARTS_RANGE), query, req.query?.equipo));
-    }
+    try {
+      if (req.method === 'GET') {
+        const query = String(req.query?.q ?? '').trim().slice(0, 120);
+        if (!query) return res.status(200).json([]);
+        return res.status(200).json(searchInventory(await readRows(PARTS_RANGE), query, req.query?.equipo));
+      }
 
-    const supplier = String(req.body?.supplier ?? '').trim();
-    const parts = req.body?.parts;
-    const excludedIds = Array.isArray(req.body?.expense_ids) ? req.body.expense_ids.slice(0, 100) : [];
-    if (!supplier || !Array.isArray(parts) || parts.length === 0 || parts.length > 100) {
-      return res.status(400).json({ error: 'Indica el proveedor y entre 1 y 100 líneas.' });
+      const supplier = String(req.body?.supplier ?? '').trim();
+      const parts = req.body?.parts;
+      const excludedIds = Array.isArray(req.body?.expense_ids) ? req.body.expense_ids.slice(0, 100) : [];
+      if (!supplier || !Array.isArray(parts) || parts.length === 0 || parts.length > 100) {
+        return res.status(400).json({ error: 'Indica el proveedor y entre 1 y 100 líneas.' });
+      }
+      if (process.env.HERMES_EXPENSE_PRICE_CURRENCY !== 'MXN') {
+        return res.status(503).json({ error: 'La moneda del historial está pendiente de confirmar.' });
+      }
+      const assigned = new Set((session.assignedUnits || []).map((unit) => String(unit).trim().toUpperCase()));
+      const rows = (await readRows(EXPENSES_RANGE)).filter((row) =>
+        session.allUnits === true || assigned.has(String(row[10] ?? '').trim().toUpperCase()));
+      const prices = recoverExpensePrices(rows, supplier, excludedIds);
+      const { compared, unmatched, comparisons, changes } = compareQuote(parts, supplier, prices);
+      const telegram = changes.length && req.body?.notify === true
+        ? await sendAlert(changes).catch(() => ({ sent: false, reason: 'telegram_unavailable' }))
+        : { sent: false, reason: 'not_requested' };
+      return res.status(200).json({
+        success: true,
+        compared,
+        unmatched,
+        price_comparisons: comparisons,
+        price_changes: changes,
+        telegram_sent: telegram.sent,
+        telegram_reason: telegram.reason,
+      });
+    } catch {
+      return res.status(503).json({ error: 'No se pudo leer el historial en Google Sheets.' });
     }
-    if (process.env.HERMES_EXPENSE_PRICE_CURRENCY !== 'MXN') {
-      return res.status(503).json({ error: 'La moneda del historial está pendiente de confirmar.' });
-    }
-    const rows = await readHermesRows(EXPENSES_RANGE);
-    const prices = recoverExpensePrices(rows, supplier, excludedIds);
-    const { compared, unmatched, changes } = compareQuote(parts, supplier, prices);
-    const telegram = changes.length && req.body?.notify === true
-      ? await sendTelegramPriceAlert(changes).catch(() => ({ sent: false, reason: 'telegram_unavailable' }))
-      : { sent: false, reason: 'not_requested' };
-    return res.status(200).json({
-      success: true,
-      compared,
-      unmatched,
-      price_changes: changes,
-      telegram_sent: telegram.sent,
-      telegram_reason: telegram.reason,
-    });
-  } catch {
-    return res.status(503).json({ error: 'No se pudo leer el historial en Google Sheets.' });
-  }
+  };
 }
+
+export default createPartsHandler();

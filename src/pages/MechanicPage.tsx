@@ -20,13 +20,12 @@ const TABS: { id: Tab; label: string }[] = [
 export default function MechanicPage() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<Tab>('inicio');
-  const { workorders, fetched, fetchWorkOrders, loading } = useWorkOrderStore();
+  const { workorders, fetched, fetchWorkOrders, loading, error } = useWorkOrderStore();
 
   useEffect(() => {
     if (!fetched) fetchWorkOrders();
   }, [fetched, fetchWorkOrders]);
 
-  // Show all active orders to mechanics (role-based, not name-based)
   const activeOrders = workorders.filter((ot) => ot.estado !== 'Completado');
 
   return (
@@ -55,13 +54,13 @@ export default function MechanicPage() {
         <div className="py-4">
           <h2 className="font-semibold text-lg text-text mb-3">
             Órdenes Activas
-            {!loading && (
+            {!loading && !error && fetched && (
               <span className="text-sm font-normal text-text-secondary ml-2">
                 ({activeOrders.length})
               </span>
             )}
           </h2>
-          {loading ? (
+          {error ? <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p> : loading || !fetched ? (
             <div className="text-center py-10 text-sm text-text-secondary">Cargando…</div>
           ) : activeOrders.length > 0 ? (
             activeOrders.map((ot) => (

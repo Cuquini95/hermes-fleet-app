@@ -10,7 +10,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
   const receiptMode = req.query?.mode === 'receipt';
-  if (!requireSession(req, res, receiptMode ? RECEIPT_ROLES : undefined)) return;
+  if (!await requireSession(req, res, receiptMode ? RECEIPT_ROLES : undefined)) return;
   res.setHeader('Cache-Control', 'no-store');
 
   try {

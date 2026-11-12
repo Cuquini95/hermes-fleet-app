@@ -1,277 +1,128 @@
-/**
- * AssignWorkModal
- *
- * Lightweight modal for scheduling a work order to a mechanic on a given day.
- *
- * On save: appendRow to WORKSHOP_SCHEDULE
- * Optionally updates mecanico_asignado on the OT via updateOTField.
- *
- * Props:
- *   mechanic   — pre-filled from clicked cell
- *   date       — pre-filled from clicked cell (Date object)
- *   mechanics  — list of available mechanics for the dropdown
- *   workorders — filtered list of open/pending OTs for the dropdown
- *   onSave     — callback after successful save
- *   onClose    — callback to dismiss
- */
-
-import { useState } from 'react';
+import { useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
-import { appendRow, SHEET_TABS } from '../../lib/sheets-api';
-import { useWorkOrderStore } from '../../stores/workorder-store';
-import { useAuthStore } from '../../stores/auth-store';
+import { mechanicCoversUnit, requestWorkshop, WorkshopApiError, type WorkshopMechanic } from '../../lib/workshop-api';
 import type { WorkOrder } from '../../types/workorder';
-import type { ScheduleEntry } from '../../pages/CalendarPage';
-
-// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface AssignWorkModalProps {
   mechanic: string;
-  date: Date;
-  mechanics: string[];
+  date: string;
+  mechanics: WorkshopMechanic[];
   workorders: WorkOrder[];
-  onSave: (entry: ScheduleEntry) => void;
+  onSave: (row: string[]) => void;
   onClose: () => void;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+const ASSIGNABLE = new Set(['Abierta', 'En Espera de Asignación', 'En Reparación', 'Esperando Pieza']);
+const fieldStyle = 'min-w-0 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm';
 
-function toISO(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
-
-function formatDateLabel(date: Date): string {
-  return date.toLocaleDateString('es-MX', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-  });
-}
-
-// ── Assignable OT statuses ─────────────────────────────────────────────────
-
-const ASSIGNABLE_ESTADOS = new Set(['Abierta', 'En Espera de Asignación', 'En Reparación']);
-
-// ── Component ─────────────────────────────────────────────────────────────────
-
-export default function AssignWorkModal({
-  mechanic: initialMechanic,
-  date,
-  mechanics,
-  workorders,
-  onSave,
-  onClose,
-}: AssignWorkModalProps) {
-  const updateOTField = useWorkOrderStore((s) => s.updateOTField);
-  const userName = useAuthStore((s) => s.userName);
-  const role = useAuthStore((s) => s.role);
-
+export default function AssignWorkModal({ mechanic, date, mechanics, workorders, onSave, onClose }: AssignWorkModalProps) {
+  const title = useId();
+  const mutationId = useRef('');
+  const submitting = useRef(false);
   const [selectedOT, setSelectedOT] = useState('');
-  const [selectedMechanic, setSelectedMechanic] = useState(initialMechanic);
+  const [mechanicId, setMechanicId] = useState<string | null>(mechanic || null);
+  const [selectedDate, setSelectedDate] = useState(date);
   const [hours, setHours] = useState('2');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState('');
 
-  const assignableOTs = workorders.filter((wo) => ASSIGNABLE_ESTADOS.has(wo.estado));
-  const selectedWO = assignableOTs.find((wo) => wo.ot_id === selectedOT);
-  const dateISO = toISO(date);
+  const assignable = workorders.filter((wo) => ASSIGNABLE.has(wo.estado));
+  const selected = assignable.find((wo) => wo.ot_id === selectedOT);
+  const available = selected ? mechanics.filter((item) => mechanicCoversUnit(item, selected.unidad)) : mechanics;
+  const canSave = !!selected && !!selectedDate && Number(hours) >= 0.25 && Number(hours) <= 24;
 
   async function handleSave() {
-    if (!selectedOT) { setError('Selecciona una OT'); return; }
-    if (!selectedMechanic) { setError('Selecciona un mecánico'); return; }
-    const parsedHours = parseFloat(hours);
-    if (isNaN(parsedHours) || parsedHours <= 0) {
-      setError('Ingresa horas válidas (> 0)');
-      return;
-    }
-
-    setError(null);
+    if (!canSave || submitting.current) return;
+    submitting.current = true;
     setSaving(true);
-
+    setError('');
+    mutationId.current ||= crypto.randomUUID();
     try {
-      const wo = assignableOTs.find((w) => w.ot_id === selectedOT);
-      const entry: ScheduleEntry = {
-        fecha_programada: dateISO,
-        ot_id: selectedOT,
-        unidad: wo?.unidad ?? '',
-        mecanico: selectedMechanic,
-        horas_estimadas: parsedHours,
-        prioridad: wo?.prioridad ?? 'MEDIA',
-        estado: 'Programado',
-        notas: notes,
-      };
-
-      // Append to WORKSHOP_SCHEDULE tab
-      // Columns: #, FECHA_PROGRAMADA, OT_ID, UNIDAD, MECANICO, HORAS_ESTIMADAS, PRIORIDAD, ESTADO, NOTAS
-      await appendRow(SHEET_TABS.WORKSHOP_SCHEDULE, [
-        '',               // # — auto or left blank; server can fill
-        dateISO,
-        selectedOT,
-        entry.unidad,
-        selectedMechanic,
-        String(parsedHours),
-        entry.prioridad,
-        'Programado',
-        notes,
-      ]);
-
-      // Optionally sync mecanico_asignado on the OT itself
-      if (wo && wo.mecanico_asignado !== selectedMechanic) {
-        await updateOTField(
-          selectedOT,
-          'mecanico_asignado',
-          selectedMechanic,
-          userName || 'sistema',
-          role ?? 'sistema',
-        );
-      }
-
-      onSave(entry);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Error al guardar');
+      const { schedule } = await requestWorkshop<{ schedule: string[] }>('schedule', {
+        mutationId: mutationId.current, otId: selectedOT, date: selectedDate, hours, notes,
+        ...(mechanicId === null ? {} : { mechanicId }),
+      });
+      onSave(schedule);
+    } catch (err) {
+      const definitive = err instanceof WorkshopApiError && [400, 403, 404, 409].includes(err.status);
+      if (definitive) mutationId.current = '';
+      setPending(!definitive);
+      setError(err instanceof Error ? err.message : 'No se pudo confirmar la programación');
     } finally {
+      submitting.current = false;
       setSaving(false);
     }
   }
 
-  return (
-    // Backdrop
-    <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40"
-      onClick={onClose}
-    >
-      {/* Panel */}
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-black/40" onClick={() => { if (!saving) onClose(); }}>
       <div
-        className="relative w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl p-5"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={title}
+        className="w-full sm:max-w-md max-h-[calc(100dvh-1rem)] overflow-y-auto bg-white rounded-t-2xl sm:rounded-2xl shadow-xl p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))]"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-base font-bold text-[#162252]">Asignar trabajo</h2>
-            <p className="text-xs text-slate-500 capitalize">{formatDateLabel(date)}</p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1.5 rounded-full hover:bg-slate-100 text-slate-500"
-          >
+          <h2 id={title} className="text-base font-bold text-[#162252]">Asignar trabajo</h2>
+          <button type="button" aria-label="Cerrar" onClick={onClose} disabled={saving} className="p-2.5 rounded-full text-slate-500">
             <X size={18} />
           </button>
         </div>
 
-        {/* Form */}
-        <div className="space-y-3">
-          {/* OT selector */}
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
-              Orden de Trabajo
-            </label>
+        <fieldset disabled={saving || pending} className="min-w-0 space-y-3">
+          <label className="block text-xs font-medium text-slate-700">
+            Orden de Trabajo
             <select
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className={fieldStyle}
               value={selectedOT}
-              onChange={(e) => setSelectedOT(e.target.value)}
+              onChange={(e) => {
+                const order = assignable.find((wo) => wo.ot_id === e.target.value);
+                setSelectedOT(e.target.value);
+                if (order && mechanicId && !mechanics.some((item) => item.userId === mechanicId && mechanicCoversUnit(item, order.unidad))) setMechanicId(null);
+              }}
             >
-              <option value="">-- Selecciona OT --</option>
-              {assignableOTs.map((wo) => (
-                <option key={wo.ot_id} value={wo.ot_id}>
-                  {wo.ot_id} · {wo.unidad} · {wo.tipo_averia}
-                </option>
-              ))}
+              <option value="">Selecciona OT</option>
+              {assignable.map((wo) => <option key={wo.ot_id} value={wo.ot_id}>{wo.ot_id} · {wo.unidad} · {wo.tipo_averia}</option>)}
             </select>
-            {assignableOTs.length === 0 && (
-              <p className="text-xs text-slate-400 mt-1">
-                No hay OTs abiertas disponibles.
-              </p>
-            )}
-          </div>
-
-          {/* Selected OT details */}
-          {selectedWO && (
-            <div className="text-xs bg-slate-50 rounded-lg px-3 py-2 text-slate-600 space-y-0.5">
-              <div><span className="font-medium">Unidad:</span> {selectedWO.unidad}</div>
-              <div><span className="font-medium">Avería:</span> {selectedWO.tipo_averia}</div>
-              <div><span className="font-medium">Prioridad:</span> {selectedWO.prioridad}</div>
-            </div>
-          )}
-
-          {/* Mechanic selector */}
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
-              Mecánico
-            </label>
-            <select
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              value={selectedMechanic}
-              onChange={(e) => setSelectedMechanic(e.target.value)}
-            >
-              <option value="">-- Selecciona mecánico --</option>
-              {mechanics.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
+          </label>
+          {assignable.length === 0 && <p className="text-xs text-slate-500">Sin órdenes disponibles para programar.</p>}
+          <label className="block text-xs font-medium text-slate-700">
+            Fecha programada
+            <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} className={fieldStyle} />
+          </label>
+          <label className="block text-xs font-medium text-slate-700">
+            Mecánico
+            <select className={fieldStyle} value={mechanicId ?? '@actual'} onChange={(e) => setMechanicId(e.target.value === '@actual' ? null : e.target.value)}>
+              <option value="@actual">Conservar asignación actual{selected?.mecanico_asignado ? ` · ${selected.mecanico_asignado}` : ''}</option>
+              <option value="">Sin asignar</option>
+              {available.map(({ userId, userName }) => <option key={userId} value={userId}>{userName}</option>)}
             </select>
-          </div>
+          </label>
+          <label className="block text-xs font-medium text-slate-700">
+            Horas estimadas
+            <input type="number" min="0.25" max="24" step="0.25" value={hours} onChange={(e) => setHours(e.target.value)} className={fieldStyle} />
+          </label>
+          <label className="block text-xs font-medium text-slate-700">
+            Notas
+            <input type="text" maxLength={1000} value={notes} onChange={(e) => setNotes(e.target.value)} className={fieldStyle} />
+          </label>
+        </fieldset>
+        {error && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-2 text-xs text-red-700">{error}</p>}
 
-          {/* Hours */}
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
-              Horas estimadas
-            </label>
-            <input
-              type="number"
-              min="0.5"
-              max="12"
-              step="0.5"
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              value={hours}
-              onChange={(e) => setHours(e.target.value)}
-            />
-          </div>
-
-          {/* Notes */}
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
-              Notas (opcional)
-            </label>
-            <input
-              type="text"
-              maxLength={120}
-              placeholder="Observaciones para el mecánico..."
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-            />
-          </div>
-
-          {/* Error */}
-          {error && (
-            <p className="text-xs text-red-600 bg-red-50 rounded px-2 py-1">{error}</p>
-          )}
-        </div>
-
-        {/* Actions */}
         <div className="flex gap-3 mt-5">
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex-1 py-2.5 rounded-xl border border-slate-300 text-sm text-slate-600 hover:bg-slate-50"
-          >
+          <button type="button" onClick={onClose} disabled={saving} className="flex-1 py-2.5 rounded-xl border border-slate-300 text-sm text-slate-600">
             Cancelar
           </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving}
-            className="flex-1 py-2.5 rounded-xl bg-[#162252] text-white text-sm font-semibold hover:bg-[#1e3275] disabled:opacity-50"
-          >
-            {saving ? 'Guardando...' : 'Programar'}
+          <button type="button" onClick={handleSave} disabled={!canSave || saving} className="flex-1 py-2.5 rounded-xl bg-[#162252] text-white text-sm font-semibold disabled:opacity-50">
+            {saving ? 'Guardando…' : pending ? 'Reintentar' : 'Programar'}
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

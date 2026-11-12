@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
+import { useAuthStore } from './auth-store';
 import type { Equipment } from '../types/equipment';
 
 // ── Status normalization ───────────────────────────────────────────────────────
@@ -55,11 +56,11 @@ interface EquipmentState {
 }
 
 /** Equipment (unidades) store: fetch-from-sheet list plus fetched/loading/error flags and refetch helper. */
+let sessionGeneration = 0;
+const emptyState = { equipment: [], fetched: false, loading: false, error: null };
+
 export const useEquipmentStore = create<EquipmentState>((set, get) => ({
-  equipment: [],
-  fetched: false,
-  loading: false,
-  error: null,
+  ...emptyState,
 
   refetch: async () => {
     set({ fetched: false });
@@ -68,6 +69,7 @@ export const useEquipmentStore = create<EquipmentState>((set, get) => ({
 
   fetchEquipment: async () => {
     if (get().fetched || get().loading) return;
+    const generation = sessionGeneration;
     set({ loading: true, error: null });
     try {
       const rows = await readRange(SHEET_TABS.FLOTA);
@@ -78,9 +80,18 @@ export const useEquipmentStore = create<EquipmentState>((set, get) => ({
         .slice(DATA_START)
         .map(parseEquipmentRow)
         .filter((e): e is Equipment => e !== null);
-      set({ equipment: parsed, fetched: true, loading: false });
+      if (generation === sessionGeneration) set({ equipment: parsed, fetched: true, loading: false });
     } catch (err) {
-      set({ error: String(err), loading: false });
+      if (generation === sessionGeneration) set({ error: String(err), loading: false });
     }
   },
 }));
+
+type ScopedAuthState = ReturnType<typeof useAuthStore.getState> & { userId?: string };
+const sessionIdentity = (state: ScopedAuthState) => state.isAuthenticated ? state.userId || state.role : null;
+
+useAuthStore.subscribe((current, previous) => {
+  if (sessionIdentity(current) === sessionIdentity(previous)) return;
+  sessionGeneration++;
+  useEquipmentStore.setState(emptyState);
+});

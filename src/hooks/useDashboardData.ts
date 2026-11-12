@@ -3,153 +3,96 @@ import { readRange, SHEET_TABS } from '../lib/sheets-api';
 import { useEquipmentList } from './useEquipmentList';
 import { mexicoDate } from '../lib/date-utils';
 import { buildAvailabilityTrend, calculateAvailability, type AvailabilityPoint } from '../lib/availability';
-import { openAveriaUnitSet } from '../lib/averias';
+import { openAveriaUnitSet, parseAveriaRow } from '../lib/averias';
+import { useEquipmentStore } from '../stores/equipment-store';
 
 export interface DashboardData {
-  availability: number;
-  criticalOTs: number;
+  availability: number | null;
+  criticalOTs: number | null;
   avgConsumption: string;
-  alertsToday: number;
+  alertsToday: number | null;
   availabilityTrend: AvailabilityPoint[];
   loading: boolean;
   error: string | null;
   refresh: () => void;
 }
 
-// ── Module-level TTL session cache ────────────────────────────────────────────
-// Survives component unmounts (e.g. navigating away and back).
-// Cleared on explicit refresh() or after CACHE_TTL_MS.
-interface CacheEntry {
-  criticalOTs: number;
-  avgConsumption: string;
-  alertsToday: number;
-  averiaRows: string[][];
-  ts: number;
-}
-
-const CACHE_TTL_MS = 30_000; // 30 seconds
-let _cache: CacheEntry | null = null;
-
-// ── Sheets fetchers ───────────────────────────────────────────────────────────
-
-async function fetchCriticalOTs(signal?: AbortSignal): Promise<number> {
-  const rows = await readRange(SHEET_TABS.ORDENES_TRABAJO, signal);
+async function fetchCriticalOTs(signal?: AbortSignal, offset?: number): Promise<number> {
+  const rows = await readRange(SHEET_TABS.ORDENES_TRABAJO, signal, undefined, offset);
   let count = 0;
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     if (!row) continue;
-    const priority = (row[7] ?? '').toLowerCase();
-    const status = (row[9] ?? '').toLowerCase();
-    if (
-      priority === 'critica' &&
-      status !== 'completado'
-    ) {
+    const priority = (row[7] ?? '').trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+    const status = (row[9] ?? '').trim().toLowerCase();
+    if (priority === 'critica' && !['completado', 'cerrada', 'cerrado'].includes(status)) {
       count++;
     }
   }
   return count;
 }
 
-async function fetchAvgConsumption(signal?: AbortSignal): Promise<string> {
-  const rows = await readRange(SHEET_TABS.COMBUSTIBLE, signal);
+async function fetchAvgConsumption(signal?: AbortSignal, offset?: number): Promise<string> {
+  const rows = await readRange(SHEET_TABS.COMBUSTIBLE, signal, undefined, offset);
   let total = 0;
   let count = 0;
-  for (let i = 2; i < rows.length; i++) {
-    const raw = rows[i]?.[6] ?? '';
-    const litros = parseFloat(raw.replace(',', '.'));
-    if (!isNaN(litros) && litros > 0) {
+  for (const row of rows) {
+    const raw = (row[6] ?? '').trim();
+    const litros = Number(raw.replace(/,(?=\d{3}(?:\D|$))/g, '').replace(',', '.'));
+    if (Number.isFinite(litros) && litros > 0) {
       total += litros;
       count++;
     }
   }
-  if (count === 0) return '--';
-  return `${(total / count).toFixed(2)} L/avg`;
+  if (count === 0) return '—';
+  return `${(total / count).toFixed(2)} L/carga`;
 }
 
 function countAlertsToday(rows: string[][]): number {
   const today = mexicoDate();
-  let count = 0;
-  for (let i = 1; i < rows.length; i++) {
-    const dateCell = (rows[i]?.[0] ?? '').trim();
-    if (dateCell === today) {
-      count++;
-    }
-  }
-  return count;
+  return rows.filter((row) => parseAveriaRow(row)?.fecha === today).length;
 }
 
-// ── Hook ──────────────────────────────────────────────────────────────────────
-
 export function useDashboardData(): DashboardData {
-  const [criticalOTs, setCriticalOTs] = useState(0);
-  const [avgConsumption, setAvgConsumption] = useState('--');
-  const [alertsToday, setAlertsToday] = useState(0);
-  const [averiaRows, setAveriaRows] = useState<string[][]>([]);
+  const [criticalOTs, setCriticalOTs] = useState<number | null>(null);
+  const [avgConsumption, setAvgConsumption] = useState('—');
+  const [averiaRows, setAveriaRows] = useState<string[][] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const equipmentList = useEquipmentList();
-  const openAveriaUnits = openAveriaUnitSet(averiaRows);
-  const availability = calculateAvailability(equipmentList, openAveriaUnits);
-  const availabilityTrend = buildAvailabilityTrend(equipmentList, averiaRows);
+  const equipmentError = useEquipmentStore((state) => state.error);
+  const hasAvailability = averiaRows !== null && equipmentList.length > 0 && !equipmentError;
+  const scope = new Set(equipmentList.map((equipment) => equipment.unit_id.toUpperCase()));
+  const scopedRows = (averiaRows ?? []).filter((row) => scope.has((row[2] ?? '').trim().toUpperCase()));
+  const availability = hasAvailability ? calculateAvailability(equipmentList, openAveriaUnitSet(scopedRows)) : null;
+  const availabilityTrend = hasAvailability ? buildAvailabilityTrend(equipmentList, scopedRows) : [];
+  const alertsToday = averiaRows === null ? null : countAlertsToday(averiaRows);
 
-  const fetchAll = useCallback(async (signal?: AbortSignal) => {
-    // Serve from cache if still fresh — avoids redundant Sheets API calls
-    // when the user navigates away and back within the TTL window.
-    const now = Date.now();
-    if (_cache !== null && now - _cache.ts < CACHE_TTL_MS) {
-      setCriticalOTs(_cache.criticalOTs);
-      setAvgConsumption(_cache.avgConsumption);
-      setAlertsToday(_cache.alertsToday);
-      setAveriaRows(_cache.averiaRows);
-      setLoading(false);
-      setError(null);
-      return;
-    }
-
+  const fetchAll = useCallback(async (signal: AbortSignal, refresh = false) => {
     setLoading(true);
     setError(null);
-
+    const offset = refresh ? 0 : undefined;
     const results = await Promise.allSettled([
-      fetchCriticalOTs(signal),
-      fetchAvgConsumption(signal),
-      readRange(SHEET_TABS.AVERIAS, signal),
+      fetchCriticalOTs(signal, offset),
+      fetchAvgConsumption(signal, offset),
+      readRange(SHEET_TABS.AVERIAS, signal, undefined, offset),
     ]);
+    if (signal.aborted) return;
 
-    if (signal?.aborted) return;
-
-    const [otsResult, consumptionResult, averiasResult] = results;
-
-    const newOTs          = otsResult.status          === 'fulfilled' ? otsResult.value          : 0;
-    const newConsumption  = consumptionResult.status   === 'fulfilled' ? consumptionResult.value   : '--';
-    const newAveriaRows   = averiasResult.status       === 'fulfilled' ? averiasResult.value       : [];
-    const newAlerts       = countAlertsToday(newAveriaRows);
-
-    setCriticalOTs(newOTs);
-    setAvgConsumption(newConsumption);
-    setAlertsToday(newAlerts);
-    setAveriaRows(newAveriaRows);
-
-    const anyFailed = results.some((r) => r.status === 'rejected');
-    setError(anyFailed ? 'Algunos datos no pudieron cargarse' : null);
-
-    // Populate cache so the next mount within TTL is instant.
-    _cache = {
-      criticalOTs: newOTs,
-      avgConsumption: newConsumption,
-      alertsToday: newAlerts,
-      averiaRows: newAveriaRows,
-      ts: Date.now(),
-    };
-
+    const [orders, fuel, breakdowns] = results;
+    setCriticalOTs(orders.status === 'fulfilled' ? orders.value : null);
+    setAvgConsumption(fuel.status === 'fulfilled' ? fuel.value : '—');
+    setAveriaRows(breakdowns.status === 'fulfilled' ? breakdowns.value : null);
+    setError(results.some((result) => result.status === 'rejected') ? 'Algunos indicadores no se pudieron cargar.' : null);
     setLoading(false);
   }, []);
 
   useEffect(() => {
     const controller = new AbortController();
     abortRef.current = controller;
-    fetchAll(controller.signal).catch(() => {});
+    void fetchAll(controller.signal);
     return () => {
       controller.abort();
       abortRef.current = null;
@@ -157,11 +100,11 @@ export function useDashboardData(): DashboardData {
   }, [fetchAll]);
 
   const refresh = useCallback(() => {
-    _cache = null; // invalidate so next fetch hits Sheets
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
-    fetchAll(controller.signal).catch(() => {});
+    void fetchAll(controller.signal, true);
+    void useEquipmentStore.getState().refetch();
   }, [fetchAll]);
 
   return {
@@ -171,7 +114,7 @@ export function useDashboardData(): DashboardData {
     alertsToday,
     availabilityTrend,
     loading,
-    error,
+    error: error || (equipmentError ? 'No se pudo cargar la flota para calcular la disponibilidad.' : null),
     refresh,
   };
 }

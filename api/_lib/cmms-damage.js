@@ -1,4 +1,5 @@
 import { requireSession } from './session-auth.js';
+import { hasIdentityUnit } from './hermes-identity.js';
 
 const DEFAULT_CMMS_API_BASE = 'https://gtp-cmms.vercel.app';
 const DEFAULT_TIMEOUT_MS = 12_000;
@@ -8,7 +9,8 @@ export default async function handler(req, res) {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'Method not allowed' });
   }
-  if (!requireSession(req, res, ['operador', 'mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia'])) return;
+  const session = await requireSession(req, res);
+  if (!session) return;
 
   const token = cleanEnvValue(process.env.CMMS_HERMES_SYSTEM_TOKEN);
   const ingestSecret = cleanEnvValue(process.env.CMMS_HERMES_INGEST_SECRET);
@@ -23,6 +25,7 @@ export default async function handler(req, res) {
   try {
     const body = await readJsonBody(req);
     const payload = toCmmsDamagePayload(body);
+    if (!hasIdentityUnit(session, payload.asset_id)) return res.status(403).json({ error: 'Unidad fuera de tu asignación' });
     const baseUrl = (cleanEnvValue(process.env.CMMS_API_BASE) || DEFAULT_CMMS_API_BASE).replace(/\/+$/, '');
     const useIngestSecret = Boolean(ingestSecret);
     const upstream = await fetch(`${baseUrl}${useIngestSecret ? '/api/live/hermes/damages/ingest' : '/api/live/hermes/damages'}`, {
