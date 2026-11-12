@@ -60,6 +60,7 @@ type Tab = 'carrito' | 'pendientes' | 'historial';
 export default function PedidosPage() {
   const navigate = useNavigate();
   const role = useAuthStore((s) => s.role);
+  const canReceive = useAuthStore((s) => s.project === 'tmf-panama' && s.canReceivePurchases);
   const equipment = useEquipmentList();
   const { items, removeItem, updateItem, clearCart } = useCartStore();
 
@@ -205,6 +206,7 @@ export default function PedidosPage() {
         <ShoppingCart size={24} color="#162252" />
         <h1 className="text-xl font-bold text-text">Pedidos de Refacciones</h1>
       </div>
+      {canReceive && <Link to="/panama/recepciones" className="mb-4 inline-flex min-h-11 items-center rounded-lg border border-slate-400 bg-white px-4 text-sm font-semibold text-[#162252]">Recepciones de compras</Link>}
 
       {/* ── Tabs ── */}
       <div className="flex mb-5 rounded-xl overflow-hidden border border-border">

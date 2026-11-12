@@ -1,15 +1,17 @@
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import FleetGrid from '../components/dashboard/FleetGrid';
 import { useFleetDispatch } from '../hooks/useFleetDispatch';
 import { useEquipmentStore } from '../stores/equipment-store';
+import { useAuthStore } from '../stores/auth-store';
 
 export default function FleetPage() {
   const navigate = useNavigate();
   const equipment = useEquipmentList();
 
   const dispatch = useFleetDispatch(equipment);
+  const role = useAuthStore((state) => state.role);
   const equipmentError = useEquipmentStore((state) => state.error);
   const ready = useEquipmentStore((state) => state.fetched) && dispatch.verified && !equipmentError;
   const refetch = useEquipmentStore((state) => state.refetch);
@@ -36,6 +38,20 @@ export default function FleetPage() {
       </div>
 
       {equipmentError && <p role="alert" className="mb-3 text-sm text-critical">No se pudo cargar el inventario de equipos.</p>}
+      {role === 'supervisor' && dispatch.pendingReturns.length > 0 && (
+        <section aria-labelledby="returns-heading" className="mb-4 rounded-xl border border-border bg-white p-4">
+          <h2 id="returns-heading" className="text-sm font-semibold text-text">Entregas de Taller pendientes de Operaciones</h2>
+          <ul className="mt-2 divide-y divide-border">
+            {dispatch.pendingReturns.map(({ unit, otId }) => (
+              <li key={otId} className="py-2">
+                <Link to={`/workorders/${encodeURIComponent(otId)}`} className="text-sm font-medium text-text underline underline-offset-2">
+                  {unit} · {otId}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <FleetGrid equipment={equipment} dispatch={dispatch} />
     </div>
   );

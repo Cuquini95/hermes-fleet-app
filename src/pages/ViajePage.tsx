@@ -7,10 +7,13 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Trash2, Plus, ScanLine } from 'lucide-react';
 import { TRANSPORT_UNITS } from '../data/transport-units';
 import { mexicoDateInput, mexicoTimeInput } from '../lib/date-utils';
-import { appendRow, readRange, SHEET_TABS } from '../lib/sheets-api';
+import { readRange, SHEET_TABS } from '../lib/sheets-api';
+import { saveFieldRows } from '../lib/field-submissions';
+import { useEquipmentList } from '../hooks/useEquipmentList';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { useAuthStore } from '../stores/auth-store';
 import ConfirmModal from '../components/ui/ConfirmModal';
-import SuccessToast from '../components/ui/SuccessToast';
+import SuccessToast, { type ToastType } from '../components/ui/SuccessToast';
 import { AutocompleteInput } from '../components/AutocompleteInput';
 
 const MATERIAL_OPTIONS = ['Tierra', 'Roca', 'Grava', 'Mineral', 'Caliza', 'Otro'] as const;
@@ -83,6 +86,11 @@ const emptyTrip = (hora: string = ''): TripEntry => ({
 export default function ViajePage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
+  const userId = useAuthStore((s) => s.userId);
+  const isPanama = useAuthStore((s) => s.project === 'tmf-panama');
+  const equipment = useEquipmentList();
+  const isOnline = useOnlineStatus();
+  const transportUnits = isPanama ? equipment : TRANSPORT_UNITS;
 
   // ── Mode ──────────────────────────────────────────────────────────────────
   const [mode, setMode] = useState<Mode>('single');
@@ -124,7 +132,7 @@ export default function ViajePage() {
   }, []);
 
   // ── Auto-rate from route ───────────────────────────────────────────────────
-  const autoRate = calcFleteRate(rutaOrigen, rutaDestino);
+  const autoRate = isPanama ? null : calcFleteRate(rutaOrigen, rutaDestino);
 
   // Single mode: recalculate flete whenever rate or tonelaje changes
   useEffect(() => {
@@ -144,7 +152,6 @@ export default function ViajePage() {
         return !isNaN(ton) && ton > 0 ? { ...t, flete: (autoRate * ton).toFixed(2) } : t;
       })
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoRate]);
 
   // ── UI state ──────────────────────────────────────────────────────────────
@@ -152,6 +159,8 @@ export default function ViajePage() {
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string>('');
   const [toastVisible, setToastVisible] = useState<boolean>(false);
+  const [toastType, setToastType] = useState<ToastType>('info');
+  const [retryRows, setRetryRows] = useState<string[][]>();
 
   const kmCargadoNum = parseFloat(kmCargado) || 0;
   const kmVacioNum   = parseFloat(kmVacio)   || 0;
@@ -215,7 +224,9 @@ export default function ViajePage() {
   }
 
   async function handleConfirm(): Promise<void> {
+    if (submitting) return;
     setShowConfirm(false);
+    setToastVisible(false);
     setSubmitting(true);
 
     const fechaSheet = fecha.split('-').reverse().join('/'); // dd/MM/yyyy
@@ -248,38 +259,27 @@ export default function ViajePage() {
       ];
     };
 
-    if (mode === 'single') {
-      // Show success immediately — write happens in background
-      setToastMessage('Flete registrado ✓');
-      setToastVisible(true);
-      setSubmitting(false);
-
-      appendRow(SHEET_TABS.FLETES, buildRow(hora, tonelaje, flete, folio)).catch((err: unknown) => {
-        console.error('Background write failed (Flete single):', err);
-      });
+    const rows = retryRows ?? (mode === 'single' ? [buildRow(hora, tonelaje, flete, folio)]
+      : [...trips].sort((a, b) => a.hora.localeCompare(b.hora)).map(t => buildRow(t.hora, t.tonelaje, t.flete, t.folio)));
+    const { written, pending, failed } = await saveFieldRows('trip', SHEET_TABS.FLETES, rows, isOnline, userId);
+    const needsRetry = failed.length > 0 && (!!retryRows || !!written || !!pending || failed.some(row => row.retrySameRow));
+    setRetryRows(needsRetry ? failed.map(({ row }) => row) : undefined);
+    if (failed.length || pending) {
+      const counts = `${written} confirmados${isPanama ? ' en Hermes' : ''} · ${pending} pendientes de sincronización · ${failed.length} sin confirmar`;
+      setToastType(failed.length ? 'error' : 'info');
+      setToastMessage(failed[0] ? `${counts}. ${failed[0].reason}` : `${counts}. Pendientes guardados en este dispositivo.`);
     } else {
-      // Sort trips by hora so sheet rows land in chronological order
-      const orderedTrips = [...trips].sort((a, b) => a.hora.localeCompare(b.hora));
-
-      // Show success immediately — all trips fire in parallel in background
-      setToastMessage(`${orderedTrips.length} viajes registrados ✓`);
-      setToastVisible(true);
-      setSubmitting(false);
-
-      Promise.allSettled(
-        orderedTrips.map((t) => appendRow(SHEET_TABS.FLETES, buildRow(t.hora, t.tonelaje, t.flete, t.folio)))
-      ).then((results) => {
-        const failed = results.filter((r) => r.status === 'rejected').length;
-        if (failed > 0) {
-          console.error(`Background write: ${failed}/${orderedTrips.length} fletes failed`);
-        }
-      });
+      setToastType('success');
+      const location = isPanama ? ' en Hermes' : '';
+      setToastMessage(written === 1 ? `Flete registrado${location}.` : `${written} viajes registrados${location}.`);
     }
+    setToastVisible(true);
+    setSubmitting(false);
   }
 
   function handleToastDismiss(): void {
     setToastVisible(false);
-    navigate(-1);
+    if (toastType !== 'error') navigate(-1);
   }
 
   const confirmMessage =
@@ -293,6 +293,7 @@ export default function ViajePage() {
         message={toastMessage}
         visible={toastVisible}
         onDismiss={handleToastDismiss}
+        type={toastType}
       />
 
       <ConfirmModal
@@ -313,7 +314,7 @@ export default function ViajePage() {
           <ArrowLeft size={20} className="text-text" />
         </button>
         <h1 className="text-xl font-bold text-text flex-1">Registro de Flete</h1>
-        <button
+        {!isPanama && <button
           type="button"
           onClick={() => navigate('/bulk-boletas')}
           className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border"
@@ -322,9 +323,10 @@ export default function ViajePage() {
         >
           <ScanLine size={14} />
           Boletas OCR
-        </button>
+        </button>}
       </div>
 
+      <fieldset disabled={submitting || !!retryRows} className="min-w-0">
       {/* ── Mode toggle ────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl p-3 shadow-sm border border-border mb-3">
         <label className="text-xs font-medium text-text-secondary mb-2 block">Modo</label>
@@ -391,7 +393,7 @@ export default function ViajePage() {
             className="w-full rounded-xl border border-border p-3 bg-white text-text"
           >
             <option value="">Seleccionar unidad...</option>
-            {TRANSPORT_UNITS.map((eq) => (
+            {transportUnits.map((eq) => (
               <option key={eq.unit_id} value={eq.unit_id}>
                 {eq.unit_id} — {eq.type}
               </option>
@@ -673,17 +675,19 @@ export default function ViajePage() {
           </div>
         </div>
       )}
+      </fieldset>
 
       {/* Submit */}
       <button
         type="button"
-        onClick={handleSubmitIntent}
-        disabled={!canSubmit || submitting}
+        onClick={retryRows ? () => void handleConfirm() : handleSubmitIntent}
+        disabled={submitting || (toastVisible && toastType !== 'error') || (!retryRows && !canSubmit)}
         className="mt-4 w-full bg-amber text-white rounded-xl py-4 font-semibold text-lg disabled:opacity-40 disabled:cursor-not-allowed transition-opacity btn-press"
         style={{ minHeight: 52 }}
       >
         {submitting
-          ? 'Guardando...'
+          ? 'Confirmando registros…'
+          : retryRows ? `Reintentar ${retryRows.length} sin confirmar`
           : mode === 'single'
             ? 'Registrar Flete'
             : `Registrar ${trips.length} Viajes`}

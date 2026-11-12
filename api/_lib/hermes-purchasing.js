@@ -12,6 +12,7 @@ export const PURCHASE_TABS = Object.freeze({
 const REQUEST_ROLES = new Set(['jefe_taller', 'coordinador', 'supervisor', 'gerencia']);
 const EXPENSE_ROLES = new Set(['jefe_taller', 'coordinador', 'gerencia']);
 const REQUEST_STATUS = new Set(['Pendiente', 'Pedido', 'Completado']);
+const RECEIPT_ORDER_STATUS = new Set(['Aprobada', 'Recibida parcial', 'Recibida', 'Pagada']);
 const OP_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const DEFAULT_ISSUER = {
   id: 'ULTRATK_MX', name: 'ULTRATK SA DE CV', currency: 'MXN', taxLabel: 'IVA', taxBps: 1600,
@@ -167,6 +168,18 @@ function orderRecord(row, items) {
     receiptStatus: allReceived ? 'Recibida' : anyReceived ? 'Recibida parcial' : 'Pendiente',
     lines,
   };
+}
+
+function hasRecordedApproval({ status, approvedBy, approvedById, approvedAt }) {
+  return RECEIPT_ORDER_STATUS.has(status) && Boolean(approvedBy && approvedById) && Number.isFinite(Date.parse(approvedAt));
+}
+
+function receivingRecord({ folio, unit, vendorName, deliveryDate, receiptStatus, version, lines }) {
+  return { folio, unit, vendorName, deliveryDate, receiptStatus, version, lines: lines.map((line) => ({
+    id: line.id, number: line.number, description: line.description, partNumber: line.partNumber,
+    quantity: line.quantity, received: line.received,
+    receipts: line.receipts.map(({ id, at, by, quantity, reference }) => ({ id, at, by, quantity, reference })),
+  })) };
 }
 
 function requestRecord(row, index) {
@@ -408,6 +421,10 @@ async function changeOrder(action, body, session, sheets, tx) {
     sheets.read(PURCHASE_TABS.orders), sheets.read(PURCHASE_TABS.lines), sheets.read(PURCHASE_TABS.requests),
   ]);
   const { record, header, items } = orderLookup(folio, orderRows, lineRows, session);
+  if (action === 'order-receive' && session.project === 'tmf-panama') {
+    const previous = await tx.replay();
+    if (previous !== null) return ok(previous);
+  }
   checkVersion(body, record);
   const guards = [orderGuard(record)];
   const values = [...header.row];
@@ -440,7 +457,8 @@ async function changeOrder(action, body, session, sheets, tx) {
     if (status === 'Pagada' && !record.approvedById) error(409, 'La orden requiere un aprobador registrado.');
     values[11] = status;
   } else {
-    if (!['Aprobada', 'Recibida parcial', 'Pagada'].includes(record.status) || !record.approvedById) {
+    if (!['Aprobada', 'Recibida parcial', 'Pagada'].includes(record.status) || !record.approvedById
+      || (session.project === 'tmf-panama' && !hasRecordedApproval(record))) {
       error(409, 'La orden necesita una aprobación registrada y saldo por recibir.');
     }
     const lineId = field(body.lineId, 120, 'partida', true);
@@ -584,7 +602,7 @@ async function deleteExpense(body, session, sheets, tx) {
 }
 
 const WRITES = new Set(['request-submit', 'request-status', 'order-save', 'order-status', 'order-receive', 'order-delete', 'expense-save', 'expense-delete']);
-const READS = new Set(['orders', 'order', 'requests', 'expenses']);
+const READS = new Set(['orders', 'order', 'receiving', 'requests', 'expenses']);
 
 export async function dispatchPurchasing({ path, method, body = {}, query = {}, session, sheets }) {
   const action = path.replace(/^api\/purchasing\//, '');
@@ -593,7 +611,11 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
     if (!session?.userId || !session?.userName) error(401, 'Inicia sesión para continuar.');
     if (!READS.has(action) && !WRITES.has(action)) error(404, 'Ruta de compras desconocida.');
     if (READS.has(action) ? method !== 'GET' : method !== 'POST') error(405, 'Método no permitido.');
-    const roleAllowed = action === 'requests' ? REQUEST_ROLES.has(session.role)
+    const panama = session.project === 'tmf-panama';
+    const warehouseAccess = panama && session.canReceivePurchases === true;
+    const roleAllowed = action === 'receiving' ? warehouseAccess
+      : action === 'order-receive' ? warehouseAccess || session.role === 'gerencia'
+      : action === 'requests' ? REQUEST_ROLES.has(session.role)
       : action === 'request-submit' ? session.role === 'jefe_taller'
       : action === 'expenses' || action.startsWith('expense-') ? EXPENSE_ROLES.has(session.role) : session.role === 'gerencia';
     if (!roleAllowed || (action === 'order-status' && session.canApprovePurchases !== true)) {
@@ -607,30 +629,36 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
       const rows = entries(await sheets.read(PURCHASE_TABS.expenses));
       return ok({ rows: rows.filter(({ row }) => trim(row[0]) && canUseUnit(session, row[10])).map(({ row }) => row) });
     }
-    if (action === 'order' || action === 'orders') {
+    if (action === 'order' || action === 'orders' || action === 'receiving') {
       const [orders, lines] = await Promise.all([sheets.read(PURCHASE_TABS.orders), sheets.read(PURCHASE_TABS.lines)]);
       if (action === 'order') {
         const { record } = orderLookup(field(query.folio, 90, 'folio', true), orders, lines, session);
         return ok({ order: record });
       }
       const rows = entries(orders).filter(({ row }) => trim(row[0]) && trim(row[11]) !== 'Eliminada');
-      const headerFolios = new Set(entries(orders).map(({ row }) => upper(row[0])).filter(Boolean));
-      const orphanFolios = session.allUnits === true
-        ? [...new Set(entries(lines).map(({ row }) => upper(row[0])).filter((folio) => folio && !headerFolios.has(folio)))]
-        : [];
       const linked = new Map();
       for (const item of entries(lines)) {
         const folio = upper(item.row[0]);
-        if (folio) linked.set(folio, [...(linked.get(folio) || []), item]);
+        if (!folio) continue;
+        if (!linked.has(folio)) linked.set(folio, []);
+        linked.get(folio).push(item);
       }
+      if (action === 'receiving') {
+        return ok({ orders: rows.filter(({ row }) => canUseUnit(session, row[5]) && RECEIPT_ORDER_STATUS.has(trim(row[11])))
+          .map(({ row }) => orderRecord(row, linked.get(upper(row[0])) || []))
+          .filter(hasRecordedApproval).map(receivingRecord).reverse() });
+      }
+      const headerFolios = new Set(entries(orders).map(({ row }) => upper(row[0])).filter(Boolean));
+      const orphanFolios = session.allUnits === true ? [...linked.keys()].filter((folio) => !headerFolios.has(folio)) : [];
       const vendors = entries(await sheets.read(PURCHASE_TABS.vendors)).map(({ row }) => vendorRecord(row)).filter((vendor) => vendor.name);
       return ok({
         orders: rows.filter(({ row }) => canUseUnit(session, row[5]))
           .map(({ row }) => orderRecord(row, linked.get(upper(row[0])) || [])).reverse(),
-        vendors, orphanFolios, issuers: configuredIssuers(session.project === 'tmf-panama'), canApprove: session.canApprovePurchases === true,
+        vendors, orphanFolios, issuers: configuredIssuers(panama), canApprove: session.canApprovePurchases === true,
       });
     }
     tx = mutate(action, body, session, sheets);
+    if (panama && action === 'order-receive') return await changeOrder(action, body, session, sheets, tx);
     const previous = await tx.replay();
     if (previous !== null) return ok(previous);
     if (action === 'request-submit') return await submitRequest(body, session, tx);

@@ -1,23 +1,25 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Clock, RefreshCw } from 'lucide-react';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { getNextPM } from '../data/pm-rules';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
-import { appendRow, handoffMeterReadings, SHEET_TABS, syncExistingHorometros } from '../lib/sheets-api';
+import { appendRow, handoffMeterReadings, SheetAppendError, SHEET_TABS, syncExistingHorometros } from '../lib/sheets-api';
 import type { CmmsMeterReading } from '../lib/cmms-meter';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { queueSubmission, flushQueue } from '../lib/offline-queue';
 import { useAuthStore } from '../stores/auth-store';
 import ConfirmModal from '../components/ui/ConfirmModal';
-import SuccessToast from '../components/ui/SuccessToast';
+import SuccessToast, { type ToastType } from '../components/ui/SuccessToast';
 
 type TurnoType = 'inicio' | 'final';
 
 export default function HorometroPage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
+  const userId = useAuthStore((s) => s.userId);
   const role = useAuthStore((s) => s.role);
+  const isPanama = useAuthStore((s) => s.project === 'tmf-panama');
   const equipment = useEquipmentList();
   const isOnline = useOnlineStatus();
 
@@ -33,6 +35,9 @@ export default function HorometroPage() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [toastVisible, setToastVisible] = useState(false);
+  const [toastType, setToastType] = useState<ToastType>('info');
+  const [submitting, setSubmitting] = useState(false);
+  const [retry, setRetry] = useState<{ row: string[]; meterReading: CmmsMeterReading; label: string }>();
   const [syncingExisting, setSyncingExisting] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
 
@@ -62,7 +67,8 @@ export default function HorometroPage() {
     return 'bg-green-50 border-success';
   }
 
-  const canSubmit = unidad !== '' && horometro !== '';
+  const canSubmit = unidad !== '' && horasActual !== null && Number.isFinite(horasActual)
+    && horasActual >= (isPanama ? 0 : 0.01) && horasActual <= 1_000_000;
 
   function handleSubmitIntent() {
     if (!canSubmit) return;
@@ -75,10 +81,10 @@ export default function HorometroPage() {
     setSyncMessage('');
     try {
       const result = await syncExistingHorometros();
-      const unresolved = [...result.unmatched, ...result.ambiguous];
+      const unresolved = [...result.unmatched, ...result.ambiguous, ...result.rejected.map(unit => unit ?? 'unidad sin identificar')];
       setSyncMessage(
         unresolved.length > 0
-          ? `CMMS recibió ${result.accepted} lectura(s); revisar ${unresolved.join(', ')}.`
+          ? `CMMS confirmó ${result.accepted - result.unmatched.length - result.ambiguous.length} lectura(s). Revisar ${unresolved.join(', ')}.`
           : `CMMS recibió ${result.accepted} lectura(s) históricas.`,
       );
     } catch (error: unknown) {
@@ -90,16 +96,20 @@ export default function HorometroPage() {
   }
 
   async function handleConfirm() {
+    if (submitting) return;
     setShowConfirm(false);
+    setToastVisible(false);
+    setSubmitting(true);
 
-    const meterReading: CmmsMeterReading = {
+    const now = new Date();
+    const meterReading: CmmsMeterReading = retry?.meterReading ?? {
       unit: unidad,
       hours: Number(horometro),
-      recorded_at: new Date().toISOString(),
+      recorded_at: now.toISOString(),
     };
-    const row = [
-      mexicoDate(),          // FECHA
-      mexicoTime(),          // HORA
+    const row = retry?.row ?? [
+      mexicoDate(now),          // FECHA
+      mexicoTime(now),          // HORA
       unidad,                                   // UNIDAD
       selectedEquipment?.model || '',           // MODELO
       userName,                                 // OPERADOR
@@ -109,67 +119,57 @@ export default function HorometroPage() {
       pmInfo ? String(pmInfo.hours_remaining) : '', // FALTAN
     ];
 
-    const label = turno === 'inicio' ? 'Inicio' : 'Final';
-
-    if (isOnline) {
-      let sheetWritten = false;
+    const label = retry?.label ?? (turno === 'inicio' ? 'inicial' : 'final');
+    const show = (message: string, type: ToastType) => {
+      setToastMessage(message);
+      setToastType(type);
+      setToastVisible(true);
+    };
+    try {
       try {
-        await appendRow(SHEET_TABS.HOROMETROS, row);
-        sheetWritten = true;
-      } catch (err) {
-        console.error('Sheets append failed (Horometros):', err);
+        if (!isOnline) throw new Error('Sin conexión.');
+        await appendRow(SHEET_TABS.HOROMETROS, row, userId);
+      } catch (error) {
+        if (error instanceof SheetAppendError && error.status < 500 && ![408, 429].includes(error.status)) {
+          setRetry(undefined);
+          show(error.reason, 'error');
+          return;
+        }
         try {
-          await queueSubmission({
-            type: 'horometro',
-            data: { tab: SHEET_TABS.HOROMETROS, values: row, meterReading },
-            timestamp: new Date().toISOString(),
-          });
-          setToastMessage(`Horómetro ${label} guardado — hoja y CMMS pendientes de sincronización ✓`);
-        } catch (queueError) {
-          console.error('Horometro queue failed:', queueError);
-          setToastMessage('No se pudo guardar el horómetro. Intenta nuevamente.');
+          await queueSubmission({ type: 'horometro', ownerId: userId, timestamp: now.toISOString(),
+            data: { tab: SHEET_TABS.HOROMETROS, values: row, ...(isPanama ? {} : { meterReading }) } });
+          setRetry(undefined);
+          show(`Horómetro ${label} guardado en este dispositivo. Pendiente de sincronización.`, 'info');
+        } catch {
+          setRetry({ row, meterReading, label });
+          show('No se pudo confirmar el horómetro ni guardarlo en este dispositivo.', 'error');
+        }
+        return;
+      }
+      setRetry(undefined);
+      if (isPanama) {
+        show(`Horómetro ${label} registrado en Hermes. Conciliación con REGISTRO TMF y enlace CMMS pendientes.`, 'info');
+        return;
+      }
+      try {
+        await handoffMeterReadings([meterReading]);
+        show(`Horómetro ${label} registrado. CMMS confirmó la lectura.`, 'success');
+      } catch {
+        try {
+          await queueSubmission({ type: 'cmms_meter', ownerId: userId, data: { readings: [meterReading] }, timestamp: now.toISOString() });
+          show(`Horómetro ${label} registrado. Envío a CMMS pendiente de sincronización.`, 'info');
+        } catch {
+          show(`Horómetro ${label} registrado. El envío a CMMS requiere revisión.`, 'info');
         }
       }
-
-      if (sheetWritten) {
-        try {
-          await handoffMeterReadings([meterReading]);
-          setToastMessage(`Horómetro ${label} de Turno registrado y conectado a CMMS ✓`);
-        } catch (err) {
-          console.error('CMMS meter handoff failed:', err);
-          try {
-            await queueSubmission({
-              type: 'cmms_meter',
-              data: { readings: [meterReading] },
-              timestamp: new Date().toISOString(),
-            });
-            setToastMessage(`Horómetro ${label} registrado — CMMS pendiente de sincronización ✓`);
-          } catch (queueError) {
-            console.error('CMMS meter queue failed:', queueError);
-            setToastMessage(`Horómetro ${label} quedó en la hoja; CMMS requiere reintento ✓`);
-          }
-        }
-      }
-    } else {
-      try {
-        await queueSubmission({
-          type: 'horometro',
-          data: { tab: SHEET_TABS.HOROMETROS, values: row, meterReading },
-          timestamp: new Date().toISOString(),
-        });
-        setToastMessage('Horómetro guardado — hoja y CMMS se sincronizarán al reconectarse ✓');
-      } catch (err: unknown) {
-        console.error('Queue failed:', err);
-        setToastMessage('No se pudo guardar el horómetro. Intenta nuevamente.');
-      }
+    } finally {
+      setSubmitting(false);
     }
-
-    setToastVisible(true);
   }
 
   function handleToastDismiss() {
     setToastVisible(false);
-    navigate(-1);
+    if (toastType !== 'error') navigate(-1);
   }
 
   return (
@@ -178,6 +178,7 @@ export default function HorometroPage() {
         message={toastMessage}
         visible={toastVisible}
         onDismiss={handleToastDismiss}
+        type={toastType}
       />
 
       <ConfirmModal
@@ -200,7 +201,12 @@ export default function HorometroPage() {
         <h1 className="text-xl font-bold text-text">Registro Horómetro</h1>
       </div>
 
-      {(role === 'supervisor' || role === 'gerencia') && (
+      {isPanama && <p className="mb-4 rounded-xl border border-border bg-white p-3 text-sm text-text-secondary">
+        Registra una lectura excepcional cuando falte en el origen automático. Para entregar lecturas y producción al cierre, abre{' '}
+        <Link to="/panama/turnos" className="font-semibold text-primary underline">Relevo de turno</Link>.
+      </p>}
+
+      {!isPanama && (role === 'supervisor' || role === 'gerencia') && (
         <div className="bg-white rounded-xl p-3 shadow-sm border border-border mb-4">
           <button
             type="button"
@@ -302,12 +308,12 @@ export default function HorometroPage() {
       {/* Submit */}
       <button
         type="button"
-        onClick={handleSubmitIntent}
-        disabled={!canSubmit}
+        onClick={retry ? () => void handleConfirm() : handleSubmitIntent}
+        disabled={submitting || (toastVisible && toastType !== 'error') || (!retry && !canSubmit)}
         className="mt-2 w-full bg-amber text-white rounded-xl py-4 font-semibold text-lg disabled:opacity-40 disabled:cursor-not-allowed transition-opacity btn-press"
         style={{ minHeight: 52 }}
       >
-        Registrar Horómetro
+        {submitting ? 'Confirmando lectura…' : retry ? 'Reintentar la misma lectura' : 'Registrar Horómetro'}
       </button>
     </div>
   );

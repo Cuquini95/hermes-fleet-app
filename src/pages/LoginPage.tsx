@@ -3,13 +3,19 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import { ROLE_HOME } from '../types/roles';
 import { useAuthStore } from '../stores/auth-store';
 
+const errorMessages = {
+  credentials: 'Verifica tus datos o consulta al responsable para confirmar que tu cuenta esté habilitada.',
+  unavailable: 'El servicio de acceso no está disponible. Intenta de nuevo o contacta a TI si el problema continúa.',
+  'rate-limited': 'Se alcanzó el límite de intentos. Espera antes de volver a ingresar.',
+};
+
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [pending, setPending] = useState(false);
-  const [loginError, setLoginError] = useState(false);
   const navigate = useNavigate();
   const login = useAuthStore((state) => state.login);
+  const loginFailure = useAuthStore((state) => state.loginFailure);
   const role = useAuthStore((state) => state.role);
   const authenticated = useAuthStore((state) => state.isAuthenticated);
 
@@ -17,13 +23,11 @@ export default function LoginPage() {
     event.preventDefault();
     if (pending) return;
     setPending(true);
-    setLoginError(false);
     const success = await login(email, password);
     setPassword('');
     setPending(false);
     const assignedRole = useAuthStore.getState().role;
     if (success && assignedRole) navigate(ROLE_HOME[assignedRole], { replace: true });
-    else setLoginError(true);
   }
 
   if (authenticated && role) return <Navigate to={ROLE_HOME[role]} replace />;
@@ -56,9 +60,9 @@ export default function LoginPage() {
           <button type="submit" disabled={pending} className="w-full rounded-xl bg-[#1E3A8A] py-3 font-semibold text-white disabled:opacity-60">
             {pending ? 'Ingresando…' : 'Ingresar'}
           </button>
-          {loginError && (
+          {loginFailure && (
             <p role="alert" className="text-sm text-red-700">
-              No se pudo ingresar. Verifica tus datos o consulta al responsable de tu proyecto.
+              {errorMessages[loginFailure]}
             </p>
           )}
         </form>

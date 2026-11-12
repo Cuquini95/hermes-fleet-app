@@ -8,6 +8,11 @@ Hermes autentica con la cuenta individual del proveedor Supabase y consulta el p
 2. Configura `HERMES_AUTH_SECRET`, `HERMES_AUTH_SUPABASE_URL`, `HERMES_AUTH_SUPABASE_PUBLISHABLE_KEY`, `HERMES_AUTH_SUPABASE_SERVICE_ROLE_KEY` y `HERMES_AUTH_PROJECT` en el servidor. El código de proyecto debe coincidir con el padrón y las fuentes operativas de ese despliegue. La clave de servicio y el padrón permanecen en el servidor.
 3. Vincula el padrón aprobado a los correos confirmados en el proveedor. Conserva el archivo con datos reales fuera del repositorio.
 
+En Panamá, aplica también las migraciones de permiso de recepción y revisión HSE.
+Las opciones `canReceivePurchases` y `canReviewPanamaHse` deben constar explícitamente
+en el padrón y son independientes de `canApprovePurchases`. Usa `projects: ["tmf-panama"]`
+para esos permisos. La revisión HSE requiere rol base Supervisor o Gerencia.
+
 Formato de una fila de prueba
 
 ```json

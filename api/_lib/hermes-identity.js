@@ -3,6 +3,7 @@ const PROJECT = /^[a-z0-9][a-z0-9_-]{0,79}$/;
 const UUID = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i;
 const UNIT = /^[a-z\d][a-z\d ._/-]{0,39}$/i;
 const PROFILE_FIELDS = 'user_id,email,user_name,role,projects,assigned_units,unit_scope,active,can_approve_purchases';
+const profileFields = (project) => project === 'tmf-panama' ? PROFILE_FIELDS + ',can_receive_purchases,can_review_panama_hse' : PROFILE_FIELDS;
 
 function envValue(env, ...names) {
   return names.map((name) => String(env[name] || '').trim()).find(Boolean) || '';
@@ -46,6 +47,7 @@ export function normalizeRosterProfile(row, project) {
     || !row.projects.includes(project) || !Array.isArray(row.assigned_units)
     || row.assigned_units.some((unit) => typeof unit !== 'string' || !UNIT.test(unit))) return null;
 
+  const panamaOnly = project === 'tmf-panama' && row.projects.every((item) => item === project);
   return {
     userId: row.user_id.toLowerCase(),
     userName: row.user_name.trim(),
@@ -56,6 +58,9 @@ export function normalizeRosterProfile(row, project) {
     unitScope: row.unit_scope,
     allUnits: row.unit_scope === 'all',
     canApprovePurchases: row.role === 'gerencia' && row.can_approve_purchases === true,
+    canReceivePurchases: panamaOnly && row.can_receive_purchases === true,
+    canReviewPanamaHse: panamaOnly && ['supervisor', 'gerencia'].includes(row.role)
+      && row.can_review_panama_hse === true,
   };
 }
 
@@ -93,7 +98,7 @@ export async function authenticateHermesEmployee(email, password, config = ident
     || !Number.isFinite(Date.parse(user.email_confirmed_at))) return null;
 
   const roster = await identityRequest(config, '/rest/v1/hermes_memberships', {
-    query: { user_id: `eq.${user.id}`, active: 'eq.true', select: PROFILE_FIELDS, limit: '1' },
+    query: { user_id: `eq.${user.id}`, active: 'eq.true', select: profileFields(config.project), limit: '1' },
   });
   if (!roster.ok) throw new Error('Hermes roster unavailable');
   const [member] = await roster.json();
@@ -116,7 +121,7 @@ export async function resolveIdentitySession(config, sessionHash, userId) {
       session_hash: `eq.${sessionHash}`,
       user_id: `eq.${userId}`,
       expires_at: `gt.${new Date().toISOString()}`,
-      select: `user_id,expires_at,hermes_memberships!inner(${PROFILE_FIELDS})`,
+      select: `user_id,expires_at,hermes_memberships!inner(${profileFields(config.project)})`,
       limit: '1',
     },
   });
@@ -141,7 +146,7 @@ export async function listWorkshopMechanics(session, unitId) {
   if (!session?.projects?.includes(config.project) || (unitId !== undefined && !hasIdentityUnit(session, unitId))) return [];
   const response = await identityRequest(config, '/rest/v1/hermes_memberships', {
     query: {
-      active: 'eq.true', role: 'eq.mecanico', projects: `cs.{${config.project}}`, select: PROFILE_FIELDS,
+      active: 'eq.true', role: 'eq.mecanico', projects: `cs.{${config.project}}`, select: profileFields(config.project),
       order: 'user_name.asc', limit: '1000',
     },
   });

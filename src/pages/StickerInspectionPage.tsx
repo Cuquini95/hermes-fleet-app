@@ -114,7 +114,9 @@ export default function StickerInspectionPage() {
   const equipment = useEquipmentList();
   const isOnline = useOnlineStatus();
   const role = useAuthStore((s) => s.role);
-  const canSupervisorApprove = role === 'supervisor' || role === 'gerencia';
+  const project = useAuthStore((s) => s.project);
+  const hseReviewer = useAuthStore((s) => s.canReviewPanamaHse);
+  const canSupervisorApprove = (role === 'supervisor' || role === 'gerencia') && (project !== 'tmf-panama' || hseReviewer);
 
   const [fecha, setFecha] = useState(mexicoDateInput());
   const [hora, setHora] = useState(mexicoTimeInput());

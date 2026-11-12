@@ -16,13 +16,18 @@ interface SessionProfile {
   unitScope: 'all' | 'assigned';
   allUnits: boolean;
   canApprovePurchases: boolean;
+  canReceivePurchases?: boolean;
+  canReviewPanamaHse?: boolean;
 }
 
-interface AuthState extends Omit<SessionProfile, 'role' | 'unitScope'> {
+interface AuthState extends Omit<SessionProfile, 'role' | 'unitScope' | 'canReceivePurchases' | 'canReviewPanamaHse'> {
   role: AppRole | null;
   unitScope: SessionProfile['unitScope'] | null;
   isAuthenticated: boolean;
   sessionChecked: boolean;
+  canReceivePurchases: boolean;
+  canReviewPanamaHse: boolean;
+  loginFailure: 'credentials' | 'unavailable' | 'rate-limited' | null;
   login: (email: string, password: string) => Promise<boolean>;
   validateSession: () => Promise<void>;
   logout: () => Promise<boolean>;
@@ -30,7 +35,8 @@ interface AuthState extends Omit<SessionProfile, 'role' | 'unitScope'> {
 
 const cleared = {
   userId: '', userName: '', role: null, project: '', projects: [], assignedUnits: [], unitScope: null,
-  allUnits: false, canApprovePurchases: false, isAuthenticated: false,
+  allUnits: false, canApprovePurchases: false, canReceivePurchases: false, canReviewPanamaHse: false,
+  isAuthenticated: false, loginFailure: null,
 };
 
 function validProfile(value: unknown): value is SessionProfile {
@@ -44,7 +50,20 @@ function validProfile(value: unknown): value is SessionProfile {
     && profile.projects.includes(profile.project)
     && Array.isArray(profile.assignedUnits) && profile.assignedUnits.every((unit) => typeof unit === 'string')
     && (profile.unitScope === 'all' || profile.unitScope === 'assigned')
-    && profile.allUnits === (profile.unitScope === 'all') && typeof profile.canApprovePurchases === 'boolean';
+    && profile.allUnits === (profile.unitScope === 'all') && typeof profile.canApprovePurchases === 'boolean'
+    && (profile.canReceivePurchases === undefined || typeof profile.canReceivePurchases === 'boolean')
+    && (profile.canReviewPanamaHse === undefined || typeof profile.canReviewPanamaHse === 'boolean');
+}
+
+function authenticatedProfile(profile: SessionProfile) {
+  return {
+    ...profile,
+    canReceivePurchases: profile.canReceivePurchases === true,
+    canReviewPanamaHse: profile.canReviewPanamaHse === true,
+    isAuthenticated: true,
+    sessionChecked: true,
+    loginFailure: null,
+  };
 }
 
 function removeLegacyProfile() {
@@ -66,20 +85,29 @@ export const useAuthStore = create<AuthState>()((set) => ({
 
   login: async (email, password) => {
     const address = email.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address) || !password) return false;
     const requestGeneration = ++generation;
+    const fail = (loginFailure: AuthState['loginFailure']) => {
+      if (requestGeneration === generation) set({ loginFailure });
+      return false;
+    };
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address) || !password) return fail('credentials');
+    set({ loginFailure: null });
     try {
       const response = await fetch('/api/auth/login', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: address, password }),
       });
-      if (!response.ok) return false;
+      if (!response.ok) {
+        if (response.status === 429) return fail('rate-limited');
+        return fail(response.status >= 500 ? 'unavailable' : 'credentials');
+      }
       const profile: unknown = await response.json();
-      if (requestGeneration !== generation || !validProfile(profile)) return false;
+      if (requestGeneration !== generation) return false;
+      if (!validProfile(profile)) return fail('unavailable');
       bindDataSession(profile.userId);
-      set({ ...profile, isAuthenticated: true, sessionChecked: true });
+      set(authenticatedProfile(profile));
       return true;
-    } catch { return false; }
+    } catch { return fail('unavailable'); }
   },
 
   validateSession: async () => {
@@ -94,7 +122,7 @@ export const useAuthStore = create<AuthState>()((set) => ({
     } catch { /* an unverifiable session never opens protected routes */ }
     if (requestGeneration !== generation) return;
     bindDataSession(validProfile(profile) ? profile.userId : '');
-    set(validProfile(profile) ? { ...profile, isAuthenticated: true, sessionChecked: true } : { ...cleared, sessionChecked: true });
+    set(validProfile(profile) ? authenticatedProfile(profile) : { ...cleared, sessionChecked: true });
   },
 
   logout: async () => {

@@ -31,3 +31,14 @@ test('leaves conflicting roster identities and cross-project records pending', (
   assert.equal(planRosterImport([{ ...rosterEntry, projects: ['otro'] }], [employee], [], 'tcm').members.length, 0);
   assert.equal(planRosterImport([{ ...rosterEntry, canApprovePurchases: true }], [employee], [], 'tcm').members.length, 0);
 });
+
+test('requires an explicit Panama-only grant for warehouse receiving', () => {
+  const panama = { ...rosterEntry, projects: ['tmf-panama'], role: 'jefe_taller' };
+  assert.equal(planRosterImport([panama], [employee], [], 'tmf-panama').members[0].can_receive_purchases, false);
+  const allowed = planRosterImport([{ ...panama, canReceivePurchases: true }], [employee], [], 'tmf-panama');
+  assert.equal(allowed.members[0].can_receive_purchases, true);
+  assert.equal(allowed.members[0].can_approve_purchases, false);
+  const crossProject = { ...panama, projects: ['tmf-panama', 'tcm'], canReceivePurchases: true };
+  assert.equal(planRosterImport([crossProject], [employee], [], 'tmf-panama').members.length, 0);
+  assert.equal(planRosterImport([{ ...rosterEntry, canReceivePurchases: true }], [employee], [], 'tcm').members.length, 0);
+});

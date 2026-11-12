@@ -25,6 +25,8 @@ export function planRosterImport(entries, users, existing, project, now = Date.n
   for (const [index, item] of entries.entries()) {
     const email = normalizedEmail(item?.email);
     const userId = identities.get(email);
+    const panamaOnly = project === 'tmf-panama' && Array.isArray(item?.projects)
+      && item.projects.length === 1 && item.projects[0] === project;
     let reason;
     if (!email) reason = 'correo_inválido';
     else if (emailCounts.get(email) > 1) reason = 'correo_duplicado';
@@ -32,6 +34,11 @@ export function planRosterImport(entries, users, existing, project, now = Date.n
     else if (!userId) reason = 'identidad_sin_confirmar';
     else if (owners.has(email) && owners.get(email) !== userId) reason = 'identidad_distinta_a_la_vinculada';
     else if (item.canApprovePurchases === true && item.role !== 'gerencia') reason = 'permiso_de_compra_incompatible';
+    else if (item.canReceivePurchases !== undefined && typeof item.canReceivePurchases !== 'boolean') reason = 'permiso_de_recepción_inválido';
+    else if (item.canReceivePurchases === true && !panamaOnly) reason = 'permiso_de_recepción_fuera_de_panamá';
+    else if (item.canReviewPanamaHse !== undefined && typeof item.canReviewPanamaHse !== 'boolean') reason = 'permiso_hse_inválido';
+    else if (item.canReviewPanamaHse === true && (!panamaOnly
+      || !['supervisor', 'gerencia'].includes(item.role))) reason = 'permiso_hse_incompatible';
     else if (item.active !== undefined && typeof item.active !== 'boolean') reason = 'estado_inválido';
     if (reason) { pending.push({ fila: index + 1, motivo: reason }); continue; }
 
@@ -39,6 +46,10 @@ export function planRosterImport(entries, users, existing, project, now = Date.n
       user_id: userId, email, user_name: item.userName, role: item.role, projects: item.projects,
       assigned_units: item.assignedUnits ?? [], unit_scope: item.unitScope, active: item.active !== false,
       can_approve_purchases: item.canApprovePurchases === true,
+      ...(project === 'tmf-panama' ? {
+        can_receive_purchases: item.canReceivePurchases === true,
+        can_review_panama_hse: item.canReviewPanamaHse === true,
+      } : {}),
     };
     const normalized = normalizeRosterProfile({ ...row, active: true }, project);
     if (!normalized) { pending.push({ fila: index + 1, motivo: 'nombre_o_alcance_pendiente' }); continue; }

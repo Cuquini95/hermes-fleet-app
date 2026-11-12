@@ -9,7 +9,8 @@ import { useEquipmentList } from '../hooks/useEquipmentList';
 import { getNextPM } from '../data/pm-rules';
 import { getCumulativePMParts, getAvailablePMLevels, type PMPart } from '../data/pm-parts-catalog';
 import { mexicoDateInput } from '../lib/date-utils';
-import { requestWorkshop, WorkshopApiError, mechanicCoversUnit, type WorkshopMechanic } from '../lib/workshop-api';
+import { requestWorkshop, WorkshopApiError, mechanicCoversUnit, PANAMA_PM_CHECKLIST_SOURCE, type WorkshopMechanic } from '../lib/workshop-api';
+import type { PMChecklist } from '../types/workorder';
 import { useAuthStore } from '../stores/auth-store';
 import { printPMOrder } from '../lib/print-pm-order';
 import ConfirmModal from '../components/ui/ConfirmModal';
@@ -59,6 +60,7 @@ export default function PMWorkOrderPage() {
   const [toastMessage, setToastMessage] = useState('');
   const [toastVisible, setToastVisible] = useState(false);
   const [printData, setPrintData] = useState<Parameters<typeof printPMOrder>[0] | null>(null);
+  const [checklistMissing, setChecklistMissing] = useState(false);
 
   const selectedEquipment = equipment.find((eq) => eq.unit_id === unidad);
   const model = selectedEquipment?.model ?? '';
@@ -128,12 +130,13 @@ export default function PMWorkOrderPage() {
 
     const levelsIncluded = partsKit?.levelsIncluded ?? [pmLevel];
     try {
-      const { otId, schedule } = await requestWorkshop<{ otId: string; schedule: string[] }>('pm', {
+      const { otId, schedule, checklist } = await requestWorkshop<{ otId: string; schedule: string[]; checklist?: PMChecklist | null }>('pm', {
         mutationId: mutationId.current, unit: unidad, level: pmLevel, includedLevels: levelsIncluded.join('+'),
         hours: estimatedHours, mechanicId, scheduledDate, notes: observaciones,
         parts: partsKit?.parts.map((part) => `${part.partNumber} x${part.quantity}`).join(', ') ?? '',
       });
       setPending(false);
+      setChecklistMissing(checklist === null);
       setPrintData({
         otId, date: schedule[1] ?? scheduledDate, unidad, model, pmLevel, levelsIncluded,
         horometro: selectedEquipment?.current_horometro ?? 0, estimatedHours: Number(estimatedHours),
@@ -384,9 +387,18 @@ export default function PMWorkOrderPage() {
       </fieldset>
       {error && <p role="alert" className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       {printData && (
-        <button type="button" onClick={() => navigate('/calendar')} className="mb-3 w-full rounded-xl border border-amber p-3 text-sm font-semibold text-amber">
-          Abrir Calendario
-        </button>
+        <>
+          {checklistMissing && <p className="mb-3 rounded-xl border border-border bg-white p-3 text-sm text-text">
+            Checklist pendiente de validar para este modelo y nivel.{' '}
+            <a href={PANAMA_PM_CHECKLIST_SOURCE} target="_blank" rel="noreferrer" className="font-medium underline underline-offset-2">Consultar Flota Checklists PM</a>
+          </p>}
+          <button type="button" onClick={() => navigate(`/workorders/${encodeURIComponent(printData.otId)}`)} className="mb-3 w-full rounded-xl border border-border p-3 text-sm font-semibold text-text">
+            Abrir orden {printData.otId}
+          </button>
+          <button type="button" onClick={() => navigate('/calendar')} className="mb-3 w-full rounded-xl border border-amber p-3 text-sm font-semibold text-amber">
+            Abrir Calendario
+          </button>
+        </>
       )}
 
       {/* Submit */}

@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { OT_COL, OT_LOG_COL } from '../lib/data-adapter';
 import { requestWorkshop, workshopActorId, WorkshopApiError } from '../lib/workshop-api';
 import { useAuthStore } from './auth-store';
-import type { WorkOrder, StatusLogEntry, OTStatusField, OTEstado, OTPriority } from '../types/workorder';
+import type { WorkOrder, StatusLogEntry, OTStatusField, OTEstado, OTPriority, WorkshopExecutionInput } from '../types/workorder';
 
 export function orderHistoryTime(value: string): number {
   const sheet = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?: (\d{2}:\d{2}(?::\d{2})?))?$/.exec(value);
@@ -24,9 +24,14 @@ interface WorkOrderState {
     otId: string,
     field: OTStatusField,
     newValue: string | string[],
+    execution?: WorkshopExecutionInput,
   ) => Promise<void>;
   getWorkOrderById: (otId: string) => WorkOrder | undefined;
   initRealtime: () => () => void;
+}
+
+function readOrderDetail<T>(value: string | undefined): T | undefined {
+  try { return value ? JSON.parse(value) as T : undefined; } catch { return undefined; }
 }
 
 function parseWorkOrderRow(row: string[]): WorkOrder | null {
@@ -50,6 +55,9 @@ function parseWorkOrderRow(row: string[]): WorkOrder | null {
     fecha_cierre:      row[OT_COL.FECHA_CIERRE]    ?? '',
     observaciones:     row[OT_COL.OBSERVACIONES]   ?? '',
     progreso:          Number(row[OT_COL.PROGRESO]) || 0,
+    execution:         readOrderDetail(row[20]),
+    technical:         readOrderDetail(row[21]),
+    operations:        readOrderDetail(row[22]),
   };
 }
 
@@ -132,14 +140,14 @@ export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
     }
   },
 
-  updateOTField: async (otId, field, newValue) => {
+  updateOTField: async (otId, field, newValue, execution) => {
     const actorId = workshopActorId();
     if (!actorId) throw new Error('Abre una sesión individual para actualizar la OT.');
-    const key = JSON.stringify([actorId, otId, field, newValue]);
+    const key = JSON.stringify([actorId, otId, field, newValue, execution]);
     const mutationId = pendingUpdates.get(key) ?? crypto.randomUUID();
     pendingUpdates.set(key, mutationId);
     try {
-      await requestWorkshop('transition', { mutationId, otId, field, value: newValue });
+      await requestWorkshop('transition', { mutationId, otId, field, value: newValue, execution });
       pendingUpdates.delete(key);
       if (actorId === workshopActorId()) await get().fetchWorkOrders();
     } catch (error) {

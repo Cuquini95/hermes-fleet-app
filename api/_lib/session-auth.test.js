@@ -58,4 +58,26 @@ describe('employee session', () => {
     fixture.membership.can_approve_purchases = true;
     expect((await readSession(req)).canApprovePurchases).toBe(true);
   });
+
+  it('resolves Panama warehouse receiving from the current membership and revokes it independently', async () => {
+    const fixture = useFixture({ project: 'tmf-panama', role: 'jefe_taller', assignedUnits: ['DZ203'], unitScope: 'assigned' });
+    const req = { headers: { cookie: fixture.cookie } };
+    expect(await readSession(req, { allowPanama: true })).toMatchObject({
+      canReceivePurchases: false, canApprovePurchases: false, assignedUnits: ['DZ203'],
+    });
+    fixture.membership.can_receive_purchases = true;
+    expect((await readSession(req, { allowPanama: true })).canReceivePurchases).toBe(true);
+    fixture.membership.can_receive_purchases = false;
+    expect((await readSession(req, { allowPanama: true })).canReceivePurchases).toBe(false);
+  });
+
+  it('requires a separate Panama HSE review grant for the current reviewer', async () => {
+    const fixture = useFixture({ project: 'tmf-panama', role: 'supervisor' });
+    const req = { headers: { cookie: fixture.cookie } };
+    expect((await readSession(req, { allowPanama: true })).canReviewPanamaHse).toBe(false);
+    fixture.membership.can_review_panama_hse = true;
+    expect((await readSession(req, { allowPanama: true })).canReviewPanamaHse).toBe(true);
+    fixture.membership.role = 'operador';
+    expect((await readSession(req, { allowPanama: true })).canReviewPanamaHse).toBe(false);
+  });
 });

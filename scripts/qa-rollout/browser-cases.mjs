@@ -88,9 +88,16 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     await visible(page.getByRole('heading', { name: folio, exact: true }));
   }
 
-  async function changeOrderStatus(page, target, folio) {
+  async function changeOrderStatus(page, target, folio, isPM = false) {
     const option = page.locator('select').filter({ has: page.getByRole('option', { name: target, exact: true }) }).first();
     await option.selectOption({ label: target });
+    if (target === 'Resuelta') {
+      await page.getByLabel('Resultado de la prueba funcional').fill('Prueba funcional registrada en QA móvil');
+      if (isPM) {
+        await page.getByLabel('Comprobación sintética de mantenimiento').check();
+        await page.getByLabel('Horómetro de ejecución').fill('1975');
+      }
+    }
     await option.locator('..').getByRole('button', { name: 'Guardar', exact: true }).click();
     await waitUntil(() => sheet.read(tabs.orders).find(row => row[1] === folio && row[9] === target), `No persistió ${target}`);
   }
@@ -110,11 +117,11 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     return date[1];
   }
 
-  async function fillFailure(page, description, withPhoto) {
+  async function fillFailure(page, description, withPhoto, unit = 'DZ203') {
     await page.goto(`${origin}/falla`, { waitUntil: 'domcontentloaded' });
     await dismissPrivacy(page);
     const selects = page.locator('#main-content select');
-    await selects.nth(0).selectOption('DZ203');
+    await selects.nth(0).selectOption(unit);
     await selects.nth(1).selectOption({ label: 'Mecánica' });
     await page.getByPlaceholder('Describe los síntomas observados...').fill(description);
     await clickByName(page, 'No');
@@ -144,10 +151,89 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     }
     if (!withGateway) return [...external];
 
+    await record('MÓVIL-TURNOS-ENTREGA-ACEPTACIÓN', async () => {
+      const shiftTab = 'HERMES_PA_TURNOS';
+      const folio = await inRole('operador', 360, async page => {
+        await page.goto(`${origin}/panama`, { waitUntil: 'domcontentloaded' });
+        await page.getByRole('link', { name: 'Relevo de turno', exact: true }).click();
+        await visible(page.getByRole('heading', { name: 'Relevo de turno', exact: true }));
+        await page.getByRole('combobox', { name: 'Unidad', exact: true }).selectOption('EX401');
+        await page.getByLabel('Turno', { exact: true }).fill('Día QA');
+        await page.getByLabel('Estado del equipo').fill('Operativo');
+        await page.getByLabel('Horómetro inicial (h)').fill('5520');
+        await page.getByLabel('Horómetro final (h)').fill('5518');
+        await visible(page.getByText(/horómetro final es inferior/i));
+        assert(await page.getByRole('button', { name: 'Entregar a Supervisión' }).isDisabled());
+        await page.getByLabel('Horómetro final (h)').fill('5528');
+        await page.getByLabel('Viajes', { exact: true }).fill('2');
+        await page.getByLabel('Toneladas', { exact: true }).fill('30.5');
+        await page.getByLabel('Cliente', { exact: true }).fill('Cliente sintético TMF');
+        await page.getByLabel('Referencia del soporte').fill('PARTE-QA-TURNO');
+        await page.getByLabel('Paradas o episodio de avería').fill('Sin paradas');
+        await clickByName(page, 'Entregar a Supervisión');
+        await visible(page.getByRole('status').filter({ hasText: 'Pendiente de revisión' }));
+        const row = sheet.read(shiftTab).find(row => row[10] === 'PARTE-QA-TURNO');
+        assert.equal(row[8], 8);
+        assert.equal(row[5], 'Pendiente de revisión');
+        await noHorizontalOverflow(page, 360);
+        await shot(page, 'relevo-parte-360.png');
+        return row[0];
+      });
+      await inRole('supervisor', 390, async page => {
+        await page.goto(`${origin}/panama/turnos`, { waitUntil: 'domcontentloaded' });
+        const part = page.getByRole('article').filter({ hasText: folio });
+        await visible(part.getByText(/8 h del turno/));
+        await part.getByRole('button', { name: 'Aceptar parte', exact: true }).click();
+        await visible(part.getByText(/Aceptado por Supervisión/));
+        await visible(part.getByText('Pendiente de conciliación en REGISTRO'));
+        assert.equal(sheet.read(shiftTab).filter(row => row[0] === folio).at(-1)[20], 'accept');
+        await noHorizontalOverflow(page, 390);
+        await shot(page, 'relevo-aceptado-390.png');
+      });
+      return { folio, hours: 8, scopes: ['operador', 'supervisor'], officialReconciliation: 'pendiente' };
+    });
+
+    await record('MÓVIL-CAMPO-CONFIRMACIÓN', () => inRole('operador', 390, async page => {
+      const fuelTab = 'Combustible';
+      const tripTab = 'Reporte_Fletes_Transporte';
+      await page.goto(`${origin}/diesel`, { waitUntil: 'domcontentloaded' });
+      await dismissPrivacy(page);
+      await page.locator('select').first().selectOption('EX401');
+      await page.getByPlaceholder('0', { exact: true }).fill('125');
+      await page.getByPlaceholder('Ej: 8450', { exact: true }).fill('5528');
+      await page.getByPlaceholder('Observaciones adicionales...').fill('COMBUSTIBLE-QA-ESPERA');
+      await clickByName(page, 'Registrar Combustible');
+      sheet.failNext({ matches: writes => writes.some(write => write.tab === fuelTab), delay: 1000 });
+      await clickByName(page, 'Confirmar');
+      await sleep(200);
+      assert.equal(await page.getByText('Combustible registrado en Hermes.').count(), 0);
+      assert.equal(sheet.read(fuelTab).some(row => row[12] === 'COMBUSTIBLE-QA-ESPERA'), false);
+      await visible(page.getByText('Combustible registrado en Hermes.'));
+      assert.equal(sheet.read(fuelTab).filter(row => row[12] === 'COMBUSTIBLE-QA-ESPERA').length, 1);
+
+      await page.goto(`${origin}/flete`, { waitUntil: 'domcontentloaded' });
+      await dismissPrivacy(page);
+      await page.locator('select').first().selectOption('DZ205');
+      await page.getByPlaceholder('Ej: Frente 3', { exact: true }).fill('Frente QA');
+      await page.getByPlaceholder('Ej: Patio de acopio', { exact: true }).fill('Patio QA');
+      await page.getByPlaceholder('0', { exact: true }).nth(0).fill('8');
+      await page.getByPlaceholder('0', { exact: true }).nth(1).fill('7');
+      await page.getByPlaceholder('Ej: 24044 · 0031', { exact: true }).fill('FLETE-QA-ESPERA');
+      await clickByName(page, 'Registrar Flete');
+      sheet.failNext({ matches: writes => writes.some(write => write.tab === tripTab), delay: 1000, when: 'before' });
+      await clickByName(page, 'Confirmar');
+      await sleep(200);
+      assert.equal(await page.getByText('Flete registrado en Hermes.').count(), 0);
+      await visible(page.getByText(/1 pendientes de sincronización/));
+      assert.equal(sheet.read(tripTab).some(row => row[14] === 'FLETE-QA-ESPERA'), false);
+      await noHorizontalOverflow(page, 390);
+      return { fuelConfirmed: true, haulQueued: true, prematureConfirmation: false };
+    }));
+
     let filed;
     await record('MÓVIL-TALLER-360-LENTO', () => inRole('operador', 360, async page => {
       const description = 'Falla sintética en conexión lenta';
-      await fillFailure(page, description, false);
+      await fillFailure(page, description, false, 'EX401');
       sheet.failNext({ matches: writes => writes.some(write => write.tab === tabs.orders), delay: 1000 });
       await clickByName(page, 'Confirmar');
       await sleep(200);
@@ -206,6 +292,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       }));
     }
 
+    let pmMobileFolio;
     await record('MÓVIL-PROGRAMA-PM-CALENDARIO', () => inRole('jefe_taller', 360, async page => {
       await page.goto(`${origin}/pm`, { waitUntil: 'domcontentloaded' });
       await dismissPrivacy(page);
@@ -214,11 +301,13 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await page.waitForURL(`${origin}/pm-order`);
       await page.locator('fieldset select').first().selectOption('EX401');
       await page.getByRole('button', { name: /^PM[- ]?\d+$/ }).first().tap();
+      await page.getByLabel('Mecánico (opcional)').selectOption(firstAccount('mecanico').user.id);
       const knownRows = sheet.read(tabs.pm).length;
       await clickByName(page, 'Activar Orden de PM');
       await clickByName(page, 'Confirmar');
       const saved = await waitUntil(() => sheet.read(tabs.pm).slice(knownRows).find(row => row[2] === 'EX401'), 'No se guardó la Orden de PM');
       const folio = saved[0];
+      pmMobileFolio = folio;
       await page.getByRole('button', { name: 'Abrir Calendario', exact: true }).tap();
       await page.waitForURL(`${origin}/calendar`);
       await visible(page.getByRole('button', { name: new RegExp(folio) }));
@@ -227,6 +316,28 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await noHorizontalOverflow(page, 360);
       return { folio, unit: 'EX401', reloaded: true };
     }));
+
+    await record('MÓVIL-PM-ENTREGA-ACEPTACIÓN', async () => {
+      assert(pmMobileFolio, 'Falta la OT de PM programada en el caso móvil');
+      const path = `${origin}/workorders/${encodeURIComponent(pmMobileFolio)}`;
+      await inRole('mecanico', 360, async page => {
+        await page.goto(path, { waitUntil: 'domcontentloaded' });
+        await visible(page.getByText('Comprobación sintética de mantenimiento', { exact: true }));
+        await changeOrderStatus(page, 'En Reparación', pmMobileFolio);
+        await changeOrderStatus(page, 'Resuelta', pmMobileFolio, true);
+        await noHorizontalOverflow(page, 360);
+      }, firstAccount('mecanico'));
+      await inRole('jefe_taller', 390, async page => {
+        await page.goto(path, { waitUntil: 'domcontentloaded' });
+        await visible(page.getByText('Comprobación sintética de mantenimiento · Realizada', { exact: true }));
+        await changeOrderStatus(page, 'Completado', pmMobileFolio);
+        await visible(page.getByText(/Aceptación técnica de /));
+        await shot(page, 'pm-aceptado-390.png');
+      });
+      const history = sheet.read(tabs.pmHistory).find(row => row[1] === pmMobileFolio);
+      assert.deepEqual([history?.[6], history?.[10]], ['1975', 'Completada']);
+      return { folio: pmMobileFolio, meter: history[6], synchronized: true };
+    });
 
     await record('MÓVIL-TALLER-CIERRE-ENTRE-ROLES', async () => {
       assert(filed, 'Falta la OT sintética de conexión lenta');
@@ -268,14 +379,18 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await changeOrderStatus(page, 'Completado', folio);
       });
       return inRole('supervisor', 390, async page => {
-        await page.goto(path, { waitUntil: 'domcontentloaded' });
+        await page.goto(`${origin}/fleet`, { waitUntil: 'domcontentloaded' });
+        await page.getByRole('link', { name: `EX401 · ${folio}`, exact: true }).click();
         await visible(page.getByRole('heading', { name: folio, exact: true }));
         await visible(page.getByText('Completado', { exact: true }));
+        await page.getByLabel('Observación de Operaciones').fill('Recepción sintética por Operaciones');
+        await clickByName(page, 'Confirmar retorno ahora');
+        await visible(page.getByText(/Equipo recibido por /));
         const row = sheet.read(tabs.orders).find(order => order[1] === folio);
         assert(row[14] && row[10]?.startsWith(origin));
         assert.equal(sheet.read(tabs.failure).find(item => item[13] === folio)?.[9], 'Completado');
         await shot(page, 'ot-cerrada-supervisor-390.png');
-        return { folio, closedAt: row[14], progress: 50, cost: 85.25, evidenceLinked: true };
+        return { folio, closedAt: row[14], returnedAt: JSON.parse(row[22]).returnedAt, progress: 50, cost: 85.25, evidenceLinked: true };
       });
     });
 
@@ -368,7 +483,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         assert(approved[18] && approved[19] && approved[18] !== approved[19]);
         await shot(page, 'sticker-aprobado-390.png');
         return { folio, unit: 'EX401', approved: true, canDispatch: true };
-      });
+      }, firstAccount('supervisor'));
     });
 
     if (!withPurchasing) return [...external];

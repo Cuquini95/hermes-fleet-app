@@ -1,20 +1,4 @@
-import type { Equipment } from '../types/equipment';
-
-export type DispatchReadinessLevel = 'ok' | 'restricted' | 'blocked';
-export type DispatchReadinessSource = 'sticker' | 'dvir' | 'averia' | 'none';
-
-export interface UnitDispatchReadiness {
-  unitId: string;
-  level: DispatchReadinessLevel;
-  source: DispatchReadinessSource;
-  label: string;
-  reason: string;
-  effectiveStatus?: Equipment['status'];
-  folio?: string;
-  expiresOn?: string;
-}
-
-const OK_READINESS: UnitDispatchReadiness = {
+const OK_READINESS = {
   unitId: '',
   level: 'ok',
   source: 'none',
@@ -22,30 +6,11 @@ const OK_READINESS: UnitDispatchReadiness = {
   reason: 'Sin bloqueo operativo registrado',
 };
 
-interface StickerRecord {
-  unitId: string;
-  folio: string;
-  finalColor: string;
-  canDispatch: string;
-  approvalState: string;
-  expiresOn: string;
-  firstDue: string;
-  timestamp: number;
-}
-
-interface DvirRecord {
-  unitId: string;
-  result: string;
-  actionState: string;
-  defects: string;
-  timestamp: number;
-}
-
-export function normalizeUnitId(value: string): string {
+export function normalizeUnitId(value) {
   return value.trim().toUpperCase();
 }
 
-function parseSheetDate(value: string): Date | null {
+function parseSheetDate(value) {
   const trimmed = value.trim();
   let match = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (match) {
@@ -60,7 +25,7 @@ function parseSheetDate(value: string): Date | null {
   return null;
 }
 
-function validDate(year: number, month: number, day: number): Date | null {
+function validDate(year, month, day) {
   const date = new Date(year, month, day);
   if (
     date.getFullYear() !== year ||
@@ -72,7 +37,7 @@ function validDate(year: number, month: number, day: number): Date | null {
   return date;
 }
 
-function parseSheetDateTime(dateValue: string, timeValue: string): number {
+function parseSheetDateTime(dateValue, timeValue) {
   const date = parseSheetDate(dateValue);
   if (!date) return 0;
 
@@ -83,18 +48,18 @@ function parseSheetDateTime(dateValue: string, timeValue: string): number {
   return date.getTime();
 }
 
-function startOfDay(date: Date): Date {
+function startOfDay(date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
-function isBeforeToday(dateValue: string, today: Date): boolean {
+function isBeforeToday(dateValue, today) {
   const date = parseSheetDate(dateValue);
   if (!date) return false;
   return startOfDay(date).getTime() < startOfDay(today).getTime();
 }
 
-function latestByUnit<T extends { unitId: string; timestamp: number }>(records: T[]): Map<string, T> {
-  const latest = new Map<string, T>();
+function latestByUnit(records) {
+  const latest = new Map();
   for (const record of records) {
     const current = latest.get(record.unitId);
     if (!current || record.timestamp >= current.timestamp) {
@@ -104,8 +69,8 @@ function latestByUnit<T extends { unitId: string; timestamp: number }>(records: 
   return latest;
 }
 
-function parseStickerRows(rows: string[][]): Map<string, StickerRecord> {
-  const records: StickerRecord[] = [];
+function parseStickerRows(rows) {
+  const records = [];
   for (const row of rows) {
     const unitId = normalizeUnitId(row[5] ?? '');
     if (!unitId || unitId === 'UNIDAD') continue;
@@ -124,8 +89,8 @@ function parseStickerRows(rows: string[][]): Map<string, StickerRecord> {
   return latestByUnit(records);
 }
 
-function parseDvirRows(rows: string[][]): Map<string, DvirRecord> {
-  const records: DvirRecord[] = [];
+function parseDvirRows(rows) {
+  const records = [];
   for (const row of rows) {
     const unitId = normalizeUnitId(row[4] ?? '');
     if (!unitId || unitId === 'UNIDAD') continue;
@@ -147,7 +112,7 @@ function parseDvirRows(rows: string[][]): Map<string, DvirRecord> {
   return latest;
 }
 
-function readinessFromSticker(record: StickerRecord, today: Date): UnitDispatchReadiness {
+function readinessFromSticker(record, today) {
   const color = record.finalColor;
   const canDispatch = record.canDispatch;
   const pending = record.approvalState === 'pendiente' || record.approvalState === 'pendiente_supervisor';
@@ -207,7 +172,7 @@ function readinessFromSticker(record: StickerRecord, today: Date): UnitDispatchR
   };
 }
 
-function readinessFromDvir(record: DvirRecord): UnitDispatchReadiness {
+function readinessFromDvir(record) {
   if (record.result === 'reprobado') {
     return {
       unitId: record.unitId,
@@ -244,10 +209,10 @@ function readinessFromDvir(record: DvirRecord): UnitDispatchReadiness {
 }
 
 function pickMostRestrictive(
-  unitId: string,
-  sticker: UnitDispatchReadiness | undefined,
-  dvir: UnitDispatchReadiness | undefined,
-): UnitDispatchReadiness {
+  unitId,
+  sticker,
+  dvir,
+) {
   if (dvir?.level === 'blocked') return dvir;
   if (sticker?.level === 'blocked') return sticker;
   if (dvir?.level === 'restricted') return dvir;
@@ -258,14 +223,15 @@ function pickMostRestrictive(
 }
 
 export function buildDispatchReadinessMap(
-  stickerRows: string[][],
-  dvirRows: string[][],
+  stickerRows,
+  dvirRows,
   today = new Date(),
-): Map<string, UnitDispatchReadiness> {
+  pendingReturns = [],
+) {
   const stickers = parseStickerRows(stickerRows);
   const dvirs = parseDvirRows(dvirRows);
   const unitIds = new Set([...stickers.keys(), ...dvirs.keys()]);
-  const map = new Map<string, UnitDispatchReadiness>();
+  const map = new Map();
 
   for (const unitId of unitIds) {
     const sticker = stickers.get(unitId);
@@ -277,13 +243,21 @@ export function buildDispatchReadinessMap(
     ));
   }
 
+  for (const { unit, otId } of pendingReturns) {
+    const unitId = normalizeUnitId(unit);
+    if (map.get(unitId)?.level === 'blocked') continue;
+    map.set(unitId, {
+      unitId, source: 'retorno', level: 'blocked', label: 'Retorno pendiente',
+      reason: `${otId} pendiente de recepción por Operaciones`, effectiveStatus: 'taller', folio: otId,
+    });
+  }
   return map;
 }
 
 export function applyDispatchReadiness(
-  unit: Equipment,
-  readiness: UnitDispatchReadiness | undefined,
-): Equipment {
+  unit,
+  readiness,
+) {
   if (!readiness?.effectiveStatus || unit.status === 'inactivo') return unit;
   if (unit.status === 'taller' && readiness.effectiveStatus !== 'taller') return unit;
   return {

@@ -210,4 +210,14 @@ describe('handoffMeterReadings', () => {
       recorded_at: '2026-07-25T18:00:00.000Z',
     }])).rejects.toThrow('502');
   });
+
+  it('requires a mapped CMMS asset before confirming a handoff, including on an HTTP 200', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({
+      received: 1, accepted: 1, applied: 0, unmatched: ['CA26'], ambiguous: [], rejected: [],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    await expect(handoffMeterReadings([{
+      unit: 'CA26', hours: 12500.5, recorded_at: '2026-07-25T19:15:00.000Z',
+    }])).rejects.toThrow('CMMS no confirmó la lectura');
+  });
 });

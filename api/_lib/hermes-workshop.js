@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import { STICKER_INSPECTION_TEMPLATES } from '../../src/data/sticker-inspection-templates.js';
+import { buildDispatchReadinessMap } from '../../src/lib/dispatch-readiness.js';
+import { PANAMA_PROJECT } from './hermes-panama.js';
 
 const TAB = {
   inventory: '01 Inventario', orders: 'ORDENES_TRABAJO', history: 'OT_STATUS_LOG', failures: 'Averias',
@@ -9,6 +11,7 @@ const TAB = {
 const ORDER_READ = new Set(['mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia']);
 const ASSIGN = new Set(['jefe_taller', 'coordinador', 'gerencia']);
 const CLOSE = new Set(['jefe_taller', 'supervisor', 'gerencia']);
+const OPERATIONS = new Set(['supervisor']);
 const MANAGEMENT = new Set([...ASSIGN, 'supervisor']);
 const SUPERVISE = new Set(['supervisor', 'gerencia']);
 const INSPECT = new Set(['operador', 'supervisor', 'gerencia']);
@@ -24,6 +27,7 @@ const STATUSES = {
 const FIELD_COLUMNS = {
   estado: 9, mecanico_asignado: 8, prioridad: 7, observaciones: 15, progreso: 16, costo_estimado: 13, foto_url: 10,
 };
+const WORKFLOW = { execution: 20, technical: 21, operations: 22, pm: 23 };
 const PRIORITIES = new Set(['CRITICA', 'ALTA', 'MEDIA', 'BAJA']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DVIR_LABELS = ['Motor', 'Transmisión', 'Frenos', 'Dirección', 'Hidráulico', 'Eléctrico', 'Neumáticos', 'Estructura', 'Luces', 'Fluidos', 'Cabina', 'Tren de rodaje'];
@@ -197,6 +201,10 @@ function orderVersion(row) {
   return row[18] || digest(row);
 }
 
+function storedObject(value) {
+  try { return value ? JSON.parse(value) : null; } catch { return null; }
+}
+
 function historyTime(value = '') {
   const sheet = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?: (\d{2}:\d{2}(?::\d{2})?))?$/.exec(value);
   const local = sheet
@@ -236,6 +244,85 @@ async function mechanicFor(context, value, unit) {
   return mechanic;
 }
 
+function linkedRows(rows, idCol, unitCol, otId, unit) {
+  const matches = rows.flatMap((row, index) => row[idCol] === otId ? [{ row, index }] : []);
+  assert(matches.length <= 1 && matches.every(({ row }) => row[unitCol]?.trim().toUpperCase() === unit), 409,
+    'El folio tiene vínculos duplicados o de otra unidad');
+  return matches[0];
+}
+
+const normalizeModel = value => value?.trim().replace(/\s+/g, ' ').toUpperCase();
+const normalizeLevel = value => value?.trim().replace(/[- ]/g, '').toUpperCase();
+const todayInPanama = context => dateFormatter.format(new Date(context.now));
+const isPanama = context => context.session.project === PANAMA_PROJECT;
+const canReviewHse = session => SUPERVISE.has(session.role) && (session.project !== PANAMA_PROJECT || session.canReviewPanamaHse === true);
+
+function configuredChecklist(context, model, level) {
+  if (!model || !level) return null;
+  let catalog;
+  try { catalog = context.pmChecklists ?? JSON.parse(process.env.HERMES_PANAMA_PM_CHECKLISTS_JSON || '[]'); }
+  catch { throw new WorkshopError(503, 'El catálogo de checklists PM requiere revisión'); }
+  assert(Array.isArray(catalog), 503, 'El catálogo de checklists PM requiere revisión');
+  const matches = catalog.filter(item => typeof item?.model === 'string' && typeof item.level === 'string'
+    && normalizeModel(item.model) === normalizeModel(model) && normalizeLevel(item.level) === normalizeLevel(level));
+  if (!matches.length) return null;
+  const [{ reference, tasks }] = matches;
+  assert(matches.length === 1 && typeof reference === 'string' && reference.trim() && reference.length <= 500
+    && Array.isArray(tasks) && tasks.length > 0 && tasks.length <= 80
+    && tasks.every(task => typeof task?.id === 'string' && /^[a-z0-9_-]{1,80}$/i.test(task.id)
+      && typeof task.label === 'string' && task.label.trim() && task.label.length <= 250)
+    && new Set(tasks.map(task => task.id)).size === tasks.length, 503, 'El checklist de este modelo y nivel requiere revisión');
+  return { reference: reference.trim(), tasks: tasks.map(({ id, label }) => ({ id, label: label.trim() })) };
+}
+
+async function pmDefinition(context, order) {
+  assert(order.row[4] === 'PM', 409, 'La orden no corresponde a un PM');
+  const saved = storedObject(order.row[WORKFLOW.pm]);
+  if (saved?.checklist) return saved;
+  if (saved) return { ...saved, checklist: configuredChecklist(context, saved.model, saved.level) };
+  const linked = linkedRows(await context.sheets.read(TAB.pm), 0, 2, order.otId, order.row[3].trim().toUpperCase());
+  assert(linked, 409, 'La orden no tiene una fila PM vinculada');
+  const [, , , model, level, , initialMeter] = linked.row;
+  return { model, level, initialMeter, checklist: configuredChecklist(context, model, level) };
+}
+
+async function executionFor(context, order) {
+  const { body, session } = context;
+  assert(order.row[17] === session.userId, 403, 'La entrega corresponde al ejecutor asignado');
+  const functionalTest = text(body.execution?.functionalTest, 'Resultado de la prueba funcional', 1500, true);
+  const execution = { userId: session.userId, userName: session.userName, submittedAt: context.now, functionalTest };
+  if (order.row[4] !== 'PM') return { execution };
+  const pm = await pmDefinition(context, order);
+  assert(pm.checklist, 409, 'Falta un checklist validado para el modelo y nivel de PM');
+  const performedOn = isoDate(body.execution?.performedOn);
+  assert(performedOn <= todayInPanama(context), 400, 'La fecha de ejecución no puede ser futura');
+  const meter = decimal(body.execution?.meter, 'Horómetro de ejecución', 0, 9999999);
+  const initialMeter = String(pm.initialMeter ?? '').trim();
+  assert(!/^\d+(?:\.\d+)?$/.test(initialMeter) || meter >= Number(initialMeter), 400, 'El horómetro es menor que la lectura de programación');
+  const completed = body.execution?.completedItems;
+  assert(Array.isArray(completed) && completed.length === pm.checklist.tasks.length
+    && pm.checklist.tasks.every(task => completed.includes(task.id)), 400, 'Completa todas las tareas del checklist del modelo');
+  return { execution: { ...execution, performedOn, meter: String(meter), completedItems: completed }, pm };
+}
+
+async function pmAcceptanceWrites(context, order, execution) {
+  const unit = order.row[3].trim().toUpperCase();
+  const definitions = [[TAB.pm, 0, 2, 11, 14], [TAB.pmHistory, 1, 2, 10, 13], [TAB.schedule, 2, 3, 7]];
+  const targets = await Promise.all(definitions.map(async ([tab, idCol, unitCol, statusCol, evidenceCol]) => {
+    const linked = linkedRows(await context.sheets.read(tab), idCol, unitCol, order.otId, unit);
+    assert(linked, 409, 'Falta una fila vinculada de la orden, el historial o el calendario PM');
+    return { tab, statusCol, evidenceCol, row: linked.index };
+  }));
+  const pm = await pmDefinition(context, order);
+  const details = [execution.performedOn, context.session.userId, context.session.userName, context.now, pm.checklist.reference];
+  return targets.flatMap(({ tab, statusCol, evidenceCol, row }) => {
+    const isSchedule = tab === TAB.schedule;
+    const writes = [{ tab, row, col: statusCol, values: [isSchedule ? 'Completado' : 'Completada'] }];
+    if (!isSchedule) writes.push({ tab, row, col: 6, values: [execution.meter] }, { tab, row, col: evidenceCol, values: details });
+    return writes;
+  });
+}
+
 async function transition(context) {
   const { body, session, sheets, mutationId } = context;
   const order = await getOrder(context, body.otId);
@@ -256,12 +343,29 @@ async function transition(context) {
   if (field === 'estado') {
     if (value === 'Completado') assert(CLOSE.has(session.role), 403, 'Tu rol no puede cerrar una OT');
     assert(value === before || STATUSES[before || 'Abierta']?.includes(value), 409, 'Transición de estado inválida');
-    const failures = await sheets.read(TAB.failures);
-    const linked = failures.map((failure, rowIndex) => ({ failure, rowIndex })).filter(({ failure }) => failure[13] === otId && failure[2] === row[3]);
-    assert(linked.length <= 1, 409, 'Hay averías duplicadas vinculadas al folio');
-    if (linked[0]) writes.push({ tab: TAB.failures, row: linked[0].rowIndex, col: 9, values: [value] });
+    const unit = row[3].trim().toUpperCase();
+    const linked = row[4] === 'PM' ? null : linkedRows(await sheets.read(TAB.failures), 13, 2, otId, unit);
+    if (linked) writes.push({ tab: TAB.failures, row: linked.index, col: 9, values: [value] });
+    if (isPanama(context) && value === 'Resuelta' && before !== value) {
+      const submitted = await executionFor(context, order);
+      writes.push({ tab: TAB.orders, row: index, col: WORKFLOW.execution, values: [JSON.stringify(submitted.execution)] },
+        { tab: TAB.history, append: [historyRow(context, otId, 'entrega_tecnica', '', submitted.execution.functionalTest)] });
+      if (submitted.pm) writes.push({ tab: TAB.orders, row: index, col: WORKFLOW.pm, values: [JSON.stringify(submitted.pm)] });
+    }
+    if (isPanama(context) && before === 'Resuelta' && value === 'En Reparación') {
+      writes.push({ tab: TAB.orders, row: index, col: WORKFLOW.execution, values: ['', ''] });
+    }
     if (value === 'Completado') {
       writes.push({ tab: TAB.orders, row: index, col: 14, values: [context.now] });
+      if (isPanama(context)) {
+        const execution = storedObject(row[WORKFLOW.execution]);
+        assert(execution?.userId && execution.functionalTest, 409, 'Devuelve la orden a reparación para documentar la prueba funcional');
+        assert(session.userId !== execution.userId && session.userId !== row[17], 403, 'La aceptación técnica requiere un verificador independiente');
+        const technical = { userId: session.userId, userName: session.userName, acceptedAt: context.now };
+        writes.push({ tab: TAB.orders, row: index, col: WORKFLOW.technical, values: [JSON.stringify(technical)] },
+          { tab: TAB.history, append: [historyRow(context, otId, 'aceptacion_tecnica', '', execution.functionalTest)] });
+        if (row[4] === 'PM') writes.push(...await pmAcceptanceWrites(context, order, execution));
+      }
       if (row[4] === 'DVIR') {
         const inspections = await sheets.read(TAB.inspections);
         for (const [rowIndex, inspection] of inspections.entries()) {
@@ -314,13 +418,16 @@ async function pm(context) {
   const description = `Mantenimiento Preventivo ${level}. Incluye: ${included}`;
   const schedule = scheduleValue(context, { otId, unit: code, mechanic, hours, date, priority, notes });
   const common = [code, model, level, included, meter];
+  const order = orderRow(context, { id: otId, unit: code, type: 'PM', description, priority, parts, notes, mechanic });
+  const definition = isPanama(context) ? { model, level, initialMeter: meter, checklist: configuredChecklist(context, model, level) } : null;
+  if (definition) order.push('', '', '', JSON.stringify(definition));
   return commit(context, [
     { tab: TAB.pm, append: [[otId, context.date, ...common, description, String(hours), mechanic?.userName || 'Sin asignar', session.userName, 'Programada', parts, notes]] },
     { tab: TAB.pmHistory, append: [[context.date, otId, ...common, String(hours), mechanic?.userName || 'Sin asignar', session.userName, 'Programada', parts, notes]] },
-    { tab: TAB.orders, append: [orderRow(context, { id: otId, unit: code, type: 'PM', description, priority, parts, notes, mechanic })] },
+    { tab: TAB.orders, append: [order] },
     { tab: TAB.history, append: [historyRow(context, otId, 'estado', '', 'Abierta')] },
     { tab: TAB.schedule, append: [schedule] },
-  ], { otId, schedule });
+  ], { otId, schedule, ...(definition && { checklist: definition.checklist }) });
 }
 
 async function schedule(context) {
@@ -352,6 +459,71 @@ async function schedule(context) {
     { tab: TAB.history, append: [historyRow(context, otId, 'mecanico_asignado', effective[8] || '', mechanic?.userName || '')] },
   );
   return commit(context, writes, { schedule: result }, `workshop-order:${otId}:${version}`);
+}
+
+function pendingOperationalReturn(row) {
+  return row[4] !== 'PM' && row[9] === 'Completado' && storedObject(row[WORKFLOW.operations])?.decision !== 'accepted';
+}
+
+async function returnQueue({ session, sheets }, details = false) {
+  const rows = await sheets.read(TAB.orders, { cached: true, requireExisting: true });
+  return rows.filter(row => /^OT-/.test(row[1] || '') && row[3] && scopeAllows(session, row[3].trim().toUpperCase())
+    && pendingOperationalReturn(row)).map(row => {
+    const entry = { otId: row[1], unit: row[3] };
+    if (!details) return entry;
+    const technical = storedObject(row[WORKFLOW.technical]);
+    return { ...entry, technicalAt: technical?.acceptedAt || row[14] || '', technicalBy: technical?.userName || '' };
+  });
+}
+
+async function operationalReturn(context) {
+  const { body, session, sheets } = context;
+  const { row, effective, index, otId, version } = await getOrder(context, body.otId);
+  assert(pendingOperationalReturn(effective), 409, 'La OT no tiene una entrega pendiente de Operaciones');
+  const execution = storedObject(row[WORKFLOW.execution]);
+  const technical = storedObject(row[WORKFLOW.technical]);
+  assert(session.userId !== execution?.userId && session.userId !== technical?.userId && session.userId !== row[17], 403,
+    'La recepción de Operaciones debe quedar a cargo de otro responsable');
+  const { decision } = body;
+  assert(['accepted', 'returned'].includes(decision), 400, 'Selecciona la decisión de Operaciones');
+  const notes = text(body.notes, 'Observación de Operaciones', 1500, true);
+  const receipt = { decision, notes, userId: session.userId, userName: session.userName, recordedAt: context.now };
+  const writes = [];
+  if (decision === 'accepted') {
+    assert(technical?.userId && execution?.userId, 409, 'Devuelve la OT para documentar una verificación técnica independiente');
+    const unit = row[3].trim().toUpperCase();
+    const [stickers, inspections] = await Promise.all(READINESS_SOURCES.slice(1).map(async ([name, tab, unitColumn, selected]) => {
+      const rows = await sheets.read(tab, { requireExisting: true });
+      return readinessRows(rows, name, unitColumn, selected, candidate => candidate === unit);
+    }));
+    const safety = buildDispatchReadinessMap(stickers, inspections, new Date(`${todayInPanama(context)}T12:00:00`)).get(unit);
+    assert(safety?.level !== 'blocked', 409, `Retorno bloqueado. ${safety?.reason || ''}`);
+    const returnedAt = body.returnedAt == null ? context.now : text(body.returnedAt, 'Fecha y hora de retorno', 24, true);
+    assert(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(returnedAt)
+      && Date.parse(returnedAt) >= Date.parse(technical.acceptedAt) && Date.parse(returnedAt) <= Date.parse(context.now), 400,
+    'La hora de retorno debe estar entre el cierre técnico y la hora actual');
+    receipt.returnedAt = returnedAt;
+  } else {
+    const dueDate = isoDate(body.dueDate);
+    assert(dueDate >= todayInPanama(context), 400, 'La fecha correctiva no puede ser anterior a hoy');
+    receipt.dueDate = dueDate;
+    const unit = row[3].trim().toUpperCase();
+    const linked = linkedRows(await sheets.read(TAB.failures), 13, 2, otId, unit);
+    if (linked) writes.push({ tab: TAB.failures, row: linked.index, col: 9, values: ['En Reparación'] });
+    if (row[4] === 'DVIR') {
+      const inspection = linkedRows(await sheets.read(TAB.inspections), 25, 4, otId, unit);
+      if (inspection) writes.push({ tab: TAB.inspections, row: inspection.index, col: 26, values: ['Pendiente'] });
+    }
+    writes.push({ tab: TAB.orders, row: index, col: 9, values: ['En Reparación'] },
+      { tab: TAB.orders, row: index, col: 14, values: [''] },
+      { tab: TAB.orders, row: index, col: WORKFLOW.execution, values: ['', ''] },
+      { tab: TAB.history, append: [historyRow(context, otId, 'estado', 'Completado', 'En Reparación')] });
+  }
+  const history = decision === 'accepted' ? `Recibida · ${receipt.returnedAt} · ${notes}` : `Devuelta a Taller · ${receipt.dueDate} · ${notes}`;
+  writes.push({ tab: TAB.orders, row: index, col: WORKFLOW.operations, values: [JSON.stringify(receipt)] },
+    { tab: TAB.orders, row: index, col: 18, values: [context.mutationId] },
+    { tab: TAB.history, append: [historyRow(context, otId, 'retorno_operativo', '', history)] });
+  return commit(context, writes, { otId, receipt }, `workshop-order:${otId}:${version}`);
 }
 
 const STICKER_COLORS = ['green', 'yellow', 'red'];
@@ -396,7 +568,6 @@ async function sticker(context) {
   const today = dateFormatter.format(new Date(context.now));
   assert(date <= today, 400, 'La inspección no puede tener una fecha futura');
   if (approved) {
-    assert(SUPERVISE.has(session.role), 403, 'Tu rol no puede aprobar el sticker');
     assert(expiry.toISOString().slice(0, 10) >= today, 409, 'La inspección está vencida');
   }
   assert(Array.isArray(body.checks) && body.checks.length === template.items.length, 400, 'Completa la lista de inspección');
@@ -478,32 +649,42 @@ async function stickerReview(context) {
   return commit(context, writes, stickerPayload(resolved), `workshop-sticker:${folio}:${PENDING_STICKER}`);
 }
 
-async function readinessSources({ session, sheets }) {
-  const definitions = [
-    ['failures', TAB.failures, 2, [0, 2, 9]],
-    ['stickers', TAB.stickers, 5, [1, 2, 3, 4, 5, 10, 12, 13, 14, 17]],
-    ['inspections', TAB.inspections, 4, [2, 3, 4, 22, 23, 26]],
-  ];
-  const results = await Promise.allSettled(definitions.map(([, tab]) => sheets.read(tab, { cached: true, requireExisting: true })));
+const READINESS_SOURCES = [
+  ['failures', TAB.failures, 2, [0, 2, 9]],
+  ['stickers', TAB.stickers, 5, [1, 2, 3, 4, 5, 10, 12, 13, 14, 17]],
+  ['inspections', TAB.inspections, 4, [2, 3, 4, 22, 23, 26]],
+];
+
+function readinessRows(rows, name, unitColumn, selected, allows) {
+  return rows.filter(row => {
+    const unit = row[unitColumn]?.trim().toUpperCase();
+    return unit && allows(unit);
+  }).map(row => {
+    const cells = Array(selected.at(-1) + 1).fill('');
+    for (const col of selected) cells[col] = row[col] || '';
+    if (name === 'stickers') {
+      const payload = storedObject(cells[17]);
+      cells[17] = Array.isArray(payload?.findings) ? payload.findings.map(finding => finding?.dueDate).filter(Boolean).sort()[0] || '' : '';
+    }
+    return cells;
+  });
+}
+
+async function readinessSources(context) {
+  const { session, sheets } = context;
+  const [failures, stickers, inspections, returns] = await Promise.allSettled([
+    ...READINESS_SOURCES.map(([, tab]) => sheets.read(tab, { cached: true, requireExisting: true })),
+    isPanama(context) ? returnQueue(context) : [],
+  ]);
   const response = { unavailable: [] };
-  for (const [index, [name, , unitColumn, selected]] of definitions.entries()) {
+  const results = [failures, stickers, inspections];
+  for (const [index, [name, , unitColumn, selected]] of READINESS_SOURCES.entries()) {
     const result = results[index];
     if (result.status !== 'fulfilled') response.unavailable.push(name);
-    response[name] = (result.status === 'fulfilled' ? result.value : []).filter((row) => {
-      const unit = row[unitColumn]?.trim().toUpperCase();
-      return unit && scopeAllows(session, unit);
-    }).map((row) => {
-      const cells = Array(selected.at(-1) + 1).fill('');
-      for (const col of selected) cells[col] = row[col] || '';
-      if (name === 'stickers') {
-        try {
-          const payload = JSON.parse(cells[17] || '{}');
-          cells[17] = (payload.findings || []).map((finding) => finding.dueDate).filter(Boolean).sort()[0] || '';
-        } catch { cells[17] = ''; }
-      }
-      return cells;
-    });
+    response[name] = readinessRows(result.status === 'fulfilled' ? result.value : [], name, unitColumn, selected, unit => scopeAllows(session, unit));
   }
+  if (returns.status !== 'fulfilled') response.unavailable.push('returns');
+  response.returns = returns.status === 'fulfilled' ? returns.value : [];
   return response;
 }
 
@@ -511,6 +692,7 @@ const MUTATIONS = {
   report: [report, ROLES, true], dvir: [dvir, INSPECT, true], transition: [transition, ORDER_READ, false],
   pm: [pm, ASSIGN, true], schedule: [schedule, ASSIGN, false],
   sticker: [sticker, ROLES, true], stickerreview: [stickerReview, SUPERVISE, false],
+  returns: [operationalReturn, OPERATIONS, false],
 };
 
 export async function dispatchWorkshop(input) {
@@ -518,11 +700,20 @@ export async function dispatchWorkshop(input) {
   const endpoint = path?.match(/^api\/workshop\/([a-z]+)$/)?.[1];
   try {
     assert(session?.userId && session.userName && ROLES.has(session.role), 401, 'Sesión inválida');
+    if (['returns', 'pmchecklist'].includes(endpoint)) assert(isPanama(input), 404, 'Acción de taller no disponible');
     if (method === 'GET' && endpoint === 'readiness') {
       return { status: 200, body: await readinessSources(input) };
     }
+    if (method === 'GET' && endpoint === 'returns') {
+      assert(OPERATIONS.has(session.role), 403, 'Tu rol no puede revisar la recepción de Operaciones');
+      return { status: 200, body: { returns: await returnQueue(input, true) } };
+    }
+    if (method === 'GET' && endpoint === 'pmchecklist') {
+      assert(ORDER_READ.has(session.role), 403, 'Tu rol no puede consultar el taller');
+      return { status: 200, body: await pmDefinition(input, await getOrder(input, input.query?.otId)) };
+    }
     if (method === 'GET' && endpoint === 'stickers') {
-      assert(SUPERVISE.has(session.role), 403, 'Tu rol no puede revisar stickers');
+      assert(canReviewHse(session), 403, 'La revisión requiere autorización HSE');
       const rows = await sheets.read(TAB.stickers, { cached: true });
       return { status: 200, body: { stickers: rows.filter((row) => row[10] === PENDING_STICKER && row[18]
         && row[5] && scopeAllows(session, row[5].toUpperCase())).map(stickerPayload) } };
@@ -549,6 +740,9 @@ export async function dispatchWorkshop(input) {
     const [handler, roles, create] = MUTATIONS[endpoint];
     assert(roles.has(session.role), 403, 'Tu rol no puede ejecutar esta acción');
     assert(body && typeof body === 'object' && !Array.isArray(body), 400, 'Solicitud inválida');
+    if (endpoint === 'stickerreview' || (endpoint === 'sticker' && body.approve === true)) {
+      assert(canReviewHse(session), 403, 'La revisión requiere autorización HSE');
+    }
     const mutationId = text(body.mutationId, 'Identificador de operación', 36, true).toLowerCase();
     assert(UUID.test(mutationId), 400, 'Identificador de operación inválido');
     const key = `workshop:${endpoint}:${session.userId}:${mutationId}`;

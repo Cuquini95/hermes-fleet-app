@@ -8,12 +8,44 @@ export type OTStatusField = 'estado' | 'mecanico_asignado' | 'progreso' | 'obser
 export interface StatusLogEntry {
   timestamp: string;
   ot_id: string;
-  field: OTStatusField | 'programacion';
+  field: OTStatusField | 'programacion' | 'entrega_tecnica' | 'aceptacion_tecnica' | 'retorno_operativo';
   old_value: string;
   new_value: string;
   changed_by: string;
   role: string;
   actorId?: string;
+}
+
+export interface WorkshopExecutionInput {
+  functionalTest: string;
+  performedOn?: string;
+  meter?: string;
+  completedItems?: string[];
+}
+
+interface WorkshopActor {
+  userId: string;
+  userName: string;
+}
+
+export interface PMChecklist {
+  reference: string;
+  tasks: { id: string; label: string }[];
+}
+
+export interface PMChecklistDefinition {
+  model: string;
+  level: string;
+  initialMeter: string;
+  checklist: PMChecklist | null;
+}
+
+export interface OperationalReceipt extends WorkshopActor {
+  decision: 'accepted' | 'returned';
+  notes: string;
+  recordedAt: string;
+  returnedAt?: string;
+  dueDate?: string;
 }
 
 export function getNextStatuses(current: OTEstado): OTEstado[] {
@@ -46,6 +78,9 @@ export interface WorkOrder {
   fecha_cierre: string;
   observaciones: string;
   progreso: number;
+  execution?: WorkshopExecutionInput & WorkshopActor & { submittedAt: string };
+  technical?: WorkshopActor & { acceptedAt: string };
+  operations?: OperationalReceipt;
 }
 
 export const PRIORITY_CONFIG: Record<OTPriority, { color: string; bg: string; label: string; time: string }> = {

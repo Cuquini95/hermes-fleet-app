@@ -3,6 +3,7 @@ import { GoogleAuth } from 'google-auth-library';
 
 const API_ROOT = 'https://sheets.googleapis.com/v4/spreadsheets';
 const TRANSACTIONS = 'Hermes_Transacciones';
+export const PANAMA_SHIFT_TAB = 'HERMES_PA_TURNOS';
 const HEADERS = {
   [TRANSACTIONS]: ['CLAVE', 'HUELLA', 'GUARDAS', 'RESULTADO', 'FECHA_UTC'],
   Inspeccion_Stickers: ['#', 'FOLIO', 'TIMESTAMP', 'FECHA', 'HORA', 'UNIDAD', 'MODELO', 'TIPO_EQUIPO', 'INSPECTOR', 'SUPERVISOR', 'ESTADO_APROBACION', 'COLOR_RECOMENDADO', 'COLOR_FINAL', 'PUEDE_DESPACHAR', 'VENCE', 'HALLAZGOS', 'FOTOS', 'DETALLE_JSON', 'INSPECTOR_ID', 'SUPERVISOR_ID', 'FECHA_APROBACION'],
@@ -264,6 +265,9 @@ export function createPanamaOperationsSheets() {
   const id = process.env.HERMES_PANAMA_OPERATIONS_SHEET_ID?.trim();
   let verified;
   return createHermesSheets({
+    schemas: { [PANAMA_SHIFT_TAB]: ['FOLIO', 'UNIDAD', 'FECHA', 'TURNO', 'VERSION', 'ESTADO_PARTE', 'HOROMETRO_INICIAL',
+      'HOROMETRO_FINAL', 'HORAS', 'ESTADO_EQUIPO', 'REFERENCIA_SOPORTE', 'VIAJES', 'TONELADAS', 'PARADAS', 'CLIENTE',
+      'AUTOR_ID', 'AUTOR', 'ACTOR_ID', 'ACTOR', 'FECHA_UTC', 'ACCION', 'COMENTARIO'] },
     request: async options => {
       const masters = ['TMF', 'WORKSHOP', 'PM', 'DOZERS', 'EXCAVATORS', 'PURCHASES', 'COSTS']
         .map(key => process.env['HERMES_PANAMA_' + key + '_SHEET_ID']?.trim());

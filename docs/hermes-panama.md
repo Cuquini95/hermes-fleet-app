@@ -16,13 +16,23 @@ Rama de la aplicación independiente para TMF Minera Panamá. La navegación de 
 | HERMES_PANAMA_DOZERS_SHEET_ID, HERMES_PANAMA_EXCAVATORS_SHEET_ID | Maestros de Componentes. Pestaña RESUMEN JEFE en cada archivo. |
 | HERMES_PANAMA_PURCHASES_SHEET_ID | Cotizaciones - Trans Plus. Consulta de Pa - Maquinaria, con filtro obligatorio de país Panamá. |
 | HERMES_PANAMA_COSTS_SHEET_ID | Control de Costos por Máquina. RESUMEN por unidad, visible para Gerencia. |
-| HERMES_PANAMA_OPERATIONS_SHEET_ID, HERMES_PANAMA_OPERATIONS_SERVICE_ACCOUNT_JSON | Libro separado del modelo de Hermes, para pruebas transaccionales. Su pestaña HERMES_PA_CONFIG debe contener HERMES_PANAMA y tmf-panama en A1:B1. Rechaza los IDs de los maestros configurados. |
+| HERMES_PANAMA_OPERATIONS_SHEET_ID, HERMES_PANAMA_OPERATIONS_SERVICE_ACCOUNT_JSON | Libro operativo separado de los maestros. Su pestaña HERMES_PA_CONFIG debe contener HERMES_PANAMA y tmf-panama en A1:B1. El servicio rechaza los IDs de los maestros configurados. Usa un libro aislado para la verificación y conserva los folios en el libro de cada entorno. |
 | HERMES_PURCHASE_ISSUERS_JSON | Emisor panameño validado, con identificación fiscal, moneda y regla fiscal. Solo se admiten emisores con plantilla Trans Plus y USD o PAB para el proyecto Panamá. |
 | VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, HERMES_WORKSHOP_STORAGE_ORIGIN | Almacenamiento dedicado para evidencias, una vez verificados los permisos. |
 | HERMES_READ_ONLY | `true` para el candidato de consulta. |
 | HERMES_PANAMA_WRITES_ENABLED | Mantener sin habilitar hasta verificar en un entorno aislado la integración de escrituras con los maestros. |
+| HERMES_PANAMA_PM_CHECKLISTS_JSON | Catálogo validado de checklists por modelo y nivel, con referencia, identificadores y etiquetas de cada tarea. Taller comprueba el checklist al entregar y aceptar el PM. |
 
-Usa el padrón de 28 personas, los correos confirmados en la identidad propia y los alcances aprobados para cada puesto. `scripts/import-hermes-roster.mjs` valida y vincula cuentas existentes. El importador no crea credenciales. No cargues las asignaciones locales de TMF marcadas como pendientes. La base de México no se usa como proveedor.
+Usa el padrón de 28 personas, los correos confirmados en la identidad propia y los alcances aprobados para cada puesto. `scripts/import-hermes-roster.mjs` valida y vincula cuentas existentes. El importador no crea credenciales. Mantén pendientes las asignaciones locales que el responsable TMF todavía deba confirmar. Usa el proyecto de identidad exclusivo de Panamá.
+
+## Habilitar el turno
+
+1. Aplica las migraciones de identidad y los permisos de recepción y HSE en Supabase Panamá. Conecta el proyecto Vercel `hermes-panama` al proveedor mediante sus variables de servidor y vuelve a desplegar. Valida una sesión con el correo de trabajo y revisa el conteo de primeros ingresos.
+2. Configura el acceso de solo lectura a los maestros y el acceso de edición al libro operativo aislado. Verifica la correspondencia por folio antes de habilitar escrituras productivas. Los folios aceptados de relevo siguen pendientes de conciliación en REGISTRO de Disponibilidad TMF.
+3. Para Almacén activa `canReceivePurchases` solo en el padrón autorizado, con las unidades asignadas. El permiso habilita el registro por partida y su historial. Compras y Finanzas consultan el saldo en la OC.
+4. La revisión HSE de stickers requiere `canReviewPanamaHse` para el responsable autorizado. El ejecutor entrega la OT con prueba funcional. Taller confirma el cierre y Operaciones acepta el retorno por separado. Un bloqueo vigente de HSE impide aceptar el retorno.
+5. Comprueba el acceso al dominio con una cuenta corporativa sin acceso administrativo a Vercel. Si la protección del alojamiento exige sesión de Vercel, el administrador ajusta el alcance del dominio cuando la autenticación y las rutas privadas de Hermes estén verificadas.
+6. Verifica los recorridos en un entorno aislado con `node scripts/qa-rollout/run.mjs` y conserva la evidencia del primer turno de cada persona. Usa los procedimientos vigentes de cada área para conciliación y continuidad durante el arranque.
 
 ## Alcance de las pruebas
 

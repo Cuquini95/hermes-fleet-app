@@ -192,7 +192,7 @@ function account(number, role, project = qaProject) {
     membership: {
       user_id: id, email, user_name: `QA ${role} ${number}`, role, projects: [project],
       assigned_units: restricted ? units : [], unit_scope: restricted ? 'assigned' : 'all',
-      active: true, can_approve_purchases: role === 'gerencia',
+      active: true, can_approve_purchases: role === 'gerencia', can_review_panama_hse: project === qaProject && number === 5 && role === 'supervisor',
     },
   };
 }
@@ -389,6 +389,10 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
     HERMES_UPSTREAM_URL: '', HERMES_UPSTREAM_TOKEN: '', HERMES_GOOGLE_SERVICE_ACCOUNT_JSON: '',
     HERMES_GOOGLE_SHEET_ID: '', HERMES_GOOGLE_SHEETS_ID: '', TELEGRAM_BOT_TOKEN: '',
     HERMES_WORKSHOP_STORAGE_ORIGIN: origin, HERMES_EXPENSE_PRICE_CURRENCY: 'USD',
+    HERMES_PANAMA_PM_CHECKLISTS_JSON: JSON.stringify(['PM-250', 'PM-1'].map(level => ({
+      model: 'Komatsu D65EX-16', level, reference: 'Checklist sintético QA, revisión 1',
+      tasks: [{ id: 'review-qa', label: 'Comprobación sintética de mantenimiento' }],
+    }))),
     HERMES_PURCHASE_ISSUERS_JSON: JSON.stringify([{ id: 'TP_PA_QA', name: 'Trans Plus Panamá QA', currency: 'USD', taxLabel: 'ITBMS', taxBps: 700, template: 'transplus' }]), HERMES_EXPENSE_RECEIPT_URL_PREFIX: `${origin}/storage/v1/object/public/receipt-photos/`,
   });
   async function stop() {
@@ -408,7 +412,7 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
     auth = { '/api/auth/login': login.default, '/api/auth/session': validate.default, '/api/auth/logout': logout.default };
     if (withGateway) {
       if (typeof gate.createHermesGateway !== 'function') throw new Error('La versión no exporta createHermesGateway');
-      gateway = gate.createHermesGateway({ sheets: sheet, writeEnabled: true, panamaOnly: true, enablePanamaOperations: true });
+      gateway = gate.createHermesGateway({ sheets: sheet, writeEnabled: true, panamaOnly: true, enablePanamaOperations: true, enablePanamaFuelCapture: true });
       if (typeof parts.createPartsHandler === 'function') auth['/api/parts/import'] = parts.createPartsHandler({
         readRows: sheet.readRange, panama: true,
         sendAlert: async changes => { alerts.push(clone(changes)); return { sent: true }; },

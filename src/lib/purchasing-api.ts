@@ -93,6 +93,14 @@ export interface PurchaseOverview {
   canApprove: boolean;
 }
 
+export type PurchaseReceivingLine = Pick<PurchaseLine, 'id' | 'number' | 'description' | 'partNumber' | 'quantity' | 'received'> & {
+  receipts: Omit<PurchaseReceipt, 'actorId'>[];
+};
+
+export type PurchaseReceivingOrder = Pick<PurchaseOrder, 'folio' | 'unit' | 'vendorName' | 'deliveryDate' | 'receiptStatus' | 'version'> & {
+  lines: PurchaseReceivingLine[];
+};
+
 const BASE = '/hermes-api/api/purchasing/';
 const pending = new Map<string, string>();
 let sessionOwner = '';
@@ -191,6 +199,15 @@ export function displayMoney(value: string | number, currency = 'USD') {
 
 export function pendingQuantity(line: Pick<PurchaseLine, 'quantity' | 'received'>) {
   return Math.max(0, Math.round((Number(line.quantity) - Number(line.received)) * 1000) / 1000);
+}
+
+const panamaReceiptDate = new Intl.DateTimeFormat('es-PA', {
+  year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'America/Panama',
+});
+
+export function formatPanamaReceiptDate(value: string) {
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? panamaReceiptDate.format(time) : value;
 }
 
 export function isApprovalRecorded(order: Pick<PurchaseOrder, 'status' | 'approvedBy' | 'approvedById' | 'approvedAt'>) {

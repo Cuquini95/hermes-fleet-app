@@ -7,6 +7,8 @@ const operatorProfile = {
   userId: '00000000-0000-4000-8000-000000000001', userName: 'Operadora de prueba', role: 'operador',
   project: 'tcm', projects: ['tcm'], assignedUnits: ['CA22'], unitScope: 'assigned', allUnits: false,
   canApprovePurchases: false,
+  canReceivePurchases: false,
+  canReviewPanamaHse: false,
 };
 
 function resetStore() {
@@ -59,6 +61,12 @@ describe('auth-store — server-backed session', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(401, { error: 'invalid' })));
     await expect(useAuthStore.getState().login('operadora@example.test', 'fixture-password')).resolves.toBe(false);
     expect(useAuthStore.getState().isAuthenticated).toBe(false);
+  });
+
+  it('distinguishes a provider outage from a rejected sign-in', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(503)));
+    await expect(useAuthStore.getState().login('operadora@example.test', 'fixture-password')).resolves.toBe(false);
+    expect(useAuthStore.getState().loginFailure).toBe('unavailable');
   });
 
   it('clears forged persisted state when the HttpOnly session is invalid', async () => {

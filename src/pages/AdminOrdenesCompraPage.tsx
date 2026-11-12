@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Plus, Printer, Trash2 } from 'lucide-react';
 import {
-  displayMoney, isApprovalRecorded, pendingQuantity, purchaseRead, purchaseRequests, purchaseWrite,
+  displayMoney, formatPanamaReceiptDate, isApprovalRecorded, pendingQuantity, purchaseRead, purchaseRequests, purchaseWrite,
   type PurchaseOrder, type PurchaseOverview, type PurchaseRequestLine,
 } from '../lib/purchasing-api';
+import { useAuthStore } from '../stores/auth-store';
 
 interface DraftLine {
   key: string;
@@ -351,6 +352,7 @@ function ReceptionForm({ order, saving, onReceive }: {
   saving: boolean;
   onReceive: (lineId: string, quantity: string, reference: string) => Promise<void>;
 }) {
+  const isPanama = useAuthStore((state) => state.project === 'tmf-panama');
   const [selected, setSelected] = useState('');
   const [quantity, setQuantity] = useState('');
   const [reference, setReference] = useState('');
@@ -363,7 +365,11 @@ function ReceptionForm({ order, saving, onReceive }: {
         <div key={entry.id} className="text-sm">
           <p>{entry.description} · Recibidas {entry.received} de {entry.quantity} · Pendientes {pendingQuantity(entry)}</p>
           {entry.receipts.map((receipt) => (
-            <p key={receipt.id} className="pl-2 text-xs text-gray-600">{receipt.quantity} · {receipt.by} · {receipt.reference || receipt.at}</p>
+            <p key={receipt.id} className="break-words pl-2 text-xs text-gray-600">
+              {receipt.quantity} · {receipt.by} · {isPanama ? <>
+                {receipt.reference && `${receipt.reference} · `}<time dateTime={receipt.at}>{formatPanamaReceiptDate(receipt.at)}</time>
+              </> : receipt.reference || receipt.at}
+            </p>
           ))}
         </div>
       ))}

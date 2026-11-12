@@ -39,13 +39,13 @@ export function setOfflineQueueSession(owner: string) {
 
 /** Persist a new submission to IndexedDB for later replay. */
 export async function queueSubmission(submission: Omit<PendingSubmission, 'id'>): Promise<void> {
-  const ownerId = queueOwner || undefined;
+  const ownerId = submission.ownerId || queueOwner || undefined;
   const db = await openDB();
   const tx = db.transaction(STORE_NAME, 'readwrite');
   tx.objectStore(STORE_NAME).add({ ...submission, ownerId });
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    tx.onabort = tx.onerror = () => reject(tx.error);
   });
 }
 

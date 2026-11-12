@@ -62,6 +62,26 @@ test('original intake appends bind actor and unit and use a stable receipt on re
   assert.equal(received[0].writes[0].append[0][4], operator.userName);
 });
 
+test('Panamá blocks TMF fuel capture until explicitly enabled in the isolated fixture', async () => {
+  let writes = 0;
+  const session = { ...operator, project: 'tmf-panama' };
+  const options = { sheets: { commit: async () => { writes += 1; } }, sessionReader: async () => session,
+    writeEnabled: true, enablePanamaOperations: true };
+  const body = { tab: 'Combustible', values: ['qa-1', '11/11/2026', '22:01', 'CA20', 'QA', 'Diésel', '35'] };
+  const request = { method: 'POST', query: { path: 'api/sheets/append' }, body };
+  for (const enabled of [false, true]) {
+    const gateway = createHermesGateway({ ...options, enablePanamaFuelCapture: enabled });
+    const capabilities = response();
+    await gateway({ method: 'GET', query: { path: 'api/panama/capacidades' } }, capabilities);
+    assert.equal(capabilities.statusCode, 200);
+    assert.equal(capabilities.body.fuelCapture, enabled);
+    const receipt = response();
+    await gateway(request, receipt);
+    assert.equal(receipt.statusCode, enabled ? 200 : 403);
+  }
+  assert.equal(writes, 1);
+});
+
 function transport() {
   const existing = new Map([
     ['Averías', { properties: { sheetId: 11, title: 'Averías', gridProperties: { rowCount: 1000, columnCount: 26 } }, rows: [['folio']] }],

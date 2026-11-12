@@ -1,5 +1,7 @@
 import { useAuthStore } from '../stores/auth-store';
 
+export const PANAMA_PM_CHECKLIST_SOURCE = 'https://docs.google.com/spreadsheets/d/1AeTvqR052hJHhEQ7jbkJ3_VIxwPa5ftwGKeVxVlasYw/edit';
+
 export interface WorkshopMechanic {
   userId: string;
   userName: string;

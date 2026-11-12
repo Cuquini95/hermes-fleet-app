@@ -150,7 +150,7 @@ export async function checkWorkshop(fixture, record) {
     const otherTech = workshop(request, await loginAs(request, anotherTech));
     const coordinator = workshop(request, await loginAs(request, firstAccount('coordinador')));
     const supervisor = workshop(request, await loginAs(request, firstAccount('supervisor')));
-    const transition = (api, field, value) => api('transition', { mutationId: randomUUID(), otId: folio, field, value });
+    const transition = (api, field, value, execution) => api('transition', { mutationId: randomUUID(), otId: folio, field, value, execution });
     const canSee = async api => good(await api('orders'), 'Consultar órdenes').orders.some(row => row[1] === folio);
     assert.equal(await canSee(tech), false);
     assert.equal((await transition(supervisor, 'mecanico_asignado', anotherTech.user.id)).status, 403);
@@ -164,7 +164,8 @@ export async function checkWorkshop(fixture, record) {
     good(await transition(tech, 'observaciones', 'Revisión sintética de avance'), 'Registrar nota');
     assert.equal((await transition(tech, 'costo_estimado', '85.25')).status, 403);
     good(await transition(leader, 'costo_estimado', '85.25'), 'Registrar costo autorizado');
-    good(await transition(leader, 'estado', 'Resuelta'), 'Resolver OT');
+    assert.equal((await transition(tech, 'estado', 'Resuelta')).status, 400);
+    good(await transition(tech, 'estado', 'Resuelta', { functionalTest: 'Prueba funcional QA de respuesta' }), 'Entregar prueba funcional');
     assert.equal((await transition(tech, 'estado', 'Completado')).status, 403);
     good(await transition(leader, 'estado', 'Completado'), 'Cerrar OT');
     const view = good(await supervisor('orders'), 'Consulta de cierre del Supervisor');
@@ -174,7 +175,11 @@ export async function checkWorkshop(fixture, record) {
     assert(view.orders.some(entry => entry[1] === folio && entry[9] === 'Completado' && entry[14] === row[14] && entry[16] === '50'));
     assert(view.history.some(entry => entry[1] === folio && entry[7] === techAccount.user.id));
     assert.equal(sheet.read(tabs.failure).find(recordRow => recordRow[13] === folio)?.[9], 'Completado');
-    return { folio, state: row[9], closeDate: row[14], history: view.history.filter(entry => entry[1] === folio).length };
+    assert(good(await supervisor('readiness'), 'Pendiente tras cierre técnico').returns.some(entry => entry.otId === folio));
+    const returned = good(await supervisor('returns', { mutationId: randomUUID(), otId: folio, decision: 'accepted', notes: 'Recepción sintética de Operaciones' }), 'Confirmar retorno por Operaciones');
+    assert.equal(returned.receipt.decision, 'accepted');
+    assert.equal(good(await supervisor('readiness'), 'Retorno confirmado').returns.some(entry => entry.otId === folio), false);
+    return { folio, state: row[9], closeDate: row[14], returnAt: returned.receipt.returnedAt, history: view.history.filter(entry => entry[1] === folio).length };
   });
 
   await record('API-TALLER-REPLICA-OT-0004', async () => {
@@ -183,16 +188,17 @@ export async function checkWorkshop(fixture, record) {
     const mechanic = firstAccount('mecanico');
     const tech = workshop(request, await loginAs(request, mechanic));
     const otId = 'OT-0004';
-    const update = (api, field, value) => api('transition', { mutationId: randomUUID(), otId, field, value });
+    const update = (api, field, value, execution) => api('transition', { mutationId: randomUUID(), otId, field, value, execution });
     good(await update(lead, 'mecanico_asignado', mechanic.user.id), 'Asignar réplica');
     good(await update(tech, 'estado', 'En Reparación'), 'Iniciar reparación de réplica');
-    good(await update(tech, 'estado', 'Resuelta'), 'Resolver réplica');
+    good(await update(tech, 'estado', 'Resuelta', { functionalTest: 'Prueba de la réplica QA' }), 'Entregar réplica');
     good(await update(sup, 'estado', 'Completado'), 'Cerrar réplica como Supervisor');
     const order = sheet.read(tabs.orders).filter(row => row[1] === otId);
     const failure = sheet.read(tabs.failure).filter(row => row[13] === otId);
     assert.equal(order.length, 1);
     assert.equal(failure.length, 1);
     assert.deepEqual([order[0][3], order[0][9], failure[0][9]], ['DZ203', 'Completado', 'Completado']);
+    assert.equal((await sup('returns', { mutationId: randomUUID(), otId, decision: 'accepted', notes: 'Debe ser independiente' })).status, 403);
     return { folio: otId, unit: 'DZ203', state: 'Completado', synthetic: true };
   });
 
@@ -213,7 +219,20 @@ export async function checkWorkshop(fixture, record) {
     assert(sheet.read(tabs.pmHistory).some(row => row[1] === pm.otId));
     const calendar = good(await sup('schedule'), 'Consultar calendario de Taller');
     assert(calendar.schedule.some(row => row[1] === date && row[2] === pm.otId && row[3] === 'EX401'));
-    return { inspection: inspection.inspectionId, inspectionOrder: inspection.otId, pmOrder: pm.otId, scheduleDate: date };
+    const tech = workshop(request, await loginAs(request, firstAccount('mecanico')));
+    const execution = { functionalTest: 'Prueba funcional sintética PM', performedOn: date, meter: '1963', completedItems: ['review-qa'] };
+    const status = (api, value, submitted) => api('transition', { mutationId: randomUUID(), otId: pm.otId, field: 'estado', value, execution: submitted });
+    const checklist = good(await tech(`pmchecklist?otId=${pm.otId}`), 'Consultar checklist por modelo');
+    assert.equal(checklist.model, 'Komatsu D65EX-16');
+    assert.deepEqual(checklist.checklist.tasks.map(task => task.id), ['review-qa']);
+    good(await status(tech, 'En Reparación'), 'Iniciar PM');
+    assert.equal((await status(tech, 'Resuelta', { ...execution, completedItems: [] })).status, 400);
+    good(await status(tech, 'Resuelta', execution), 'Entregar PM');
+    assert.equal(sheet.read(tabs.pm).find(row => row[0] === pm.otId)[11], 'Programada');
+    good(await status(sup, 'Completado'), 'Aceptar PM');
+    const synchronized = [sheet.read(tabs.pm).find(row => row[0] === pm.otId)[11], sheet.read(tabs.pmHistory).find(row => row[1] === pm.otId)[10], sheet.read(tabs.schedule).find(row => row[2] === pm.otId)[7]];
+    assert.deepEqual(synchronized, ['Completada', 'Completada', 'Completado']);
+    return { inspection: inspection.inspectionId, inspectionOrder: inspection.otId, pmOrder: pm.otId, scheduleDate: date, synchronized };
   });
 
   await record('API-TALLER-STICKER-REVISIÓN-BLOQUEO', async () => {
@@ -224,7 +243,7 @@ export async function checkWorkshop(fixture, record) {
     const { getStickerTemplate } = await import(pathToFileURL(resolve(fixture.repoDirectory, 'src/data/sticker-inspection-templates.js')).href);
     const template = getStickerTemplate('camion_articulado');
     const checks = template.items.map(item => ({ itemId: item.id, status: 'cumple', canOperate: true }));
-    const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City' }).format(new Date());
+    const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Panama' }).format(new Date());
     const body = { mutationId: randomUUID(), unit: 'DZ203', templateId: template.id, company: 'Hermes QA', date,
       time: '08:00', checks, finalColor: 'green', approve: false, photos: [] };
     assert.equal((await op('sticker', { ...body, approve: true })).status, 403);

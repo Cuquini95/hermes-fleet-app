@@ -67,6 +67,7 @@ const knownPath = value => (Array.isArray(value) ? value.join('/') : String(valu
 
 const workshop = context => import('./_lib/hermes-workshop.js').then(module => module.dispatchWorkshop(context));
 const purchasing = context => import('./_lib/hermes-purchasing.js').then(module => module.dispatchPurchasing(context));
+const shifts = context => import('./_lib/hermes-shifts.js').then(module => module.dispatchShifts(context));
 const mechanics = (session, unit) => import('./_lib/hermes-identity.js').then(module => module.listWorkshopMechanics(session, unit));
 
 async function visibleRows(sheets, tab, rule, session) {
@@ -146,6 +147,7 @@ export function createHermesGateway({
   readPanama,
   panamaOnly = false,
   enablePanamaOperations = false,
+  enablePanamaFuelCapture = false,
   writeEnabled = process.env.VERCEL_ENV === 'production' && !['1', 'true'].includes(process.env.HERMES_READ_ONLY),
   pausedOperations = new Set((process.env.HERMES_PAUSED_OPERATIONS || '').split(',').map(knownPath).filter(Boolean)),
 } = {}) {
@@ -159,7 +161,13 @@ export function createHermesGateway({
       if (rejectIfRateLimited(req, res, { scope: 'hermes-gateway', limit: 120 }, session.userId)) return;
 
       if (panamaOnly && session.project !== PANAMA_PROJECT) return invalid(res, 403, 'Proyecto no habilitado en Hermes Panamá.');
-      if (path.startsWith('api/panama/') || (session.project === PANAMA_PROJECT && !enablePanamaOperations)) {
+      if (path === 'api/panama/capacidades') {
+        if (session.project !== PANAMA_PROJECT) return invalid(res, 403, 'Consulta reservada a TMF Panamá.');
+        if (req.method !== 'GET') return invalid(res, 405, 'Método no permitido.');
+        return res.status(200).json({ fuelCapture: enablePanamaOperations && writeEnabled && enablePanamaFuelCapture });
+      }
+      const shiftRoute = path === 'api/panama/turnos' || path.startsWith('api/panama/turnos/');
+      if ((path.startsWith('api/panama/') && !shiftRoute) || (session.project === PANAMA_PROJECT && !enablePanamaOperations)) {
         const result = await dispatchPanama({ path, method: req.method, session, read: readPanama });
         return res.status(result.status).json(result.body);
       }
@@ -181,7 +189,16 @@ export function createHermesGateway({
       }
 
       if (req.method !== 'GET' && !writeEnabled) return invalid(res, 503, 'Este despliegue permite consulta.');
-      if (path === 'api/sheets/append') return await sheetAppend(req, res, sheets, session);
+      if (shiftRoute) {
+        const result = await shifts({ path, method: req.method, body: req.body ?? {}, session, sheets });
+        return res.status(result.status).json(result.body);
+      }
+      if (path === 'api/sheets/append') {
+        if (session.project === PANAMA_PROJECT && canonicalTab(req.body?.tab) === 'Combustible' && !enablePanamaFuelCapture) {
+          return invalid(res, 403, 'La captura de combustible TMF está pendiente de habilitación por Operaciones.');
+        }
+        return await sheetAppend(req, res, sheets, session);
+      }
       if (path.startsWith('api/sheets/')) return invalid(res, 403, 'Usa el flujo específico de Hermes para cambiar este registro.');
       if (path === 'api/cmms/meter') {
         if (session.project === PANAMA_PROJECT) return invalid(res, 503, 'Enlace CMMS de Panamá pendiente.');

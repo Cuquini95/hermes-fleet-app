@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth-store';
 
 const definitions = [
@@ -19,6 +20,8 @@ type Sections = Record<string, SourceRow[] | null>;
 export default function PanamaPage() {
   const name = useAuthStore(state => state.userName);
   const userId = useAuthStore(state => state.userId);
+  const canSeeShifts = useAuthStore(state => state.project === 'tmf-panama' && ['operador', 'supervisor', 'coordinador', 'gerencia'].includes(state.role ?? ''));
+  const canReceive = useAuthStore(state => state.project === 'tmf-panama' && state.canReceivePurchases);
   const logout = useAuthStore(state => state.logout);
   const [sections, setSections] = useState<Sections>();
   const [filter, setFilter] = useState('');
@@ -53,6 +56,8 @@ export default function PanamaPage() {
           <button className="rounded-lg border border-slate-400 px-3 py-2 text-sm" type="button" onClick={async () => setLogoutFailed(!(await logout()))}>Cerrar sesión</button>
         </header>
         {logoutFailed && <p className="my-2 text-red-700" role="alert">No se pudo cerrar la sesión. Intenta de nuevo.</p>}
+        {canSeeShifts && <Link to="/panama/turnos" className="mr-3 mt-4 inline-flex min-h-11 items-center rounded-lg border border-slate-400 bg-white px-4 text-sm font-semibold text-[#162252]">Relevo de turno</Link>}
+        {canReceive && <Link to="/panama/recepciones" className="mt-4 inline-flex min-h-11 items-center rounded-lg border border-slate-400 bg-white px-4 text-sm font-semibold text-[#162252]">Recepciones de compras</Link>}
         <div className="my-5 flex flex-wrap items-end gap-3">
           <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm font-semibold">
             Filtrar por unidad

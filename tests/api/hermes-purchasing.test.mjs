@@ -221,6 +221,88 @@ test('impone roles y unidades en la lectura y escritura de Compras', async () =>
   assert.deepEqual((await call('orders', null, limited)).body.orders, []);
 });
 
+test('Almacén de Panamá consulta y recibe por partida dentro de su asignación', async (t) => {
+  const priorIssuers = process.env.HERMES_PURCHASE_ISSUERS_JSON;
+  process.env.HERMES_PURCHASE_ISSUERS_JSON = JSON.stringify([{
+    id: 'TP_PA', name: 'Trans Plus Panamá QA', currency: 'USD', taxLabel: 'ITBMS', taxBps: 700, template: 'transplus',
+  }]);
+  t.after(() => {
+    if (priorIssuers === undefined) delete process.env.HERMES_PURCHASE_ISSUERS_JSON;
+    else process.env.HERMES_PURCHASE_ISSUERS_JSON = priorIssuers;
+  });
+
+  const { call, readOrder, sheets } = setup();
+  const buyer = { ...manager, project: 'tmf-panama', projects: ['tmf-panama'] };
+  const finance = { ...buyer, userId: 'actor-qa-finanzas', allUnits: false, assignedUnits: ['DZ203'], canApprovePurchases: false };
+  const warehouse = {
+    ...finance, userId: 'actor-qa-almacen', userName: 'Almacén QA', role: 'jefe_taller', canReceivePurchases: true,
+  };
+  const withoutGrant = { ...warehouse, canReceivePurchases: false };
+  const mexico = { ...warehouse, project: 'mexico', projects: ['mexico'] };
+
+  async function createOrder(unit, approve = true) {
+    const created = await call('order-save', newOrder({ entity: 'TP_PA', unit, lines: [
+      { description: 'Filtro hidráulico', quantity: '3.125', unitPrice: '6.05', partNumber: 'FILTRO-QA' },
+    ] }), buyer);
+    assert.equal(created.status, 200);
+    const order = await readOrder(created.body.folio, buyer);
+    if (!approve) return order;
+    assert.equal((await call('order-status', {
+      operationId: randomUUID(), folio: order.folio, version: order.version, status: 'Aprobada',
+    }, buyer)).status, 200);
+    return readOrder(order.folio, buyer);
+  }
+
+  const [approved, foreign, draft] = [await createOrder('DZ203'), await createOrder('EX401'), await createOrder('DZ203', false)];
+  const denied = await call('receiving', null, withoutGrant);
+  assert.equal(denied.status, 403);
+  assert.equal((await call('receiving', null, mexico)).status, 403);
+  const queue = await call('receiving', null, warehouse);
+  assert.equal(queue.status, 200);
+  assert.deepEqual(queue.body.orders.map(({ folio }) => folio), [approved.folio]);
+  const [visible] = queue.body.orders;
+  assert.equal(visible.lines[0].quantity, '3.125');
+  assert.equal(visible.lines[0].received, '0');
+  assert.equal('unitPrice' in visible.lines[0], false);
+  assert.equal('total' in visible.lines[0], false);
+  assert.equal('total' in visible, false);
+  assert.equal((await call('orders', null, warehouse)).status, 403);
+  assert.equal((await call('order', null, warehouse, { folio: approved.folio })).status, 403);
+  assert.equal((await call('order-status', {
+    operationId: randomUUID(), folio: draft.folio, version: draft.version, status: 'Aprobada',
+  }, warehouse)).status, 403);
+  assert.equal((await call('order-save', newOrder({ folio: draft.folio, version: draft.version, entity: 'TP_PA', unit: 'DZ203' }), warehouse)).status, 403);
+
+  const input = (order, quantity, reference) => ({
+    operationId: randomUUID(), folio: order.folio, version: order.version, lineId: order.lines[0].id, quantity, reference,
+  });
+  const first = { ...input(approved, '1.25', 'Remisión QA 01'), unitPrice: '0.01' };
+  assert.equal((await call('order-receive', first, withoutGrant)).status, 403);
+  assert.equal((await call('order-receive', first, mexico)).status, 403);
+  assert.equal((await call('order-receive', input(foreign, '1', ''), warehouse)).status, 403);
+  assert.equal((await call('order-receive', input(draft, '1', ''), warehouse)).status, 409);
+  assert.equal((await call('order-receive', first, warehouse)).status, 200);
+  assert.equal((await call('order-receive', first, { ...warehouse, assignedUnits: ['EX401'] })).status, 403);
+  const partial = await readOrder(approved.folio, finance);
+  assert.equal(partial.receiptStatus, 'Recibida parcial');
+  assert.equal(partial.lines[0].received, '1.25');
+  assert.equal(partial.lines[0].unitPrice, '6.05');
+  assert.deepEqual(partial.lines[0].receipts.map(({ actorId, quantity, reference }) => [actorId, quantity, reference]), [
+    [warehouse.userId, '1.25', 'Remisión QA 01'],
+  ]);
+  assert.equal((await call('order-receive', input(partial, '1.876', ''), warehouse)).status, 409);
+  const final = input(partial, '1.875', 'Remisión QA 02');
+  assert.equal((await call('order-receive', final, warehouse)).status, 200);
+  assert.equal((await call('order-receive', final, warehouse)).status, 200);
+  const done = await readOrder(approved.folio, finance);
+  assert.equal(done.receiptStatus, 'Recibida');
+  assert.equal(done.lines[0].received, '3.125');
+  assert.equal(done.lines[0].receipts.length, 2);
+  assert.equal((await call('receiving', null, warehouse)).body.orders[0].receiptStatus, 'Recibida');
+  assert.equal((await readOrder(foreign.folio, buyer)).receiptStatus, 'Pendiente');
+  assert.equal(sheets.inspect(TAB.audit).filter((row) => row[4] === 'Recepción de partida').length, 2);
+});
+
 test('guarda todo el reparto del recibo de forma atómica y cuadra los centavos', async (t) => {
   const oldPrefix = process.env.HERMES_EXPENSE_RECEIPT_URL_PREFIX;
   delete process.env.HERMES_EXPENSE_RECEIPT_URL_PREFIX;

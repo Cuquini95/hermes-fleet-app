@@ -108,6 +108,17 @@ function invalidateCachedTab(tab: string): void {
 
 // ── API functions ─────────────────────────────────────────────────────────────
 
+export class SheetAppendError extends Error {
+  readonly status: number;
+  readonly reason: string;
+
+  constructor(status: number, reason: string) {
+    super(`Sheets API error ${status}: ${reason}`);
+    this.status = status;
+    this.reason = reason;
+  }
+}
+
 /** Append a new row to the given sheet tab. Invalidates the local cache for that tab on success. */
 export async function appendRow(tab: string, values: string[], expectedUserId = cacheOwner): Promise<void> {
   invalidateCachedTab(tab);
@@ -116,14 +127,9 @@ export async function appendRow(tab: string, values: string[], expectedUserId = 
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tab, values, ...(expectedUserId ? { expectedUserId } : {}) }),
   });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Sheets API error ${response.status}: ${text}`);
-  }
-  const json = await response.json();
-  if (!json.success) {
-    throw new Error(json.error ?? 'appendRow failed — row not written');
-  }
+  const json = await response.json().catch(() => null);
+  if (!response.ok) throw new SheetAppendError(response.status, json?.error || 'El servidor rechazó el registro.');
+  if (json?.success !== true) throw new Error(json?.error ?? 'appendRow failed — row not written');
 }
 
 export interface CmmsMeterHandoffResult {
@@ -138,6 +144,7 @@ export interface CmmsMeterHandoffResult {
 /** Send one or more already-persisted Hermes meter readings to CMMS. */
 export async function handoffMeterReadings(
   readings: readonly CmmsMeterReading[],
+  allowPartial = false,
 ): Promise<CmmsMeterHandoffResult> {
   if (readings.length === 0) {
     return { received: 0, accepted: 0, applied: 0, unmatched: [], ambiguous: [], rejected: [] };
@@ -159,7 +166,7 @@ export async function handoffMeterReadings(
     throw new Error(`CMMS meter handoff error ${response.status}: ${payload.detail || text}`);
   }
 
-  return {
+  const result = {
     received: Number(payload.received || 0),
     accepted: Number(payload.accepted || 0),
     applied: Number(payload.applied || 0),
@@ -167,6 +174,13 @@ export async function handoffMeterReadings(
     ambiguous: Array.isArray(payload.ambiguous) ? payload.ambiguous.filter((unit): unit is string => typeof unit === 'string') : [],
     rejected: Array.isArray(payload.rejected) ? payload.rejected.filter((unit): unit is string | null => typeof unit === 'string' || unit === null) : [],
   };
+  const distinctUnits = new Set(readings.map(reading => reading.unit.trim().toUpperCase())).size;
+  if (!allowPartial && (result.received !== readings.length || result.accepted !== distinctUnits
+    || !Array.isArray(payload.unmatched) || !Array.isArray(payload.ambiguous) || !Array.isArray(payload.rejected)
+    || payload.unmatched.length || payload.ambiguous.length || payload.rejected.length)) {
+    throw new Error('CMMS no confirmó la lectura para todas las unidades.');
+  }
+  return result;
 }
 
 /**
@@ -175,7 +189,7 @@ export async function handoffMeterReadings(
  */
 export async function syncExistingHorometros(): Promise<CmmsMeterHandoffResult> {
   const rows = await readRange(SHEET_TABS.HOROMETROS);
-  return handoffMeterReadings(parseHorometroSheetRows(rows));
+  return handoffMeterReadings(parseHorometroSheetRows(rows), true);
 }
 
 /**

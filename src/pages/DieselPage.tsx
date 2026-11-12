@@ -5,12 +5,13 @@ import { z } from 'zod';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { isAnomalous } from '../data/fuel-benchmarks';
 import { mexicoDateInput, mexicoTimeInput } from '../lib/date-utils';
-import { appendRow, SHEET_TABS } from '../lib/sheets-api';
+import { SHEET_TABS } from '../lib/sheets-api';
+import { saveFieldRows } from '../lib/field-submissions';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
-import { queueSubmission, flushQueue } from '../lib/offline-queue';
+import { flushQueue } from '../lib/offline-queue';
 import { useAuthStore } from '../stores/auth-store';
 import ConfirmModal from '../components/ui/ConfirmModal';
-import SuccessToast from '../components/ui/SuccessToast';
+import SuccessToast, { type ToastType } from '../components/ui/SuccessToast';
 import FuelDispatchScanner from '../components/fuel/FuelDispatchScanner';
 
 const dieselSchema = z.object({
@@ -39,6 +40,8 @@ const FUEL_TYPES: FuelType[] = ['Urea', 'Diesel', 'Gasolina'];
 export default function DieselPage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
+  const userId = useAuthStore((s) => s.userId);
+  const isPanama = useAuthStore((s) => s.project === 'tmf-panama');
   const equipment = useEquipmentList();
   const isOnline = useOnlineStatus();
 
@@ -61,8 +64,25 @@ export default function DieselPage() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [toastVisible, setToastVisible] = useState(false);
+  const [toastType, setToastType] = useState<ToastType>('info');
+  const [submitting, setSubmitting] = useState(false);
+  const [retryRow, setRetryRow] = useState<string[]>();
+  const [fuelCapture, setFuelCapture] = useState<'checking' | 'enabled' | 'blocked' | 'unavailable'>('checking');
   const [anomalyWarning, setAnomalyWarning] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
+
+  useEffect(() => {
+    if (!isPanama) return;
+    const controller = new AbortController();
+    fetch('/hermes-api/api/panama/capacidades', { cache: 'no-store', signal: controller.signal })
+      .then(async response => {
+        if (!response.ok) throw new Error('Configuración no disponible');
+        const config = await response.json();
+        if (!controller.signal.aborted) setFuelCapture(config.fuelCapture === true ? 'enabled' : 'blocked');
+      })
+      .catch(() => { if (!controller.signal.aborted) setFuelCapture('unavailable'); });
+    return () => controller.abort();
+  }, [isPanama, userId]);
 
   const selectedEquipment = equipment.find((eq) => eq.unit_id === unidad);
   const isTruck = selectedEquipment?.type === 'Camión Pesado';
@@ -89,15 +109,18 @@ export default function DieselPage() {
     setShowConfirm(true);
   }
 
-  function handleConfirm() {
+  async function handleConfirm() {
+    if (submitting) return;
     setShowConfirm(false);
+    setToastVisible(false);
+    setSubmitting(true);
 
     const litrosNum = parseFloat(litros) || 0;
     const costoNum = parseFloat(costo) || 0;
     const horometroNum = parseFloat(horometro) || 0;
     const kmNum = parseFloat(kmActual) || 0;
 
-    const row = [
+    const row = retryRow ?? [
       String(Date.now()),
       fecha.split('-').reverse().join('/'),      // dd/MM/yyyy
       hora.length === 5 ? hora + ':00' : hora,   // HH:mm:ss
@@ -113,27 +136,37 @@ export default function DieselPage() {
       observaciones,
     ];
 
-    if (isOnline) {
-      // Show success immediately — write happens in background
-      setToastMessage('Combustible registrado ✓');
-      setToastVisible(true);
-
-      appendRow(SHEET_TABS.COMBUSTIBLE, row).catch((err: unknown) => {
-        console.error('Background write failed (Combustible):', err);
-        queueSubmission({ type: 'fuel', data: { tab: SHEET_TABS.COMBUSTIBLE, values: row }, timestamp: new Date().toISOString() }).catch(() => {});
-      });
+    const result = await saveFieldRows('fuel', SHEET_TABS.COMBUSTIBLE, [row], isOnline, userId);
+    const [failure] = result.failed;
+    setRetryRow(failure?.retrySameRow ? row : undefined);
+    if (result.written) {
+      setToastType('success');
+      setToastMessage(isPanama ? 'Combustible registrado en Hermes.' : 'Combustible registrado.');
+    } else if (result.pending) {
+      setToastType('info');
+      setToastMessage('Combustible guardado en este dispositivo. Pendiente de sincronización.');
     } else {
-      queueSubmission({ type: 'fuel', data: { tab: SHEET_TABS.COMBUSTIBLE, values: row }, timestamp: new Date().toISOString() })
-        .catch((err: unknown) => console.error('Queue failed:', err));
-      setToastMessage('Combustible guardado — se sincronizará al reconectarse ✓');
-      setToastVisible(true);
+      setToastType('error');
+      setToastMessage(failure?.reason ?? 'No se pudo confirmar el registro de combustible.');
     }
+    setToastVisible(true);
+    setSubmitting(false);
   }
 
   function handleToastDismiss() {
     setToastVisible(false);
-    navigate(-1);
+    if (toastType !== 'error') navigate(-1);
   }
+
+  if (isPanama && fuelCapture !== 'enabled') return (
+    <section className="rounded-xl border border-border bg-white p-4">
+      <h1 className="text-xl font-bold text-text">Registro Diesel</h1>
+      <p className="mt-2 text-sm text-text-secondary" role="status">{fuelCapture === 'checking' ? 'Consultando la habilitación de captura…'
+        : fuelCapture === 'blocked' ? 'Operaciones debe confirmar el alcance y el responsable del registro de combustible en TMF.'
+          : 'No se pudo consultar la habilitación de combustible. Abre esta pantalla con conexión.'}</p>
+      <button type="button" onClick={() => navigate(-1)} className="mt-4 font-semibold text-primary">Volver</button>
+    </section>
+  );
 
   return (
     <div className="flex flex-col pb-4 animate-fade-up">
@@ -141,6 +174,7 @@ export default function DieselPage() {
         message={toastMessage}
         visible={toastVisible}
         onDismiss={handleToastDismiss}
+        type={toastType}
       />
 
       <ConfirmModal
@@ -179,7 +213,7 @@ export default function DieselPage() {
       ) : (
         <>
           {/* OCR scan button */}
-          <button
+          {!isPanama && <button
             type="button"
             data-testid="diesel-scan-dispatch-button"
             onClick={() => setShowScanner(true)}
@@ -190,10 +224,10 @@ export default function DieselPage() {
               <div className="font-semibold text-amber">Escanear hoja de despacho</div>
               <div className="text-xs text-text-secondary">Captura varios registros a la vez</div>
             </div>
-          </button>
+          </button>}
 
       {/* Form card */}
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-border flex flex-col gap-4">
+      <fieldset disabled={submitting || !!retryRow} className="bg-white rounded-xl p-4 shadow-sm border border-border flex flex-col gap-4">
         {/* Fecha / Hora */}
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
@@ -336,17 +370,17 @@ export default function DieselPage() {
             className="w-full rounded-xl border border-border p-3 text-sm text-text resize-none bg-white"
           />
         </div>
-      </div>
+      </fieldset>
 
       {/* Submit */}
       <button
         type="button"
-        onClick={handleSubmitIntent}
-        disabled={!canSubmit}
+        onClick={retryRow ? () => void handleConfirm() : handleSubmitIntent}
+        disabled={submitting || (toastVisible && toastType !== 'error') || (!retryRow && !canSubmit)}
         className="mt-4 w-full bg-amber text-white rounded-xl py-4 font-semibold text-lg disabled:opacity-40 disabled:cursor-not-allowed transition-opacity btn-press"
         style={{ minHeight: 52 }}
       >
-        Registrar Combustible
+        {submitting ? 'Confirmando registro…' : retryRow ? 'Reintentar el mismo registro' : 'Registrar Combustible'}
       </button>
         </>
       )}

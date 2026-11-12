@@ -14,6 +14,8 @@ import ErrorBoundary from './components/ErrorBoundary';
 
 const LoginPage           = lazy(() => import('./pages/LoginPage'));
 const PanamaPage          = lazy(() => import('./pages/PanamaPage'));
+const PanamaShiftsPage    = lazy(() => import('./pages/PanamaShiftsPage'));
+const PanamaReceivingPage = lazy(() => import('./pages/PanamaReceivingPage'));
 const PrivacyPolicyPage   = lazy(() => import('./pages/PrivacyPolicyPage'));
 const TermsPage           = lazy(() => import('./pages/TermsPage'));
 
@@ -136,6 +138,8 @@ export default function App() {
       <Route path="/privacy" element={<S><PrivacyPolicyPage /></S>} />
       <Route path="/terms"   element={<S><TermsPage /></S>} />
       <Route path="/panama" element={<RequireRole roles={ALL}><PageBoundary role={role}><S><PanamaPage /></S></PageBoundary></RequireRole>} />
+      <Route path="/panama/turnos" element={<RequireRole roles={['operador', 'supervisor', 'coordinador', 'gerencia']}><PageBoundary role={role}><S><PanamaShiftsPage /></S></PageBoundary></RequireRole>} />
+      <Route path="/panama/recepciones" element={<RequireRole roles={ALL}><PageBoundary role={role}><S><PanamaReceivingPage /></S></PageBoundary></RequireRole>} />
 
       {/* ── Chat — any authenticated user, no AppShell ─────────────────── */}
       <Route path="/chat" element={
