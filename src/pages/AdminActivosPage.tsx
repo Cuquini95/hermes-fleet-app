@@ -140,9 +140,9 @@ export default function AdminActivosPage() {
         <Input label="Marca" value={form.marca} onChange={(v) => setForm({ ...form, marca: v })} />
         <Input label="Año" type="number" value={form.ano} onChange={(v) => setForm({ ...form, ano: v })} />
         <Input label="Fecha adquisición" type="date" value={form.fecha_adquisicion} onChange={(v) => setForm({ ...form, fecha_adquisicion: v })} required />
-        <Input label="Costo adquisición (MXN)" type="number" value={form.costo_adquisicion} onChange={(v) => setForm({ ...form, costo_adquisicion: v })} required />
+        <Input label="Costo adquisición (USD)" type="number" value={form.costo_adquisicion} onChange={(v) => setForm({ ...form, costo_adquisicion: v })} required />
         <Input label="Vida útil (años)" type="number" value={form.vida_util_anos} onChange={(v) => setForm({ ...form, vida_util_anos: v })} />
-        <Input label="Valor residual (MXN)" type="number" value={form.valor_residual} onChange={(v) => setForm({ ...form, valor_residual: v })} />
+        <Input label="Valor residual (USD)" type="number" value={form.valor_residual} onChange={(v) => setForm({ ...form, valor_residual: v })} />
         <Select label="Método" value={form.metodo} options={['Lineal', 'Saldo Decreciente']} onChange={(v) => setForm({ ...form, metodo: v as AssetForm['metodo'] })} />
         <Input label="Horas totales vida" type="number" value={form.horas_totales_vida} onChange={(v) => setForm({ ...form, horas_totales_vida: v })} />
         <Select label="Segmento" value={form.segmento} options={['Renta', 'Transporte', 'Ambos']} onChange={(v) => setForm({ ...form, segmento: v as AssetForm['segmento'] })} />

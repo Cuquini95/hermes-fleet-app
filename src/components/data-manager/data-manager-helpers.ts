@@ -26,14 +26,14 @@ export function looksLikeHeaderRow(row: string[], columns: ColumnDef[]): boolean
 
 // ── Formatters ───────────────────────────────────────────────────────────────
 
-/** Formats a raw numeric string as MXN currency. */
+/** Formats a raw numeric string as USD currency. */
 export function formatCurrency(raw: string): string {
   const cleaned = raw.replace(/[^0-9.\-]/g, '');
   const n = parseFloat(cleaned);
   if (!Number.isFinite(n)) return raw;
   return n.toLocaleString('es-MX', {
     style: 'currency',
-    currency: 'MXN',
+    currency: 'USD',
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });

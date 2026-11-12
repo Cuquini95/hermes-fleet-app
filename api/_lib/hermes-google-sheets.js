@@ -28,6 +28,7 @@ export class HermesSheetError extends Error {
 }
 
 let googleAuth;
+let panamaGoogleAuth;
 function configuredSpreadsheet() {
   const id = (process.env.HERMES_GOOGLE_SHEET_ID || process.env.HERMES_GOOGLE_SHEETS_ID || '').trim();
   if (!/^[A-Za-z0-9_-]{20,}$/.test(id)) throw new HermesSheetError(503, 'La fuente de Hermes no está configurada.');
@@ -258,3 +259,39 @@ const defaultSheets = createHermesSheets();
 
 // Parts lookup consumes unformatted numeric values from known named ranges.
 export const readHermesRows = (range, options) => defaultSheets.readRange(range, options);
+
+export function createPanamaOperationsSheets() {
+  const id = process.env.HERMES_PANAMA_OPERATIONS_SHEET_ID?.trim();
+  let verified;
+  return createHermesSheets({
+    request: async options => {
+      const masters = ['TMF', 'WORKSHOP', 'PM', 'DOZERS', 'EXCAVATORS', 'PURCHASES', 'COSTS']
+        .map(key => process.env['HERMES_PANAMA_' + key + '_SHEET_ID']?.trim());
+      if (!id || !/^[A-Za-z0-9_-]{20,}$/.test(id) || masters.includes(id)) {
+        throw new HermesSheetError(503, 'Configura el archivo operativo independiente de Hermes Panamá.');
+      }
+      if (!panamaGoogleAuth) {
+        try {
+          const credentials = JSON.parse(process.env.HERMES_PANAMA_OPERATIONS_SERVICE_ACCOUNT_JSON || 'null');
+          if (credentials?.type !== 'service_account') throw new Error('Invalid credentials');
+          panamaGoogleAuth = new GoogleAuth({ credentials, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+        } catch {
+          throw new HermesSheetError(503, 'La cuenta de servicio operativa de Panamá no está configurada.');
+        }
+      }
+      verified ??= panamaGoogleAuth.request({
+        url: API_ROOT + '/' + id + '/values/' + encodeURIComponent("'HERMES_PA_CONFIG'!A1:B1"),
+        timeout: 8000, retry: false,
+      }).then(response => {
+        const marker = response.data?.values?.[0];
+        if (marker?.[0] !== 'HERMES_PANAMA' || marker?.[1] !== 'tmf-panama') throw new Error('Marcador de Panamá inválido');
+      }).catch(() => {
+        verified = undefined;
+        throw new HermesSheetError(503, 'No se pudo verificar el archivo operativo de Panamá.');
+      });
+      await verified;
+      return panamaGoogleAuth.request({ ...options, timeout: 10000, retry: false });
+    },
+    spreadsheetId: id || 'panama-operations-not-configured',
+  });
+}

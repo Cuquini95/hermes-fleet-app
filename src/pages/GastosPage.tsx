@@ -113,7 +113,7 @@ function byType(gastos: GastoCompra[]) {
 // ── Currency formatter ────────────────────────────────────────────────────────
 
 const mxn = (n: number) =>
-  n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN', maximumFractionDigits: 0 });
+  n.toLocaleString('es-MX', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 
 // ── Report data builder (for PDF export) ─────────────────────────────────────
 

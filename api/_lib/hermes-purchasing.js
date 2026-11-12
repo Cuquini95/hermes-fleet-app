@@ -79,7 +79,7 @@ function calendarDate(value, label, required) {
 
 function timestamp() {
   const now = new Date();
-  const zone = { timeZone: 'America/Mexico_City' };
+  const zone = { timeZone: 'America/Panama' };
   const date = new Intl.DateTimeFormat('en-GB', { ...zone, day: '2-digit', month: '2-digit', year: 'numeric' }).format(now);
   const time = new Intl.DateTimeFormat('en-GB', { ...zone, hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(now);
   return { date, time, iso: now.toISOString() };
@@ -96,18 +96,18 @@ function requireUnit(session, value) {
   return unit;
 }
 
-function configuredIssuers() {
+function configuredIssuers(panama = false) {
   const source = process.env.HERMES_PURCHASE_ISSUERS_JSON;
-  if (!source) return [DEFAULT_ISSUER];
+  if (!source) return panama ? [] : [DEFAULT_ISSUER];
   try {
     const data = JSON.parse(source);
     if (!Array.isArray(data) || new Set(data.map((i) => i.id)).size !== data.length) return [];
     return data.filter((i) =>
       typeof i.id === 'string' && /^[A-Z0-9_-]{2,40}$/.test(i.id) &&
       typeof i.name === 'string' && i.name.trim().length > 0 && i.name.length < 160 &&
-      ['MXN', 'USD', 'PAB'].includes(i.currency) && Number.isInteger(i.taxBps) &&
+      (panama ? ['USD', 'PAB'] : ['MXN', 'USD', 'PAB']).includes(i.currency) && Number.isInteger(i.taxBps) &&
       i.taxBps >= 0 && i.taxBps <= 10000 && typeof i.taxLabel === 'string' &&
-      ['ultratk', 'transplus'].includes(i.template)
+      (panama ? i.template === 'transplus' : ['ultratk', 'transplus'].includes(i.template))
     ).map((i) => ({
       id: i.id, name: i.name, currency: i.currency, taxBps: i.taxBps, taxLabel: i.taxLabel,
       address: trim(i.address).slice(0, 500), phone: trim(i.phone).slice(0, 80),
@@ -344,7 +344,7 @@ async function saveOrder(body, session, sheets, tx) {
     error(409, 'El folio ya existe en cabeceras o partidas. Se requiere conciliación.');
   }
   const unit = requireUnit(session, body.unit);
-  const issuer = configuredIssuers().find((item) => item.id === body.entity);
+  const issuer = configuredIssuers(session.project === 'tmf-panama').find((item) => item.id === body.entity);
   if (!issuer) error(400, 'Selecciona una entidad emisora configurada.');
   const vendors = entries(vendorRows).map(({ row }) => vendorRecord(row)).filter((vendor) =>
     vendor.name && upper(vendor.name) === upper(body.vendorName) && upper(vendor.rfc) === upper(body.vendorRfc));
@@ -627,7 +627,7 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
       return ok({
         orders: rows.filter(({ row }) => canUseUnit(session, row[5]))
           .map(({ row }) => orderRecord(row, linked.get(upper(row[0])) || [])).reverse(),
-        vendors, orphanFolios, issuers: configuredIssuers(), canApprove: session.canApprovePurchases === true,
+        vendors, orphanFolios, issuers: configuredIssuers(session.project === 'tmf-panama'), canApprove: session.canApprovePurchases === true,
       });
     }
     tx = mutate(action, body, session, sheets);

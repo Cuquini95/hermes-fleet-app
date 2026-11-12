@@ -17,10 +17,10 @@ export const roles = {
   gerencia: '/dashboard',
 };
 
-const qaProject = 'hermes-qa';
+const qaProject = 'tmf-panama';
 const qaPublicKey = 'fixture-only-public-key';
 const qaServiceKey = 'fixture-only-service-key';
-const units = ['CA20', 'TR16', 'CV100'];
+const units = ['DZ203', 'EX401', 'DZ205'];
 export const fixturePassword = 'HermesSyntheticTestOnly!2026';
 export const photoPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg==', 'base64');
 
@@ -33,7 +33,7 @@ export const tabs = {
 };
 
 function priorMonthDate() {
-  const [year, month] = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', timeZone: 'America/Mexico_City' }).format(new Date()).split('-');
+  const [year, month] = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', timeZone: 'America/Panama' }).format(new Date()).split('-');
   const monthStart = new Date(Date.UTC(Number(year), Number(month) - 2, 6));
   return monthStart.toISOString().slice(0, 10).split('-').reverse().join('/');
 }
@@ -42,18 +42,18 @@ function fixtureRows() {
   return new Map([
     [tabs.fleet, [
       ['Inventario de prueba'], ['Operación QA'], ['#','COD1','Descripción','Marca','Modelo','Año','Serie','Ubicación','Estado','Lectura Hr/Km'],
-      ['1','CA20','Articulado QA','Caterpillar','745','2018','QA-CA20','Frente QA','Operativo','1475'],
-      ['2','TR16','Tractor QA','Komatsu','D65EX-16','2018','QA-TR16','Frente QA','Operativo','1960'],
-      ['3','CV100','Volteo QA','Mack','Granite','2022','QA-CV100','Frente QA','Operativo','390'],
-      ['4','CV101','Volteo QA sin asignar','Mack','Granite','2022','QA-CV101','Frente QA','Operativo','420'],
+      ['1','DZ203','Articulado QA','Caterpillar','745','2018','QA-DZ203','Frente QA','Operativo','1475'],
+      ['2','EX401','Tractor QA','Komatsu','D65EX-16','2018','QA-EX401','Frente QA','Operativo','1960'],
+      ['3','DZ205','Volteo QA','Mack','Granite','2022','QA-DZ205','Frente QA','Operativo','390'],
+      ['4','EX410','Volteo QA sin asignar','Mack','Granite','2022','QA-EX410','Frente QA','Operativo','420'],
     ]],
     [tabs.orders, [
       ['ROW_ID','OT_ID','FECHA','UNIDAD','TIPO_AVERIA','DESCRIPCION','SEVERIDAD','PRIORIDAD','MECANICO','ESTADO','FOTO_URL','AVERIA_REF','PARTES','COSTO_ESTIMADO','FECHA_CIERRE','OBSERVACIONES','PROGRESO'],
-      ['replica-qa','OT-0004','11/11/2026','CA20','Llanta','Réplica sintética de incidente de llanta','ALTA','ALTA','','Abierta','','OT-0004','','','','','0'],
+      ['replica-qa','OT-0004','11/11/2026','DZ203','Llanta','Réplica sintética de incidente de llanta','ALTA','ALTA','','Abierta','','OT-0004','','','','','0'],
     ]],
     [tabs.failure, [
       ['FECHA','HORA','UNIDAD','TIPO_AVERIA','DESCRIPCION','SEVERIDAD','TECNICO','TIEMPO_PARO','COSTO_ESTIMADO','ESTADO','SOLUCION','OBSERVACIONES','PROVEEDOR_PIEZA','OT_ID','FOTO_URL'],
-      ['11/11/2026','14:15:00','CA20','Llanta','Réplica sintética de incidente de llanta','ALTA','QA operador','','','Abierta','','','','OT-0004',''],
+      ['11/11/2026','14:15:00','DZ203','Llanta','Réplica sintética de incidente de llanta','ALTA','QA operador','','','Abierta','','','','OT-0004',''],
     ]],
     [tabs.history, [['TIMESTAMP','OT_ID','FIELD','OLD_VALUE','NEW_VALUE','CHANGED_BY','ROLE']]],
     [tabs.schedule, [['ID','FECHA','OT_ID','UNIDAD','MECANICO','HORAS','NOTAS']]],
@@ -66,16 +66,16 @@ function fixtureRows() {
     [tabs.providers, [['Nombre','RFC','Dirección','Ciudad','Estado','CP','Teléfono','Email','Contacto'], ['Proveedor QA','QAT000000000','Calle de prueba 10','Ciudad QA','Jalisco','00000','0000000000','proveedor@example.invalid','Contacto QA']]],
     [tabs.purchases, [['OC_ID','FECHA','PROVEEDOR','RFC','DIRECCION','UNIDAD','SUBTOTAL','IVA','ENVIO','OTROS','TOTAL','ESTADO','COMENTARIOS','APROBADA_POR','FECHA_ENTREGA']]],
     [tabs.lines, [['OC_ID','ITEM','DESCRIPCION','CANTIDAD','PRECIO_UNITARIO','TOTAL'], ['OC-001','1','Partida histórica ficticia sin cabecera','1','12','12']]],
-    [tabs.parts, [[], [], [], [], ['SKU','Descripción','OEM','Serie','Unidad','Stock','Mínimo','Precio','Ubicación','','Equipo','','','Proveedor'], ['QA-001','Filtro hidráulico de prueba','OEM-QA-001','','pza','8','3','123.45','Almacén QA','','CA20','','','Proveedor QA'], ['QA-002','Sello de prueba','OEM-QA-002','','pza','1','2','21.50','Almacén QA','','TR16','','','Proveedor QA']]],
+    [tabs.parts, [[], [], [], [], ['SKU','Descripción','OEM','Serie','Unidad','Stock','Mínimo','Precio','Ubicación','','Equipo','','','Proveedor'], ['QA-001','Filtro hidráulico de prueba','OEM-QA-001','','pza','8','3','123.45','Almacén QA','','DZ203','','','Proveedor QA'], ['QA-002','Sello de prueba','OEM-QA-002','','pza','1','2','21.50','Almacén QA','','EX401','','','Proveedor QA']]],
     [tabs.expenses, [
       ['ID','FECHA','HORA','TIPO','PROVEEDOR','RFC','FOLIO_FACTURA','SUBTOTAL','IVA','TOTAL','UNIDAD','OT','RESPONSABLE','METODO_PAGO','LINE_ITEMS','IMAGEN_URL','ESTADO'],
-      ['GST-HIST-SIM','04/10/2026','09:00:00','Refaccion','Proveedor QA','QAT000000000','FAC-HIST-SIM','200.00','32.00','232.00','CA20','','QA Gerencia','Transferencia','[QA-001] Filtro hidráulico de prueba x2 $200.00','','Aprobado'],
-      ['GST-MES-ANTERIOR-SIM',priorMonthDate(),'11:00:00','Servicio','Proveedor QA mes anterior','QAT000000001','FAC-ANTERIOR-SIM','100.25','16.04','116.29','TR16','','QA Gerencia','Transferencia','','','Aprobado'],
+      ['GST-HIST-SIM','04/10/2026','09:00:00','Refaccion','Proveedor QA','QAT000000000','FAC-HIST-SIM','200.00','32.00','232.00','DZ203','','QA Gerencia','Transferencia','[QA-001] Filtro hidráulico de prueba x2 $200.00','','Aprobado'],
+      ['GST-MES-ANTERIOR-SIM',priorMonthDate(),'11:00:00','Servicio','Proveedor QA mes anterior','QAT000000001','FAC-ANTERIOR-SIM','100.25','16.04','116.29','EX401','','QA Gerencia','Transferencia','','','Aprobado'],
     ]],
     [tabs.changes, [['TIMESTAMP','ACTOR','ROL','ACCION','FOLIO','DETALLE']]],
     ['Combustible', [['Registro QA'], ['ID','FECHA','HORA','UNIDAD','OPERADOR','TIPO','LITROS'],
-      ['FUEL-QA-1','11/11/2026','07:00','CA20','QA operador','Diésel','100'],
-      ['FUEL-QA-2','11/11/2026','08:00','TR16','QA operador','Diésel','150']]],
+      ['FUEL-QA-1','11/11/2026','07:00','DZ203','QA operador','Diésel','100'],
+      ['FUEL-QA-2','11/11/2026','08:00','EX401','QA operador','Diésel','150']]],
     ['04B Registro Horómetros', [['FECHA','HORA','UNIDAD','MODELO','OPERADOR','TURNO','HOROMETRO']]],
     ['Personal_TCM', [['Nombre','Teléfono','Rol','Notas']]],
   ]);
@@ -388,8 +388,8 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
     HERMES_AUTH_SUPABASE_SERVICE_ROLE_KEY: qaServiceKey, HERMES_AUTH_PROJECT: qaProject,
     HERMES_UPSTREAM_URL: '', HERMES_UPSTREAM_TOKEN: '', HERMES_GOOGLE_SERVICE_ACCOUNT_JSON: '',
     HERMES_GOOGLE_SHEET_ID: '', HERMES_GOOGLE_SHEETS_ID: '', TELEGRAM_BOT_TOKEN: '',
-    HERMES_WORKSHOP_STORAGE_ORIGIN: origin, HERMES_EXPENSE_PRICE_CURRENCY: 'MXN',
-    HERMES_PURCHASE_ISSUERS_JSON: '', HERMES_EXPENSE_RECEIPT_URL_PREFIX: `${origin}/storage/v1/object/public/receipt-photos/`,
+    HERMES_WORKSHOP_STORAGE_ORIGIN: origin, HERMES_EXPENSE_PRICE_CURRENCY: 'USD',
+    HERMES_PURCHASE_ISSUERS_JSON: JSON.stringify([{ id: 'TP_PA_QA', name: 'Trans Plus Panamá QA', currency: 'USD', taxLabel: 'ITBMS', taxBps: 700, template: 'transplus' }]), HERMES_EXPENSE_RECEIPT_URL_PREFIX: `${origin}/storage/v1/object/public/receipt-photos/`,
   });
   async function stop() {
     globalThis.fetch = originalFetch;
@@ -408,9 +408,9 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
     auth = { '/api/auth/login': login.default, '/api/auth/session': validate.default, '/api/auth/logout': logout.default };
     if (withGateway) {
       if (typeof gate.createHermesGateway !== 'function') throw new Error('La versión no exporta createHermesGateway');
-      gateway = gate.createHermesGateway({ sheets: sheet, writeEnabled: true });
+      gateway = gate.createHermesGateway({ sheets: sheet, writeEnabled: true, panamaOnly: true, enablePanamaOperations: true });
       if (typeof parts.createPartsHandler === 'function') auth['/api/parts/import'] = parts.createPartsHandler({
-        readRows: sheet.readRange,
+        readRows: sheet.readRange, panama: true,
         sendAlert: async changes => { alerts.push(clone(changes)); return { sent: true }; },
       });
     }

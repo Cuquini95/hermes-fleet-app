@@ -60,7 +60,7 @@ export async function readSession(req) {
   return resolveIdentitySession(identityConfig(), sessionHash(claims.sid), claims.sub);
 }
 
-export async function requireSession(req, res, allowedRoles) {
+export async function requireSession(req, res, allowedRoles, { allowPanama = false } = {}) {
   let session;
   try { session = await readSession(req); }
   catch {
@@ -71,7 +71,7 @@ export async function requireSession(req, res, allowedRoles) {
     res.status(401).json({ error: 'Sesión inválida' });
     return null;
   }
-  if (allowedRoles && !allowedRoles.includes(session.role)) {
+  if ((!allowPanama && session.project === 'tmf-panama') || (allowedRoles && !allowedRoles.includes(session.role))) {
     res.status(403).json({ error: 'Acción no autorizada para este rol' });
     return null;
   }

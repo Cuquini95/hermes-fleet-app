@@ -27,8 +27,8 @@ const FIELD_COLUMNS = {
 const PRIORITIES = new Set(['CRITICA', 'ALTA', 'MEDIA', 'BAJA']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DVIR_LABELS = ['Motor', 'Transmisión', 'Frenos', 'Dirección', 'Hidráulico', 'Eléctrico', 'Neumáticos', 'Estructura', 'Luces', 'Fluidos', 'Cabina', 'Tren de rodaje'];
-const dateFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' });
-const timeFormatter = new Intl.DateTimeFormat('es-MX', { timeZone: 'America/Mexico_City', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+const dateFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Panama', year: 'numeric', month: '2-digit', day: '2-digit' });
+const timeFormatter = new Intl.DateTimeFormat('es-MX', { timeZone: 'America/Panama', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
 
 class WorkshopError extends Error {
   constructor(status, message) { super(message); this.status = status; }

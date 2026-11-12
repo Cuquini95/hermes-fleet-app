@@ -349,7 +349,7 @@ export default function MyReportsPage() {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
-    timeZone: 'America/Mexico_City',
+    timeZone: 'America/Panama',
   });
 
   return (

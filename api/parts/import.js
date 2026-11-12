@@ -1,5 +1,5 @@
 import { requireSession } from '../_lib/session-auth.js';
-import { readHermesRows } from '../_lib/hermes-google-sheets.js';
+import { createPanamaOperationsSheets, readHermesRows } from '../_lib/hermes-google-sheets.js';
 import { PARTS_RANGE, EXPENSES_RANGE, searchInventory, recoverExpensePrices, compareQuote } from '../_lib/hermes-part-prices.js';
 
 function formatMoney(value) {
@@ -64,7 +64,7 @@ async function sendTelegramPriceAlert(changes) {
 
 const WORKSHOP = ['mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
 
-export function createPartsHandler({ readRows = readHermesRows, sendAlert = sendTelegramPriceAlert } = {}) {
+export function createPartsHandler({ readRows = readHermesRows, sendAlert = sendTelegramPriceAlert, panama = false } = {}) {
   return async function handler(req, res) {
     res.setHeader('Cache-Control', 'no-store');
     if (req.method === 'OPTIONS') {
@@ -75,8 +75,9 @@ export function createPartsHandler({ readRows = readHermesRows, sendAlert = send
       res.setHeader('Allow', 'GET, POST, OPTIONS');
       return res.status(405).json({ error: 'Método no permitido' });
     }
-    const session = await requireSession(req, res, req.method === 'GET' ? WORKSHOP : WORKSHOP.slice(1));
+    const session = await requireSession(req, res, req.method === 'GET' ? WORKSHOP : WORKSHOP.slice(1), { allowPanama: panama });
     if (!session) return;
+    if (panama && session.project !== 'tmf-panama') return res.status(403).json({ error: 'Proyecto no habilitado para Panamá.' });
 
     try {
       if (req.method === 'GET') {
@@ -91,7 +92,7 @@ export function createPartsHandler({ readRows = readHermesRows, sendAlert = send
       if (!supplier || !Array.isArray(parts) || parts.length === 0 || parts.length > 100) {
         return res.status(400).json({ error: 'Indica el proveedor y entre 1 y 100 líneas.' });
       }
-      if (process.env.HERMES_EXPENSE_PRICE_CURRENCY !== 'MXN') {
+      if (process.env.HERMES_EXPENSE_PRICE_CURRENCY !== (panama ? 'USD' : 'MXN')) {
         return res.status(503).json({ error: 'La moneda del historial está pendiente de confirmar.' });
       }
       const assigned = new Set((session.assignedUnits || []).map((unit) => String(unit).trim().toUpperCase()));
@@ -117,4 +118,7 @@ export function createPartsHandler({ readRows = readHermesRows, sendAlert = send
   };
 }
 
-export default createPartsHandler();
+export default process.env.VERCEL === '1'
+  ? createPartsHandler({ panama: true, readRows: createPanamaOperationsSheets().readRange,
+      sendAlert: async () => ({ sent: false, reason: 'panama_notifications_unconfigured' }) })
+  : createPartsHandler();

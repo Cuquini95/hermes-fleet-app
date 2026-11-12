@@ -51,7 +51,7 @@ export default function OrdenCompraPrintPage() {
     ['Total', order.total],
   ];
   const approvedAt = authorized ? new Intl.DateTimeFormat('es-MX', {
-    dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Mexico_City',
+    dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Panama',
   }).format(new Date(order.approvedAt)) : '';
 
   return (

@@ -33,8 +33,8 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center gap-3 text-center">
           <img src="/logo-transplus.svg" alt="Trans Plus" className="h-24 w-24" />
-          <h1 className="text-2xl font-bold tracking-widest">HERMES</h1>
-          <p className="text-sm text-slate-600">Grupo Trans Plus · Operaciones</p>
+          <h1 className="text-2xl font-bold tracking-widest">Hermes Panamá</h1>
+          <p className="text-sm text-slate-600">Grupo Trans Plus · TMF Minera Panamá</p>
         </div>
         <form className="space-y-4" onSubmit={submit}>
           <label className="block text-sm font-medium">

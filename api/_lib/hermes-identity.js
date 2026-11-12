@@ -9,14 +9,15 @@ function envValue(env, ...names) {
 }
 
 export function identityConfig(env = process.env) {
-  const source = envValue(env, 'HERMES_AUTH_SUPABASE_URL', 'VITE_SUPABASE_URL');
-  const publishableKey = envValue(env, 'HERMES_AUTH_SUPABASE_PUBLISHABLE_KEY', 'VITE_SUPABASE_ANON_KEY');
+  const source = envValue(env, 'HERMES_AUTH_SUPABASE_URL');
+  const publishableKey = envValue(env, 'HERMES_AUTH_SUPABASE_PUBLISHABLE_KEY');
   const serviceKey = envValue(env, 'HERMES_AUTH_SUPABASE_SERVICE_ROLE_KEY');
   const project = envValue(env, 'HERMES_AUTH_PROJECT');
   let url;
   try { url = new URL(source); } catch { throw new Error('Identity provider is not configured'); }
   const localFixture = url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) && env.VERCEL_ENV !== 'production';
-  if ((url.protocol !== 'https:' && !localFixture) || url.username || url.password || url.search || url.hash
+  if ((env.VERCEL === '1' && project !== 'tmf-panama')
+    || (url.protocol !== 'https:' && !localFixture) || url.username || url.password || url.search || url.hash
     || !publishableKey || !serviceKey || !PROJECT.test(project)) {
     throw new Error('Identity provider is not configured');
   }

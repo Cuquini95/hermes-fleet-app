@@ -13,6 +13,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 //    the shell, auth guard, and error boundary. ────────────────────────────────
 
 const LoginPage           = lazy(() => import('./pages/LoginPage'));
+const PanamaPage          = lazy(() => import('./pages/PanamaPage'));
 const PrivacyPolicyPage   = lazy(() => import('./pages/PrivacyPolicyPage'));
 const TermsPage           = lazy(() => import('./pages/TermsPage'));
 
@@ -134,6 +135,7 @@ export default function App() {
       <Route path="/login"   element={<S><LoginPage /></S>} />
       <Route path="/privacy" element={<S><PrivacyPolicyPage /></S>} />
       <Route path="/terms"   element={<S><TermsPage /></S>} />
+      <Route path="/panama" element={<RequireRole roles={ALL}><PageBoundary role={role}><S><PanamaPage /></S></PageBoundary></RequireRole>} />
 
       {/* ── Chat — any authenticated user, no AppShell ─────────────────── */}
       <Route path="/chat" element={

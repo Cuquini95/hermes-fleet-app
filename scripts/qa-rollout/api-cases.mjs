@@ -57,8 +57,8 @@ export async function checkLoad(fixture, record, withGateway) {
       assert.equal(session.role, account.membership.role);
       if (withGateway) {
         const fleet = good(await request('/hermes-api/api/sheets/read?tab=01%20Inventario', { cookie }), 'Primera consulta de inventario');
-        assert(Array.isArray(fleet.data) && fleet.data.some(row => row.includes('CA20')), 'El inventario de prueba no llegó a la sesión');
-        if (!session.allUnits) assert(!fleet.data.some(row => row.includes('CV101')), 'Se mostró una unidad de prueba fuera del alcance');
+        assert(Array.isArray(fleet.data) && fleet.data.some(row => row.includes('DZ203')), 'El inventario de prueba no llegó a la sesión');
+        if (!session.allUnits) assert(!fleet.data.some(row => row.includes('EX410')), 'Se mostró una unidad de prueba fuera del alcance');
       }
       durations.push(performance.now() - start);
       return session.userId;
@@ -113,7 +113,7 @@ export async function checkWorkshop(fixture, record) {
   await record('API-TALLER-AVISO-Y-REINTENTO', async () => {
     const op = workshop(request, await loginAs(request, firstAccount('operador')));
     const data = {
-      mutationId: randomUUID(), unit: 'CA20', type: 'Mecánica', description: 'QA reintento de avería y orden',
+      mutationId: randomUUID(), unit: 'DZ203', type: 'Mecánica', description: 'QA reintento de avería y orden',
       canMove: false, customer: 'Frente QA', location: 'Patio QA', downtime: 'Indeterminado', photos: [],
     };
     const target = writes => writes.some(write => write.tab === tabs.orders);
@@ -192,8 +192,8 @@ export async function checkWorkshop(fixture, record) {
     const failure = sheet.read(tabs.failure).filter(row => row[13] === otId);
     assert.equal(order.length, 1);
     assert.equal(failure.length, 1);
-    assert.deepEqual([order[0][3], order[0][9], failure[0][9]], ['CA20', 'Completado', 'Completado']);
-    return { folio: otId, unit: 'CA20', state: 'Completado', synthetic: true };
+    assert.deepEqual([order[0][3], order[0][9], failure[0][9]], ['DZ203', 'Completado', 'Completado']);
+    return { folio: otId, unit: 'DZ203', state: 'Completado', synthetic: true };
   });
 
   await record('API-TALLER-DVIR-PM', async () => {
@@ -202,17 +202,17 @@ export async function checkWorkshop(fixture, record) {
     const sup = workshop(request, await loginAs(request, firstAccount('supervisor')));
     const date = '2026-11-12';
     const check = Array.from({ length: 12 }, (_, index) => ({ status: index === 2 ? 'falla' : 'ok', notes: index === 2 ? 'Hallazgo ficticio' : '' }));
-    const inspection = good(await op('dvir', { mutationId: randomUUID(), unit: 'CV100', date, time: '07:20', type: 'pre-operacion', meter: 391, checks: check, observations: '', photos: [] }), 'Guardar DVIR reprobado');
+    const inspection = good(await op('dvir', { mutationId: randomUUID(), unit: 'DZ205', date, time: '07:20', type: 'pre-operacion', meter: 391, checks: check, observations: '', photos: [] }), 'Guardar DVIR reprobado');
     assert.equal(inspection.result, 'reprobado');
     const dvir = sheet.read(tabs.dvir).find(row => row[1] === inspection.inspectionId);
     assert.equal(dvir?.[25], inspection.otId);
     assert(good(await sup('orders'), 'Consultar OT de inspección').orders.some(row => row[1] === inspection.otId && row[4] === 'DVIR'));
-    const pm = good(await lead('pm', { mutationId: randomUUID(), unit: 'TR16', level: 'PM-250', includedLevels: 'PM-250', hours: 2.5, mechanicId: firstAccount('mecanico').user.id, scheduledDate: date, parts: 'Filtro QA', notes: 'Mantenimiento QA' }), 'Crear orden PM');
+    const pm = good(await lead('pm', { mutationId: randomUUID(), unit: 'EX401', level: 'PM-250', includedLevels: 'PM-250', hours: 2.5, mechanicId: firstAccount('mecanico').user.id, scheduledDate: date, parts: 'Filtro QA', notes: 'Mantenimiento QA' }), 'Crear orden PM');
     assert(pm.otId);
     assert(sheet.read(tabs.pm).some(row => row[0] === pm.otId));
     assert(sheet.read(tabs.pmHistory).some(row => row[1] === pm.otId));
     const calendar = good(await sup('schedule'), 'Consultar calendario de Taller');
-    assert(calendar.schedule.some(row => row[1] === date && row[2] === pm.otId && row[3] === 'TR16'));
+    assert(calendar.schedule.some(row => row[1] === date && row[2] === pm.otId && row[3] === 'EX401'));
     return { inspection: inspection.inspectionId, inspectionOrder: inspection.otId, pmOrder: pm.otId, scheduleDate: date };
   });
 
@@ -225,7 +225,7 @@ export async function checkWorkshop(fixture, record) {
     const template = getStickerTemplate('camion_articulado');
     const checks = template.items.map(item => ({ itemId: item.id, status: 'cumple', canOperate: true }));
     const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City' }).format(new Date());
-    const body = { mutationId: randomUUID(), unit: 'CA20', templateId: template.id, company: 'Hermes QA', date,
+    const body = { mutationId: randomUUID(), unit: 'DZ203', templateId: template.id, company: 'Hermes QA', date,
       time: '08:00', checks, finalColor: 'green', approve: false, photos: [] };
     assert.equal((await op('sticker', { ...body, approve: true })).status, 403);
     const submitted = good(await op('sticker', body), 'Guardar inspección para revisión');
@@ -252,15 +252,15 @@ export async function checkWorkshop(fixture, record) {
     const red = good(await sup('stickerreview', { mutationId: randomUUID(), folio: blocked.folio }), 'Revisar sin liberar unidad con sticker rojo');
     assert.equal(red.canDispatch, false);
     const readiness = good(await sup('readiness'), 'Consultar restricciones de flota');
-    assert(readiness.stickers.some(row => row[1] === blocked.folio && row[5] === 'CA20' && row[12] === 'red' && row[13] === 'no'));
-    return { reviewed: submitted.folio, blocked: blocked.folio, reviewerId: supervisor.user.id, unit: 'CA20', redCanDispatch: false };
+    assert(readiness.stickers.some(row => row[1] === blocked.folio && row[5] === 'DZ203' && row[12] === 'red' && row[13] === 'no'));
+    return { reviewed: submitted.folio, blocked: blocked.folio, reviewerId: supervisor.user.id, unit: 'DZ203', redCanDispatch: false };
   });
 }
 
 function orderPayload(description = 'Filtro sintético') {
   return {
     operationId: randomUUID(), date: '2026-11-12', deliveryDate: '2026-11-14',
-    vendorName: 'Proveedor QA', vendorRfc: 'QAT000000000', unit: 'CA20', entity: 'ULTRATK_MX',
+    vendorName: 'Proveedor QA', vendorRfc: 'QAT000000000', unit: 'DZ203', entity: 'TP_PA_QA',
     lines: [
       { description, quantity: 2, unitPrice: 123.45 },
       { description: 'Sello sintético', quantity: 3, unitPrice: 45.67 },
@@ -282,15 +282,15 @@ export async function checkPurchasing(fixture, record) {
     const buyer = await loginAs(request, firstAccount('jefe_taller'));
     const find = (query, unit) => request(`/api/parts/import?q=${encodeURIComponent(query)}${unit ? `&equipo=${unit}` : ''}`, { cookie: mechanic });
     for (const term of ['QA-001', 'OEM-QA-001', 'Filtro hidráulico de prueba']) {
-      const [item] = good(await find(term, 'CA20'), 'Buscar por SKU, OEM o descripción');
+      const [item] = good(await find(term, 'DZ203'), 'Buscar por SKU, OEM o descripción');
       assert.equal(item.part_number, 'QA-001');
       assert.equal(item.oem_ref, 'OEM-QA-001');
       assert.equal(item.stock_quantity, 8);
       assert.equal(item.stock_minimum, 3);
-      assert.deepEqual(item.compatible_units, ['CA20']);
+      assert.deepEqual(item.compatible_units, ['DZ203']);
       assert.equal(item.supplier, 'Proveedor QA');
     }
-    assert.deepEqual(good(await find('QA-001', 'TR16'), 'Descartar incompatibilidad'), []);
+    assert.deepEqual(good(await find('QA-001', 'EX401'), 'Descartar incompatibilidad'), []);
     assert.deepEqual(good(await find('QA-NO-EXISTE'), 'Consultar repuesto inexistente'), []);
     const compare = supplier => request('/api/parts/import', { cookie: buyer, body: {
       supplier, parts: [{ part_number: 'QA-001', unit_price: 123.45 }, { part_number: 'QA-002', unit_price: 21.50 }],
@@ -309,8 +309,8 @@ export async function checkPurchasing(fixture, record) {
     const lead = purchasing(request, await loginAs(request, firstAccount('jefe_taller')));
     const manager = purchasing(request, await loginAs(request, firstAccount('gerencia')));
     const items = [
-      { part_number: 'QA-001', description: 'Filtro hidráulico de prueba', quantity: 2, unit_price: 123.45, equipment: 'CA20', urgencia: 'Urgente', notes: 'Nota QA de catálogo', source: 'Catálogo' },
-      { part_number: 'MANUAL-QA', description: 'Empaque manual QA', quantity: 3, unit_price: 45.67, equipment: 'CA20', urgencia: 'Normal', notes: 'Nota QA manual', isManual: true },
+      { part_number: 'QA-001', description: 'Filtro hidráulico de prueba', quantity: 2, unit_price: 123.45, equipment: 'DZ203', urgencia: 'Urgente', notes: 'Nota QA de catálogo', source: 'Catálogo' },
+      { part_number: 'MANUAL-QA', description: 'Empaque manual QA', quantity: 3, unit_price: 45.67, equipment: 'DZ203', urgencia: 'Normal', notes: 'Nota QA manual', isManual: true },
     ];
     const orderRequest = good(await lead('request-submit', { operationId: randomUUID(), items }), 'Enviar pedido de dos partidas');
     const getItems = async api => good(await api('requests'), 'Recargar partidas del pedido').items.filter(item => item.pedidoId === orderRequest.folio);
@@ -318,7 +318,7 @@ export async function checkPurchasing(fixture, record) {
     assert.equal(source.length, 2);
     const catalog = source.find(item => item.partNum === 'QA-001');
     const manual = source.find(item => item.partNum === 'MANUAL-QA');
-    assert.deepEqual([catalog.cantidad, catalog.equipo, manual.cantidad, manual.fuente], ['2', 'CA20', '3', 'Manual']);
+    assert.deepEqual([catalog.cantidad, catalog.equipo, manual.cantidad, manual.fuente], ['2', 'DZ203', '3', 'Manual']);
     const statusChange = { operationId: randomUUID(), id: catalog.id, version: catalog.version, status: 'Pedido' };
     assert.equal((await lead('request-status', statusChange)).status, 403);
     good(await manager('request-status', statusChange), 'Cambiar la partida de catálogo');
@@ -356,14 +356,14 @@ export async function checkPurchasing(fixture, record) {
     assert.notEqual(first.folio, 'OC-001');
     assert.equal(onlyFolio(sheet.read(tabs.purchases), first.folio).length, 1);
     assert.equal(onlyFolio(sheet.read(tabs.lines), first.folio).length, 3);
-    assert.equal(first.total, '536.95');
+    assert.equal(first.total, '497.95');
     assert.deepEqual(onlyFolio(sheet.read(tabs.lines), 'OC-001'), originalOrphan);
     const simultaneous = await Promise.all([api('order-save', orderPayload('Alta sintética A')), api('order-save', orderPayload('Alta sintética B'))]);
     const simultaneousFolios = simultaneous.map(result => good(result, 'Alta simultánea').folio);
     assert.equal(new Set([first.folio, ...simultaneousFolios]).size, 3);
     const getOrder = async () => good(await api(`order?folio=${encodeURIComponent(first.folio)}`), 'Recargar OC').order;
     const draft = await getOrder();
-    assert.deepEqual([draft.subtotal, draft.tax, draft.shipping, draft.other, draft.total], ['433.36', '69.34', '25.50', '8.75', '536.95']);
+    assert.deepEqual([draft.subtotal, draft.tax, draft.shipping, draft.other, draft.total], ['433.36', '30.34', '25.50', '8.75', '497.95']);
     assert(draft.vendorAddress.includes('Calle de prueba 10'));
     const [firstLine, deletedLine, thirdLine] = draft.lines;
     good(await api('order-save', { ...payload, operationId: randomUUID(), folio: first.folio, version: draft.version, lines: [
@@ -382,7 +382,7 @@ export async function checkPurchasing(fixture, record) {
     good(await api('order-status', { operationId: randomUUID(), folio: rejected.folio, version: rejected.version, status: 'Rechazada' }), 'Rechazar un borrador');
     const reloadedRejected = good(await api(`order?folio=${encodeURIComponent(rejected.folio)}`), 'Recargar OC rechazada').order;
     assert.equal(reloadedRejected.status, 'Rechazada');
-    return { folio: first.folio, originalTotal: '536.95', rows: 4, simultaneousFolios, orphanPreserved: true, editPersisted: true, rejected: rejected.folio };
+    return { folio: first.folio, originalTotal: '497.95', rows: 4, simultaneousFolios, orphanPreserved: true, editPersisted: true, rejected: rejected.folio };
   });
 
   await record('API-COMPRAS-RECIBIR-PARCIAL', async () => {
@@ -444,14 +444,14 @@ export async function checkPurchasing(fixture, record) {
       subtotal: 100, iva: 16, total: 116, ot_id: 'OT-0004', metodo_pago: 'Transferencia', imagen_url: receipt,
       line_items: [{ part_number: 'QA-002', description: 'Sello de prueba', qty: 1, unit_price: 100 }],
     };
-    const payload = { operationId: randomUUID(), expense, allocations: [{ unit: 'CA20', amount: 69.60 }, { unit: 'TR16', amount: 46.40 }] };
+    const payload = { operationId: randomUUID(), expense, allocations: [{ unit: 'DZ203', amount: 69.60 }, { unit: 'EX401', amount: 46.40 }] };
     const saved = good(await api('expense-save', payload), 'Guardar gasto repartido');
     good(await api('expense-save', payload), 'Reintentar el mismo gasto');
     const rows = sheet.read(tabs.expenses).filter(row => row[17] === saved.folio);
     assert.equal(rows.length, 2);
     assert.deepEqual(rows.map(row => [row[10], row[7], row[8], row[9], row[15]]), [
-      ['CA20', '60.00', '9.60', '69.60', receipt], ['TR16', '40.00', '6.40', '46.40', receipt],
+      ['DZ203', '60.00', '9.60', '69.60', receipt], ['EX401', '40.00', '6.40', '46.40', receipt],
     ]);
-    return { folio: saved.folio, units: ['CA20', 'TR16'], subtotal: 100, tax: 16, total: 116, receiptLinked: true };
+    return { folio: saved.folio, units: ['DZ203', 'EX401'], subtotal: 100, tax: 16, total: 116, receiptLinked: true };
   });
 }

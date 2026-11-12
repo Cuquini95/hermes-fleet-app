@@ -77,7 +77,7 @@ export default function BottomNav() {
       <MoreTray
         open={showMoreTray}
         onClose={() => setShowMoreTray(false)}
-        items={overflow}
+        items={[...overflow, { id: 'tmf', label: 'Maestros TMF', icon: 'Table2', path: '/panama' }]}
       />
     </>
   );

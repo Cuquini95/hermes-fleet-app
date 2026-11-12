@@ -22,7 +22,7 @@ interface ColumnDef {
   index: number;          // source column index from sheets
   align?: ColumnAlign;
   mono?: boolean;         // monospace font (numbers / codes)
-  currency?: boolean;     // format as MXN currency
+  currency?: boolean;     // format as USD currency
   badge?: 'severity' | 'status' | 'resultado';
   hideOnMobile?: boolean; // hide on small screens
   sticky?: boolean;       // sticky first column
@@ -228,7 +228,7 @@ function formatCurrency(raw: string): string {
   if (!Number.isFinite(n)) return raw;
   return n.toLocaleString('es-MX', {
     style: 'currency',
-    currency: 'MXN',
+    currency: 'USD',
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });

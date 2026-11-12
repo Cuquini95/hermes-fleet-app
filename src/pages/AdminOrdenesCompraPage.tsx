@@ -34,7 +34,7 @@ const input = 'w-full min-w-0 rounded-lg border border-gray-300 bg-white px-3 py
 const button = 'rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium disabled:opacity-50';
 const primary = 'rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50';
 const blankLine = (): DraftLine => ({ key: crypto.randomUUID(), description: '', partNumber: '', quantity: '1', unitPrice: '' });
-const today = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Mexico_City' });
+const today = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Panama' });
 const isoDate = (dmy: string) => {
   const [day, month, year] = dmy.split('/');
   return year && month && day ? year + '-' + month.padStart(2, '0') + '-' + day.padStart(2, '0') : dmy;
@@ -108,7 +108,7 @@ export default function AdminOrdenesCompraPage() {
   }, [initialLine, requests]);
 
   const issuer = data?.issuers.find((entry) => entry.id === draft.entity);
-  const currency = issuer?.currency || 'MXN';
+  const currency = issuer?.currency || 'USD';
   const vendor = data?.vendors.find((entry) => vendorKey(entry.name, entry.rfc) === draft.vendor);
   const subtotal = draft.lines.reduce((sum, line) => sum + Math.round(Math.round((Number(line.quantity) || 0) * 1000) * cents(line.unitPrice) / 1000), 0);
   const tax = Math.round(subtotal * (issuer?.taxBps || 0) / 10000);

@@ -107,10 +107,10 @@ const TYPE_LABELS: Record<string, string> = {
 // ── Formatters ────────────────────────────────────────────────────────────────
 
 const mxn = (n: number) =>
-  n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN', maximumFractionDigits: 2 });
+  n.toLocaleString('es-MX', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
 
 const mxnCompact = (n: number) =>
-  n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN', maximumFractionDigits: 0 });
+  n.toLocaleString('es-MX', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 
 // ── Page dimensions (A4 portrait at 72 DPI) ───────────────────────────────────
 

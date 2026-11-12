@@ -9,7 +9,7 @@ export interface ColumnDef {
   align?: ColumnAlign;
   /** Render value in monospace font (numbers / codes). */
   mono?: boolean;
-  /** Format value as MXN currency. */
+  /** Format value as USD currency. */
   currency?: boolean;
   badge?: 'severity' | 'status' | 'resultado';
   /** Hide on small screens. */

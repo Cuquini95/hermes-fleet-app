@@ -181,7 +181,7 @@ export async function uploadExpenseReceipt(file: File, operationId: string) {
   return receiptUrl;
 }
 
-export function displayMoney(value: string | number, currency = 'MXN') {
+export function displayMoney(value: string | number, currency = 'USD') {
   const amount = Number(String(value).replace(/[$,\s]/g, ''));
   if (!Number.isFinite(amount)) return '—';
   return amount.toLocaleString('es-MX', {

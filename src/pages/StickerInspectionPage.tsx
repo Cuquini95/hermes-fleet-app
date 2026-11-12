@@ -74,7 +74,7 @@ interface StickerFindingRecord {
   photos: string[];
 }
 
-const COMPANY_DEFAULT = 'TCM';
+const COMPANY_DEFAULT = 'Trans Plus Panamá';
 const COLORS: StickerColor[] = ['green', 'yellow', 'red'];
 const STATUS_OPTIONS: { value: StickerInspectionStatus; label: string }[] = [
   { value: 'cumple', label: 'Cumple' },

@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 import { requireSession } from './_lib/session-auth.js';
-import { canonicalTab, createHermesSheets } from './_lib/hermes-google-sheets.js';
+import { canonicalTab, createHermesSheets, createPanamaOperationsSheets } from './_lib/hermes-google-sheets.js';
 import { rejectIfRateLimited } from './_lib/rate-limit.js';
 import meterHandler from './_lib/cmms-meter.js';
+import { dispatchPanama, PANAMA_PROJECT, readPanamaInventory } from './_lib/hermes-panama.js';
 
 const ADMIN = ['jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
 const WORKSHOP = ['mecanico', ...ADMIN];
@@ -142,17 +143,26 @@ export function createHermesGateway({
   listMechanics = mechanics,
   dispatchWorkshop = workshop,
   dispatchPurchasing = purchasing,
+  readPanama,
+  panamaOnly = false,
+  enablePanamaOperations = false,
   writeEnabled = process.env.VERCEL_ENV === 'production' && !['1', 'true'].includes(process.env.HERMES_READ_ONLY),
   pausedOperations = new Set((process.env.HERMES_PAUSED_OPERATIONS || '').split(',').map(knownPath).filter(Boolean)),
 } = {}) {
   return async function handler(req, res) {
     res.setHeader('Cache-Control', 'no-store');
     try {
-      const session = await sessionReader(req, res);
+      const session = await sessionReader(req, res, undefined, { allowPanama: true });
       if (!session) return;
       const path = knownPath(req.query?.path);
       if (!/^[a-zA-Z0-9_./-]+$/.test(path) || path.split('/').some(segment => segment === '.' || segment === '..')) return invalid(res, 400, 'Ruta inválida.');
       if (rejectIfRateLimited(req, res, { scope: 'hermes-gateway', limit: 120 }, session.userId)) return;
+
+      if (panamaOnly && session.project !== PANAMA_PROJECT) return invalid(res, 403, 'Proyecto no habilitado en Hermes Panamá.');
+      if (path.startsWith('api/panama/') || (session.project === PANAMA_PROJECT && !enablePanamaOperations)) {
+        const result = await dispatchPanama({ path, method: req.method, session, read: readPanama });
+        return res.status(result.status).json(result.body);
+      }
 
       if (path === 'health' && req.method === 'GET') {
         await sheets.read('01 Inventario', { cached: true });
@@ -163,6 +173,7 @@ export function createHermesGateway({
 
       const route = PROXY.get(path) ?? (/^diagrams\/file\/[A-Za-z0-9_-]+\.pdf$/i.test(path) ? { method: 'GET', roles: WORKSHOP } : undefined);
       if (route) {
+        if (session.project === PANAMA_PROJECT) return invalid(res, 503, 'Integración no configurada para Panamá.');
         if (req.method !== route.method) return invalid(res, 405, 'Método no permitido.');
         if (!route.roles.includes(session.role)) return invalid(res, 403, 'Integración no autorizada.');
         if (req.method === 'POST' && !writeEnabled) return invalid(res, 503, 'Integración externa deshabilitada en este entorno.');
@@ -172,7 +183,10 @@ export function createHermesGateway({
       if (req.method !== 'GET' && !writeEnabled) return invalid(res, 503, 'Este despliegue permite consulta.');
       if (path === 'api/sheets/append') return await sheetAppend(req, res, sheets, session);
       if (path.startsWith('api/sheets/')) return invalid(res, 403, 'Usa el flujo específico de Hermes para cambiar este registro.');
-      if (path === 'api/cmms/meter') return await meterHandler(req, res);
+      if (path === 'api/cmms/meter') {
+        if (session.project === PANAMA_PROJECT) return invalid(res, 503, 'Enlace CMMS de Panamá pendiente.');
+        return await meterHandler(req, res);
+      }
 
       const dispatch = path.startsWith('api/workshop/') ? dispatchWorkshop : path.startsWith('api/purchasing/') ? dispatchPurchasing : null;
       if (!dispatch) return invalid(res, 404, 'Ruta no disponible.');
@@ -186,4 +200,14 @@ export function createHermesGateway({
   };
 }
 
-export default createHermesGateway();
+const panamaOperations = createPanamaOperationsSheets();
+export default createHermesGateway({
+  sheets: {
+    ...panamaOperations,
+    read: (tab, options) => tab === '01 Inventario' ? readPanamaInventory() : panamaOperations.read(tab, options),
+  },
+  panamaOnly: true,
+  enablePanamaOperations: true,
+  writeEnabled: process.env.VERCEL_ENV === 'production' && process.env.HERMES_PANAMA_WRITES_ENABLED === 'true'
+    && !['1', 'true'].includes(process.env.HERMES_READ_ONLY),
+});

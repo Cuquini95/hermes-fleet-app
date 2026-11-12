@@ -5,7 +5,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const apiTarget = env.VITE_HERMES_API_URL || 'https://5-78-204-80.sslip.io/hermes-api';
+  const apiTarget = env.VITE_HERMES_API_URL || 'http://127.0.0.1:8787/hermes-api';
 
   return {
     plugins: [
@@ -18,8 +18,8 @@ export default defineConfig(({ mode }) => {
         registerType: 'autoUpdate',
         includeAssets: ['favicon.svg', 'icons.svg', 'logo-transplus.svg'],
         manifest: {
-          name: 'Hermes Fleet — GTP',
-          short_name: 'Hermes GTP',
+          name: 'Hermes Panamá',
+          short_name: 'Hermes Panamá',
           description: 'Gestión de flota, diagnóstico IA y control de mantenimiento GTP',
           theme_color: '#0f172a',
           background_color: '#0f172a',
@@ -27,7 +27,7 @@ export default defineConfig(({ mode }) => {
           orientation: 'portrait',
           scope: '/',
           start_url: '/',
-          lang: 'es-MX',
+          lang: 'es-PA',
           icons: [
             {
               src: '/pwa-64x64.png',
