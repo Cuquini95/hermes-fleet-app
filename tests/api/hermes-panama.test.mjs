@@ -121,6 +121,22 @@ test('maintenance exposes PM FLOTA and its scoped interval and component sources
   assert.equal((await dispatchPanama({ ...query, path: 'api/panama/maintenance', session: { ...teamMember, role: 'operador' } })).status, 403);
 });
 
+test('maintenance reads the current PM FLOTA header without losing unit scope or the official status', async () => {
+  const read = async ({ key }) => {
+    if (key !== 'maintenance') throw new Error('Unavailable');
+    return [
+      ['#', 'EQUIPO', 'MODELO', 'Estado', 'PRÓXIMO PM', 'TOCA A LAS (h)', 'HORÓMETRO HOY', 'HORAS QUE LE QUEDAN', '¿CUÁNDO TOCA?', 'FECHA APROX.', 'ÚLTIMO PM ANOTADO', 'LECTURA', 'PLAN', 'CHECKLIST'],
+      ['1', 'DZ203', 'Komatsu D155AX-6', 'Al día', 'PM 250', '3,200', '3,100', '100', '', '', 'PM 250 a 2,950.0 h · por confirmar', 'Al día', 'Por aprobar', 'Abrir'],
+      ['2', 'EX401', 'Develon DX360LCA-7M', 'Vencido', 'PM 500', '2,553', '3,061', '-508', '', '', '', 'Al día', 'Por aprobar', 'Abrir'],
+    ];
+  };
+  const { body } = await dispatchPanama({ ...query, path: 'api/panama/maintenance', read });
+  assert.deepEqual(body.sections.maintenance, [{
+    unit: 'DZ203', model: 'Komatsu D155AX-6', status: 'Al día', next: 'PM 250',
+    due: '3,200', hours: '3,100', remaining: '100', last: 'PM 250 a 2,950.0 h · por confirmar', reading: 'Al día', plan: 'Por aprobar',
+  }]);
+});
+
 test('snapshot sections retain their timestamp and scope; unavailable sources stay unknown', async () => {
   const captured_at = '2026-11-13T19:30:00.000Z';
   const read = async ({ key }) => {

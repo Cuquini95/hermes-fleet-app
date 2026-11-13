@@ -114,9 +114,9 @@ export default function PMWorkOrderPage() {
 
   // Cumulative parts for selected level
   const partsKit = useMemo(() => {
-    if (!model || !pmLevel) return null;
+    if (isPanama || !model || !pmLevel) return null;
     return getCumulativePMParts(model, pmLevel);
-  }, [model, pmLevel]);
+  }, [isPanama, model, pmLevel]);
 
   const groupedParts = useMemo(() => {
     if (!partsKit) return {};
@@ -414,6 +414,7 @@ export default function PMWorkOrderPage() {
               Horas estimadas
               <input type="number" min="0.25" max="240" step="0.25" value={estimatedHours} onChange={(e) => setHoursOverride(e.target.value)} className="w-full rounded-xl border border-border p-3 text-text bg-white" />
             </label>
+            {isPanama && <p className="text-xs text-text-secondary">Usa la estimación de Taller y registra las refacciones confirmadas en Observaciones.</p>}
             <label className="flex flex-col gap-1 text-sm font-medium text-text-secondary">
               Mecánico (opcional)
               <select value={mechanicId} onChange={(e) => setMechanicId(e.target.value)} className="w-full rounded-xl border border-border p-3 text-text bg-white">

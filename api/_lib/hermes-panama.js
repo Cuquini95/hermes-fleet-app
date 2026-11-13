@@ -22,7 +22,7 @@ const sourceSpecs = [
   { key: 'orders', env: 'HERMES_PANAMA_WORKSHOP_SHEET_ID', range: "'OTS'!A4:V", unit: 'EQUIPO', managementOnly: true,
     columns: { id: 'Nº OT', unit: 'EQUIPO', description: 'FALLA / TRABAJO A REALIZAR', status: 'ESTADO', check: 'CONTROL INTEGRIDAD OT' } },
   { key: 'maintenance', env: 'HERMES_PANAMA_PM_SHEET_ID', range: "'PM FLOTA'!A7:N", unit: 'EQUIPO', managementOnly: true,
-    columns: maintenanceColumns, optionalColumns: maintenanceDetails },
+    columns: maintenanceColumns, columnAliases: { status: 'Estado' }, optionalColumns: maintenanceDetails },
   { key: 'dozers', env: 'HERMES_PANAMA_DOZERS_SHEET_ID', range: "'RESUMEN JEFE'!A4:J", unit: 'EQUIPO', managementOnly: true,
     columns: { unit: 'EQUIPO', group: 'TIPO', critical: '🔴', upcoming: '🟠', noData: '⚪ sin dato' } },
   { key: 'excavators', env: 'HERMES_PANAMA_EXCAVATORS_SHEET_ID', range: "'RESUMEN JEFE'!A4:J", unit: 'EQUIPO', managementOnly: true,
@@ -64,7 +64,11 @@ function readSource(spec) {
 
 export async function readOfficialPanamaShifts() {
   const spec = sourceSpecs.find(source => source.key === 'shifts');
-  return visibleRecords(await readSource(spec), { ...spec, limit: undefined }, { allUnits: true });
+  const source = await readSourceForConsultation(spec);
+  return {
+    records: visibleRecords(rowsOf(source), { ...spec, limit: undefined }, { allUnits: true }),
+    capturedAt: source.captured_at,
+  };
 }
 
 // Snapshots are read through the server identity and use the same scope
@@ -140,7 +144,11 @@ export const readPanamaConsultationInventory = () => readPanamaInventory(readSou
 function visibleRecords(rows, spec, session) {
   const [header = [], ...data] = rows;
   const names = header.map(keyOf);
-  const columns = Object.entries(spec.columns).map(([key, name]) => [key, names.indexOf(keyOf(name))]);
+  const columns = Object.entries(spec.columns).map(([key, name]) => {
+    const index = names.indexOf(keyOf(name));
+    const alias = spec.columnAliases?.[key];
+    return [key, index < 0 && alias ? names.indexOf(keyOf(alias)) : index];
+  });
   if (columns.some(([, col]) => col < 0)) throw new Error('Unexpected Panama source columns');
   for (const [key, name] of Object.entries(spec.optionalColumns ?? {})) {
     const index = names.indexOf(keyOf(name));

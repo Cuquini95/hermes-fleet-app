@@ -210,6 +210,13 @@ test('accepted shifts reconcile with the official TMF day and meter readings wit
   assert.match((await next()).officialStatus, /Lecturas distintas/);
   official = [match, match];
   assert.match((await next()).officialStatus, /Duplicado/);
+  official = { records: [match], capturedAt: '2026-11-13T23:09:00.000Z' };
+  const fromSnapshot = await next();
+  assert.equal(fromSnapshot.officialReference, match.id);
+  assert.equal(fromSnapshot.officialCut, official.capturedAt);
+  assert.match(fromSnapshot.officialStatus, /Coincide.*corte de REGISTRO/);
+  official.records = [];
+  assert.match((await next()).officialStatus, /Sin coincidencia en el corte/);
   official = null;
   assert.match((await next()).officialStatus, /no disponible/);
 });

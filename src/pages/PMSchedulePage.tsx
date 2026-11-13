@@ -87,6 +87,9 @@ function PanamaPMSchedule({ userId, canSchedule }: { userId?: string; canSchedul
           ? <a href={PANAMA_PM_MASTER_URL} target="_blank" rel="noreferrer" className="font-semibold underline">PM FLOTA</a>
           : <strong>PM FLOTA</strong>}.
       </p>
+      {data?.sourceDate && <p className="mb-3 text-xs text-text-secondary">
+        Corte del {new Date(data.sourceDate).toLocaleString('es-PA', { timeZone: 'America/Panama', dateStyle: 'short', timeStyle: 'short' })} · Panamá
+      </p>}
       {canSchedule && <Link to="/pm-order" className="mb-4 inline-flex min-h-11 items-center rounded-xl bg-amber px-4 text-sm font-semibold text-white">Nueva Orden PM</Link>}
       {data === null && <SkeletonList count={4} />}
       {data?.entries === null && <p role="alert" className="mb-4 rounded-xl bg-amber-50 p-4 text-sm text-text">

@@ -41,6 +41,17 @@ describe('Panama maintenance sources', () => {
     expect(stale.entries?.[0]?.state).toBe('unknown');
   });
 
+  it('shows current and previous master labels for an up-to-date PM', () => {
+    const maintenance = [
+      { ...official, status: 'Al día', reading: 'Al día', remaining: '100', plan: 'Por aprobar' },
+      { ...official, unit: 'DZ204', status: 'BIEN', reading: 'AL DÍA', remaining: '100' },
+      { ...official, unit: 'DZ205', status: 'Al día', reading: 'Lectura atrasada (105 días)', remaining: '100' },
+    ];
+    const result = buildPanamaMaintenance({ maintenance }, []);
+    expect(result.entries?.map(({ state }) => state)).toEqual(['ok', 'ok', 'unknown']);
+    expect(result.entries?.[0]?.plan).toBe('Por aprobar');
+  });
+
   it('keeps known component exceptions visible when the other master is unavailable', () => {
     const result = buildPanamaMaintenance({ ...master, excavators: null }, []);
     expect(result.components).toEqual([{ unit: 'DZ203', critical: 2, upcoming: 1, noData: 1 }]);

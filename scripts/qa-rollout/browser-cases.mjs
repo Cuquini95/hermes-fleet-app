@@ -351,6 +351,9 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await page.waitForURL(`${origin}/pm-order`);
       await page.locator('fieldset select').first().selectOption('EX401');
       await page.getByRole('button', { name: /^PM[- ]?\d+$/ }).first().tap();
+      assert.equal(await page.getByText('Auto-generado', { exact: true }).count(), 0);
+      assert.equal(await page.getByLabel('Horas estimadas').inputValue(), '');
+      await page.getByLabel('Horas estimadas').fill('3');
       await page.getByLabel('Mecánico (opcional)').selectOption(firstAccount('mecanico').user.id);
       const knownRows = sheet.read(tabs.pm).length;
       await clickByName(page, 'Activar Orden de PM');

@@ -110,7 +110,7 @@ function sourceState(row: SourceRow, remaining: number | null): MaintenanceEntry
   if (remaining !== null && (remaining <= 0 || status.includes('VENCIDO'))) return 'overdue';
   if (remaining === null || /SIN |FALTA|ACTUALIZAR|INACTIVO|ATRASAD/.test(`${status} ${clean(row.reading)}`)) return 'unknown';
   if (/PROGRAMAR|PRONTO/.test(status)) return 'upcoming';
-  return status.includes('BIEN') ? 'ok' : 'unknown';
+  return status === 'AL DIA' || status.includes('BIEN') ? 'ok' : 'unknown';
 }
 
 function projection(accepted: AcceptedPm, plan: SourceRow | undefined, intervals: number[], anchor: number | null): MaintenanceEntry['projectedNext'] {
