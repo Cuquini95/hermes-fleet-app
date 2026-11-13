@@ -209,7 +209,7 @@ export function createHermesGateway({
         }
         const [fleet, operations] = await Promise.allSettled([
           sheets.read('01 Inventario', { cached: true }),
-          sheets.read('Hermes_Transacciones', { cached: true }),
+          sheets.read('ORDENES_TRABAJO', { cached: true, requireExisting: true }),
         ]);
         const checks = {
           identity: 'up',

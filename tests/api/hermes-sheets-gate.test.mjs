@@ -246,9 +246,9 @@ test('Panamá health distinguishes the official fleet from its writable workbook
   const checks = [];
   const gateway = createHermesGateway({
     sessionReader: async () => ({ ...operator, project: 'tmf-panama' }),
-    sheets: { read: async (tab) => {
-      checks.push(tab);
-      if (tab === 'Hermes_Transacciones') throw new Error('fixture: unavailable workbook');
+    sheets: { read: async (tab, options) => {
+      checks.push([tab, options]);
+      if (tab === 'ORDENES_TRABAJO' && options?.requireExisting) throw new Error('fixture: unavailable workbook');
       return [['fleet header']];
     } },
     enablePanamaOperations: true, writeEnabled: true,
@@ -259,5 +259,8 @@ test('Panamá health distinguishes the official fleet from its writable workbook
   assert.equal(result.body.status, 'degraded');
   assert.equal(result.body.writeEnabled, false);
   assert.deepEqual(result.body.checks, { identity: 'up', fleet: 'up', operations: 'down' });
-  assert.deepEqual(checks, ['01 Inventario', 'Hermes_Transacciones']);
+  assert.deepEqual(checks, [
+    ['01 Inventario', { cached: true }],
+    ['ORDENES_TRABAJO', { cached: true, requireExisting: true }],
+  ]);
 });
