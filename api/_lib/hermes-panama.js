@@ -1,5 +1,6 @@
 import { GoogleAuth } from 'google-auth-library';
 import { createHermesSheets } from './hermes-google-sheets.js';
+import { identityConfig, identityRequest } from './hermes-identity.js';
 
 export const PANAMA_PROJECT = 'tmf-panama';
 const management = new Set(['jefe_taller', 'coordinador', 'supervisor', 'gerencia']);
@@ -66,6 +67,42 @@ export async function readOfficialPanamaShifts() {
   return visibleRecords(await readSource(spec), { ...spec, limit: undefined }, { allUnits: true });
 }
 
+// Snapshots are read through the server identity and use the same scope
+// projection as the source sheets. Operational reconciliation still requires Sheets.
+const snapshots = new Map();
+
+function readSnapshot(spec) {
+  const previous = snapshots.get(spec.key);
+  if (previous && Date.now() < previous.expiresAt) return previous.promise;
+  const promise = (async () => {
+    const config = identityConfig();
+    if (config.project !== PANAMA_PROJECT) throw new Error('Panama snapshot project mismatch');
+    const response = await identityRequest(config, '/rest/v1/hermes_panama_source_snapshots', {
+      query: { source: 'eq.' + spec.key, select: 'rows,captured_at', limit: 1 },
+    });
+    if (!response.ok) throw new Error('Panama snapshot unavailable');
+    const [snapshot] = await response.json();
+    if (!Array.isArray(snapshot?.rows) || !Number.isFinite(Date.parse(snapshot.captured_at))) {
+      throw new Error('Panama snapshot unavailable');
+    }
+    return snapshot;
+  })();
+  const current = { promise, expiresAt: Date.now() + 30000 };
+  snapshots.set(spec.key, current);
+  promise.catch(() => { if (snapshots.get(spec.key) === current) snapshots.delete(spec.key); });
+  return promise;
+}
+
+async function readSourceForConsultation(spec) {
+  try { return await readSource(spec); }
+  catch (error) {
+    if (process.env.VERCEL_ENV !== 'production') throw error;
+    return readSnapshot(spec);
+  }
+}
+
+const rowsOf = source => Array.isArray(source) ? source : source.rows;
+
 const equipmentDetails = {
   key: 'equipmentDetails', env: 'HERMES_PANAMA_EQUIPMENT_SHEET_ID', range: "'EQUIPOS'!A3:M",
   unit: 'CÓDIGO', country: 'PAÍS',
@@ -75,9 +112,9 @@ const equipmentDetails = {
 export async function readPanamaInventory(read = readSource) {
   const [fleet, details] = await Promise.all([
     read(sourceSpecs[0]),
-    Promise.resolve().then(() => read(equipmentDetails)).then(rows => visibleRecords(rows, equipmentDetails, { allUnits: true })).catch(() => []),
+    Promise.resolve().then(() => read(equipmentDetails)).then(rows => visibleRecords(rowsOf(rows), equipmentDetails, { allUnits: true })).catch(() => []),
   ]);
-  const rows = visibleRecords(fleet, sourceSpecs[0], { allUnits: true });
+  const rows = visibleRecords(rowsOf(fleet), sourceSpecs[0], { allUnits: true });
   const byUnit = new Map();
   const ambiguous = new Set();
   for (const detail of details) {
@@ -97,6 +134,8 @@ export async function readPanamaInventory(read = readSource) {
     }),
   ];
 }
+
+export const readPanamaConsultationInventory = () => readPanamaInventory(readSourceForConsultation);
 
 function visibleRecords(rows, spec, session) {
   const [header = [], ...data] = rows;
@@ -150,20 +189,25 @@ async function componentDetails({ method, query, session, read }) {
   if (!session.allUnits && !(session.assignedUnits ?? []).some(value => keyOf(value) === unit)) {
     return { status: 403, body: { error: 'Unidad fuera del alcance de la sesión.' } };
   }
-  const results = await Promise.allSettled(componentSources.map(async spec =>
-    visibleRecords(await read(spec), spec, { ...session, allUnits: false, assignedUnits: [unit] })
-      .filter(row => row.part && (!row.date || /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(row.date))),
-  ));
-  const changes = [], life = [], unavailable = [];
+  const results = await Promise.allSettled(componentSources.map(async spec => {
+    const source = await read(spec);
+    const records = visibleRecords(rowsOf(source), spec, { ...session, allUnits: false, assignedUnits: [unit] })
+      .filter(row => row.part && (!row.date || /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(row.date)));
+    return { records, capturedAt: source.captured_at };
+  }));
+  const changes = [], life = [], unavailable = [], snapshots = {};
   results.forEach((result, index) => {
     const spec = componentSources[index];
     if (result.status === 'rejected') unavailable.push(spec.key);
-    else (spec.key.endsWith('Changes') ? changes : life).push(...result.value.map(record => ({ ...record, source: spec.range })));
+    else {
+      if (result.value.capturedAt) snapshots[spec.key] = result.value.capturedAt;
+      (spec.key.endsWith('Changes') ? changes : life).push(...result.value.records.map(record => ({ ...record, source: spec.range })));
+    }
   });
-  return { status: 200, body: { unit, changes, life, unavailable, checkedAt: new Date().toISOString() } };
+  return { status: 200, body: { unit, changes, life, unavailable, snapshots, checkedAt: new Date().toISOString() } };
 }
 
-export async function dispatchPanama({ path, method, query, session, read = readSource }) {
+export async function dispatchPanama({ path, method, query, session, read = readSourceForConsultation }) {
   if (session.project !== PANAMA_PROJECT) return { status: 403, body: { error: 'Consulta reservada a TMF Panamá.' } };
   if (path === 'api/panama/componentes') return componentDetails({ method, query, session, read });
   if (path !== 'api/panama/summary' && path !== 'api/panama/maintenance') return { status: 404, body: { error: 'Ruta no disponible para Panamá.' } };
@@ -176,12 +220,16 @@ export async function dispatchPanama({ path, method, query, session, read = read
     ? [...sourceSpecs.filter(spec => ['maintenance', 'dozers', 'excavators'].includes(spec.key)), maintenancePlan, maintenanceAnchor]
     : sourceSpecs.filter(spec => spec.managementRole ? session.role === spec.managementRole
     : !spec.managementOnly || management.has(session.role));
+  const snapshots = {};
   const sections = await Promise.all(visible.map(async spec => {
     try {
-      return [spec.key, visibleRecords(await read(spec), spec, session)];
+      const source = await read(spec);
+      const records = visibleRecords(rowsOf(source), spec, session);
+      if (source.captured_at) snapshots[spec.key] = source.captured_at;
+      return [spec.key, records];
     } catch {
       return [spec.key, null];
     }
   }));
-  return { status: 200, body: { project: PANAMA_PROJECT, sections: Object.fromEntries(sections) } };
+  return { status: 200, body: { project: PANAMA_PROJECT, sections: Object.fromEntries(sections), snapshots } };
 }

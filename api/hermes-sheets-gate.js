@@ -3,7 +3,7 @@ import { requireSession } from './_lib/session-auth.js';
 import { canonicalTab, createHermesSheets, createPanamaOperationsSheets } from './_lib/hermes-google-sheets.js';
 import { rejectIfRateLimited } from './_lib/rate-limit.js';
 import meterHandler from './_lib/cmms-meter.js';
-import { dispatchPanama, PANAMA_PROJECT, readPanamaInventory, readOfficialPanamaShifts } from './_lib/hermes-panama.js';
+import { dispatchPanama, PANAMA_PROJECT, readPanamaConsultationInventory, readOfficialPanamaShifts } from './_lib/hermes-panama.js';
 import { createPanamaDemoSheets } from './_lib/hermes-panama-demo.js';
 import { technicalDocuments } from './_lib/hermes-technical-library.js';
 import { validatePanamaMeterAppend } from './_lib/hermes-shifts.js';
@@ -326,7 +326,7 @@ export default createHermesGateway({
   demoSheets: process.env.VERCEL_ENV === 'preview' ? createPanamaDemoSheets() : undefined,
   sheets: {
     ...panamaOperations,
-    read: (tab, options) => tab === '01 Inventario' ? readPanamaInventory() : panamaOperations.read(tab, options),
+    read: (tab, options) => tab === '01 Inventario' ? readPanamaConsultationInventory() : panamaOperations.read(tab, options),
   },
   panamaOnly: true,
   enablePanamaOperations: true,

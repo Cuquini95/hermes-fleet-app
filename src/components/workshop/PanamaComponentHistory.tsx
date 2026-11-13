@@ -21,6 +21,7 @@ interface ComponentHistory {
   changes: ComponentRow[];
   life: ComponentRow[];
   unavailable: string[];
+  snapshots?: Record<string, string>;
 }
 
 function Records({ items, history }: { items: ComponentRow[]; history: boolean }) {
@@ -74,6 +75,8 @@ export default function PanamaComponentHistory() {
     setRequest({ unit: unit.trim().toUpperCase() });
   }
 
+  const capture = Object.values(record?.snapshots ?? {}).sort()[0];
+
   return (
     <section className="my-4 space-y-3 rounded-2xl border border-slate-200 bg-white p-4">
       <h2 className="text-lg font-semibold">Historial y vida de componentes</h2>
@@ -93,6 +96,11 @@ export default function PanamaComponentHistory() {
         <>
           <h3 className="font-semibold">{record.unit} · Cambios registrados</h3>
           {record.unavailable.length > 0 && <p role="status" className="text-amber-800">La consulta es parcial. Una o más fuentes de componentes no respondieron.</p>}
+          {capture && (
+            <p className="text-sm text-slate-600">
+              Corte de componentes del {new Date(capture).toLocaleString('es-PA', { timeZone: 'America/Panama', dateStyle: 'short', timeStyle: 'short' })} · hora de Panamá
+            </p>
+          )}
           <Records items={record.changes} history />
           <h3 className="font-semibold">Vida según el maestro</h3>
           <Records items={record.life} history={false} />

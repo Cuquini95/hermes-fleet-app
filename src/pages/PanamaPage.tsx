@@ -26,6 +26,7 @@ export default function PanamaPage() {
   const canReceive = useAuthStore(state => state.project === 'tmf-panama' && state.canReceivePurchases);
   const logout = useAuthStore(state => state.logout);
   const [sections, setSections] = useState<Sections>();
+  const [snapshots, setSnapshots] = useState<Record<string, string>>({});
   const [filter, setFilter] = useState('');
   const [reload, setReload] = useState(0);
   const [failed, setFailed] = useState(false);
@@ -40,7 +41,10 @@ export default function PanamaPage() {
         if (!response.ok) throw new Error('Consulta no disponible');
         const data = await response.json();
         if (data.project !== 'tmf-panama' || !data.sections) throw new Error('Respuesta fuera del proyecto');
-        if (!controller.signal.aborted) setSections(data.sections);
+        if (!controller.signal.aborted) {
+          setSections(data.sections);
+          setSnapshots(data.snapshots ?? {});
+        }
       })
       .catch(() => { if (!controller.signal.aborted) setFailed(true); });
     return () => controller.abort();
@@ -68,12 +72,18 @@ export default function PanamaPage() {
           <button type="button" onClick={() => setReload(value => value + 1)} className="rounded-lg bg-[#162252] px-4 py-2 font-semibold text-white">Actualizar</button>
         </div>
         {failed ? <p role="alert">La consulta está temporalmente fuera de servicio.</p> : !sections && <p role="status">Consultando los maestros de Panamá…</p>}
+        {Object.keys(snapshots).length > 0 && (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="status">
+            Consulta con cortes de los maestros oficiales. La hora de captura figura en cada sección. Usa el maestro para consultar cambios posteriores.
+          </p>
+        )}
         {canSeeComponents && <PanamaComponentHistory />}
         {sections && definitions.filter(({ key }) => Object.hasOwn(sections, key)).map(({ key, title, fields }) => {
           const rows = sections[key]?.filter(row => row.unit.toUpperCase().includes(filter.trim().toUpperCase()));
           return (
             <section key={key} className="my-4 rounded-2xl border border-slate-200 bg-white p-4">
               <h2 className="mb-3 text-lg font-bold">{title}{rows && <span className="ml-2 text-sm text-slate-600">{rows.length}</span>}</h2>
+              {snapshots[key] && <p className="mb-3 text-xs text-slate-600">Corte del {new Date(snapshots[key]).toLocaleString('es-PA', { timeZone: 'America/Panama', dateStyle: 'short', timeStyle: 'short' })} · hora de Panamá</p>}
               {!rows ? <p className="text-amber-800">Fuente no disponible.</p> : rows.length === 0 ? <p className="text-slate-600">Sin registros para esta consulta.</p> : (
                 <ul className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {rows.map((row, i) => (

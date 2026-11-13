@@ -120,3 +120,16 @@ test('maintenance exposes PM FLOTA and its scoped interval and component sources
   assert.equal(result.body.sections.excavators, null);
   assert.equal((await dispatchPanama({ ...query, path: 'api/panama/maintenance', session: { ...teamMember, role: 'operador' } })).status, 403);
 });
+
+test('snapshot sections retain their timestamp and scope; unavailable sources stay unknown', async () => {
+  const captured_at = '2026-11-13T19:30:00.000Z';
+  const read = async ({ key }) => {
+    if (!fixtures[key]) throw new Error('Unavailable');
+    return { rows: fixtures[key], captured_at };
+  };
+  const { body } = await dispatchPanama({ ...query, read });
+  assert.deepEqual(body.sections.fleet.map(({ unit }) => unit), ['DZ203']);
+  assert.equal(body.snapshots.fleet, captured_at);
+  assert.equal(body.sections.shifts, null);
+  assert.equal(body.snapshots.shifts, undefined);
+});

@@ -94,6 +94,11 @@ export default function ExecutiveDashboard() {
       {/* General tab */}
       {activeTab === 'general' && (
         <div className="flex flex-col gap-4">
+          {project === 'tmf-panama' && (
+            <Link to="/panama" className="inline-flex min-h-11 items-center rounded-lg border border-border bg-card px-3 text-sm font-semibold text-text">
+              Consultar maestros TMF · Flota, Taller, PM y costos
+            </Link>
+          )}
           {data.error && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{data.error}</p>}
 
           {/* KPI row */}
