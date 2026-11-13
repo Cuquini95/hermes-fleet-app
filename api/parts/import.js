@@ -1,6 +1,8 @@
 import { requireSession } from '../_lib/session-auth.js';
 import { createPanamaOperationsSheets, readHermesRows } from '../_lib/hermes-google-sheets.js';
-import { PARTS_RANGE, EXPENSES_RANGE, searchInventory, recoverExpensePrices, compareQuote } from '../_lib/hermes-part-prices.js';
+import { createPanamaDemoSheets } from '../_lib/hermes-panama-demo.js';
+import { readPanamaInventory } from '../_lib/hermes-panama.js';
+import { PARTS_RANGE, EXPENSES_RANGE, searchInventory, recoverExpensePrices, compareQuote, visiblePanamaParts } from '../_lib/hermes-part-prices.js';
 
 function formatMoney(value) {
   return `$${Number(value).toLocaleString('es-MX', {
@@ -64,7 +66,10 @@ async function sendTelegramPriceAlert(changes) {
 
 const WORKSHOP = ['mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
 
-export function createPartsHandler({ readRows = readHermesRows, sendAlert = sendTelegramPriceAlert, panama = false } = {}) {
+export function createPartsHandler({
+  readRows = readHermesRows, readFleet, demoSheets, sessionReader = requireSession,
+  sendAlert = sendTelegramPriceAlert, panama = false,
+} = {}) {
   return async function handler(req, res) {
     res.setHeader('Cache-Control', 'no-store');
     if (req.method === 'OPTIONS') {
@@ -75,15 +80,22 @@ export function createPartsHandler({ readRows = readHermesRows, sendAlert = send
       res.setHeader('Allow', 'GET, POST, OPTIONS');
       return res.status(405).json({ error: 'Método no permitido' });
     }
-    const session = await requireSession(req, res, req.method === 'GET' ? WORKSHOP : WORKSHOP.slice(1), { allowPanama: panama });
+    const session = await sessionReader(req, res, req.method === 'GET' ? WORKSHOP : WORKSHOP.slice(1), { allowPanama: panama });
     if (!session) return;
     if (panama && session.project !== 'tmf-panama') return res.status(403).json({ error: 'Proyecto no habilitado para Panamá.' });
 
     try {
+      const demo = panama && session.previewDemo === true;
+      if (demo && !demoSheets) return res.status(503).json({ error: 'El catálogo de prueba no está disponible.' });
       if (req.method === 'GET') {
         const query = String(req.query?.q ?? '').trim().slice(0, 120);
         if (!query) return res.status(200).json([]);
-        return res.status(200).json(searchInventory(await readRows(PARTS_RANGE), query, req.query?.equipo));
+        let rows = demo ? (await demoSheets.read('12 Inventario Rep.')).slice(5) : await readRows(PARTS_RANGE);
+        if (panama && !session.allUnits) {
+          const fleet = await (demo ? demoSheets.read('01 Inventario') : readFleet());
+          rows = visiblePanamaParts(rows, fleet, session);
+        }
+        return res.status(200).json(searchInventory(rows, query, req.query?.equipo));
       }
 
       const supplier = String(req.body?.supplier ?? '').trim();
@@ -92,15 +104,16 @@ export function createPartsHandler({ readRows = readHermesRows, sendAlert = send
       if (!supplier || !Array.isArray(parts) || parts.length === 0 || parts.length > 100) {
         return res.status(400).json({ error: 'Indica el proveedor y entre 1 y 100 líneas.' });
       }
-      if (process.env.HERMES_EXPENSE_PRICE_CURRENCY !== (panama ? 'USD' : 'MXN')) {
+      if (!demo && process.env.HERMES_EXPENSE_PRICE_CURRENCY !== (panama ? 'USD' : 'MXN')) {
         return res.status(503).json({ error: 'La moneda del historial está pendiente de confirmar.' });
       }
       const assigned = new Set((session.assignedUnits || []).map((unit) => String(unit).trim().toUpperCase()));
-      const rows = (await readRows(EXPENSES_RANGE)).filter((row) =>
+      const expenseRows = demo ? (await demoSheets.read('02 Gastos')).slice(1) : await readRows(EXPENSES_RANGE);
+      const rows = expenseRows.filter((row) =>
         session.allUnits === true || assigned.has(String(row[10] ?? '').trim().toUpperCase()));
       const prices = recoverExpensePrices(rows, supplier, excludedIds);
       const { compared, unmatched, comparisons, changes } = compareQuote(parts, supplier, prices);
-      const telegram = changes.length && req.body?.notify === true
+      const telegram = !demo && changes.length && req.body?.notify === true
         ? await sendAlert(changes).catch(() => ({ sent: false, reason: 'telegram_unavailable' }))
         : { sent: false, reason: 'not_requested' };
       return res.status(200).json({
@@ -113,12 +126,14 @@ export function createPartsHandler({ readRows = readHermesRows, sendAlert = send
         telegram_reason: telegram.reason,
       });
     } catch {
-      return res.status(503).json({ error: 'No se pudo leer el historial en Google Sheets.' });
+      return res.status(503).json({ error: req.method === 'GET' ? 'No se pudo consultar el catálogo de repuestos.' : 'No se pudo consultar el historial de precios.' });
     }
   };
 }
 
 export default process.env.VERCEL === '1'
-  ? createPartsHandler({ panama: true, readRows: createPanamaOperationsSheets().readRange,
+  ? createPartsHandler({
+      panama: true, readRows: createPanamaOperationsSheets().readRange, readFleet: () => readPanamaInventory(),
+      demoSheets: process.env.VERCEL_ENV === 'preview' ? createPanamaDemoSheets() : undefined,
       sendAlert: async () => ({ sent: false, reason: 'panama_notifications_unconfigured' }) })
   : createPartsHandler();

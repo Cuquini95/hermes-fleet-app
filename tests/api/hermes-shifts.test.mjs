@@ -20,6 +20,7 @@ function isolatedGateway() {
   const receipts = new Map();
   const guards = new Set();
   let failCommit = false;
+  let beforeCommit;
   const sheets = {
     async read(tab) { return structuredClone(tabs.get(tab) ?? []); },
     async replay({ key, fingerprint }) {
@@ -29,6 +30,9 @@ function isolatedGateway() {
       return structuredClone(receipt.result);
     },
     async commit({ key, fingerprint, guard, guards: additionalGuards = [], writes, result }) {
+      const hook = beforeCommit;
+      beforeCommit = undefined;
+      if (hook) await hook();
       const replayed = await sheets.replay({ key, fingerprint });
       if (replayed) return { replayed: true, result: replayed };
       if (failCommit) throw Object.assign(new Error('Escritura no confirmada'), { status: 503 });
@@ -36,7 +40,6 @@ function isolatedGateway() {
       if (allGuards.some(value => guards.has(value))) throw Object.assign(new Error('Conflicto de versión'), { status: 409 });
       for (const value of allGuards) guards.add(value);
       for (const { tab, append } of writes) {
-        assert.ok(['HERMES_PA_TURNOS', 'HERMES_PA_DESPACHO'].includes(tab));
         tabs.set(tab, [...(tabs.get(tab) ?? []), ...structuredClone(append)]);
       }
       receipts.set(key, { fingerprint, result: structuredClone(result) });
@@ -46,13 +49,13 @@ function isolatedGateway() {
   const gateway = createHermesGateway({ sheets, writeEnabled: true, enablePanamaOperations: true,
     sessionReader: async req => req.session,
     listShiftOperators: async (_session, unit) => !unit || operator.assignedUnits.includes(unit) ? [operator] : [] });
-  async function request(endpoint, session, body) {
+  async function request(endpoint, session, body, prefix = 'api/panama/turnos') {
     const output = {};
     const res = { setHeader() {}, status(value) { output.status = value; return this; }, json(value) { output.body = value; return this; } };
-    await gateway({ query: { path: `api/panama/turnos${endpoint ? '/' + endpoint : ''}` }, session, method: body ? 'POST' : 'GET', body }, res);
+    await gateway({ query: { path: `${prefix}${endpoint ? '/' + endpoint : ''}` }, session, method: body ? 'POST' : 'GET', body }, res);
     return output;
   }
-  return { request, tabs, fail: value => { failCommit = value; } };
+  return { request, tabs, fail: value => { failCommit = value; }, interrupt: hook => { beforeCommit = hook; } };
 }
 
 test('entrega un parte F07 con ocho horas, soporte y folio que Supervisión puede aceptar una vez', async () => {
@@ -168,4 +171,18 @@ test('despacho bloquea averías vigentes, registra al operador elegido y reaplic
   const [visible] = (await request('despacho', operator)).body.assignments;
   assert.equal(visible.id, saved.body.assignment.id);
   assert.equal(visible.readiness.level, 'blocked');
+});
+
+
+test('despacho rechaza una avería confirmada entre la validación y el guardado', async () => {
+  const { request, tabs, interrupt } = isolatedGateway();
+  const assignment = { mutationId: randomUUID(), unit: 'EX401', date: '2026-11-12', shift: 'Día', site: 'Frente QA', operatorId: operator.userId };
+  interrupt(async () => {
+    const report = await request('report', operator, { mutationId: randomUUID(), unit: 'EX401', type: 'Hidráulica',
+      description: 'Falla concurrente QA', canMove: false, photos: [] }, 'api/workshop');
+    assert.equal(report.status, 201);
+  });
+  assert.equal((await request('despacho', supervisor, assignment)).status, 409);
+  assert.equal(tabs.get('HERMES_PA_DESPACHO'), undefined);
+  assert.match((await request('despacho', supervisor, assignment)).body.error, /Despacho bloqueado/);
 });

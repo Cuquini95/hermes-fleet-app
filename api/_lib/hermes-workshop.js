@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import { STICKER_INSPECTION_TEMPLATES } from '../../src/data/sticker-inspection-templates.js';
+import { STICKER_INSPECTION_TEMPLATES, stickerTemplateForEquipment } from '../../src/data/sticker-inspection-templates.js';
 import { buildDispatchReadinessMap } from '../../src/lib/dispatch-readiness.js';
 import { PANAMA_PROJECT } from './hermes-panama.js';
+import { PANAMA_READINESS_TAB } from './hermes-google-sheets.js';
 
 const TAB = {
   inventory: '01 Inventario', orders: 'ORDENES_TRABAJO', history: 'OT_STATUS_LOG', failures: 'Averias',
@@ -149,8 +150,22 @@ function failureWrites(context, data) {
   ];
 }
 
-async function commit(context, writes, result, guard) {
-  const saved = await context.sheets.commit({ key: context.key, fingerprint: context.fingerprint, guard, writes, result });
+export async function readUnitReadinessRevision(sheets, unit) {
+  const rows = await sheets.read(PANAMA_READINESS_TAB);
+  return rows.findLast(row => row[0] === unit)?.[1] || 'initial';
+}
+
+export function unitReadinessChange(unit, revision, key, at) {
+  return {
+    guard: `panama:readiness:${unit}:${revision}`,
+    write: { tab: PANAMA_READINESS_TAB, append: [[unit, digest(key), at]] },
+  };
+}
+
+async function commit(context, writes, result, guard, readiness) {
+  const guards = readiness ? [readiness.guard] : [];
+  if (readiness) writes.push(readiness.write);
+  const saved = await context.sheets.commit({ key: context.key, fingerprint: context.fingerprint, guard, guards, writes, result });
   return { status: saved.replayed ? 200 : context.create ? 201 : 200, body: { ...saved.result, replayed: saved.replayed } };
 }
 
@@ -183,7 +198,19 @@ async function report(context) {
     writes[2].append.push(historyRow(context, context.otId, 'reincidencia', '', previousOtId));
     result.previousOtId = previousOtId;
   }
-  return commit(context, writes, result);
+  return commitRestriction(context, code, writes, result);
+}
+
+async function commitRestriction(context, unit, writes, result) {
+  if (!isPanama(context)) return commit(context, writes, result);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const revision = await readUnitReadinessRevision(context.sheets, unit);
+    try {
+      return await commit(context, [...writes], result, undefined, unitReadinessChange(unit, revision, context.key, context.now));
+    } catch (error) {
+      if (error.status !== 409 || attempt === 2 || await readUnitReadinessRevision(context.sheets, unit) === revision) throw error;
+    }
+  }
 }
 
 async function dvir(context) {
@@ -210,7 +237,7 @@ async function dvir(context) {
   if (otId) writes.push(...failureWrites(context, {
     id: otId, unit: code, type: 'DVIR', description: observations || 'Inspección DVIR reprobada', priority: 'ALTA', photos, notes: inspectionId,
   }));
-  return commit(context, writes, { inspectionId, otId, result, score });
+  return commitRestriction(context, code, writes, { inspectionId, otId, result, score });
 }
 
 function orderVersion(row) {
@@ -221,12 +248,12 @@ function storedObject(value) {
   try { return value ? JSON.parse(value) : null; } catch { return null; }
 }
 
-function historyTime(value = '') {
+function historyTime(value = '', panama = false) {
   const sheet = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?: (\d{2}:\d{2}(?::\d{2})?))?$/.exec(value);
   const local = sheet
     ? `${sheet[3]}-${sheet[2].padStart(2, '0')}-${sheet[1].padStart(2, '0')}T${sheet[4] || '00:00:00'}`
     : value.replace(' ', 'T');
-  const zone = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/.test(local) ? '-06:00' : '';
+  const zone = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/.test(local) ? (panama ? '-05:00' : '-06:00') : '';
   return Date.parse(`${local}${zone}`) || 0;
 }
 
@@ -239,7 +266,7 @@ async function getOrder(context, value) {
   assert(found, 404, 'OT no encontrada');
   assert(orderVisible(context.session, found.row), 403, 'OT fuera de tu alcance');
   const effective = [...found.row];
-  for (const log of logs.filter((row) => row[1] === otId).sort((a, b) => historyTime(a[0]) - historyTime(b[0]))) {
+  for (const log of logs.filter((row) => row[1] === otId).sort((a, b) => historyTime(a[0], isPanama(context)) - historyTime(b[0], isPanama(context)))) {
     if (Object.hasOwn(FIELD_COLUMNS, log[2])) effective[FIELD_COLUMNS[log[2]]] = log[4];
   }
   return { otId, ...found, effective, version: orderVersion(found.row) };
@@ -355,11 +382,14 @@ async function transition(context) {
   const before = effective[col] || '';
   let value = field === 'foto_url' ? '' : text(body.value, 'Valor', 3000);
   const writes = [];
+  const unit = row[3].trim().toUpperCase();
+  const readiness = field === 'estado' && isPanama(context)
+    ? unitReadinessChange(unit, await readUnitReadinessRevision(sheets, unit), context.key, context.now)
+    : undefined;
 
   if (field === 'estado') {
     if (value === 'Completado') assert(CLOSE.has(session.role), 403, 'Tu rol no puede cerrar una OT');
     assert(value === before || STATUSES[before || 'Abierta']?.includes(value), 409, 'Transición de estado inválida');
-    const unit = row[3].trim().toUpperCase();
     const linked = row[4] === 'PM' ? null : linkedRows(await sheets.read(TAB.failures), 13, 2, otId, unit);
     if (linked) writes.push({ tab: TAB.failures, row: linked.index, col: 9, values: [value] });
     if (isPanama(context) && value === 'Resuelta' && before !== value) {
@@ -410,7 +440,7 @@ async function transition(context) {
     { tab: TAB.orders, row: index, col: 18, values: [mutationId] },
     { tab: TAB.history, append: [historyRow(context, otId, field, before, value)] },
   );
-  return commit(context, writes, { otId }, `workshop-order:${otId}:${version}`);
+  return commit(context, writes, { otId }, `workshop-order:${otId}:${version}`, readiness);
 }
 
 function scheduleValue(context, { otId, unit, mechanic, hours, date, priority, notes }) {
@@ -505,9 +535,11 @@ async function operationalReturn(context) {
   const notes = text(body.notes, 'Observación de Operaciones', 1500, true);
   const receipt = { decision, notes, userId: session.userId, userName: session.userName, recordedAt: context.now };
   const writes = [];
+  const unit = row[3].trim().toUpperCase();
+  const revision = await readUnitReadinessRevision(sheets, unit);
+  const readiness = unitReadinessChange(unit, revision, context.key, context.now);
   if (decision === 'accepted') {
     assert(technical?.userId && execution?.userId, 409, 'Devuelve la OT para documentar una verificación técnica independiente');
-    const unit = row[3].trim().toUpperCase();
     const safety = await verifyUnitReadiness(sheets, unit, { acceptReturnFor: otId });
     assert(safety?.level !== 'blocked', 409, `Retorno bloqueado. ${safety?.reason || ''}`);
     const returnedAt = body.returnedAt == null ? context.now : text(body.returnedAt, 'Fecha y hora de retorno', 24, true);
@@ -519,7 +551,6 @@ async function operationalReturn(context) {
     const dueDate = isoDate(body.dueDate);
     assert(dueDate >= todayInPanama(context), 400, 'La fecha correctiva no puede ser anterior a hoy');
     receipt.dueDate = dueDate;
-    const unit = row[3].trim().toUpperCase();
     const linked = linkedRows(await sheets.read(TAB.failures), 13, 2, otId, unit);
     if (linked) writes.push({ tab: TAB.failures, row: linked.index, col: 9, values: ['En Reparación'] });
     if (row[4] === 'DVIR') {
@@ -535,7 +566,7 @@ async function operationalReturn(context) {
   writes.push({ tab: TAB.orders, row: index, col: WORKFLOW.operations, values: [JSON.stringify(receipt)] },
     { tab: TAB.orders, row: index, col: 18, values: [context.mutationId] },
     { tab: TAB.history, append: [historyRow(context, otId, 'retorno_operativo', '', history)] });
-  return commit(context, writes, { otId, receipt }, `workshop-order:${otId}:${version}`);
+  return commit(context, writes, { otId, receipt }, `workshop-order:${otId}:${version}`, readiness);
 }
 
 const STICKER_COLORS = ['green', 'yellow', 'red'];
@@ -543,15 +574,6 @@ const STICKER_STATUSES = ['cumple', 'condicionado', 'no_cumple', 'no_aplica'];
 const PENDING_STICKER = 'pendiente_supervisor';
 const APPROVED_STICKER = 'aprobado_supervisor';
 const fmtSheetDate = (value) => value.split('-').reverse().join('/');
-
-function templateClass(type) {
-  const name = type.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  if (/excavadora/.test(name)) return 'excavadora';
-  if (/tractor.*oruga|bulldozer/.test(name)) return 'tractor_oruga';
-  if (/cargador.*frontal/.test(name)) return 'cargador_frontal';
-  if (/camion.*articulado|dumper/.test(name)) return 'camion_articulado';
-  return '';
-}
 
 function stickerPayload(row) {
   let details;
@@ -569,7 +591,7 @@ async function sticker(context) {
   const { body, session } = context;
   const { code, model, type } = await equipmentFor(context, body.unit);
   const template = STICKER_INSPECTION_TEMPLATES.find((item) => item.id === body.templateId);
-  const expected = templateClass(type);
+  const expected = stickerTemplateForEquipment(type, isPanama(context) ? model : '');
   assert(template && (!expected || expected === template.id), 400, 'La lista de inspección debe corresponder al equipo');
   const company = text(body.company, 'Empresa', 100, true);
   const date = isoDate(body.date);
@@ -629,7 +651,7 @@ async function sticker(context) {
   ]);
   const writes = [{ tab: TAB.stickers, append: [row] }];
   if (findingRows.length) writes.push({ tab: TAB.findings, append: findingRows });
-  return commit(context, writes, stickerPayload(row));
+  return commitRestriction(context, code, writes, stickerPayload(row));
 }
 
 async function stickerReview(context) {
@@ -639,7 +661,10 @@ async function stickerReview(context) {
   const matches = stickers.map((row, index) => ({ row, index })).filter(({ row }) => row[1] === folio);
   assert(matches.length === 1, matches.length ? 409 : 404, 'Inspección no disponible para aprobar');
   const { row, index } = matches[0];
-  requireUnit(session, row[5]);
+  const unit = requireUnit(session, row[5]);
+  const readiness = isPanama(context)
+    ? unitReadinessChange(unit, await readUnitReadinessRevision(sheets, unit), context.key, context.now)
+    : undefined;
   assert(row[10] === PENDING_STICKER, 409, 'La inspección ya fue revisada');
   assert(row[18] && row[17] && STICKER_COLORS.includes(row[12]), 409, 'La inspección requiere validar su origen');
   assert(!isPanama(context) || row[18] !== session.userId, 403, 'La inspección requiere revisión de otra persona autorizada de HSE');
@@ -660,7 +685,7 @@ async function stickerReview(context) {
       writes.push({ tab: TAB.findings, row: rowIndex, col: 14, values: [APPROVED_STICKER] });
     }
   }
-  return commit(context, writes, stickerPayload(resolved), `workshop-sticker:${folio}:${PENDING_STICKER}`);
+  return commit(context, writes, stickerPayload(resolved), `workshop-sticker:${folio}:${PENDING_STICKER}`, readiness);
 }
 
 const READINESS_SOURCES = [
@@ -692,6 +717,7 @@ export async function verifyUnitsReadiness(sheets, units, { acceptReturnFor } = 
     sheets.read(TAB.orders, { requireExisting: true }),
   ]);
   const scoped = orders.filter(row => /^OT-/.test(row[1] || '') && units.has(row[3]?.trim().toUpperCase()));
+  // Independently acknowledge technically closed orders. Dispatch still checks all pending returns.
   const pendingReturns = acceptReturnFor ? [] : scoped.filter(pendingOperationalReturn).map(row => ({ unit: row[3], otId: row[1] }));
   const map = buildDispatchReadinessMap(stickers, inspections,
     new Date(`${dateFormatter.format(new Date())}T12:00:00`), pendingReturns, failures);

@@ -419,7 +419,7 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
       if (typeof gate.createHermesGateway !== 'function') throw new Error('La versión no exporta createHermesGateway');
       gateway = gate.createHermesGateway({ sheets: sheet, writeEnabled: true, panamaOnly: true, enablePanamaOperations: true, enablePanamaFuelCapture: true });
       if (typeof parts.createPartsHandler === 'function') auth['/api/parts/import'] = parts.createPartsHandler({
-        readRows: sheet.readRange, panama: true,
+        readRows: sheet.readRange, readFleet: () => sheet.read(tabs.fleet), panama: true,
         sendAlert: async changes => { alerts.push(clone(changes)); return { sent: true }; },
       });
     }

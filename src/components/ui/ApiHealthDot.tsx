@@ -53,7 +53,7 @@ export default function ApiHealthDot() {
 
       {open && (
         <div
-          className="absolute right-0 top-full mt-2 rounded-xl p-4 shadow-xl z-50 min-w-56 flex flex-col gap-2 text-xs"
+          className="absolute right-0 top-full mt-2 rounded-xl p-4 shadow-xl z-50 w-56 max-w-[calc(100vw-2rem)] flex flex-col gap-2 text-xs"
           style={{ backgroundColor: '#162252', border: '1px solid rgba(255,255,255,0.1)' }}
         >
           <div className="flex justify-between items-center">
@@ -115,6 +115,15 @@ export default function ApiHealthDot() {
                 </div>
               )}
 
+              {health.deployment && (
+                <dl className="space-y-1 break-all border-t border-white/10 pt-2 text-white/80">
+                  <div><dt>Proyecto y ambiente</dt><dd>{health.deployment.project} · {health.deployment.environment}</dd></div>
+                  {health.deployment.host && <div><dt>Despliegue</dt><dd>{health.deployment.host}</dd></div>}
+                  {health.deployment.id && <div><dt>ID de Vercel</dt><dd>{health.deployment.id}</dd></div>}
+                  {health.deployment.commit && <div><dt>Commit</dt><dd>{health.deployment.commit}</dd></div>}
+                  <div><dt>Datos</dt><dd>{health.dataMode === 'demo' ? 'Prueba' : 'Operativos'} · {health.writeEnabled ? 'Escritura habilitada' : 'Consulta'}</dd></div>
+                </dl>
+              )}
               <UptimeStr seconds={health.uptime_seconds} />
               {health.version && (
                 <span className="text-white/30">v{health.version}</span>

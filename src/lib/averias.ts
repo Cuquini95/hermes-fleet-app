@@ -33,7 +33,7 @@ function stripOtFromObservaciones(value: string): string {
 export function parseAveriaRow(row: string[]): AveriaEntry | null {
   const fecha = (row[0] ?? '').trim();
   const unidad = (row[2] ?? '').trim();
-  if (!fecha.includes('/') || !unidad) return null;
+  if (!/^(?:\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2})$/.test(fecha) || !unidad) return null;
 
   const observacionesRaw = (row[11] ?? '').trim();
   const otCell = (row[13] ?? '').trim();

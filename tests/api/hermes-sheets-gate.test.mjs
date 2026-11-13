@@ -264,3 +264,20 @@ test('Panamá health distinguishes the official fleet from its writable workbook
     ['ORDENES_TRABAJO', { cached: true, requireExisting: true }],
   ]);
 });
+
+test('the Panama inventory sheet read preserves layout while filtering parts to the assigned units', async () => {
+  const own = ['QA-FILTRO-001', 'Filtro QA', '', '', 'pza', '8', '3', '75', '', '', 'Komatsu D65EX-16'];
+  const other = ['QA-SIN-ALCANCE', 'Otro filtro QA', '', '', 'pza', '8', '3', '75', '', '', 'QA-EX401'];
+  const header = [[], [], [], [], ['SKU']];
+  const sheets = { read: async tab => tab === '01 Inventario'
+    ? [[], [], [], ['1', 'QA-DZ203', '', 'Komatsu', 'D65EX-16'], ['2', 'QA-EX401', '', 'Doosan', 'DX360LC-7']]
+    : [...header, own, other] };
+  const gate = createHermesGateway({
+    sheets, enablePanamaOperations: true,
+    sessionReader: async () => ({ ...operator, role: 'jefe_taller', project: 'tmf-panama', assignedUnits: ['QA-DZ203'] }),
+  });
+  const result = response();
+  await gate({ method: 'GET', query: { path: 'api/sheets/read', tab: '12 Inventario Rep.' } }, result);
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(result.body.data, [...header, own, []]);
+});

@@ -9,7 +9,7 @@ import {
   ShieldCheck,
   WifiOff,
 } from 'lucide-react';
-import { STICKER_INSPECTION_TEMPLATES, getStickerTemplate } from '../data/sticker-inspection-templates';
+import { STICKER_INSPECTION_TEMPLATES, getStickerTemplate, stickerTemplateForEquipment } from '../data/sticker-inspection-templates';
 import type {
   EquipmentInspectionClass,
   StickerColor,
@@ -124,6 +124,9 @@ export default function StickerInspectionPage() {
   const [company, setCompany] = useState(COMPANY_DEFAULT);
   const [unitId, setUnitId] = useState('');
   const [templateId, setTemplateId] = useState<EquipmentInspectionClass>('camion_articulado');
+  const selectedUnit = equipment.find(item => item.unit_id === unitId);
+  const suggestedTemplate = project === 'tmf-panama' && selectedUnit
+    ? stickerTemplateForEquipment(selectedUnit.type, selectedUnit.model) : '';
   const template = useMemo(() => getStickerTemplate(templateId), [templateId]);
   const [responses, setResponses] = useState<Record<string, ItemResponse>>(() => buildInitialResponses(template.items, fecha));
   const [finalColor, setFinalColor] = useState<StickerColor>('green');
@@ -193,7 +196,7 @@ export default function StickerInspectionPage() {
   const overrideNeedsReason = finalColor !== decision.recommendedColor && overrideReason.trim() === '';
   const canSubmit =
     !submitting && !lastSticker &&
-    unitId.trim() !== '' &&
+    unitId.trim() !== '' && (!suggestedTemplate || templateId === suggestedTemplate) &&
     company.trim() !== '' &&
     answeredCount === template.items.length &&
     !evidenceGap &&
@@ -391,7 +394,13 @@ export default function StickerInspectionPage() {
         </Field>
 
         <Field label="Unidad / NFC / QR">
-          <select value={unitId} onChange={(event) => setUnitId(event.target.value)} className="field-input bg-white">
+          <select value={unitId} onChange={(event) => {
+            const nextUnit = equipment.find(item => item.unit_id === event.target.value);
+            setUnitId(event.target.value);
+            const nextTemplate = project === 'tmf-panama' && nextUnit && stickerTemplateForEquipment(nextUnit.type, nextUnit.model);
+            if (nextTemplate) setTemplateId(nextTemplate);
+            setResponses(buildInitialResponses(getStickerTemplate(nextTemplate || templateId).items, fecha));
+          }} className="field-input bg-white">
             <option value="">Seleccionar unidad...</option>
             {equipment.map((eq) => (
               <option key={eq.unit_id} value={eq.unit_id}>
@@ -404,6 +413,7 @@ export default function StickerInspectionPage() {
         <Field label="Tipo de equipo">
           <select
             value={templateId}
+            disabled={Boolean(suggestedTemplate)}
             onChange={(event) => setTemplateId(event.target.value as EquipmentInspectionClass)}
             className="field-input bg-white"
           >

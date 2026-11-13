@@ -17,6 +17,8 @@ export interface ApiHealth {
   uptime_seconds?: number;
   checks?: { identity: 'up' | 'down'; fleet: 'up' | 'down'; operations: 'up' | 'down' };
   dataMode?: 'demo' | 'operational';
+  writeEnabled?: boolean;
+  deployment?: { project: string; environment: string; host: string | null; id: string | null; commit: string | null };
   db?: HealthDb;
   integrations?: HealthIntegrations;
   version?: string;

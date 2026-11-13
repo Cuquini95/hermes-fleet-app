@@ -48,8 +48,9 @@ describe('UnitDetailModal — Averías tab data loading', () => {
     expect(source).toContain('unit.unit_id.toUpperCase()');
   });
 
-  it('skips the first 3 header rows (slice(3))', () => {
-    expect(source).toContain('.slice(3)');
+  it('parses each candidate row so short Panama headers do not hide the first failure', () => {
+    expect(source).toContain('.map(parseAveriaRow)');
+    expect(source).not.toContain('.slice(3)');
   });
 
   it('cancels the async fetch on unmount via cancelled flag', () => {

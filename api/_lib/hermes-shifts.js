@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { hasIdentityUnit } from './hermes-identity.js';
 import { PANAMA_PROJECT } from './hermes-panama.js';
 import { HermesSheetError, PANAMA_DISPATCH_TAB, PANAMA_SHIFT_TAB } from './hermes-google-sheets.js';
-import { verifyUnitReadiness, verifyUnitsReadiness } from './hermes-workshop.js';
+import { readUnitReadinessRevision, unitReadinessChange, verifyUnitReadiness, verifyUnitsReadiness } from './hermes-workshop.js';
 
 const READ = new Set(['operador', 'supervisor', 'coordinador', 'gerencia']);
 const DELIVER = new Set(['operador', 'supervisor']);
@@ -177,6 +177,7 @@ async function dispatchAssignment({ method, body, session, sheets, listShiftOper
   const period = [data.date, canonical(data.shift)];
   const id = `DPA-${sha([data.unit, ...period]).slice(0, 20).toUpperCase()}`;
   const operatorGuard = `panama:dispatch:operator:${sha([operatorId, ...period])}`;
+  const revision = await readUnitReadinessRevision(sheets, data.unit);
   const [operators, inventory, readiness, priorRows] = await Promise.all([
     operatorsFor(data.unit), inventoryFor(sheets, data.unit), verifyUnitReadiness(sheets, data.unit), sheets.read(PANAMA_DISPATCH_TAB),
   ]);
@@ -190,9 +191,11 @@ async function dispatchAssignment({ method, body, session, sheets, listShiftOper
   const row = [id, data.unit, data.date, data.shift, site, operator.userId, operator.userName, session.userId,
     session.userName, new Date().toISOString()];
   const [assignment] = dispatchRecords([row]);
-  const saved = await sheets.commit({ key, fingerprint, guards: [`panama:dispatch:unit:${id}`, operatorGuard],
-    writes: [{ tab: PANAMA_DISPATCH_TAB, append: [row] }], result: { assignment: { ...assignment, readiness: eligibility } } });
-  return { status: saved.replayed ? 200 : 201, body: saved.result };
+  const change = unitReadinessChange(data.unit, revision, key, row[9]);
+  const saved = await sheets.commit({ key, fingerprint, guards: [`panama:dispatch:unit:${id}`, operatorGuard, change.guard],
+    writes: [{ tab: PANAMA_DISPATCH_TAB, append: [row] }, change.write], result: { assignment: { ...assignment, readiness: eligibility } } });
+  const [current] = await assignmentsWithReadiness(sheets, [saved.result.assignment]);
+  return { status: saved.replayed ? 200 : 201, body: { assignment: current } };
 }
 
 export async function dispatchShifts({ path, method, body, session, sheets, listShiftOperators = async () => [] }) {

@@ -8,6 +8,7 @@ import { createPanamaDemoSheets } from './_lib/hermes-panama-demo.js';
 import { technicalDocuments } from './_lib/hermes-technical-library.js';
 import { validatePanamaMeterAppend } from './_lib/hermes-shifts.js';
 import { readPersonalHistory } from './_lib/hermes-profile.js';
+import { visiblePanamaParts } from './_lib/hermes-part-prices.js';
 
 const ADMIN = ['jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
 const WORKSHOP = ['mecanico', ...ADMIN];
@@ -77,6 +78,11 @@ const operators = (session, unit) => import('./_lib/hermes-identity.js').then(mo
 
 async function visibleRows(sheets, tab, rule, session) {
   const rows = await sheets.read(tab, { cached: true });
+  if (tab === '12 Inventario Rep.' && session.project === PANAMA_PROJECT && !session.allUnits) {
+    const fleet = await sheets.read('01 Inventario', { cached: true });
+    const visible = new Set(visiblePanamaParts(rows.slice(5), fleet, session));
+    return rows.map((row, index) => index < 5 || visible.has(row) ? row : []);
+  }
   if (session.allUnits || (rule.unit === undefined && !rule.linked)) return rows;
   if (rule.linked) {
     const [parentTab, key, parentKey, parentUnit] = rule.linked;
@@ -221,6 +227,13 @@ export function createHermesGateway({
           checks,
           writeEnabled: writeEnabled && checks.operations === 'up',
           dataMode: demo ? 'demo' : 'operational',
+          deployment: {
+            project: 'hermes-panama',
+            environment: process.env.VERCEL_ENV ?? 'local',
+            host: process.env.VERCEL_URL ?? null,
+            id: process.env.VERCEL_DEPLOYMENT_ID ?? null,
+            commit: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
+          },
         });
       }
       if (path === 'api/profile/history') {

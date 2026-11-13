@@ -44,9 +44,7 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
     void (async () => {
       try {
         const rows = await readRange(SHEET_TABS.AVERIAS)
-        // Header rows: 0 (title), 1 (legend), 2 (column names) — data starts at row 3
         const matches = rows
-          .slice(3)
           .filter((r) => (r[2] ?? '').trim().toUpperCase() === unit.unit_id.toUpperCase())
           .map(parseAveriaRow)
           .filter((a): a is AveriaEntry => a !== null)
@@ -151,8 +149,10 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
             <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 text-sm text-gray-600 flex items-start gap-2">
               <AlertCircle size={16} className="flex-shrink-0 mt-0.5 text-gray-400" />
               <div>
-                <p className="font-medium">Sin reporte de avería registrado</p>
-                {unit.status !== 'operativo' && (
+                <p className="font-medium">{dispatchReadiness?.source === 'averia'
+                  ? 'El detalle de la avería pendiente requiere conciliación'
+                  : 'Sin reporte de avería registrado'}</p>
+                {unit.status !== 'operativo' && dispatchReadiness?.source !== 'averia' && (
                   <p className="text-xs text-gray-500 mt-1">
                     El estado en "01 Inventario" indica{' '}
                     <strong>{(STATUS_LABEL[unit.status] ?? unit.status).toLowerCase()}</strong> pero

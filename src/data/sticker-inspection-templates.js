@@ -241,3 +241,14 @@ export function getStickerTemplate(templateId) {
   if (!fallback) throw new Error('No sticker inspection templates configured');
   return STICKER_INSPECTION_TEMPLATES.find((template) => template.id === templateId) ?? fallback;
 }
+
+
+export function stickerTemplateForEquipment(type, model) {
+  const name = String(type ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+  if (/excavadora/.test(name)) return 'excavadora';
+  if (/tractor.*oruga|bulldozer|dozer/.test(name)) return 'tractor_oruga';
+  if (/cargador.*frontal|wheel loader/.test(name)) return 'cargador_frontal';
+  if (/camion.*articulado|dumper|articulado/.test(name)) return 'camion_articulado';
+  if (/\b(?:d[1-9]\d{1,2}(?:ax|ex|px)|d[4-9][tr]?)\b/i.test(model)) return 'tractor_oruga';
+  return '';
+}

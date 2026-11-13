@@ -19,6 +19,7 @@ function fixture(pmChecklists = []) {
   const mutations = new Map();
   const guards = new Set();
   let fail = false;
+  let beforeCommit;
   const sheets = {
     async read(tab) { return structuredClone(data.get(tab) || []); },
     async replay({ key, fingerprint }) {
@@ -26,11 +27,15 @@ function fixture(pmChecklists = []) {
       if (mutation && mutation.fingerprint !== fingerprint) throw Object.assign(new Error('Operación distinta'), { status: 409 });
       return mutation ? structuredClone(mutation.result) : null;
     },
-    async commit({ key, fingerprint, guard, writes, result }) {
+    async commit({ key, fingerprint, guard, guards: extraGuards = [], writes, result }) {
+      const hook = beforeCommit;
+      beforeCommit = undefined;
+      if (hook) await hook();
       const replayed = await sheets.replay({ key, fingerprint });
       if (replayed) return { replayed: true, result: replayed };
       if (fail) throw Object.assign(new Error('Falló confirmación simulada'), { status: 503 });
-      if (guard && guards.has(guard)) throw Object.assign(new Error('Orden actualizada'), { status: 409 });
+      const versions = [guard, ...extraGuards].filter(Boolean);
+      if (versions.some(item => guards.has(item))) throw Object.assign(new Error('Orden actualizada'), { status: 409 });
       const newData = structuredClone(data);
       for (const write of writes) {
         const table = newData.get(write.tab) || [];
@@ -42,7 +47,7 @@ function fixture(pmChecklists = []) {
         newData.set(write.tab, table);
       }
       for (const [key, value] of newData) data.set(key, value);
-      if (guard) guards.add(guard);
+      for (const item of versions) guards.add(item);
       mutations.set(key, { fingerprint, result });
       return { replayed: false, result };
     },
@@ -53,7 +58,7 @@ function fixture(pmChecklists = []) {
     listMechanics: async () => [mechanic, secondMechanic],
     storageOrigin: 'https://storage-qa.supabase.co',
   });
-  return { sheets, request, fail: value => { fail = value; } };
+  return { sheets, request, fail: value => { fail = value; }, interrupt: hook => { beforeCommit = hook; } };
 }
 
 const report = (changes = {}) => ({
@@ -375,4 +380,19 @@ test('Taller puede comprobar el checklist exacto por unidad y nivel antes de pro
   assert.equal((await request('pmtemplate', workshop, undefined, { unit: 'CA20', level: 'PM-500' })).body.checklist, null);
   assert.equal((await request('pmtemplate', { ...workshop, assignedUnits: ['DZ203'] }, undefined, { unit: 'CA20', level: 'PM-250' })).status, 403);
   assert.equal((await request('pmtemplate', operator, undefined, { unit: 'CA20', level: 'PM-250' })).status, 403);
+});
+
+
+test('un retorno no se confirma si otra avería se guarda entre la validación y el commit', async () => {
+  const { request, sheets, interrupt } = fixture();
+  const otId = await startRepair(request);
+  assert.equal((await transition(request, mechanic, otId, 'Resuelta', executionProof)).status, 200);
+  assert.equal((await transition(request, workshop, otId, 'Completado')).status, 200);
+  const body = { mutationId: randomUUID(), otId, decision: 'accepted', notes: 'Prueba de retorno concurrente' };
+  interrupt(async () => {
+    assert.equal((await request('report', operator, report({ description: 'Otra avería concurrente' }))).status, 201);
+  });
+  assert.equal((await request('returns', supervisor, body)).status, 409);
+  assert.match((await request('returns', supervisor, body)).body.error, /Retorno bloqueado/);
+  assert.equal((await sheets.read('OT_STATUS_LOG')).filter(row => row[2] === 'retorno_operativo').length, 0);
 });

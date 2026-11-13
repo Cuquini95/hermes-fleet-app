@@ -8,6 +8,16 @@ const round = (value) => Math.round(value * 100) / 100;
 // Some inventory rows list these Komatsu model families without the brand.
 const equipmentFamilies = new Map([['KOMATSU', ['KOMATSU', 'D155', 'HM400']]]);
 
+const catalogKey = value => String(value ?? '').toUpperCase().normalize('NFD').replace(/[^A-Z0-9]/g, '');
+
+export function visiblePanamaParts(parts, fleet, session) {
+  const assigned = new Set((session.assignedUnits ?? []).map(catalogKey));
+  const allowed = new Set(fleet.filter(row => assigned.has(catalogKey(row[1])))
+    .flatMap(row => [row[1], row[4], [row[3], row[4]].filter(Boolean).join(' ')])
+    .map(catalogKey).filter(Boolean));
+  return parts.filter(row => String(row[10] ?? '').split(/[,;\n]+/).some(value => allowed.has(catalogKey(value))));
+}
+
 function positive(value) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : 0;

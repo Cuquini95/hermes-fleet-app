@@ -1,5 +1,5 @@
 import { identityConfig, identityRequest } from './hermes-identity.js';
-import { canonicalTab } from './hermes-google-sheets.js';
+import { canonicalTab, PANAMA_READINESS_TAB } from './hermes-google-sheets.js';
 
 const route = '/rest/v1/hermes_preview_operations';
 const workspace = 'panama-demo';
@@ -68,7 +68,7 @@ export function createPanamaDemoSheets(request = options => identityRequest(iden
     if (!Object.hasOwn(tables, tab) && tab === 'Movimientos Repuestos PA') {
       tables[tab] = [['ID', 'FECHA_UTC', 'TIPO', 'SKU', 'CANTIDAD', 'UNIDAD', 'OC', 'PARTIDA', 'OT', 'REFERENCIA', 'ACTOR', 'ACTOR_ID', 'EXISTENCIA', 'MEDIDA']];
     }
-    if (tab === 'HERMES_PA_DESPACHO' && !Object.hasOwn(tables, tab)) tables[tab] = [];
+    if (['HERMES_PA_DESPACHO', PANAMA_READINESS_TAB].includes(tab) && !Object.hasOwn(tables, tab)) tables[tab] = [];
     if (!Object.hasOwn(tables, tab)) throw fail(503, 'La tabla de prueba no está disponible.');
     if (change.append) {
       tables[tab].push(...change.append);
