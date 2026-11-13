@@ -32,6 +32,10 @@ class InnerBoundary extends Component<Props, State> {
   }
 
   handleRetry = () => {
+    if (/Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module|Unable to preload CSS/i.test(this.state.errorMessage)) {
+      window.location.reload();
+      return;
+    }
     this.setState({ hasError: false, errorMessage: '' });
   };
 

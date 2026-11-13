@@ -12,10 +12,16 @@ self.skipWaiting();
 clientsClaim();
 
 // ── Precache all build assets (manifest injected by vite-plugin-pwa) ──────────
-precacheAndRoute(self.__WB_MANIFEST);
-registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), {
+registerRoute(new NavigationRoute(async (options) => {
+  try {
+    return await fetch(options.request, { cache: 'no-cache' });
+  } catch {
+    return createHandlerBoundToURL('/index.html')(options);
+  }
+}, {
   denylist: [/^\/api(?:\/|$)/, /^\/hermes-api(?:\/|$)/],
 }));
+precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
 
 // ── Runtime caching ───────────────────────────────────────────────────────────
