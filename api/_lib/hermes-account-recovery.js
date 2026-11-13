@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { identityConfig, identityRequest, normalizedEmail, normalizeRosterProfile } from '../_lib/hermes-identity.js';
-import { isSameOriginAuthRequest } from '../_lib/session-auth.js';
-import { rejectIfRateLimited } from '../_lib/rate-limit.js';
+import { identityConfig, identityRequest, normalizedEmail, normalizeRosterProfile } from './hermes-identity.js';
+import { isSameOriginAuthRequest } from './session-auth.js';
+import { rejectIfRateLimited } from './rate-limit.js';
 
 const accepted = { message: 'Si tu cuenta está habilitada, recibirás un código en tu correo de trabajo.' };
 const invalidCode = { error: 'El código no es válido o venció. Solicita uno nuevo.' };

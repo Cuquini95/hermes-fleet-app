@@ -2,8 +2,10 @@ import { createHash } from 'node:crypto';
 import { authenticateHermesEmployee, identityConfig, normalizedEmail } from '../_lib/hermes-identity.js';
 import { isSameOriginAuthRequest, issueSession, sessionCookie } from '../_lib/session-auth.js';
 import { rejectIfRateLimited } from '../_lib/rate-limit.js';
+import recoverAccount from '../_lib/hermes-account-recovery.js';
 
 export default async function handler(req, res) {
+  if (req.query?.flow === 'recovery') return recoverAccount(req, res);
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   if (!isSameOriginAuthRequest(req)) return res.status(403).json({ error: 'Solicitud no autorizada' });

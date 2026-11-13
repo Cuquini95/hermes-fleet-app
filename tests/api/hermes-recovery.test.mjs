@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRecoveryHandler } from '../../api/auth/recovery.js';
+import { createRecoveryHandler } from '../../api/_lib/hermes-account-recovery.js';
+import login from '../../api/auth/login.js';
 
 const email = 'recovery@example.invalid';
 const userId = 'c2d43dc8-46f9-4b9e-a4c9-0c6532d2da8d';
@@ -28,6 +29,12 @@ test('recovery delivers only to a scoped member and gives the same response for 
   assert.deepEqual(member.body, unknown.body);
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0], ['/auth/v1/recover', { method: 'POST', body: { email }, auth: 'public' }]);
+});
+
+test('the login function dispatches recovery with its own method and origin controls', async () => {
+  const res = response();
+  await login({ method: 'POST', headers: { host: 'test.invalid', origin: 'https://outside.invalid' }, query: { flow: 'recovery' } }, res);
+  assert.equal(res.code, 403);
 });
 
 test('verified recovery changes the password through the identity provider and revokes Hermes sessions', async () => {

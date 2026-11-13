@@ -3,6 +3,7 @@
     "api/hermes-ai/photo_to_failure.js": { "maxDuration": 30 }
   },
   "rewrites": [
+    { "source": "/api/auth/recovery", "destination": "/api/auth/login?flow=recovery" },
     { "source": "/hermes-api/ai/diagnose", "destination": "/api/hermes-ai/diagnose" },
     { "source": "/hermes-api/ai/manual_lookup", "destination": "/api/hermes-ai/manual_lookup" },
     { "source": "/hermes-api/ai/photo_to_failure", "destination": "/api/hermes-ai/photo_to_failure" },
