@@ -20,7 +20,9 @@ Rama de la aplicación independiente para TMF Minera Panamá. La navegación de 
 | HERMES_PURCHASE_ISSUERS_JSON | Emisor panameño validado, con identificación fiscal, moneda y regla fiscal. Solo se admiten emisores con plantilla Trans Plus y USD o PAB para el proyecto Panamá. |
 | VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, HERMES_WORKSHOP_STORAGE_ORIGIN | Almacenamiento dedicado para evidencias, una vez verificados los permisos. |
 | HERMES_READ_ONLY | `true` para el candidato de consulta. |
-| HERMES_PANAMA_WRITES_ENABLED | Mantener sin habilitar hasta verificar en un entorno aislado la integración de escrituras con los maestros. |
+| HERMES_PANAMA_WRITES_ENABLED | Usar `true` después de aceptar las pruebas con las fuentes operativas. `HERMES_READ_ONLY=true` prevalece para detener todas las escrituras. |
+| HERMES_PANAMA_WRITE_GROUPS | Lista explícita de flujos ya aceptados. Valores permitidos taller, inspecciones, pm, turnos, despacho, compras, recepcion, finanzas, gastos, horometro, combustible, fletes, llantas, proveedores y activos. Sin grupos válidos, la app conserva consulta. |
+| HERMES_PANAMA_FUEL_CAPTURE | Usar `true` junto al grupo combustible después de conciliar con el maestro panameño. |
 | HERMES_PANAMA_PM_CHECKLISTS_JSON | Catálogo validado de checklists por modelo y nivel, con referencia, identificadores y etiquetas de cada tarea. Taller comprueba el checklist al entregar y aceptar el PM. |
 | VITE_HERMES_PA_PM_MASTER_LINK, VITE_HERMES_PA_PM_REGISTER_LINK, VITE_HERMES_PA_VALUATION_LINK, VITE_HERMES_PA_FINANCE_LINK | Enlaces opcionales a maestros compartidos con el equipo. Los enlaces solo sirven para abrir Drive y conservan sus permisos. Cualquier URL del frontend es visible en el paquete compilado. |
 
@@ -29,7 +31,7 @@ Usa el padrón de 28 personas, los correos confirmados en la identidad propia y 
 ## Habilitar el turno
 
 1. Aplica las migraciones de identidad y los permisos de recepción y HSE en Supabase Panamá. Conecta el proyecto Vercel `hermes-panama` al proveedor mediante sus variables de servidor y vuelve a desplegar. Valida una sesión con el correo de trabajo y revisa el conteo de primeros ingresos.
-2. Configura el acceso de solo lectura a los maestros y el acceso de edición al libro operativo aislado. Verifica la correspondencia por folio antes de habilitar escrituras productivas. Los folios aceptados de relevo siguen pendientes de conciliación en REGISTRO de Disponibilidad TMF.
+2. Configura el acceso de solo lectura a los maestros y el acceso de edición al libro operativo aislado. Verifica la correspondencia por folio antes de habilitar escrituras productivas. Los relevos aceptados muestran el cotejo de lecturas con REGISTRO cuando la cuenta lectora tiene acceso al maestro.
 3. Para Almacén activa `canReceivePurchases` solo en el padrón autorizado, con las unidades asignadas. El permiso habilita el registro por partida y su historial. Compras y Finanzas consultan el saldo en la OC.
 4. La revisión HSE de stickers requiere `canReviewPanamaHse` para el responsable autorizado. El ejecutor entrega la OT con prueba funcional. Taller confirma el cierre y Operaciones acepta el retorno por separado. Un bloqueo vigente de HSE impide aceptar el retorno.
 5. Comprueba el acceso al dominio con una cuenta corporativa sin acceso administrativo a Vercel. Si la protección del alojamiento exige sesión de Vercel, el administrador ajusta el alcance del dominio cuando la autenticación y las rutas privadas de Hermes estén verificadas.

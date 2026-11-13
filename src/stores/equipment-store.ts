@@ -11,6 +11,7 @@ function normalizeStatus(raw: string): Equipment['status'] {
     .trim()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, ''); // strip accents
+  if (!s) return 'no_verificado';
   if (s === 'operativo' || s.startsWith('en operac') || s === 'disponible') return 'operativo';
   if (s.includes('reparac') || s.includes('falla') || s.startsWith('en pm') || s === 'pm' || s.includes('mantenimiento') || s.includes('taller')) return 'taller';
   if (s.includes('traslado') || s.includes('alerta')) return 'alerta';

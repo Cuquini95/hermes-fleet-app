@@ -87,3 +87,10 @@ describe('dispatchAvailability', () => {
     expect(dispatchAvailability([unit('EX401', 'taller')], new Map(), true)).toMatchObject({ pct: 0 });
   });
 });
+
+
+it('keeps availability unknown when an unrestricted unit has no verified operational state', () => {
+  const equipment = [unit('EX401'), unit('DZ203', 'no_verificado')];
+  expect(dispatchAvailability(equipment, new Map(), true).available).toBeNull();
+  expect(dispatchAvailability(equipment, new Map([['DZ203', { level: 'blocked' }]]), true).available).toBe(1);
+});

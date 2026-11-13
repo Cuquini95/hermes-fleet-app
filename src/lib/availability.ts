@@ -48,7 +48,9 @@ export function dispatchAvailability(
     (readiness.get(normalizeUnitId(unit.unit_id))?.level ?? 'ok') !== 'ok',
   ).map((unit) => unit.unit_id);
   const total = equipment.length;
-  const available = verified && total > 0 ? total - exceptions.length : null;
+  const unknown = equipment.some(unit => unit.status === 'no_verificado'
+    && (readiness.get(normalizeUnitId(unit.unit_id))?.level ?? 'ok') === 'ok');
+  const available = verified && total > 0 && !unknown ? total - exceptions.length : null;
   return {
     total,
     available,

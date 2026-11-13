@@ -143,7 +143,8 @@ async function assignmentsWithReadiness(sheets, assignments) {
 
 function assignmentReadiness(inventory, readiness) {
   const status = canonical(String(inventory?.[8] ?? ''));
-  if (!inventory || ['INACTIVO', 'INACTIVA', 'FUERA DE SERVICIO', 'EN TALLER', 'TALLER', 'BAJA', 'NO OPERATIVO', 'NO OPERATIVA'].includes(status)) {
+  if (!inventory || !status) return { level: 'blocked', reason: 'No hay estado operativo verificado para la unidad.' };
+  if (['INACTIVO', 'INACTIVA', 'FUERA DE SERVICIO', 'EN TALLER', 'TALLER', 'BAJA', 'NO OPERATIVO', 'NO OPERATIVA'].includes(status)) {
     return { level: 'blocked', reason: 'La unidad no está disponible en el inventario.' };
   }
   return { level: readiness?.level ?? 'ok', reason: readiness?.reason ?? 'Sin restricción activa registrada.' };

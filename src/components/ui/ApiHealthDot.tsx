@@ -122,6 +122,7 @@ export default function ApiHealthDot() {
                   {health.deployment.id && <div><dt>ID de Vercel</dt><dd>{health.deployment.id}</dd></div>}
                   {health.deployment.commit && <div><dt>Commit</dt><dd>{health.deployment.commit}</dd></div>}
                   <div><dt>Datos</dt><dd>{health.dataMode === 'demo' ? 'Prueba' : 'Operativos'} · {health.writeEnabled ? 'Escritura habilitada' : 'Consulta'}</dd></div>
+                  {!!health.operationGroups?.length && <div><dt>Flujos habilitados</dt><dd>{health.operationGroups.join(', ')}</dd></div>}
                 </dl>
               )}
               <UptimeStr seconds={health.uptime_seconds} />

@@ -281,3 +281,29 @@ test('the Panama inventory sheet read preserves layout while filtering parts to 
   assert.equal(result.statusCode, 200);
   assert.deepEqual(result.body.data, [...header, own, []]);
 });
+
+test('the Panama release enables only accepted write groups and preserves consultation when they are empty', async () => {
+  const sheets = { read: async () => [], commit: async ({ result }) => ({ result }) };
+  const actor = { ...operator, project: 'tmf-panama', role: 'gerencia' };
+  const calls = [];
+  for (const groups of [new Set(), new Set(['taller'])]) {
+    const gate = createHermesGateway({
+      sheets, enablePanamaOperations: true, panamaWriteGroups: groups, writeEnabled: true,
+      sessionReader: async () => actor,
+      dispatchWorkshop: async () => { calls.push('taller'); return { status: 201, body: { otId: 'OT-QA' } }; },
+      dispatchPurchasing: async () => { calls.push('compras'); return { status: 201, body: {} }; },
+    });
+    const request = async (method, path) => {
+      const res = response();
+      await gate({ method, query: { path }, body: {} }, res);
+      return res;
+    };
+    assert.equal((await request('POST', 'api/workshop/report')).statusCode, groups.size ? 201 : 503);
+    assert.equal((await request('POST', 'api/purchasing/order-save')).statusCode, 503);
+    assert.equal((await request('POST', 'api/workshop/future-route')).statusCode, 503);
+    const health = await request('GET', 'health');
+    assert.equal(health.body.writeEnabled, groups.size > 0);
+    assert.deepEqual(health.body.operationGroups, [...groups]);
+  }
+  assert.deepEqual(calls, ['taller']);
+});

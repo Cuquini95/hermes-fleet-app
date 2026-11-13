@@ -55,6 +55,30 @@ const APPEND = new Map([
   ['Activos', { roles: GERENCIA, unit: 0 }],
 ]);
 
+const PANAMA_OPERATION_GROUPS = new Map([
+  ['taller', ['api/workshop/report', 'api/workshop/transition', 'api/workshop/returns']],
+  ['inspecciones', ['api/workshop/dvir', 'api/workshop/sticker', 'api/workshop/stickerreview']],
+  ['pm', ['api/workshop/pm', 'api/workshop/schedule']],
+  ['turnos', ['api/panama/turnos/entregar', 'api/panama/turnos/revisar']],
+  ['despacho', ['api/panama/turnos/despacho']],
+  ['compras', ['api/purchasing/request-submit', 'api/purchasing/request-status', 'api/purchasing/order-save',
+    'api/purchasing/order-status', 'api/purchasing/order-delete']],
+  ['recepcion', ['api/purchasing/order-receive', 'api/purchasing/inventory-move']],
+  ['finanzas', ['api/purchasing/order-invoice', 'api/purchasing/order-payment']],
+  ['gastos', ['api/purchasing/expense-save', 'api/purchasing/expense-delete', 'api/purchasing/expense-review']],
+  ['horometro', ['api/sheets/append:04B Registro Horómetros']],
+  ['combustible', ['api/sheets/append:Combustible']],
+  ['fletes', ['api/sheets/append:Reporte_Fletes_Transporte']],
+  ['llantas', ['api/sheets/append:13 Neumáticos']],
+  ['proveedores', ['api/sheets/append:Proveedores']],
+  ['activos', ['api/sheets/append:Activos']],
+]);
+const operationGroup = new Map([...PANAMA_OPERATION_GROUPS].flatMap(([group, routes]) => routes.map(route => [route, group])));
+
+function enabledPanamaGroups(value) {
+  return new Set(String(value ?? '').split(',').map(group => group.trim()).filter(group => PANAMA_OPERATION_GROUPS.has(group)));
+}
+
 const PROXY = new Map([
   ['parts', { method: 'GET', roles: WORKSHOP }],
   ['diagrams/list', { method: 'GET', roles: WORKSHOP }],
@@ -175,6 +199,7 @@ export function createHermesGateway({
   panamaOnly = false,
   enablePanamaOperations = false,
   enablePanamaFuelCapture = false,
+  panamaWriteGroups,
   writeEnabled: operationalWrites = process.env.VERCEL_ENV === 'production' && !['1', 'true'].includes(process.env.HERMES_READ_ONLY),
   pausedOperations = new Set((process.env.HERMES_PAUSED_OPERATIONS || '').split(',').map(knownPath).filter(Boolean)),
 } = {}) {
@@ -191,11 +216,12 @@ export function createHermesGateway({
       const demo = session.project === PANAMA_PROJECT && session.previewDemo === true;
       if (demo && !demoSheets) return invalid(res, 503, 'La fuente de prueba no está disponible.');
       const sheets = demo ? demoSheets : operationalSheets;
-      const writeEnabled = demo || operationalWrites;
+      const permittedGroups = session.project === PANAMA_PROJECT && !demo ? panamaWriteGroups : undefined;
+      const writeEnabled = demo || (operationalWrites && (!permittedGroups || permittedGroups.size > 0));
       if (path === 'api/panama/capacidades') {
         if (session.project !== PANAMA_PROJECT) return invalid(res, 403, 'Consulta reservada a TMF Panamá.');
         if (req.method !== 'GET') return invalid(res, 405, 'Método no permitido.');
-        return res.status(200).json({ fuelCapture: enablePanamaOperations && writeEnabled && (demo || enablePanamaFuelCapture) });
+        return res.status(200).json({ fuelCapture: enablePanamaOperations && writeEnabled && (demo || (enablePanamaFuelCapture && (!permittedGroups || permittedGroups.has('combustible')))) });
       }
       if (path === 'api/panama/documentos-tecnicos') {
         if (session.project !== PANAMA_PROJECT || !WORKSHOP.includes(session.role)) return invalid(res, 403, 'Consulta no autorizada.');
@@ -228,6 +254,7 @@ export function createHermesGateway({
           checks,
           writeEnabled: writeEnabled && checks.operations === 'up',
           dataMode: demo ? 'demo' : 'operational',
+          ...(permittedGroups && { operationGroups: writeEnabled && checks.operations === 'up' ? [...permittedGroups] : [] }),
           deployment: {
             project: 'hermes-panama',
             environment: process.env.VERCEL_ENV ?? 'local',
@@ -257,7 +284,14 @@ export function createHermesGateway({
         return await proxy(req, res, path, session);
       }
 
-      if (req.method !== 'GET' && !writeEnabled) return invalid(res, 503, 'Este despliegue permite consulta.');
+      if (req.method !== 'GET') {
+        if (!writeEnabled) return invalid(res, 503, 'Este despliegue permite consulta. Usa el procedimiento vigente de tu área.');
+        const routeKey = path === 'api/sheets/append' ? `${path}:${canonicalTab(req.body?.tab)}` : path;
+        const group = operationGroup.get(routeKey);
+        if (permittedGroups && (!group || !permittedGroups.has(group))) {
+          return invalid(res, 503, 'Este flujo está en consulta. Usa el procedimiento vigente de tu área.');
+        }
+      }
       if (shiftRoute) {
         const result = await shifts({ path, method: req.method, body: req.body ?? {}, session, sheets, listShiftOperators,
           readOfficialShifts: demo ? undefined : readOfficialShifts });
@@ -297,6 +331,8 @@ export default createHermesGateway({
   panamaOnly: true,
   enablePanamaOperations: true,
   readOfficialShifts: readOfficialPanamaShifts,
-  // This release serves the production workbook for consultation.
-  writeEnabled: false,
+  panamaWriteGroups: enabledPanamaGroups(process.env.HERMES_PANAMA_WRITE_GROUPS),
+  enablePanamaFuelCapture: process.env.HERMES_PANAMA_FUEL_CAPTURE === 'true',
+  writeEnabled: process.env.VERCEL_ENV === 'production' && process.env.HERMES_PANAMA_WRITES_ENABLED === 'true'
+    && !['1', 'true'].includes(process.env.HERMES_READ_ONLY),
 });

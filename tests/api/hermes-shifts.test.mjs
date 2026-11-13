@@ -16,7 +16,7 @@ const input = (changes = {}) => ({
 });
 
 function isolatedGateway(readOfficialShifts) {
-  const tabs = new Map([['01 Inventario', [[], [], ['#', 'COD1'], ['1', 'EX401'], ['2', 'EX405']]]]);
+  const tabs = new Map([['01 Inventario', [[], [], ['#', 'COD1'], ['1', 'EX401', '', '', '', '', '', '', 'Operativo'], ['2', 'EX405']]]]);
   const receipts = new Map();
   const guards = new Set();
   let failCommit = false;
@@ -212,4 +212,14 @@ test('accepted shifts reconcile with the official TMF day and meter readings wit
   assert.match((await next()).officialStatus, /Duplicado/);
   official = null;
   assert.match((await next()).officialStatus, /no disponible/);
+});
+
+
+test('despacho exige estado operativo conocido aunque la unidad exista en el maestro', async () => {
+  const { request, tabs } = isolatedGateway();
+  tabs.get('01 Inventario')[3][8] = '';
+  const dispatch = { mutationId: randomUUID(), unit: 'EX401', date: '2026-11-12', shift: 'Día', site: 'Frente QA', operatorId: operator.userId };
+  const result = await request('despacho', supervisor, dispatch);
+  assert.equal(result.status, 409);
+  assert.match(result.body.error, /No hay estado operativo verificado/);
 });
