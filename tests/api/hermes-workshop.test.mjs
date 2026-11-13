@@ -17,6 +17,13 @@ const manager = account('manager-qa', 'gerencia');
 function fixture(pmChecklists = []) {
   const data = new Map([['01 Inventario', [[], [], [], ['', 'CA20', '', 'Cat', '745', '', '', '', '', '4000']]]]);
   const mutations = new Map();
+  const evidence = new Map();
+  const attach = (kind, operationId, session, unit = 'CA20') => {
+    const id = randomUUID().replaceAll('-', '').repeat(2);
+    evidence.set(id, { ready: true, actor_id: session.userId, kind, operation_id: operationId,
+      units: [unit], record_id: '', preview_demo: false });
+    return `/hermes-api/api/evidence?id=${id}`;
+  };
   const guards = new Set();
   let fail = false;
   let beforeCommit;
@@ -56,9 +63,9 @@ function fixture(pmChecklists = []) {
     path: `api/workshop/${path}`, method: body === undefined ? 'GET' : 'POST', body,
     query, session, sheets, pmChecklists,
     listMechanics: async () => [mechanic, secondMechanic],
-    storageOrigin: 'https://storage-qa.supabase.co',
+    evidenceStorage: { find: async id => evidence.get(id) },
   });
-  return { sheets, request, fail: value => { fail = value; }, interrupt: hook => { beforeCommit = hook; } };
+  return { sheets, request, attach, fail: value => { fail = value; }, interrupt: hook => { beforeCommit = hook; } };
 }
 
 const report = (changes = {}) => ({
@@ -79,8 +86,10 @@ async function startRepair(request) {
 }
 
 test('una falla confirma un mismo folio para avería, OT y bandejas después de persistir', async () => {
-  const { request, sheets, fail } = fixture();
-  const body = report({ photos: ['https://storage-qa.supabase.co/storage/v1/object/public/falla-photos/qa.jpg'] });
+  const { request, sheets, attach, fail } = fixture();
+  const body = report();
+  assert.equal((await request('report', operator, { ...body, photos: ['https://storage-qa.supabase.co/storage/v1/object/public/falla-photos/qa.jpg'] })).status, 400);
+  body.photos = [attach('report', body.mutationId, operator)];
   fail(true);
   assert.equal((await request('report', operator, body)).status, 503);
   assert.deepEqual(await sheets.read('Averias'), []);
@@ -197,7 +206,7 @@ test('una reincidencia conserva el cierre original y queda vinculada a una nueva
   assert.equal(second[24], otId);
   const log = await sheets.read('OT_STATUS_LOG');
   assert.equal(log.filter(row => row[1] === recurrence.body.otId && row[2] === 'reincidencia' && row[4] === otId).length, 1);
-  assert.equal((await request('report', operator, report({ previousOtId: recurrence.body.otId }))).status, 409);
+  assert.equal((await request('report', operator, report({ previousOtId: recurrence.body.otId }))).status, 400);
 });
 
 test('un DVIR fallido mantiene el bloqueo aunque Taller cierre la reparación', async () => {
@@ -314,7 +323,7 @@ test('DVIR reprobado y PM dejan sus filas ligadas a la orden y al calendario', a
 });
 
 test('un sticker mantiene el bloqueo y exige aprobación identificada', async () => {
-  const { request, sheets } = fixture();
+  const { request, sheets, attach } = fixture();
   const { getStickerTemplate } = await import('../../src/data/sticker-inspection-templates.js');
   const template = getStickerTemplate('camion_articulado');
   const checklist = template.items.map((item) => ({ itemId: item.id, status: 'cumple', canOperate: true }));
@@ -339,8 +348,9 @@ test('un sticker mantiene el bloqueo y exige aprobación identificada', async ()
   assert.equal(sticker[19], supervisor.userId);
 
   const hardStop = template.items.find((item) => item.hardStop);
-  const photo = 'https://storage-qa.supabase.co/storage/v1/object/public/sticker-inspection-photos/freno.jpg';
-  const fail = { ...body, mutationId: randomUUID(), photos: [photo], checks: checklist.map((item) => item.itemId === hardStop.id
+  const mutationId = randomUUID();
+  const photo = attach('sticker', mutationId, operator);
+  const fail = { ...body, mutationId, photos: [photo], checks: checklist.map((item) => item.itemId === hardStop.id
     ? { ...item, status: 'no_cumple', canOperate: false, comment: 'Evidencia QA', photos: [photo] }
     : item) };
   assert.equal((await request('sticker', operator, fail)).status, 400);

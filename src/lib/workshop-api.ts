@@ -28,10 +28,11 @@ export function mechanicCoversUnit(mechanic: WorkshopMechanic, unit: string): bo
 }
 
 export async function requestWorkshop<T>(endpoint: string, input?: Record<string, unknown>): Promise<T> {
+  const expectedUserId = workshopActorId();
   const response = await fetch(`/hermes-api/api/workshop/${endpoint}`, {
     method: input ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store',
     headers: input ? { 'Content-Type': 'application/json' } : undefined,
-    body: input ? JSON.stringify(input) : undefined,
+    body: input ? JSON.stringify({ ...input, ...(expectedUserId && { expectedUserId }) }) : undefined,
     signal: AbortSignal.timeout(25000),
   });
   const result = await response.json().catch(() => null);

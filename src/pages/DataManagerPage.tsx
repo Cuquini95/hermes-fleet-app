@@ -118,13 +118,13 @@ const COLLECTIONS: [Collection, ...Collection[]] = [
     emptyMessage: 'No hay averías reportadas',
     columns: [
       { label: 'Fecha',       index: 0, sticky: true, minWidth: '110px' },
-      { label: 'ID',          index: 1, mono: true, hideOnMobile: true },
+      { label: 'OT',          index: 13, mono: true, hideOnMobile: true },
       { label: 'Unidad',      index: 2, mono: true, minWidth: '90px' },
       { label: 'Tipo',        index: 3, hideOnMobile: true },
       { label: 'Descripción', index: 4, minWidth: '200px' },
       { label: 'Severidad',   index: 5, badge: 'severity' },
-      { label: 'Técnico',     index: 6, hideOnMobile: true },
-      { label: 'Status',      index: 7, badge: 'status' },
+      { label: 'Reportó',     index: 6, hideOnMobile: true },
+      { label: 'Estado',      index: 9, badge: 'status' },
     ],
   },
   {
@@ -134,15 +134,14 @@ const COLLECTIONS: [Collection, ...Collection[]] = [
     tab: 'ORDENES_TRABAJO',
     emptyMessage: 'No hay órdenes de trabajo',
     columns: [
-      { label: 'Fecha',       index: 0, sticky: true, minWidth: '110px' },
+      { label: 'Fecha',       index: 2, sticky: true, minWidth: '110px' },
       { label: 'OT ID',       index: 1, mono: true },
-      { label: 'Fecha Doc',   index: 2, hideOnMobile: true, minWidth: '110px' },
       { label: 'Unidad',      index: 3, mono: true, minWidth: '90px' },
       { label: 'Tipo',        index: 4, hideOnMobile: true },
       { label: 'Descripción', index: 5, minWidth: '200px' },
       { label: 'Severidad',   index: 6, badge: 'severity' },
-      { label: 'Técnico',     index: 7, hideOnMobile: true },
-      { label: 'Status',      index: 8, badge: 'status' },
+      { label: 'Técnico',     index: 8, hideOnMobile: true },
+      { label: 'Estado',      index: 9, badge: 'status' },
     ],
   },
   {
@@ -222,6 +221,12 @@ function looksLikeHeaderRow(row: string[], columns: ColumnDef[]): boolean {
   const expected = columns[0]?.label.toLowerCase().trim() ?? '';
   if (!expected) return false;
   return first === expected || first.startsWith('fecha');
+}
+
+function recordRows(rows: string[][], collection: Collection, isPanama: boolean): string[][] {
+  if (isPanama) return rows.slice(collection.id === 'combustible' ? 2 : 1).filter(row => !isRowEmpty(row));
+  const filtered = rows.filter(row => !isRowEmpty(row));
+  return filtered[0] && looksLikeHeaderRow(filtered[0], collection.columns) ? filtered.slice(1) : filtered;
 }
 
 function formatCurrency(raw: string): string {
@@ -338,8 +343,14 @@ function DataManager({ isPanama }: { isPanama: boolean }) {
   }, []);
 
   const active: Collection = useMemo(
-    () => COLLECTIONS.find((c) => c.id === activeId) ?? COLLECTIONS[0],
-    [activeId]
+    () => {
+      const collection = COLLECTIONS.find((c) => c.id === activeId) ?? COLLECTIONS[0];
+      if (!isPanama || collection.id !== 'gastos') return collection;
+      return { ...collection, columns: collection.columns.map(column => ({ ...column,
+        label: ({ RFC: 'RUC', IVA: 'ITBMS', Status: 'Estado' } as Record<string, string>)[column.label] ?? column.label,
+      })) };
+    },
+    [activeId, isPanama]
   );
 
   const loadTab = useCallback(async (collection: Collection) => {
@@ -383,14 +394,8 @@ function DataManager({ isPanama }: { isPanama: boolean }) {
   // Clean rows: drop empties and any header row
   const cleanRows = useMemo(() => {
     const raw = cache[active.id];
-    if (!raw) return [];
-    const filtered = raw.filter((row) => !isRowEmpty(row));
-    const firstRow = filtered[0];
-    if (firstRow && looksLikeHeaderRow(firstRow, active.columns)) {
-      return filtered.slice(1);
-    }
-    return filtered;
-  }, [cache, active]);
+    return raw ? recordRows(raw, active, isPanama) : [];
+  }, [cache, active, isPanama]);
 
   // Filtered by search (client-side, instant)
   const visibleRows = useMemo(() => {
@@ -434,14 +439,8 @@ function DataManager({ isPanama }: { isPanama: boolean }) {
   const loadedRowCounts = (id: string): number | null => {
     const raw = cache[id];
     if (!raw || errors[id]) return null;
-    const filtered = raw.filter((r) => !isRowEmpty(r));
-    const firstRow = filtered[0];
     const coll = COLLECTIONS.find((c) => c.id === id);
-    const body =
-      firstRow && coll && looksLikeHeaderRow(firstRow, coll.columns)
-        ? filtered.slice(1)
-        : filtered;
-    return body.length;
+    return coll ? recordRows(raw, coll, isPanama).length : null;
   };
 
   async function handleCopy() {
@@ -594,20 +593,12 @@ function DataManager({ isPanama }: { isPanama: boolean }) {
 
       {/* ── Table ─────────────────────────────────────────────────────────── */}
       <div className="px-4 py-3">
-        {error ? master ? (
-          <div className="space-y-3">
-            <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Libro operativo no disponible para {active.label.toLowerCase()}.</p>
-            <PanamaSourceRecords key={master} source={master} search={search} />
-          </div>
-        ) : (
+        {error ? (
           <ErrorState message={error} onRetry={() => loadTab(active)} />
         ) : !cache[active.id] ? (
           <SkeletonTable columns={active.columns} />
         ) : visibleRows.length === 0 ? (
-          <div className="space-y-3">
-            <EmptyState message={search ? 'Sin resultados para tu búsqueda' : master ? 'Sin registros de Hermes en esta categoría.' : active.emptyMessage} />
-            {master && cleanRows.length === 0 && <PanamaSourceRecords key={master} source={master} search={search} />}
-          </div>
+          <EmptyState message={search ? 'Sin resultados para tu búsqueda' : master ? 'Sin registros de Hermes en esta categoría.' : active.emptyMessage} />
         ) : (
           <>
             <DataTable columns={active.columns} rows={pagedRows} />
@@ -620,6 +611,7 @@ function DataManager({ isPanama }: { isPanama: boolean }) {
             )}
           </>
         )}
+        {master && <div className="mt-3"><PanamaSourceRecords key={master} source={master} search={search} /></div>}
       </div>
 
       <AnalyticsModal open={analyticsOpen} onClose={() => setAnalyticsOpen(false)} />

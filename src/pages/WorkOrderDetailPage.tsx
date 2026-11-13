@@ -15,6 +15,7 @@ import { photoUrls } from '../lib/averias';
 import { requestWorkshop, mechanicCoversUnit, PANAMA_PM_CHECKLIST_SOURCE, type WorkshopMechanic } from '../lib/workshop-api';
 import { mexicoDateInput } from '../lib/date-utils';
 import { uploadPhoto } from '../lib/photo-upload';
+import { uploadEvidence } from '../lib/evidence-upload';
 import PhotoCapture from '../components/ui/PhotoCapture';
 import OperationalReturnCard from '../components/workshop/OperationalReturnCard';
 
@@ -114,7 +115,7 @@ export default function WorkOrderDetailPage() {
   const [meter, setMeter] = useState('');
   const [completedItems, setCompletedItems] = useState<string[]>([]);
   const [pmState, setPmState] = useState<{ otId: string; definition?: PMChecklistDefinition; error?: string }>();
-  const uploaded = useRef(new Map<File, string>());
+  const uploadAttempt = useRef<{ actorId: string; otId: string; operationId: string; urls: Map<File, string> } | null>(null);
   const submitting = useRef(false);
 
   useEffect(() => {
@@ -161,22 +162,31 @@ export default function WorkOrderDetailPage() {
     .sort((a, b) => orderHistoryTime(b.timestamp) - orderHistoryTime(a.timestamp));
 
   async function handleSave(field: OTStatusField, value: string) {
-    if (!otId || !wo || submitting.current) return;
+    if (!otId || !wo || !actorId || submitting.current) return;
     submitting.current = true;
     setSaving(field);
     setSaveError(null);
     try {
       if (field === 'foto_url') {
+        if (evidence.length > 40) throw new Error('Adjunta hasta 40 fotos por operación.');
+        const previous = uploadAttempt.current;
+        const attempt = previous?.actorId === actorId && previous.otId === otId ? previous
+          : { actorId, otId, operationId: crypto.randomUUID(), urls: new Map<File, string>() };
+        uploadAttempt.current = attempt;
         const urls = [];
-        for (const { file } of evidence) {
-          const url = uploaded.current.get(file) ?? await uploadPhoto(file, 'falla-photos');
-          uploaded.current.set(file, url);
+        for (const [slot, { file }] of evidence.entries()) {
+          if (useAuthStore.getState().userId !== actorId) throw new Error('Cambió la sesión.');
+          const url = attempt.urls.get(file) ?? (panamaWorkflow ? await uploadEvidence(file, {
+            kind: 'order', recordId: otId, units: [wo.unidad], slot, operationId: attempt.operationId, expectedUserId: actorId,
+          }) : await uploadPhoto(file, 'falla-photos'));
+          attempt.urls.set(file, url);
           urls.push(url);
         }
-        await updateOTField(otId, field, urls);
+        if (useAuthStore.getState().userId !== actorId) throw new Error('Cambió la sesión.');
+        await updateOTField(otId, field, urls, undefined, attempt.operationId);
         evidence.forEach(({ preview }) => URL.revokeObjectURL(preview));
         setEvidence([]);
-        uploaded.current.clear();
+        uploadAttempt.current = null;
       } else {
         let execution: WorkshopExecutionInput | undefined;
         if (panamaWorkflow && field === 'estado' && value === 'Resuelta') {
@@ -557,11 +567,18 @@ export default function WorkOrderDetailPage() {
               <legend className="text-xs font-medium text-text-secondary mb-2">Evidencia de la reparación</legend>
               <PhotoCapture
                 photos={evidence}
-                onCapture={(file) => setEvidence((list) => [...list, { file, preview: URL.createObjectURL(file) }])}
-                onRemove={(index) => setEvidence((list) => {
-                  if (list[index]) URL.revokeObjectURL(list[index].preview);
-                  return list.filter((_, i) => i !== index);
-                })}
+                onCapture={(file) => {
+                  uploadAttempt.current = null;
+                  const preview = URL.createObjectURL(file);
+                  setEvidence((list) => [...list, { file, preview }]);
+                }}
+                onRemove={(index) => {
+                  uploadAttempt.current = null;
+                  setEvidence((list) => {
+                    if (list[index]) URL.revokeObjectURL(list[index].preview);
+                    return list.filter((_, i) => i !== index);
+                  });
+                }}
                 multiple
               />
               {evidence.length > 0 && (

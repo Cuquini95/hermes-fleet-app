@@ -80,7 +80,7 @@ interface GastosState {
   canReview: boolean;
   closedThrough: string;
   fetchGastos: () => Promise<void>;
-  saveGasto: (payload: NuevoGastoPayload, allocations: { unit: string; amount: string }[]) => Promise<string[]>;
+  saveGasto: (payload: NuevoGastoPayload, allocations: { unit: string; amount: string }[], attachmentOperationId?: string) => Promise<string[]>;
   deleteGasto: (gastoId: string) => Promise<void>;
   reviewGasto: (gastoId: string, status: 'Aprobado' | 'Rechazado', reason: string) => Promise<void>;
 }
@@ -173,11 +173,11 @@ export const useGastosStore = create<GastosState>((set, get) => ({
     }
   },
 
-  saveGasto: async (payload, allocations) => {
+  saveGasto: async (payload, allocations, attachmentOperationId) => {
     const startedIn = generation;
     set({ saving: true, error: null });
     try {
-      const { ids } = await purchaseWrite<{ ids: string[] }>('expense-save', {
+      const result = await purchaseWrite<{ ids: string[] }>('expense-save', {
         expense: {
           ...payload,
           subtotal: payload.subtotal.toFixed(2),
@@ -185,10 +185,11 @@ export const useGastosStore = create<GastosState>((set, get) => ({
           total: payload.total.toFixed(2),
         },
         allocations,
-      });
+      }, attachmentOperationId, ({ ids }) => Array.isArray(ids) && ids.length === allocations.length
+        && new Set(ids).size === ids.length && ids.every(id => typeof id === 'string' && Boolean(id)));
       if (startedIn !== generation) throw new DOMException('Cambió la sesión', 'AbortError');
       set({ fetched: false });
-      return ids;
+      return result.ids;
     } finally {
       if (startedIn === generation) set({ saving: false });
     }

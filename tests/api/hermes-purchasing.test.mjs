@@ -8,12 +8,12 @@ const manager = {
   projects: ['QA'], assignedUnits: [], canApprovePurchases: true,
 };
 
-function store() {
+function store({ vendors = [['NOMBRE'], ['Proveedor de prueba', 'RFC-QA', 'Dirección QA']] } = {}) {
   let rows = {
     [TAB.orders]: [['OC_ID']],
     [TAB.lines]: [['OC_ID'], ['OC-001', '1', 'Partida histórica sin cabecera', '1', '10', '10']],
     [TAB.requests]: [['Fecha']],
-    [TAB.vendors]: [['NOMBRE'], ['Proveedor de prueba', 'RFC-QA', 'Dirección QA']],
+    [TAB.vendors]: vendors,
     [TAB.expenses]: [['Gasto_ID']],
     [TAB.audit]: [['Registro']],
     '12 Inventario Rep.': [['SKU','Descripción','OEM','Serie','Unidad','Stock','Mínimo','Precio','Ubicación','','Equipo'], ['SKU-QA','Filtro QA','','','pza','4','2','5','','','QA-DZ203']],
@@ -73,8 +73,8 @@ function store() {
   };
 }
 
-function setup() {
-  const sheets = store();
+function setup(options) {
+  const sheets = store(options);
   const call = (action, body, session = manager, query) => dispatchPurchasing({
     path: 'api/purchasing/' + action,
     method: body ? 'POST' : 'GET',
@@ -130,6 +130,69 @@ test('mantiene la huérfana y guarda tres importes con el mismo folio después d
   assert.equal(order.unit, 'CA20');
   assert.equal(sheets.inspect(TAB.orders).length, 2);
   assert.equal(sheets.inspect(TAB.lines).length, 5);
+});
+
+test('Panamá guarda borradores con proveedor manual, descuento e ITBMS documentado', async (t) => {
+  const previous = process.env.HERMES_PURCHASE_ISSUERS_JSON;
+  delete process.env.HERMES_PURCHASE_ISSUERS_JSON;
+  t.after(() => {
+    if (previous === undefined) delete process.env.HERMES_PURCHASE_ISSUERS_JSON;
+    else process.env.HERMES_PURCHASE_ISSUERS_JSON = previous;
+  });
+  const buyer = { ...manager, project: 'tmf-panama', canApprovePurchases: false };
+  const { call, readOrder, sheets } = setup({ vendors: [['NOMBRE']] });
+  const overview = (await call('orders', null, buyer)).body;
+  assert.deepEqual(overview.vendors, []);
+  assert.deepEqual(overview.issuers.map(({ id, name, currency, taxBps }) => [id, name, currency, taxBps]), [
+    ['TP_PA', 'TRANSPLUS, S.A.', 'USD', undefined],
+  ]);
+  assert.equal(overview.canApprove, false);
+  assert.equal(overview.canRecordInvoice, false);
+  assert.equal(overview.canRecordPayment, false);
+
+  const base = {
+    entity: 'TP_PA', unit: 'DZ203', vendorSource: 'manual', vendorName: 'Proveedor documental QA',
+    vendorRfc: 'RUC-QA-123', vendorAddress: 'Dirección Panamá QA', shipping: '0', other: '0', discount: '32.80',
+    lines: [{ description: 'Refacción QA', quantity: '1', unitPrice: '163.90' }],
+  };
+  assert.equal((await call('order-save', newOrder(base), buyer)).status, 400);
+  assert.equal((await call('order-save', newOrder({ ...base, tax: '9.18', vendorName: '' }), buyer)).status, 400);
+  assert.equal((await call('order-save', newOrder({ ...base, tax: '9.18', discount: '163.91' }), buyer)).status, 400);
+  assert.equal((await call('order-save', newOrder({ ...base, tax: '9.18', vendorSource: 'catalog' }), buyer)).status, 400);
+  const discounted = newOrder({ ...base, tax: '9.18' });
+  const saved = await call('order-save', discounted, buyer);
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  assert.deepEqual((await call('order-save', discounted, buyer)).body, saved.body);
+  const order = await readOrder(saved.body.folio, buyer);
+  assert.deepEqual([order.subtotal, order.discount, order.tax, order.total, order.status], ['163.90', '32.80', '9.18', '140.28', 'Borrador']);
+  assert.deepEqual([order.vendorSource, order.vendorName, order.vendorRfc, order.vendorAddress], [
+    'manual', base.vendorName, base.vendorRfc, base.vendorAddress,
+  ]);
+  assert.deepEqual([order.issuer.taxId, order.issuer.phone], ['RUC 2236707-1-778948 DV 15', '387-3710']);
+  assert.equal((await call('order-status', {
+    operationId: randomUUID(), folio: order.folio, version: order.version, status: 'Aprobada',
+  }, buyer)).status, 403);
+  const manualApproval = await call('order-status', {
+    operationId: randomUUID(), folio: order.folio, version: order.version, status: 'Aprobada', reason: 'Q25 QA',
+  }, { ...buyer, canApprovePurchases: true });
+  assert.equal(manualApproval.status, 409);
+  assert.match(manualApproval.body.error, /proveedor del catálogo/);
+  assert.equal((await call('order-save', newOrder({ ...base, tax: '0' }), { ...buyer, allUnits: false, assignedUnits: ['EX401'] })).status, 403);
+
+  const exempt = await call('order-save', newOrder({
+    ...base, tax: '0', folio: order.folio, version: order.version,
+    lines: [{ id: order.lines[0].id, ...base.lines[0] }],
+  }), buyer);
+  assert.equal(exempt.status, 200, JSON.stringify(exempt.body));
+  const updated = await readOrder(order.folio, buyer);
+  assert.deepEqual([updated.tax, updated.total, updated.status], ['0.00', '131.10', 'Borrador']);
+  const document = await call('order-save', newOrder({
+    ...base, discount: '0', tax: '371.00', lines: [{ description: 'Servicio QA', quantity: '1', unitPrice: '5300.00' }],
+  }), buyer);
+  assert.equal(document.status, 200, JSON.stringify(document.body));
+  assert.equal(document.body.total, '5671.00');
+  assert.deepEqual(sheets.inspect(TAB.vendors), [['NOMBRE']]);
+  assert.equal(sheets.inspect(TAB.orders).length, 3);
 });
 
 test('dos altas concurrentes tienen folios distintos y una edición actualiza solo sus partidas', async () => {
@@ -251,11 +314,12 @@ test('Almacén de Panamá consulta y recibe por partida dentro de su asignación
   const mexico = { ...warehouse, project: 'mexico', projects: ['mexico'] };
 
   async function createOrder(unit, approve = true) {
-    const created = await call('order-save', newOrder({ entity: 'TP_PA', unit, lines: [
+    const created = await call('order-save', newOrder({ entity: 'TP_PA', unit, tax: '1.32', vendorAddress: 'No sustituye el catálogo', lines: [
       { description: 'Filtro hidráulico', quantity: '3.125', unitPrice: '6.05', partNumber: 'FILTRO-QA' },
     ] }), buyer);
     assert.equal(created.status, 200);
     const order = await readOrder(created.body.folio, buyer);
+    assert.equal(order.vendorAddress, 'Dirección QA');
     if (!approve) return order;
     assert.equal((await call('order-status', {
       operationId: randomUUID(), folio: order.folio, version: order.version, status: 'Aprobada', reason: 'Soporte Q25 sintético',

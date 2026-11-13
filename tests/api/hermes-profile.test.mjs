@@ -4,6 +4,7 @@ import { createHermesGateway } from '../../api/hermes-sheets-gate.js';
 
 const id = '11111111-1111-4111-8111-111111111111';
 const other = '22222222-2222-4222-8222-222222222222';
+const proof = `/hermes-api/api/evidence?id=${'a'.repeat(64)}`;
 const session = { userId: id, userName: 'Nombre compartido', role: 'operador', project: 'tmf-panama', assignedUnits: ['CA20'] };
 const row = (columns, fields) => Object.assign(Array(columns).fill(''), fields);
 const inspect = ({ owner, unit, folio }) => row(29, { 1: folio, 2: '12/11/2026', 3: '07:00', 4: unit, 6: session.userName, 22: 'aprobado', 28: owner });
@@ -13,6 +14,10 @@ const data = {
     inspect({ owner: other, unit: 'CA20', folio: 'INS-2' }),
     inspect({ owner: id, unit: 'CV20', folio: 'INS-3' }),
     inspect({ owner: '', unit: 'CA20', folio: 'INS-LEGACY' }),
+  ],
+  Inspeccion_Stickers: [
+    row(21, { 1: 'STICKER-1', 3: '12/11/2026', 4: '06:00', 5: 'CA20', 10: 'pendiente_supervisor', 16: proof, 18: id }),
+    row(21, { 1: 'STICKER-2', 3: '12/11/2026', 4: '06:30', 5: 'CA20', 10: 'aprobado_supervisor', 16: proof, 18: other }),
   ],
   'ORDENES_TRABAJO': [row(20, { 1: 'OT-1', 3: 'CA20', 19: id })],
   'Averías': [row(15, { 0: '12/11/2026', 1: '07:45', 2: 'CA20', 4: 'Falla de prueba', 13: 'OT-1' })],
@@ -35,7 +40,8 @@ test('personal history reports only records attributable to the session and avai
   });
   const res = await call(gate, 'api/profile/history');
   assert.equal(res.statusCode, 200);
-  assert.deepEqual(res.body.records.map(item => item.folio), ['OT-1', 'INS-1']);
+  assert.deepEqual(res.body.records.map(item => item.folio), ['OT-1', 'INS-1', 'STICKER-1']);
+  assert.deepEqual(res.body.records.find(item => item.folio === 'STICKER-1')?.evidence, [proof]);
   assert.ok(res.body.unavailable.includes('Horómetros'));
   assert.ok(!Object.values(res.body).flat().some(item => item?.folio === 'INS-LEGACY'));
 });

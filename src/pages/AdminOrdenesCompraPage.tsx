@@ -23,8 +23,13 @@ interface Draft {
   date: string;
   deliveryDate: string;
   vendor: string;
+  vendorName: string;
+  vendorRfc: string;
+  vendorAddress: string;
   unit: string;
   entity: string;
+  discount: string;
+  tax: string;
   shipping: string;
   other: string;
   comments: string;
@@ -34,6 +39,7 @@ interface Draft {
 const input = 'w-full min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm';
 const button = 'rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium disabled:opacity-50';
 const primary = 'rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50';
+const manualVendor = 'manual';
 const blankLine = (): DraftLine => ({ key: crypto.randomUUID(), description: '', partNumber: '', quantity: '1', unitPrice: '' });
 const today = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Panama' });
 const isoDate = (dmy: string) => {
@@ -41,8 +47,8 @@ const isoDate = (dmy: string) => {
   return year && month && day ? year + '-' + month.padStart(2, '0') + '-' + day.padStart(2, '0') : dmy;
 };
 const blankDraft = (entity = ''): Draft => ({
-  folio: '', version: '', date: today(), deliveryDate: '', vendor: '', unit: 'FLOTA', entity,
-  shipping: '0', other: '0', comments: '', lines: [blankLine()],
+  folio: '', version: '', date: today(), deliveryDate: '', vendor: '', vendorName: '', vendorRfc: '', vendorAddress: '', unit: 'FLOTA', entity,
+  discount: '', tax: '', shipping: '0', other: '0', comments: '', lines: [blankLine()],
 });
 const vendorKey = (name: string, rfc: string) => JSON.stringify([name, rfc]);
 const linkedLine = (line: PurchaseRequestLine): DraftLine => ({
@@ -60,6 +66,8 @@ function cents(value: string) {
 
 export default function AdminOrdenesCompraPage() {
   const isPanama = useAuthStore((state) => state.project === 'tmf-panama');
+  const previewDemo = useAuthStore((state) => state.previewDemo);
+  const requiresDocumentTax = isPanama && !previewDemo;
   const [params, setParams] = useSearchParams();
   const initialLine = params.get('partida') ?? '';
   const [data, setData] = useState<PurchaseOverview | null>(null);
@@ -115,10 +123,14 @@ export default function AdminOrdenesCompraPage() {
 
   const issuer = data?.issuers.find((entry) => entry.id === draft.entity);
   const currency = issuer?.currency || 'USD';
+  const usesManualVendor = isPanama && draft.vendor === manualVendor;
   const vendor = data?.vendors.find((entry) => vendorKey(entry.name, entry.rfc) === draft.vendor);
+  const vendorReady = usesManualVendor ? Boolean(draft.vendorName.trim()) : Boolean(vendor);
   const subtotal = draft.lines.reduce((sum, line) => sum + Math.round(Math.round((Number(line.quantity) || 0) * 1000) * cents(line.unitPrice) / 1000), 0);
-  const tax = Math.round(subtotal * (issuer?.taxBps || 0) / 10000);
-  const total = subtotal + tax + cents(draft.shipping) + cents(draft.other);
+  const netSubtotal = subtotal - cents(draft.discount);
+  const tax = isPanama && draft.tax !== '' ? cents(draft.tax)
+    : requiresDocumentTax ? null : Math.round(netSubtotal * (issuer?.taxBps || 0) / 10000);
+  const total = tax === null || netSubtotal < 0 ? null : netSubtotal + tax + cents(draft.shipping) + cents(draft.other);
   const openOrder = data?.orders.find((order) => order.folio === receiving);
   const candidateLines = requests.filter((line) =>
     line.estado !== 'Completado' && !line.ocFolio &&
@@ -141,10 +153,14 @@ export default function AdminOrdenesCompraPage() {
   function edit(order: PurchaseOrder) {
     setError('');
     setReceiving('');
+    const catalogVendor = vendorKey(order.vendorName, order.vendorRfc);
+    const keepVendorSnapshot = isPanama && (order.vendorSource === 'manual' || !data?.vendors.some((entry) => vendorKey(entry.name, entry.rfc) === catalogVendor));
     setDraft({
       folio: order.folio, version: order.version, date: isoDate(order.date), deliveryDate: isoDate(order.deliveryDate),
-      vendor: vendorKey(order.vendorName, order.vendorRfc), unit: order.unit || 'FLOTA',
+      vendor: keepVendorSnapshot ? manualVendor : catalogVendor, vendorName: order.vendorName, vendorRfc: order.vendorRfc,
+      vendorAddress: order.vendorAddress, unit: order.unit || 'FLOTA',
       entity: order.issuer?.id || data?.issuers[0]?.id || '',
+      discount: order.discount?.replace(/[$,\s]/g, '') || '', tax: order.tax.replace(/[$,\s]/g, ''),
       shipping: order.shipping.replace(/[$,\s]/g, '') || '0', other: order.other.replace(/[$,\s]/g, '') || '0', comments: order.comments,
       lines: order.lines.length ? order.lines.map((line) => ({
         ...line, key: line.id,
@@ -174,13 +190,16 @@ export default function AdminOrdenesCompraPage() {
 
   async function save(event: React.FormEvent) {
     event.preventDefault();
-    if (!vendor) { setError('Selecciona un proveedor.'); return; }
+    if (!vendorReady) { setError('Identifica el proveedor de la orden.'); return; }
     const lines = draft.lines.map(({ id, description, partNumber, quantity, unitPrice, requestLineId }) => ({
       id, description: description.trim(), partNumber, quantity, unitPrice, requestLineId,
     }));
     await run('order-save', {
       folio: draft.folio || undefined, version: draft.version || undefined, date: draft.date,
-      deliveryDate: draft.deliveryDate, vendorName: vendor.name, vendorRfc: vendor.rfc, unit: draft.unit,
+      deliveryDate: draft.deliveryDate, unit: draft.unit,
+      vendorName: vendor?.name ?? draft.vendorName, vendorRfc: vendor?.rfc ?? draft.vendorRfc,
+      ...(usesManualVendor ? { vendorSource: manualVendor, vendorAddress: draft.vendorAddress } : {}),
+      ...(isPanama ? { discount: draft.discount || '0', tax: draft.tax || undefined } : {}),
       entity: draft.entity, shipping: draft.shipping || '0', other: draft.other || '0', comments: draft.comments, lines,
     }, (reply) => {
       setMessage(reply.folio + ' guardada · ' + displayMoney(reply.total || '0', currency));
@@ -250,9 +269,21 @@ export default function AdminOrdenesCompraPage() {
               <select aria-label="Proveedor" required className={input} value={draft.vendor} onChange={(event) => setField('vendor', event.target.value)}>
                 <option value="">Seleccionar</option>
                 {data.vendors.map((entry, index) => <option key={index} value={vendorKey(entry.name, entry.rfc)}>{entry.name}</option>)}
+                {isPanama && <option value={manualVendor}>Capturar proveedor para este borrador</option>}
               </select>
               {vendor && <span className="block text-xs text-gray-600">{vendor.rfc} · {vendor.address}</span>}
             </label>
+            {usesManualVendor && <div className="grid gap-3 sm:col-span-2 sm:grid-cols-2">
+              <label className="text-sm">Nombre del proveedor
+                <input required maxLength={180} className={input} value={draft.vendorName} onChange={(event) => setField('vendorName', event.target.value)} />
+              </label>
+              <label className="text-sm">RUC o identificación fiscal del proveedor
+                <input maxLength={80} className={input} value={draft.vendorRfc} onChange={(event) => setField('vendorRfc', event.target.value)} />
+              </label>
+              <label className="text-sm sm:col-span-2">Dirección del proveedor
+                <input maxLength={500} className={input} value={draft.vendorAddress} onChange={(event) => setField('vendorAddress', event.target.value)} />
+              </label>
+            </div>}
             <label className="text-sm">Fecha de la orden
               <input type="date" required className={input} value={draft.date} onChange={(event) => setField('date', event.target.value)} />
             </label>
@@ -305,6 +336,14 @@ export default function AdminOrdenesCompraPage() {
             </button>
           </div>
           <div className="grid grid-cols-2 gap-2">
+            {isPanama && <>
+              <label className="text-sm">Descuento según documento
+                <input type="number" min="0" max={subtotal / 100} step="0.01" className={input} value={draft.discount} onChange={(event) => setField('discount', event.target.value)} />
+              </label>
+              <label className="text-sm">{issuer?.taxLabel || 'ITBMS'} según documento
+                <input type="number" min="0" step="0.01" required={requiresDocumentTax} placeholder="0 si es exento" className={input} value={draft.tax} onChange={(event) => setField('tax', event.target.value)} />
+              </label>
+            </>}
             <label className="text-sm">Envío
               <input type="number" min="0" step="0.01" className={input} value={draft.shipping} onChange={(event) => setField('shipping', event.target.value)} />
             </label>
@@ -317,11 +356,12 @@ export default function AdminOrdenesCompraPage() {
           </label>
           <dl className="space-y-1 text-sm">
             <div className="flex justify-between"><dt>Subtotal</dt><dd>{displayMoney(subtotal / 100, currency)}</dd></div>
-            <div className="flex justify-between"><dt>{issuer?.taxLabel || 'Impuesto'}</dt><dd>{displayMoney(tax / 100, currency)}</dd></div>
-            <div className="flex justify-between font-bold"><dt>Total</dt><dd>{displayMoney(total / 100, currency)}</dd></div>
+            {netSubtotal !== subtotal && <div className="flex justify-between"><dt>Subtotal con descuento</dt><dd>{displayMoney(netSubtotal / 100, currency)}</dd></div>}
+            <div className="flex justify-between"><dt>{issuer?.taxLabel || 'Impuesto'}</dt><dd>{tax === null ? '—' : displayMoney(tax / 100, currency)}</dd></div>
+            <div className="flex justify-between font-bold"><dt>Total</dt><dd>{total === null ? '—' : displayMoney(total / 100, currency)}</dd></div>
           </dl>
           <div className="flex flex-wrap gap-2">
-            <button type="submit" disabled={saving || !vendor || !issuer} className={primary}>{saving ? 'Guardando…' : 'Guardar orden'}</button>
+            <button type="submit" disabled={saving || !vendorReady || !issuer || total === null} className={primary}>{saving ? 'Guardando…' : 'Guardar orden'}</button>
             {draft.folio && <button type="button" className={button} onClick={resetDraft}>Cancelar edición</button>}
           </div>
         </form>
@@ -343,7 +383,7 @@ export default function AdminOrdenesCompraPage() {
               {order.status === 'Borrador' && <button type="button" className={button} disabled={saving} onClick={() => edit(order)}>Editar</button>}
               {data.canApprove && order.status === 'Borrador' && (
                 <>
-                  <button type="button" className={primary} disabled={saving} onClick={() => decide(order, 'Aprobada')}>Aprobar</button>
+                  <button type="button" className={primary} disabled={saving || (isPanama && order.vendorSource === 'manual')} onClick={() => decide(order, 'Aprobada')}>Aprobar</button>
                   <button type="button" className={button} disabled={saving} onClick={() => decide(order, 'Rechazada')}>Rechazar</button>
                 </>
               )}
@@ -355,6 +395,9 @@ export default function AdminOrdenesCompraPage() {
                 onClick={() => openReconciliation(order, 'order-payment')}>Registrar pago conciliado</button>}
               {['Borrador', 'Rechazada'].includes(order.status) && <button type="button" className={button} disabled={saving} onClick={() => setConfirmDelete(order.folio)}>Eliminar orden</button>}
             </div>
+            {data.canApprove && isPanama && order.status === 'Borrador' && order.vendorSource === 'manual' && (
+              <p className="text-xs text-gray-600">Selecciona el proveedor del catálogo en el borrador antes de aprobar.</p>
+            )}
             {order.approvalReason && <p className="break-words text-sm text-gray-600">Decisión · {order.approvalReason}</p>}
             {order.invoice && <p className="break-words text-sm text-gray-600">Factura {order.invoice.reference} · {order.invoice.by}</p>}
             {order.payment && <p className="break-words text-sm text-gray-600">Pago conciliado {order.payment.reference} · {order.payment.by}</p>}

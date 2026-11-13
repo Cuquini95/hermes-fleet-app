@@ -16,10 +16,11 @@ import {
   ScanLine,
 } from 'lucide-react';
 import { useGastosStore } from '../stores/gastos-store';
+import { useAuthStore } from '../stores/auth-store';
 import { ocrReceipt, comparePartsQuote } from '../lib/sheets-api';
 import type { ExpenseOptions, GastoTipo, MetodoPago } from '../stores/gastos-store';
 import type { OcrLineItem, PriceChange } from '../lib/sheets-api';
-import { canAttachExpenseReceipt, purchaseRead, uploadExpenseReceipt } from '../lib/purchasing-api';
+import { canAttachExpenseReceipt, PurchaseApiError, purchaseRead, uploadExpenseReceipt } from '../lib/purchasing-api';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { mexicoDateInput } from '../lib/date-utils';
 import PhotoCapture from '../components/ui/PhotoCapture';
@@ -41,6 +42,10 @@ export default function NuevoGastoPage() {
   const navigate = useNavigate();
   const equipment = useEquipmentList();
   const { saveGasto, saving } = useGastosStore();
+  const project = useAuthStore(state => state.project);
+  const actorId = useAuthStore(state => state.userId);
+  const allUnits = useAuthStore(state => state.allUnits);
+  const isPanama = project === 'tmf-panama';
 
   // ── Form state
   const [tipo, setTipo] = useState<GastoTipo>('Refaccion');
@@ -64,7 +69,7 @@ export default function NuevoGastoPage() {
     return () => ctrl.abort();
   }, []);
   const [subtotal, setSubtotal] = useState(0);
-  const [iva, setIva] = useState(0);
+  const [iva, setIva] = useState<number | null>(null);
   const [total, setTotal] = useState(0);
   // ── Unit mode
   const [unitMode, setUnitMode] = useState<'single' | 'multi'>('single');
@@ -74,12 +79,12 @@ export default function NuevoGastoPage() {
   const [otId, setOtId] = useState('');
   const [metodoPago, setMetodoPago] = useState<MetodoPago>('Efectivo');
   const [lineItems, setLineItems] = useState<OcrLineItem[]>([emptyLine()]);
-  const receipt = useRef<{ file: File; operationId: string; uploadedUrl: string } | null>(null);
+  const receipt = useRef<{ file: File; operationId: string; uploadedUrl: string; unitScope: string } | null>(null);
   const [attachmentName, setAttachmentName] = useState('');
   const [receiptPhotos, setReceiptPhotos] = useState<PhotoItem[]>([]);
 
   const selectReceipt = useCallback((file: File) => {
-    receipt.current = { file, operationId: crypto.randomUUID(), uploadedUrl: '' };
+    receipt.current = { file, operationId: crypto.randomUUID(), uploadedUrl: '', unitScope: '' };
     setAttachmentName(file.name);
     setReceiptPhotos((previous) => {
       if (previous[0]) URL.revokeObjectURL(previous[0].preview);
@@ -114,6 +119,7 @@ export default function NuevoGastoPage() {
   const [telegramSent, setTelegramSent] = useState(false);
   const [priceMessage, setPriceMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [confirmationPending, setConfirmationPending] = useState(false);
   const submitLock = useRef(false);
 
   const fileRef = useRef<HTMLInputElement>(null);
@@ -123,7 +129,7 @@ export default function NuevoGastoPage() {
 
   function handleSubtotalChange(val: number) {
     setSubtotal(val);
-    setTotal(parseFloat((val + iva).toFixed(2)));
+    setTotal(parseFloat((val + (iva ?? 0)).toFixed(2)));
   }
 
   // ── OCR ───────────────────────────────────────────────────────────────────
@@ -140,7 +146,7 @@ export default function NuevoGastoPage() {
       setRfcProveedor(result.rfc_proveedor || '');
       setFolioFactura(result.folio_factura || '');
       setSubtotal(result.subtotal || 0);
-      setIva(result.iva || 0);
+      setIva(result.iva || null);
       setTotal(result.total || 0);
       if (result.tipo) setTipo(result.tipo as GastoTipo);
       if (result.line_items?.length) setLineItems(result.line_items);
@@ -220,17 +226,26 @@ export default function NuevoGastoPage() {
     setSubmitting(true);
     setSubmitError(null);
     setPriceMessage('');
+    let sent = false;
 
     try {
       if (!entity || !documentDate) throw new Error('Indica la entidad y la fecha del documento.');
+      if (isPanama && iva === null) throw new Error('Indica el ITBMS del documento. Escribe 0 si es exento.');
+      const allocations = unitMode === 'single'
+        ? [{ unit: unidad, amount: total.toFixed(2) }]
+        : splitEntries.map(({ unitId, amount }) => ({ unit: unitId, amount: amount.toFixed(2) }));
       const selectedReceipt = receipt.current;
-      if (selectedReceipt && !selectedReceipt.uploadedUrl) {
-        try {
-          selectedReceipt.uploadedUrl = await uploadExpenseReceipt(selectedReceipt.file, selectedReceipt.operationId);
-        } catch {
-          throw new Error('No se confirmó el adjunto del recibo. Reintenta con el mismo archivo.');
+      if (selectedReceipt) {
+        const units = allocations.map(({ unit }) => (unit || 'FLOTA').toUpperCase()).sort();
+        const scope = JSON.stringify([actorId, units]);
+        if (selectedReceipt.unitScope && selectedReceipt.unitScope !== scope) {
+          selectedReceipt.operationId = crypto.randomUUID();
+          selectedReceipt.uploadedUrl = '';
         }
+        selectedReceipt.unitScope = scope;
+        selectedReceipt.uploadedUrl ||= await uploadExpenseReceipt(selectedReceipt.file, selectedReceipt.operationId, units, project, actorId);
       }
+      if (actorId !== useAuthStore.getState().userId) throw new Error('Cambió la sesión.');
 
       const commonFields = {
         tipo,
@@ -244,16 +259,15 @@ export default function NuevoGastoPage() {
         metodo_pago: metodoPago,
         imagen_url: selectedReceipt?.uploadedUrl ?? '',
         line_items: lineItems.filter((line) => line.description.trim()),
-        subtotal, iva, total,
+        subtotal, iva: iva ?? 0, total,
       };
-      const allocations = unitMode === 'single'
-        ? [{ unit: unidad, amount: total.toFixed(2) }]
-        : splitEntries.map(({ unitId, amount }) => ({ unit: unitId, amount: amount.toFixed(2) }));
-      const expenseIds = await saveGasto(commonFields, allocations);
+      sent = true;
+      const expenseIds = await saveGasto(commonFields, allocations, isPanama ? selectedReceipt?.operationId : undefined);
+      setConfirmationPending(false);
 
       if (tipo === 'Refaccion' && commonFields.line_items.some((line) => line.part_number && line.unit_price > 0)) {
         try {
-          const result = await comparePartsQuote(proveedor, commonFields.line_items, { expenseIds, notify: true });
+          const result = await comparePartsQuote(proveedor, commonFields.line_items, { expenseIds, notify: !isPanama });
           setPriceChanges(result.price_changes);
           setTelegramSent(result.telegram_sent);
           if (result.unmatched.length) setPriceMessage(`Sin historial comparable para ${result.unmatched.length} repuesto(s).`);
@@ -271,7 +285,12 @@ export default function NuevoGastoPage() {
       setSubmitDone(true);
       setTimeout(() => navigate(-1), 1800);
     } catch (err: unknown) {
-      setSubmitError(err instanceof Error ? err.message : 'Error al guardar');
+      const uncertain = sent && (!(err instanceof PurchaseApiError) || err.confirmationPending);
+      const pending = isPanama && (uncertain || (confirmationPending && err instanceof PurchaseApiError && [401, 403, 404, 409, 429].includes(err.status)));
+      setConfirmationPending(pending);
+      setSubmitError(pending
+        ? 'El registro está pendiente de confirmación. Usa Reintentar registro para verificar el mismo gasto.'
+        : err instanceof Error ? err.message : 'Error al guardar');
     } finally {
       submitLock.current = false;
       setSubmitting(false);
@@ -340,24 +359,25 @@ export default function NuevoGastoPage() {
     );
   }
 
-  const unitIds = ['FLOTA', ...equipment.map((e) => e.unit_id)];
+  const unitIds = [...(!isPanama || allUnits ? ['FLOTA'] : []), ...equipment.map((e) => e.unit_id)];
 
   return (
     <form onSubmit={handleSubmit} className="flex min-w-0 flex-col py-4 gap-4 animate-fade-up">
       {/* Header */}
       <div className="flex items-center gap-2 mb-1">
-        <button type="button" onClick={() => navigate(-1)} className="p-1 -ml-1" aria-label="Volver">
+        <button type="button" onClick={() => navigate(-1)} disabled={submitting || confirmationPending} className="p-1 -ml-1 disabled:opacity-40" aria-label="Volver">
           <ChevronLeft size={22} className="text-text-secondary" aria-hidden="true" />
         </button>
         <h1 className="text-xl font-bold text-text">Nuevo Gasto</h1>
       </div>
 
+      <fieldset disabled={submitting || confirmationPending} className="flex min-w-0 flex-col gap-4">
       {/* ── OCR section ─────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-border p-4 shadow-sm">
         <p className="text-sm font-semibold text-text mb-3 flex items-center gap-2">
           <ScanLine size={16} /> Escanear Recibo / Factura
         </p>
-        {canAttachExpenseReceipt ? (
+        {canAttachExpenseReceipt(project) ? (
           <>
             <div className="flex gap-3">
               {/* Camera */}
@@ -641,18 +661,20 @@ export default function NuevoGastoPage() {
             />
           </div>
           <div>
-            <label className="text-xs text-text-secondary mb-1 block">{entity?.taxLabel || 'Impuesto'} según documento</label>
+            <label htmlFor="expense-document-tax" className="text-xs text-text-secondary mb-1 block">{entity?.taxLabel || 'Impuesto'} según documento</label>
             <input
+              id="expense-document-tax"
+              required={isPanama}
               type="number"
               step="0.01"
               min="0"
-              value={iva || ''}
+              value={iva ?? ''}
               onChange={(e) => {
-                const v = parseFloat(e.target.value) || 0;
+                const v = e.target.value === '' ? null : e.target.valueAsNumber;
                 setIva(v);
-                setTotal(parseFloat((subtotal + v).toFixed(2)));
+                setTotal(parseFloat((subtotal + (v ?? 0)).toFixed(2)));
               }}
-              placeholder="0.00"
+              placeholder={isPanama ? '0 si es exento' : '0.00'}
               className="w-full border border-border rounded-lg px-3 py-2 text-sm"
             />
           </div>
@@ -738,9 +760,11 @@ export default function NuevoGastoPage() {
         </button>
       </div>
 
+      </fieldset>
+
       {/* ── Error ────────────────────────────────────────────────────────── */}
       {submitError && (
-        <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">
+        <div role="alert" className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">
           <AlertCircle size={16} />
           {submitError}
         </div>
@@ -749,7 +773,7 @@ export default function NuevoGastoPage() {
       {/* ── Submit ───────────────────────────────────────────────────────── */}
       <button
         type="submit"
-        disabled={!entity || saving || submitting || ocrLoading || (unitMode === 'multi' && !splitOk)}
+        disabled={!entity || (isPanama && iva === null) || saving || submitting || ocrLoading || (unitMode === 'multi' && !splitOk)}
         className="w-full bg-amber text-white font-semibold rounded-xl py-3.5 flex items-center justify-center gap-2 disabled:opacity-60"
       >
         {saving || submitting ? (
@@ -757,6 +781,8 @@ export default function NuevoGastoPage() {
             <Loader2 size={18} className="animate-spin" />
             Guardando…
           </>
+        ) : confirmationPending ? (
+          'Reintentar registro'
         ) : unitMode === 'multi' ? (
           `Registrar ${splitEntries.length} gastos`
         ) : (

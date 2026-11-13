@@ -208,6 +208,7 @@ export default function PedidosPage() {
         <ShoppingCart size={24} color="#162252" />
         <h1 className="text-xl font-bold text-text">Pedidos de Refacciones</h1>
       </div>
+      {isPanama && isGerencia && <Link to="/admin/ordenes-compra" className="mb-4 inline-flex min-h-11 items-center rounded-lg border border-slate-400 bg-white px-4 text-sm font-semibold text-[#162252]">Órdenes de compra</Link>}
       {canReceive && <Link to="/panama/recepciones" className="mb-4 inline-flex min-h-11 items-center rounded-lg border border-slate-400 bg-white px-4 text-sm font-semibold text-[#162252]">Recepciones de compras</Link>}
 
       {/* ── Tabs ── */}
@@ -406,13 +407,12 @@ export default function PedidosPage() {
             <>
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
                 <p role="alert" className="text-sm text-amber-900">
-                  {historialError === 'access' ? 'Verifica tu sesión y los permisos de tu cuenta.' : isPanama ? 'El libro operativo no responde. Pedidos pendientes e historial de Hermes sin verificar.' : 'No se pudieron consultar los pedidos.'}
+                  {historialError === 'access' ? 'Tu cuenta no pudo abrir esta consulta.' : 'No se pudieron consultar los pedidos de Hermes.'}
                 </p>
                 <button type="button" onClick={() => void loadHistorial()} className="flex min-h-10 shrink-0 items-center gap-2 rounded-lg bg-[#162252] px-3 text-sm font-semibold text-white">
                   <RefreshCw size={15} /> Reintentar
                 </button>
               </div>
-              {isPanama && historialError === 'source' && <PanamaSourceRecords source="purchases" />}
             </>
           )}
 
@@ -434,8 +434,6 @@ export default function PedidosPage() {
             </div>
           )}
 
-          {isPanama && !loadingHistorial && !historialError && historial.length === 0 && <PanamaSourceRecords source="purchases" />}
-
           {visibleRows.map((row) => (
             <PedidoRowCard
               key={row.id}
@@ -444,6 +442,7 @@ export default function PedidosPage() {
               onStatusChange={() => loadHistorial()}
             />
           ))}
+          {isPanama && !loadingHistorial && historialError !== 'access' && <PanamaSourceRecords source="purchases" />}
 
           {/* Refresh at bottom when results are showing */}
           {!loadingHistorial && !historialError && visibleRows.length > 0 && (

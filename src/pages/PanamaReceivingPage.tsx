@@ -116,6 +116,8 @@ function ReceivingQueue() {
                       {line.receipts.map((receipt) => <li key={receipt.id} className="break-words">
                         {receipt.quantity} · {receipt.by} · <time dateTime={receipt.at}>{formatPanamaReceiptDate(receipt.at)}</time>
                         {receipt.reference && ` · ${receipt.reference}`}
+                        {receipt.stockDisposition === 'posted' && ' · Inventario actualizado'}
+                        {receipt.stockDisposition === 'unregistered' && ' · SKU sin alta en inventario'}
                       </li>)}
                     </ul>}
                     {pending > 0 && (isActive ? <ReceiptForm

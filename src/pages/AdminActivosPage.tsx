@@ -1,12 +1,11 @@
 /**
  * Admin · Activos
  * Gerencia-only page for creating fleet asset records.
- * Writes to Google Sheets tab "Activos". Read by Power-GTP's
- * "Ciclo de Vida de Activos" dashboard.
  */
 
 import { useEffect, useState } from 'react';
 import { appendRow, readRange } from '../lib/sheets-api';
+import { useAuthStore } from '../stores/auth-store';
 
 const TAB = 'Activos';
 
@@ -45,6 +44,7 @@ function toDDMMYYYY(iso: string): string {
 }
 
 export default function AdminActivosPage() {
+  const isPanama = useAuthStore(state => state.project === 'tmf-panama');
   const [rows, setRows] = useState<string[][] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [form, setForm] = useState<AssetForm>(empty);
@@ -86,7 +86,7 @@ export default function AdminActivosPage() {
         form.notas.trim(),
       ];
       await appendRow(TAB, row);
-      setSuccess(`Activo ${form.unidad} registrado en Google Sheets.`);
+      setSuccess(`Activo ${form.unidad} registrado.`);
       setForm(empty);
       await load();
     } catch (err) {
@@ -96,7 +96,7 @@ export default function AdminActivosPage() {
     }
   }
 
-  const tabMissing =
+  const tabMissing = !isPanama &&
     loadError !== null &&
     /Unable to parse range|not found|404|500|Internal server/i.test(loadError);
 
@@ -104,9 +104,7 @@ export default function AdminActivosPage() {
     <div className="p-4 max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold mb-1">Activos</h1>
       <p className="text-sm text-gray-600 mb-6">
-        Registra la flota para el dashboard de <strong>Ciclo de Vida de Activos</strong>{' '}
-        en Power-GTP. Se escribe en la pestaña <code>Activos</code> del Google
-        Sheet de Hermes.
+        {isPanama ? 'Ficha de adquisición y vida útil de la flota de Panamá.' : 'Registra la flota para el dashboard de Ciclo de Vida de Activos en Power-GTP.'}
       </p>
 
       {tabMissing && (

@@ -237,7 +237,9 @@ export async function checkWorkshop(fixture, record) {
   });
 
   await record('API-TALLER-STICKER-REVISIÓN-BLOQUEO', async () => {
-    const op = workshop(request, await loginAs(request, firstAccount('operador')));
+    const operator = firstAccount('operador');
+    const operatorCookie = await loginAs(request, operator);
+    const op = workshop(request, operatorCookie);
     const coordinator = workshop(request, await loginAs(request, firstAccount('coordinador')));
     const supervisor = firstAccount('supervisor');
     const sup = workshop(request, await loginAs(request, supervisor));
@@ -261,14 +263,26 @@ export async function checkWorkshop(fixture, record) {
     assert.equal(sticker[19], supervisor.user.id);
     assert(sticker[20]);
     const hardStop = template.items.find(item => item.hardStop);
-    const key = 'sticker-inspection-photos/freno-sintetico.png';
-    fixture.photos.set(key, photoPng);
-    const photo = `${fixture.origin}/storage/v1/object/public/${key}`;
+    const mutationId = randomUUID();
+    const upload = { kind: 'sticker', operationId: mutationId, units: ['DZ203'], expectedUserId: operator.user.id,
+      slot: 0, mimeType: 'image/png', data: photoPng.toString('base64') };
+    const photo = good(await request('/hermes-api/api/evidence', { cookie: operatorCookie, body: upload }), 'Adjuntar foto al sticker').url;
+    assert.match(photo, /^\/hermes-api\/api\/evidence\?id=[a-f0-9]{64}$/);
+    assert.equal((await request(photo, { cookie: operatorCookie })).status, 404);
+    assert.equal(good(await request('/hermes-api/api/evidence', { cookie: operatorCookie, body: upload }), 'Reintentar foto').url, photo);
     const failedChecks = checks.map(item => item.itemId === hardStop.id ? { ...item, status: 'no_cumple', canOperate: false, comment: 'Hallazgo crítico ficticio', photos: [photo] } : item);
-    const failing = { ...body, mutationId: randomUUID(), time: '09:00', checks: failedChecks, photos: [photo] };
+    const failing = { ...body, mutationId, time: '09:00', checks: failedChecks, photos: [photo] };
     assert.equal((await op('sticker', failing)).status, 400);
     const blocked = good(await op('sticker', { ...failing, finalColor: 'red' }), 'Guardar inspección roja');
     assert.equal(blocked.canDispatch, false);
+    assert.equal((await request(photo)).status, 401);
+    assert.equal((await request(photo, { cookie: operatorCookie })).status, 200);
+    const coordinatorCookie = await loginAs(request, firstAccount('coordinador'));
+    assert.equal((await request(photo, { cookie: coordinatorCookie })).status, 404);
+    const hseCookie = await loginAs(request, supervisor);
+    const downloaded = await fetch(fixture.origin + photo, { headers: { cookie: hseCookie } });
+    assert.equal(downloaded.headers.get('Cache-Control'), 'private, no-store');
+    assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), photoPng);
     const red = good(await sup('stickerreview', { mutationId: randomUUID(), folio: blocked.folio }), 'Revisar sin liberar unidad con sticker rojo');
     assert.equal(red.canDispatch, false);
     const readiness = good(await sup('readiness'), 'Consultar restricciones de flota');
@@ -286,7 +300,7 @@ function orderPayload(description = 'Filtro sintético') {
       { description: 'Sello sintético', quantity: 3, unitPrice: 45.67 },
       { description: 'Tornillería sintética', quantity: 5, unitPrice: 9.89 },
     ],
-    shipping: 25.50, other: 8.75, comments: 'Orden aislada de prueba',
+    tax: '30.34', shipping: 25.50, other: 8.75, comments: 'Orden aislada de prueba',
   };
 }
 
@@ -345,6 +359,7 @@ export async function checkPurchasing(fixture, record) {
     const changed = await getItems(lead);
     assert.deepEqual([changed.find(item => item.id === catalog.id).estado, changed.find(item => item.id === manual.id).estado], ['Pedido', 'Pendiente']);
     const payload = orderPayload();
+    payload.tax = '26.88';
     payload.lines = source.map(item => ({ requestLineId: item.id, description: item.descripcion, quantity: item.cantidad, unitPrice: item.unitPrice }));
     const oc = good(await manager('order-save', payload), 'Convertir pedido a OC');
     const { order } = good(await manager(`order?folio=${encodeURIComponent(oc.folio)}`), 'Recargar OC vinculada');
@@ -386,7 +401,7 @@ export async function checkPurchasing(fixture, record) {
     assert.deepEqual([draft.subtotal, draft.tax, draft.shipping, draft.other, draft.total], ['433.36', '30.34', '25.50', '8.75', '497.95']);
     assert(draft.vendorAddress.includes('Calle de prueba 10'));
     const [firstLine, deletedLine, thirdLine] = draft.lines;
-    good(await api('order-save', { ...payload, operationId: randomUUID(), folio: first.folio, version: draft.version, lines: [
+    good(await api('order-save', { ...payload, operationId: randomUUID(), folio: first.folio, version: draft.version, tax: '38.95', lines: [
       { id: firstLine.id, description: 'Filtro editado QA', quantity: 4, unitPrice: 123.45 },
       { id: thirdLine.id, description: thirdLine.description, quantity: thirdLine.quantity, unitPrice: thirdLine.unitPrice },
       { description: 'Partida nueva QA', quantity: 1, unitPrice: 13.25 },
@@ -468,10 +483,13 @@ export async function checkPurchasing(fixture, record) {
   });
 
   await record('API-GASTOS-REPARTO-RECIBO', async () => {
-    const api = purchasing(request, await loginAs(request, firstAccount('jefe_taller')));
-    const uploaded = await fetch(`${fixture.origin}/api/qa/receipt-upload`, { method: 'POST', body: new Uint8Array([0, 1, 2]) });
-    assert.equal(uploaded.status, 200);
-    const { receiptUrl: receipt } = await uploaded.json();
+    const actor = firstAccount('jefe_taller');
+    const cookie = await loginAs(request, actor);
+    const api = purchasing(request, cookie);
+    const operationId = randomUUID();
+    const upload = { kind: 'receipt', operationId, units: ['DZ203', 'EX401'], expectedUserId: actor.user.id, slot: 0,
+      mimeType: 'image/png', data: photoPng.toString('base64') };
+    const { url: receipt } = good(await request('/hermes-api/api/evidence', { cookie, body: upload }), 'Adjuntar comprobante del gasto');
     const expense = {
       tipo: 'Refaccion', proveedor: 'Proveedor QA', rfc_proveedor: 'QAT000000000', folio_factura: 'FAC-QA-REPARTO',
       entity: 'TP_PA_QA', currency: 'USD',
@@ -479,8 +497,10 @@ export async function checkPurchasing(fixture, record) {
       subtotal: 100, iva: 7, total: 107, ot_id: 'OT-0004', metodo_pago: 'Transferencia', imagen_url: receipt,
       line_items: [{ part_number: 'QA-002', description: 'Sello de prueba', qty: 1, unit_price: 100 }],
     };
-    const payload = { operationId: randomUUID(), expense, allocations: [{ unit: 'DZ203', amount: 64.20 }, { unit: 'EX401', amount: 42.80 }] };
+    const payload = { operationId, expense, allocations: [{ unit: 'DZ203', amount: 64.20 }, { unit: 'EX401', amount: 42.80 }] };
+    assert.equal((await api('expense-save', { ...payload, operationId: randomUUID() })).status, 400);
     const saved = good(await api('expense-save', payload), 'Guardar gasto repartido');
+    assert.equal((await request(receipt, { cookie })).status, 200);
     good(await api('expense-save', payload), 'Reintentar el mismo gasto');
     const rows = sheet.read(tabs.expenses).filter(row => row[17] === saved.folio);
     assert.equal(rows.length, 2);

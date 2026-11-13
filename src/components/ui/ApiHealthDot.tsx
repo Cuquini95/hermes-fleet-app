@@ -8,7 +8,8 @@ const STATUS_COLOR: Record<string, string> = {
   loading: '#94A3B8',
 };
 
-const CHECK_LABELS = { identity: 'Sesión', fleet: 'Maestro de flota', operations: 'Libro operativo' };
+const CHECK_LABELS = { identity: 'Sesión', fleet: 'Maestro de flota', operations: 'Registro operativo' };
+const CHECK_STATUS = { ok: 'Disponible', degraded: 'Servicio parcial', down: 'Fuera de servicio' };
 
 const STATUS_LABEL: Record<string, string> = {
   ok: 'API OK',
@@ -75,7 +76,7 @@ export default function ApiHealthDot() {
                   className="rounded-full"
                   style={{ width: 8, height: 8, backgroundColor: color }}
                 />
-                <span className="text-white capitalize">{health.status}</span>
+                <span className="text-white">{CHECK_STATUS[health.status]}</span>
               </div>
 
               {health.checks && (

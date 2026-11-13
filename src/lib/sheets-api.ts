@@ -113,7 +113,7 @@ export class SheetAppendError extends Error {
   readonly reason: string;
 
   constructor(status: number, reason: string) {
-    super(`Sheets API error ${status}: ${reason}`);
+    super(reason);
     this.status = status;
     this.reason = reason;
   }

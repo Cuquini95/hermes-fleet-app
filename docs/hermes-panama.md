@@ -16,13 +16,11 @@ Rama de la aplicación independiente para TMF Minera Panamá. La navegación de 
 | HERMES_PANAMA_DOZERS_SHEET_ID, HERMES_PANAMA_EXCAVATORS_SHEET_ID | Maestros de Componentes. Pestaña RESUMEN JEFE en cada archivo. |
 | HERMES_PANAMA_PURCHASES_SHEET_ID | Cotizaciones - Trans Plus. Consulta de Pa - Maquinaria, con filtro obligatorio de país Panamá. |
 | HERMES_PANAMA_COSTS_SHEET_ID | Control de Costos por Máquina. RESUMEN por unidad, visible para Gerencia. |
-| HERMES_PANAMA_OPERATIONS_SHEET_ID, HERMES_PANAMA_OPERATIONS_SERVICE_ACCOUNT_JSON | Libro operativo separado de los maestros. Su pestaña HERMES_PA_CONFIG debe contener HERMES_PANAMA y tmf-panama en A1:B1. El servicio rechaza los IDs de los maestros configurados. Usa un libro aislado para la verificación y conserva los folios en el libro de cada entorno. |
-| HERMES_PURCHASE_ISSUERS_JSON | Emisor panameño validado, con identificación fiscal, moneda y regla fiscal. Solo se admiten emisores con plantilla Trans Plus y USD o PAB para el proyecto Panamá. |
-| VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, HERMES_WORKSHOP_STORAGE_ORIGIN | Almacenamiento dedicado para evidencias, una vez verificados los permisos. |
-| HERMES_READ_ONLY | `true` para el candidato de consulta. |
-| HERMES_PANAMA_WRITES_ENABLED | Usar `true` después de aceptar las pruebas con las fuentes operativas. `HERMES_READ_ONLY=true` prevalece para detener todas las escrituras. |
-| HERMES_PANAMA_WRITE_GROUPS | Lista explícita de flujos ya aceptados. Valores permitidos taller, inspecciones, pm, turnos, despacho, compras, recepcion, finanzas, gastos, horometro, combustible, fletes, llantas, proveedores y activos. Sin grupos válidos, la app conserva consulta. |
-| HERMES_PANAMA_FUEL_CAPTURE | Usar `true` junto al grupo combustible después de conciliar con el maestro panameño. |
+| Registro operativo | Las migraciones de operaciones y evidencias crean el registro PostgreSQL y el bucket privado en el Supabase de Panamá. Vercel usa las credenciales de servidor del proyecto. |
+| HERMES_PURCHASE_ISSUERS_JSON | Opcional. El emisor predeterminado es TRANSPLUS, S.A. en USD. Cada captura usa el ITBMS del documento. |
+| HERMES_READ_ONLY | `true` pausa todas las escrituras en producción. |
+| HERMES_PANAMA_WRITE_GROUPS | Selecciona los flujos habilitados. Por defecto quedan disponibles los flujos internos; una lista vacía activa consulta. El grupo despacho requiere además `HERMES_PANAMA_DISPATCH_VERIFIED=true`. |
+| HERMES_PANAMA_FUEL_CAPTURE | `false` deshabilita la captura de combustible. Los despachos capturados quedan en el registro de Hermes. |
 | HERMES_PANAMA_PM_CHECKLISTS_JSON | Catálogo validado de checklists por modelo y nivel, con referencia, identificadores y etiquetas de cada tarea. Taller comprueba el checklist al entregar y aceptar el PM. |
 | VITE_HERMES_PA_PM_MASTER_LINK, VITE_HERMES_PA_PM_REGISTER_LINK, VITE_HERMES_PA_VALUATION_LINK, VITE_HERMES_PA_FINANCE_LINK | Enlaces opcionales a maestros compartidos con el equipo. Los enlaces solo sirven para abrir Drive y conservan sus permisos. Cualquier URL del frontend es visible en el paquete compilado. |
 
@@ -31,7 +29,7 @@ Usa el padrón de 28 personas, los correos confirmados en la identidad propia y 
 ## Habilitar el turno
 
 1. Aplica las migraciones de identidad y los permisos de recepción y HSE en Supabase Panamá. Conecta el proyecto Vercel `hermes-panama` al proveedor mediante sus variables de servidor y vuelve a desplegar. Valida una sesión con el correo de trabajo y revisa el conteo de primeros ingresos.
-2. Configura el acceso de solo lectura a los maestros y el acceso de edición al libro operativo aislado. Verifica la correspondencia por folio antes de habilitar escrituras productivas. Los relevos aceptados muestran el cotejo de lecturas con REGISTRO cuando la cuenta lectora tiene acceso al maestro.
+2. Aplica las migraciones del registro y de adjuntos privados. Conecta los maestros para consulta. Los relevos aceptados muestran el cotejo de lecturas con REGISTRO cuando la cuenta lectora tiene acceso al maestro.
 3. Para Almacén activa `canReceivePurchases` solo en el padrón autorizado, con las unidades asignadas. El permiso habilita el registro por partida y su historial. Compras y Finanzas consultan el saldo en la OC.
 4. La revisión HSE de stickers requiere `canReviewPanamaHse` para el responsable autorizado. El ejecutor entrega la OT con prueba funcional. Taller confirma el cierre y Operaciones acepta el retorno por separado. Un bloqueo vigente de HSE impide aceptar el retorno.
 5. Comprueba el acceso al dominio con una cuenta corporativa sin acceso administrativo a Vercel. Si la protección del alojamiento exige sesión de Vercel, el administrador ajusta el alcance del dominio cuando la autenticación y las rutas privadas de Hermes estén verificadas.
@@ -41,7 +39,7 @@ Usa el padrón de 28 personas, los correos confirmados en la identidad propia y 
 
 La suite de Hermes conserva el modelo transaccional original en un almacén de prueba. Prueba reportes con reintento, asignación por identidad, avance, cierre, PM y calendario, pedido, OC, aprobación y recepciones parciales. Los valores del emisor de prueba son ficticios.
 
-Para uso productivo, vincula las nuevas operaciones a los campos de captura de los maestros oficiales. Taller calcula parte del estado en OTS. PM separa captura, fórmulas, evidencia y aceptación en ANOTAR PM. PARTIDAS_RECEPCION acumula el recibido y las devoluciones por partida y necesita el enlace comprobado a una cabecera panameña. Las escrituras sobre esos maestros requieren adaptadores y una prueba aislada de conciliación antes de habilitarlas. Una OT de prueba en el modelo de Hermes no acredita cierre en OTS. Conserva la operación vigente durante el corte.
+Las nuevas averías, OT, inspecciones, compras y gastos quedan en Hermes. Los maestros oficiales se consultan por separado y pueden mostrar un corte fechado. La conciliación con Sheets se verifica por folio. Almacén distingue la recepción documental del movimiento de un SKU dado de alta.
 
 Verifica los procedimientos y fuentes de llantas, inventario, compras, costos, combustible, avisos y documentos oficiales de acceso antes de su activación. Las rutas de integración del Hermes anterior y el enlace CMMS quedan fuera del candidato de Panamá hasta tener endpoints propios.
 
@@ -49,7 +47,7 @@ Verifica los procedimientos y fuentes de llantas, inventario, compras, costos, c
 
 El acceso muestra «Recuperar contraseña». Para habilitar el envío, TI configura el proveedor Supabase de Panamá y su plantilla de recuperación para incluir el código de un solo uso `{{ .Token }}`. Comprobar entrega y caducidad con un buzón de prueba autorizado antes de activar `HERMES_RECOVERY_ENABLED=true`. El formulario recibe el código y solicita una contraseña nueva. La API confirma la membresía activa de Panamá y el código con Supabase y revoca las sesiones Hermes de esa cuenta. Usar el control de frecuencia de infraestructura del proyecto además del límite por instancia.
 
-La salud autenticada del gateway distingue sesión, maestro de flota y libro operativo. La lectura del maestro no basta para mostrar el libro como disponible. Una fuente caída se informa como degradación. El resultado de una lectura del libro no certifica sus permisos de escritura.
+La salud del gateway comprueba sesión, maestro de flota y registro operativo. Una prueba de guardado y relectura comprueba por separado la escritura.
 
 La sección de Manuales y Diagramas en Panamá usa `HERMES_PANAMA_TECHNICAL_CATALOG_JSON`. Cada entrada contiene `title`, `model`, `kind` (manual o diagram), `source` y `url` de archivo de Google Drive. Taller debe verificar edición, aplicación por equipo y permiso de lectura en Drive antes de publicar una entrada. El vínculo conserva los permisos existentes de Drive. El entorno sin catálogo indica biblioteca no disponible.
 

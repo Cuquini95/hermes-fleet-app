@@ -24,6 +24,7 @@ import type { GastoCompra, GastoTipo, VerifiedExpense } from '../stores/gastos-s
 import MonthSelector from '../components/MonthSelector';
 import { generateGastosPDF, type GastoReportData } from '../lib/gastos-pdf';
 import { downloadBlob } from '../lib/download-blob';
+import { isPrivateEvidenceUrl } from '../lib/evidence-link';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
 
 // ── Colour palette ────────────────────────────────────────────────────────────
@@ -635,7 +636,7 @@ function GastoRow({
           <button type="button" onClick={() => onReview('Aprobado')} className="rounded border border-border px-2 py-1 text-xs">Validar gasto</button>
           <button type="button" onClick={() => onReview('Rechazado')} className="rounded border border-border px-2 py-1 text-xs">Rechazar gasto</button>
         </div>}
-        {/^https:\/\//i.test(gasto.imagen_url) && (
+        {(isPrivateEvidenceUrl(gasto.imagen_url) || /^https:\/\//i.test(gasto.imagen_url)) && (
           <a className="mt-1 inline-block text-xs font-semibold text-blue-800" href={gasto.imagen_url} target="_blank" rel="noreferrer">Abrir recibo</a>
         )}
       </div>

@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto';
 import { PANAMA_DEMO_ISSUER } from './hermes-panama-demo.js';
+import { isEvidenceError, verifyEvidence } from './hermes-evidence.js';
+import { orderWriteGuard } from './hermes-workshop.js';
+import { HermesSheetError } from './hermes-google-sheets.js';
 
 export const PURCHASE_TABS = Object.freeze({
   orders: 'Órdenes de Compra',
@@ -21,6 +24,11 @@ const DEFAULT_ISSUER = {
   id: 'ULTRATK_MX', name: 'ULTRATK SA DE CV', currency: 'MXN', taxLabel: 'IVA', taxBps: 1600,
   address: 'Juarez 312, Revolucion · Tecalitlan, Jalisco', phone: '314-115-1515', template: 'ultratk',
 };
+const PANAMA_ISSUER = Object.freeze({
+  id: 'TP_PA', name: 'TRANSPLUS, S.A.', currency: 'USD', taxLabel: 'ITBMS', template: 'transplus',
+  address: 'Costa del Este, Edificio Financial Park, piso 10, oficina 10-A',
+  phone: '387-3710', taxId: 'RUC 2236707-1-778948 DV 15',
+});
 
 class RequestError extends Error {
   constructor(status, message) {
@@ -37,6 +45,7 @@ const ok = (body) => ({ status: 200, body });
 const entries = (rows) => rows.map((row, index) => ({ row, index })).slice(1);
 const wholeRow = (tab, index, values) => ({ tab, row: index, values });
 const append = (tab, rows) => ({ tab, append: rows });
+const readTables = (sheets, ...tabs) => sheets.readMany?.(tabs) ?? Promise.all(tabs.map(tab => sheets.read(tab)));
 
 function field(value, max, label, required = false) {
   const out = trim(value);
@@ -100,19 +109,27 @@ function requireUnit(session, value) {
   return unit;
 }
 
+async function validateOperationalUnits(sheets, ...units) {
+  const specific = units.filter(unit => unit !== 'FLOTA');
+  if (!sheets.nativeOperations || !specific.length) return;
+  const fleet = new Set((await sheets.read('01 Inventario')).slice(3).map(row => upper(row[1])));
+  if (specific.some(unit => !fleet.has(unit))) error(400, 'La unidad no figura en el inventario TMF.');
+}
+
 function configuredIssuers(session) {
   const panama = session.project === 'tmf-panama';
   if (panama && session.previewDemo === true) return [PANAMA_DEMO_ISSUER];
   const source = process.env.HERMES_PURCHASE_ISSUERS_JSON;
-  if (!source) return panama ? [] : [DEFAULT_ISSUER];
+  if (!source) return [panama ? PANAMA_ISSUER : DEFAULT_ISSUER];
   try {
     const data = JSON.parse(source);
     if (!Array.isArray(data) || new Set(data.map((i) => i.id)).size !== data.length) return [];
     return data.filter((i) =>
       typeof i.id === 'string' && /^[A-Z0-9_-]{2,40}$/.test(i.id) &&
       typeof i.name === 'string' && i.name.trim().length > 0 && i.name.length < 160 &&
-      (panama ? ['USD', 'PAB'] : ['MXN', 'USD', 'PAB']).includes(i.currency) && Number.isInteger(i.taxBps) &&
-      i.taxBps >= 0 && i.taxBps <= 10000 && typeof i.taxLabel === 'string' &&
+      (panama ? ['USD', 'PAB'] : ['MXN', 'USD', 'PAB']).includes(i.currency) &&
+      ((panama && i.taxBps === undefined) || (Number.isInteger(i.taxBps) && i.taxBps >= 0 && i.taxBps <= 10000)) &&
+      typeof i.taxLabel === 'string' &&
       (panama ? i.template === 'transplus' : ['ultratk', 'transplus'].includes(i.template))
     ).map((i) => ({
       id: i.id, name: i.name, currency: i.currency, taxBps: i.taxBps, taxLabel: i.taxLabel,
@@ -129,6 +146,22 @@ function vendorRecord(row) {
     name: trim(row[0]), rfc: trim(row[1]),
     address: row.slice(2, 6).map(trim).filter(Boolean).join(', '),
   };
+}
+
+function orderVendor(body, rows, panama) {
+  if (panama && body.vendorSource === 'manual') {
+    return {
+      name: field(body.vendorName, 180, 'nombre del proveedor', true),
+      rfc: field(body.vendorRfc, 80, 'identificación fiscal del proveedor'),
+      address: field(body.vendorAddress, 500, 'dirección del proveedor'),
+      source: 'manual',
+    };
+  }
+  if (body.vendorSource !== undefined && body.vendorSource !== 'catalog') error(400, 'Revisa el origen del proveedor.');
+  const vendors = entries(rows).map(({ row }) => vendorRecord(row)).filter((vendor) =>
+    vendor.name && upper(vendor.name) === upper(body.vendorName) && upper(vendor.rfc) === upper(body.vendorRfc));
+  if (vendors.length !== 1) error(400, 'Selecciona un proveedor único del catálogo.');
+  return { ...vendors[0], source: 'catalog' };
 }
 
 function issuerSnapshot(row) {
@@ -178,6 +211,7 @@ function orderRecord(row, items) {
   return {
     folio: trim(row[0]), date: trim(row[1]), vendorName: trim(row[2]), vendorRfc: trim(row[3]), vendorAddress: trim(row[4]),
     unit: trim(row[5]), subtotal: trim(row[6]), tax: trim(row[7]), shipping: trim(row[8]), other: trim(row[9]), total: trim(row[10]),
+    discount: trim(row[25]) || '0.00', vendorSource: row[26] === 'manual' ? 'manual' : 'catalog',
     status: trim(row[11]) || 'Borrador', comments: trim(row[12]), approvedBy: trim(row[13]), deliveryDate: trim(row[14]),
     version: trim(row[15]) || 'legacy-' + hash([row, items.map((item) => item.row)]).slice(0, 24),
     issuer: issuerSnapshot(row), approvedById: trim(row[17]), approvedAt: trim(row[18]), requestedBy: trim(row[20]),
@@ -195,7 +229,7 @@ function receivingRecord({ folio, unit, vendorName, deliveryDate, receiptStatus,
   return { folio, unit, vendorName, deliveryDate, receiptStatus, version, lines: lines.map((line) => ({
     id: line.id, number: line.number, description: line.description, partNumber: line.partNumber,
     quantity: line.quantity, received: line.received,
-    receipts: line.receipts.map(({ id, at, by, quantity, reference }) => ({ id, at, by, quantity, reference })),
+    receipts: line.receipts.map(({ id, at, by, quantity, reference, stockDisposition }) => ({ id, at, by, quantity, reference, stockDisposition })),
   })) };
 }
 
@@ -243,9 +277,11 @@ function mutate(action, body, session, sheets) {
   const operationId = field(body.operationId, 36, 'operación', true).toLowerCase();
   if (!OP_ID.test(operationId)) error(400, 'Identificador de operación inválido.');
   const key = 'compras:' + hash([session.userId, action, operationId]);
-  const fingerprint = hash([session.userId, action, body]);
+  const operation = { ...body };
+  delete operation.expectedUserId;
+  const fingerprint = hash([session.userId, action, operation]);
   return {
-    operationId, key, fingerprint,
+    operationId, key, fingerprint, version: sheets.nativeOperations ? hash(key) : operationId,
     async replay() {
       return sheets.replay({ key, fingerprint });
     },
@@ -311,7 +347,7 @@ function inventoryWrites({ part, nextStock, session, tx, kind, amount, unit, fol
   return [
     { tab: PURCHASE_TABS.catalog, row: part.index, col: 5, values: [quantity(nextStock)] },
     append(PURCHASE_TABS.inventoryMovements, [[
-      tx.operationId, timestamp().iso, kind, part.row[0], quantity(amount), unit, folio, lineId, ot, reference,
+      tx.version, timestamp().iso, kind, part.row[0], quantity(amount), unit, folio, lineId, ot, reference,
       session.userName, session.userId, quantity(nextStock), part.row[4] || '',
     ]]),
   ];
@@ -347,8 +383,9 @@ async function moveInventory(body, session, sheets, tx) {
   const stock = await sheets.read(PURCHASE_TABS.catalog);
   const matches = entries(orders).filter(({ row }) => upper(row[1]) === ot);
   if (matches.length !== 1) error(404, 'La OT no está disponible para registrar repuestos.');
-  const unit = requireUnit(session, matches[0].row[3]);
-  if (kind === 'Salida' && ['COMPLETADO','CANCELADO'].includes(normalizeCatalogKey(matches[0].row[9]))) {
+  const order = matches[0];
+  const unit = requireUnit(session, order.row[3]);
+  if (kind === 'Salida' && ['COMPLETADO','CANCELADO'].includes(normalizeCatalogKey(order.row[9]))) {
     error(409, 'No puedes sacar repuestos para una OT cerrada.');
   }
   const part = catalogPart(stock, sku);
@@ -364,10 +401,16 @@ async function moveInventory(body, session, sheets, tx) {
     sum + (row[2] === 'Salida' ? 1n : -1n) * decimalCell(row[4], 3, 'movimiento anterior'), 0n);
   if (kind === 'Devolución' && amount > issued) error(409, 'La devolución supera lo entregado a esta OT.');
   const nextStock = available + (kind === 'Salida' ? -amount : amount);
+  const guards = [inventoryGuard(part, history)];
+  const writes = inventoryWrites({ part, nextStock, session, tx, kind, amount, unit, ot, reference });
+  if (kind === 'Salida' && sheets.nativeOperations) {
+    guards.push(orderWriteGuard(order.row));
+    writes.push({ tab: 'ORDENES_TRABAJO', row: order.index, col: 18, values: [tx.version] });
+  }
   return tx.commit([
-    ...inventoryWrites({ part, nextStock, session, tx, kind, amount, unit, ot, reference }),
+    ...writes,
     auditRow(session, tx.operationId, kind + ' de repuesto', ot, part.row[0] + ' · ' + quantity(amount)),
-  ], { id: tx.operationId, stock: quantity(nextStock), ot }, [inventoryGuard(part, history)]);
+  ], { id: tx.operationId, stock: quantity(nextStock), ot }, guards);
 }
 
 async function submitRequest(body, session, sheets, tx) {
@@ -392,9 +435,10 @@ async function submitRequest(body, session, sheets, tx) {
     return [
       now.date, part, description, unit, quantity(qty), source, 'Pendiente', '', '', folio, now.time, session.userName,
       priority, field(item.notes, 1000, 'notas'), money(lineCost(qty, unitPrice)), folio + '-L' + (index + 1),
-      '', tx.operationId, session.userId, '', now.iso, money(unitPrice),
+      '', tx.version, session.userId, '', now.iso, money(unitPrice),
     ];
   });
+  await validateOperationalUnits(sheets, ...rows.map(row => row[3]));
   return tx.commit([
     append(PURCHASE_TABS.requests, rows),
     auditRow(session, tx.operationId, 'Pedido creado', folio, rows.length + ' partidas'),
@@ -411,10 +455,10 @@ async function changeRequest(body, session, sheets, tx) {
   if (record.ocFolio) error(409, 'Actualiza la partida desde la orden de compra vinculada.');
   const status = record.estado === 'Pendiente' ? 'Pedido' : record.estado === 'Pedido' ? 'Completado' : '';
   if (!status || body.status !== status) error(409, 'Cambio de estado no válido para esta partida.');
-  const write = requestUpdate(entry, tx.operationId, session.userId, '', status, '');
+  const write = requestUpdate(entry, tx.version, session.userId, '', status, '');
   return tx.commit([
     write, auditRow(session, tx.operationId, 'Estado de partida de pedido', id, record.estado + ' → ' + status),
-  ], { id, status, version: tx.operationId }, [requestGuard(record)]);
+  ], { id, status, version: tx.version }, [requestGuard(record)]);
 }
 
 function requireDraft(order) {
@@ -461,10 +505,9 @@ function buildOrderLines(body, unit, folio, current, requests, session) {
 }
 
 async function saveOrder(body, session, sheets, tx) {
-  const [orderRows, lineRows, vendorRows, requestRows] = await Promise.all([
-    sheets.read(PURCHASE_TABS.orders), sheets.read(PURCHASE_TABS.lines),
-    sheets.read(PURCHASE_TABS.vendors), sheets.read(PURCHASE_TABS.requests),
-  ]);
+  const [orderRows, lineRows, vendorRows, requestRows] = await readTables(
+    sheets, PURCHASE_TABS.orders, PURCHASE_TABS.lines, PURCHASE_TABS.vendors, PURCHASE_TABS.requests,
+  );
   const folio = upper(field(body.folio, 90, 'folio')) || 'OC-' + hash(tx.key).slice(0, 18).toUpperCase();
   const current = body.folio ? orderLookup(folio, orderRows, lineRows, session) : null;
   if (current) {
@@ -474,26 +517,31 @@ async function saveOrder(body, session, sheets, tx) {
     error(409, 'El folio ya existe en cabeceras o partidas. Se requiere conciliación.');
   }
   const unit = requireUnit(session, body.unit);
+  await validateOperationalUnits(sheets, unit);
+  const panama = session.project === 'tmf-panama';
   const issuer = configuredIssuers(session).find((item) => item.id === body.entity);
   if (!issuer) error(400, 'Selecciona una entidad emisora configurada.');
-  const vendors = entries(vendorRows).map(({ row }) => vendorRecord(row)).filter((vendor) =>
-    vendor.name && upper(vendor.name) === upper(body.vendorName) && upper(vendor.rfc) === upper(body.vendorRfc));
-  if (vendors.length !== 1) error(400, 'Selecciona un proveedor único del catálogo.');
-  const vendor = vendors[0];
+  const vendor = orderVendor(body, vendorRows, panama);
   const date = calendarDate(body.date, 'la orden', true);
   const deliveryDate = calendarDate(body.deliveryDate, 'entrega', false);
   const requests = parseRequests(requestRows);
   const items = buildOrderLines(body, unit, folio, current, requests, session);
   const subtotal = items.reduce((sum, line) => sum + lineCost(line.qty, line.price), 0n);
-  const tax = (subtotal * BigInt(issuer.taxBps) + 5000n) / 10000n;
+  const discount = panama ? decimal(body.discount ?? '0', 2, 'descuento') : 0n;
+  if (discount > subtotal) error(400, 'El descuento debe ser menor o igual al subtotal.');
+  const netSubtotal = subtotal - discount;
+  const tax = panama && (session.previewDemo !== true || body.tax != null)
+    ? decimal(body.tax, 2, 'ITBMS según documento')
+    : (netSubtotal * BigInt(issuer.taxBps) + 5000n) / 10000n;
   const shipping = decimal(body.shipping ?? '0', 2, 'envío');
   const other = decimal(body.other ?? '0', 2, 'otros cargos');
-  const total = subtotal + tax + shipping + other;
+  const total = netSubtotal + tax + shipping + other;
   const now = timestamp();
   const values = [
     folio, date, vendor.name, vendor.rfc, vendor.address, unit, money(subtotal), money(tax), money(shipping), money(other), money(total),
-    'Borrador', field(body.comments, 2000, 'comentarios'), '', deliveryDate, tx.operationId, JSON.stringify(issuer),
+    'Borrador', field(body.comments, 2000, 'comentarios'), '', deliveryDate, tx.version, JSON.stringify(issuer),
     '', '', current?.header.row[19] || session.userId, current?.header.row[20] || session.userName, now.iso,
+    ...(panama ? [current?.header.row[22] || '', current?.header.row[23] || '', current?.header.row[24] || '', money(discount), vendor.source] : []),
   ];
   const orderWrite = current ? wholeRow(PURCHASE_TABS.orders, current.header.index, values) : append(PURCHASE_TABS.orders, [values]);
   const writes = [orderWrite];
@@ -520,23 +568,23 @@ async function saveOrder(body, session, sheets, tx) {
   const linked = new Set(items.map((item) => item.requestLineId).filter(Boolean));
   for (const entry of requests) {
     if (linked.has(entry.record.id) && entry.record.ocFolio !== folio) {
-      writes.push(requestUpdate(entry, tx.operationId, session.userId, folio, 'Pedido', entry.record.estado));
+      writes.push(requestUpdate(entry, tx.version, session.userId, folio, 'Pedido', entry.record.estado));
       guards.push(requestGuard(entry.record));
     }
     if (entry.record.ocFolio === folio && !linked.has(entry.record.id)) {
-      writes.push(requestUpdate(entry, tx.operationId, session.userId, '', entry.row[19] || 'Pendiente', ''));
+      writes.push(requestUpdate(entry, tx.version, session.userId, '', entry.row[19] || 'Pendiente', ''));
       guards.push(requestGuard(entry.record));
     }
   }
   writes.push(auditRow(session, tx.operationId, current ? 'OC editada' : 'OC creada', folio, items.length + ' partidas'));
-  return tx.commit(writes, { folio, total: money(total), version: tx.operationId }, guards);
+  return tx.commit(writes, { folio, total: money(total), version: tx.version }, guards);
 }
 
 async function changeOrder(action, body, session, sheets, tx) {
   const folio = field(body.folio, 90, 'folio', true);
-  const [orderRows, lineRows, requestRows] = await Promise.all([
-    sheets.read(PURCHASE_TABS.orders), sheets.read(PURCHASE_TABS.lines), sheets.read(PURCHASE_TABS.requests),
-  ]);
+  const [orderRows, lineRows, requestRows] = await readTables(
+    sheets, PURCHASE_TABS.orders, PURCHASE_TABS.lines, PURCHASE_TABS.requests,
+  );
   const { record, header, items } = orderLookup(folio, orderRows, lineRows, session);
   if (action === 'order-receive' && session.project === 'tmf-panama') {
     const previous = await tx.replay();
@@ -545,7 +593,7 @@ async function changeOrder(action, body, session, sheets, tx) {
   checkVersion(body, record);
   const guards = [orderGuard(record)];
   const values = [...header.row];
-  values[15] = tx.operationId;
+  values[15] = tx.version;
   values[21] = timestamp().iso;
   const writes = [];
   const requests = parseRequests(requestRows);
@@ -575,6 +623,7 @@ async function changeOrder(action, body, session, sheets, tx) {
     }
     if (status === 'Aprobada') {
       if (!record.issuer || !record.lines.length || !record.vendorName) error(409, 'Completa la entidad, el proveedor y las partidas.');
+      if (panama && record.vendorSource === 'manual') error(409, 'Selecciona el proveedor del catálogo en el borrador antes de aprobar.');
       values[13] = session.userName;
       values[17] = session.userId;
       values[18] = timestamp().iso;
@@ -635,29 +684,31 @@ async function changeOrder(action, body, session, sheets, tx) {
       error(409, 'Esta remisión ya se registró para la partida. Consulta el historial.');
     }
     const receipt = {
-      id: tx.operationId, at: timestamp().iso, by: session.userName, actorId: session.userId,
+      id: tx.version, at: timestamp().iso, by: session.userName, actorId: session.userId,
       quantity: quantity(increment), reference,
     };
-    const receipts = JSON.stringify([...line.receipts, receipt]);
-    if (receipts.length > 45000) error(409, 'El historial de la partida requiere archivarse antes de recibir más.');
-    writes.push(wholeRow(PURCHASE_TABS.lines, item.index, [...item.row.slice(0, 10), quantity(newReceived), receipts]));
+    if (panama) receipt.stockDisposition = line.partNumber ? 'unregistered' : 'document';
     if (panama && line.partNumber) {
       const history = entries(await sheets.read(PURCHASE_TABS.inventoryMovements)).map(({ row }) => row);
       const part = catalogPart(await sheets.read(PURCHASE_TABS.catalog), line.partNumber, false);
       if (part) {
+        receipt.stockDisposition = 'posted';
         const nextStock = await stockForWriting(sheets, part) + increment;
         writes.push(...inventoryWrites({ part, nextStock, session, tx, kind: 'Recepción', amount: increment,
           unit: record.unit, folio, lineId, reference }));
         guards.push(inventoryGuard(part, history));
       }
     }
+    const receipts = JSON.stringify([...line.receipts, receipt]);
+    if (receipts.length > 45000) error(409, 'El historial de la partida requiere archivarse antes de recibir más.');
+    writes.push(wholeRow(PURCHASE_TABS.lines, item.index, [...item.row.slice(0, 10), quantity(newReceived), receipts]));
     const full = newReceived === requested && record.lines.every((other) =>
       other.id === lineId || decimalCell(other.received, 3, 'recibido') >= decimalCell(other.quantity, 3, 'ordenado', true));
     values[11] = record.status === 'Pagada' ? 'Pagada' : full ? 'Recibida' : 'Recibida parcial';
     if (newReceived === requested && line.requestLineId) {
       const request = requests.find((entry) => entry.record.id === line.requestLineId && entry.record.ocFolio === folio);
       if (!request) error(409, 'Falta conciliar el vínculo entre la partida recibida y el pedido.');
-      writes.push(requestUpdate(request, tx.operationId, session.userId, folio, 'Completado', request.row[19] || ''));
+      writes.push(requestUpdate(request, tx.version, session.userId, folio, 'Completado', request.row[19] || ''));
       guards.push(requestGuard(request.record));
     }
     detail = lineId + ' · ' + quantity(increment) + ' recibida(s), saldo ' + quantity(requested - newReceived);
@@ -665,13 +716,13 @@ async function changeOrder(action, body, session, sheets, tx) {
 
   if (values[11] === 'Eliminada' || values[11] === 'Rechazada') {
     for (const entry of requests.filter((request) => request.record.ocFolio === folio)) {
-      writes.push(requestUpdate(entry, tx.operationId, session.userId, '', entry.row[19] || 'Pendiente', ''));
+      writes.push(requestUpdate(entry, tx.version, session.userId, '', entry.row[19] || 'Pendiente', ''));
       guards.push(requestGuard(entry.record));
     }
   }
   writes.push(wholeRow(PURCHASE_TABS.orders, header.index, Array.from(values, (value) => value ?? '')));
   writes.push(auditRow(session, tx.operationId, auditAction || (action === 'order-receive' ? 'Recepción de partida' : 'Estado de OC ' + values[11]), folio, detail));
-  return tx.commit(writes, { folio, status: values[11], version: tx.operationId }, guards);
+  return tx.commit(writes, { folio, status: values[11], version: tx.version }, guards);
 }
 
 function expenseItems(lines) {
@@ -733,7 +784,7 @@ function expenseOptions(session) {
   };
 }
 
-async function saveExpense(body, session, tx) {
+async function saveExpense(body, session, sheets, tx, evidenceStorage) {
   const expense = body.expense ?? {};
   const type = field(expense.tipo, 30, 'tipo de gasto', true);
   const method = field(expense.metodo_pago, 30, 'método de pago', true);
@@ -756,8 +807,13 @@ async function saveExpense(body, session, tx) {
       allocations.reduce((sum, allocation) => sum + allocation.amount, 0n) !== total) {
     error(400, 'Las unidades deben ser distintas y sus importes deben sumar el total.');
   }
+  await validateOperationalUnits(sheets, ...allocations.map(({ unit }) => unit));
+  const panama = session.project === 'tmf-panama';
   const image = field(expense.imagen_url, 1200, 'recibo');
-  if (image) {
+  if (image && panama) {
+    await verifyEvidence([image], { kind: 'receipt', units: allocations.map(({ unit }) => unit), operationId: tx.operationId,
+      session, storage: evidenceStorage });
+  } else if (image) {
     const allowed = trim(process.env.HERMES_EXPENSE_RECEIPT_URL_PREFIX);
     if (!allowed) error(409, 'Los adjuntos de Gastos están pendientes de activar. Conserva el recibo en el canal vigente de Compras.');
     const source = parseHttpsUrl(allowed);
@@ -768,7 +824,6 @@ async function saveExpense(body, session, tx) {
   }
   const items = expenseItems(expense.line_items);
   const now = timestamp();
-  const panama = session.project === 'tmf-panama';
   const issuer = panama ? configuredIssuers(session).find(({ id }) => id === expense.entity) : null;
   if (panama && (!issuer || expense.currency !== issuer.currency)) error(400, 'Selecciona la entidad y moneda autorizadas para el documento.');
   const documentDate = panama ? calendarDate(expense.document_date, 'documento', true) : now.date;
@@ -842,7 +897,7 @@ async function changeExpense(action, body, session, sheets, tx) {
 const WRITES = new Set(['request-submit', 'request-status', 'order-save', 'order-status', 'order-receive', 'order-invoice', 'order-payment', 'order-delete', 'inventory-move', 'expense-save', 'expense-delete', 'expense-review']);
 const READS = new Set(['orders', 'order', 'receiving', 'requests', 'expenses', 'inventory-movements', 'expense-options']);
 
-export async function dispatchPurchasing({ path, method, body = {}, query = {}, session, sheets }) {
+export async function dispatchPurchasing({ path, method, body = {}, query = {}, session, sheets, evidenceStorage }) {
   const action = path.replace(/^api\/purchasing\//, '');
   let tx;
   try {
@@ -884,7 +939,7 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
       return ok({ rows: rows.filter(({ row }) => trim(row[0]) && canUseUnit(session, row[10])).map(({ row }) => row), ...expenseOptions(session) });
     }
     if (action === 'order' || action === 'orders' || action === 'receiving') {
-      const [orders, lines] = await Promise.all([sheets.read(PURCHASE_TABS.orders), sheets.read(PURCHASE_TABS.lines)]);
+      const [orders, lines] = await readTables(sheets, PURCHASE_TABS.orders, PURCHASE_TABS.lines);
       if (action === 'order') {
         const { record } = orderLookup(field(query.folio, 90, 'folio', true), orders, lines, session);
         return ok({ order: record });
@@ -920,7 +975,7 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
     if (action === 'request-status') return await changeRequest(body, session, sheets, tx);
     if (action === 'inventory-move') return await moveInventory(body, session, sheets, tx);
     if (action === 'order-save') return await saveOrder(body, session, sheets, tx);
-    if (action === 'expense-save') return await saveExpense(body, session, tx);
+    if (action === 'expense-save') return await saveExpense(body, session, sheets, tx, evidenceStorage);
     if (action === 'expense-delete' || action === 'expense-review') return await changeExpense(action, body, session, sheets, tx);
     return await changeOrder(action, body, session, sheets, tx);
   } catch (cause) {
@@ -929,7 +984,9 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
       const replayed = await tx.replay().catch(() => null);
       if (replayed !== null) return ok(replayed);
     }
-    if (cause instanceof RequestError || status === 409) return { status, body: { error: cause.message } };
+    if (cause instanceof RequestError || isEvidenceError(cause) || status === 409 || (cause instanceof HermesSheetError && status === 400)) {
+      return { status, body: { error: cause.message } };
+    }
     return { status: 503, body: { error: 'No pudimos confirmar el guardado o la lectura. Actualiza o reintenta la misma operación.' } };
   }
 }

@@ -304,7 +304,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await clickByName(page, 'Confirmar');
       const row = await waitUntil(() => sheet.read(tabs.orders).find(item => item[5] === description), 'No se guardó la OT con foto');
       await visible(page.getByText(/OT creada/i));
-      assert(row[10]?.startsWith(origin), 'La OT no conservó la foto del fixture');
+      assert(/^\/hermes-api\/api\/evidence\?id=[a-f0-9]{64}$/.test(row[10] ?? ''), 'La OT no conservó la foto del fixture');
       assert.equal(sheet.read(tabs.failure).find(item => item[13] === row[1])?.[14], row[10]);
       await noHorizontalOverflow(page, 390);
       return { folio: row[1], photoLinked: true };
@@ -417,7 +417,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         const upload = page.locator('input[type=file]').first();
         await upload.setInputFiles({ name: 'evidencia-mecanico.png', mimeType: 'image/png', buffer: photoPng });
         await clickByName(page, 'Guardar evidencia');
-        await waitUntil(() => sheet.read(tabs.orders).find(row => row[1] === folio && row[10]?.startsWith(origin)), 'No persistió la evidencia');
+        await waitUntil(() => sheet.read(tabs.orders).find(row => row[1] === folio && /^\/hermes-api\/api\/evidence\?id=[a-f0-9]{64}$/.test(row[10] ?? '')), 'No persistió la evidencia');
         await visible(page.getByRole('img', { name: 'Foto 1', exact: true }));
         await changeOrderStatus(page, 'Resuelta', folio);
         assert.equal(await page.getByRole('option', { name: 'Completado', exact: true }).count(), 0);
@@ -437,7 +437,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await clickByName(page, 'Confirmar retorno ahora');
         await visible(page.getByText(/Equipo recibido por /));
         const row = sheet.read(tabs.orders).find(order => order[1] === folio);
-        assert(row[14] && row[10]?.startsWith(origin));
+        assert(row[14] && /^\/hermes-api\/api\/evidence\?id=[a-f0-9]{64}$/.test(row[10] ?? ''));
         assert.equal(JSON.parse(row[20]).laborHours, 2.25);
         await visible(page.getByText('2.25 h de trabajo registradas', { exact: true }));
         assert.equal(sheet.read(tabs.failure).find(item => item[13] === folio)?.[9], 'Completado');
@@ -493,11 +493,19 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await clickByName(page, 'Confirmar');
         await visible(page.getByText(/Inspección registrada\. OT creada/));
         const row = sheet.read(tabs.dvir).find(item => item[23]?.includes(note));
-        assert(row && row[22] === 'reprobado' && row[25] && row[24].startsWith(origin));
+        assert(row && row[22] === 'reprobado' && row[25] && /^\/hermes-api\/api\/evidence\?id=[a-f0-9]{64}$/.test(row[24] ?? ''));
         assert.equal(sheet.read(tabs.failure).filter(item => item[13] === row[25]).length, 1);
         await noHorizontalOverflow(page, 360);
         await shot(page, 'dvir-ot-360.png');
-        return { inspection: row[1], folio: row[25] };
+        await page.goto(`${origin}/perfil`, { waitUntil: 'domcontentloaded' });
+        await clickByName(page, /Historial de mis acciones/);
+        const evidence = page.getByRole('link', { name: 'Ver evidencia 1' }).filter({ visible: true });
+        await visible(evidence);
+        assert((await evidence.evaluateAll(links => links.map(link => link.getAttribute('href')))).includes(row[24]));
+        const photo = await page.request.get(origin + row[24]);
+        assert.equal(photo.status(), 200);
+        assert.deepEqual(await photo.body(), photoPng);
+        return { inspection: row[1], folio: row[25], ownerEvidence: true };
       });
       return inRole('coordinador', 390, async page => {
         await visible(page.getByText(result.folio, { exact: true }));
@@ -609,6 +617,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         const form = page.locator('form').first();
         await form.getByLabel('Vincular partida del pedido').selectOption(lines.catalog[15]);
         await form.getByLabel('Proveedor', { exact: true }).selectOption({ label: 'Proveedor QA' });
+        await form.getByLabel('ITBMS según documento').fill('0');
         await form.getByRole('button', { name: 'Guardar orden', exact: true }).tap();
         const linked = await waitUntil(() => sheet.read(tabs.requests).find(row => row[15] === lines.manual[15] && row[16]), 'La OC no se vinculó al pedido');
         const folio = linked[16];
@@ -640,6 +649,8 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       }
       await form.getByLabel('Envío', { exact: true }).fill('25.50');
       await form.getByLabel('Otros cargos', { exact: true }).fill('8.75');
+      assert.equal(await form.getByRole('button', { name: 'Guardar orden', exact: true }).isDisabled(), true);
+      await form.getByLabel('ITBMS según documento').fill('30.34');
       await visible(form.getByText(/497[.,]95/));
       await noHorizontalOverflow(page, 390);
       await form.getByRole('button', { name: 'Guardar orden', exact: true }).tap();
@@ -715,11 +726,20 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       const allocations = page.locator('input.w-24[type=number]');
       await allocations.nth(0).fill('83.52');
       await allocations.nth(1).fill('55.68');
+      sheet.failNext({ matches: writes => writes.some(write => write.tab === tabs.expenses), when: 'after' });
       await clickByName(page, 'Registrar 2 gastos');
+      const retry = page.getByRole('button', { name: 'Reintentar registro', exact: true });
+      await visible(retry);
+      assert.equal(await entity.isDisabled(), true);
+      assert.equal(await allocations.nth(0).isDisabled(), true);
+      const pending = sheet.read(tabs.expenses).filter(row => row[6] === 'FAC-QA-MOVIL');
+      assert.equal(pending.length, 2);
+      await retry.tap();
       await visible(page.getByText('2 repartos registrados para revisión', { exact: true }));
       const saved = sheet.read(tabs.expenses).filter(row => row[6] === 'FAC-QA-MOVIL');
+      assert.deepEqual(saved, pending);
       assert.deepEqual(saved.map(row => [row[10], row[9]]), [['DZ203', '83.52'], ['EX401', '55.68']]);
-      assert(saved.every(row => row[15].startsWith(`${origin}/storage/v1/object/public/receipt-photos/`)));
+      assert(saved.every(row => /^\/hermes-api\/api\/evidence\?id=[a-f0-9]{64}$/.test(row[15])));
       assert(saved.every(row => row[16] === 'Pendiente'));
       await noHorizontalOverflow(page, 390);
       return { folio: saved[0][17], total: 139.2, units: saved.map(row => row[10]), ocr: 'simulado', review: 'pendiente' };

@@ -19,6 +19,7 @@ const fieldStyle = 'min-w-0 w-full border border-slate-300 rounded-lg px-3 py-2 
 export default function AssignWorkModal({ mechanic, date, mechanics, workorders, onSave, onClose }: AssignWorkModalProps) {
   const title = useId();
   const mutationId = useRef('');
+  const expectedVersion = useRef<string | undefined>(undefined);
   const submitting = useRef(false);
   const [selectedOT, setSelectedOT] = useState('');
   const [mechanicId, setMechanicId] = useState<string | null>(mechanic || null);
@@ -39,11 +40,15 @@ export default function AssignWorkModal({ mechanic, date, mechanics, workorders,
     submitting.current = true;
     setSaving(true);
     setError('');
-    mutationId.current ||= crypto.randomUUID();
+    if (!mutationId.current) {
+      mutationId.current = crypto.randomUUID();
+      expectedVersion.current = selected?.version;
+    }
     try {
       const { schedule } = await requestWorkshop<{ schedule: string[] }>('schedule', {
         mutationId: mutationId.current, otId: selectedOT, date: selectedDate, hours, notes,
         ...(mechanicId === null ? {} : { mechanicId }),
+        ...(expectedVersion.current && { expectedVersion: expectedVersion.current }),
       });
       onSave(schedule);
     } catch (err) {

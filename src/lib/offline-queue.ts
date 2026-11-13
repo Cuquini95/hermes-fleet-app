@@ -7,6 +7,9 @@ import { uploadFallaPhotos } from './falla-submit';
 import { reportCmmsDamage, type CmmsDamageReport } from './cmms-events';
 import { isCmmsMeterReading, type CmmsMeterReading } from './cmms-meter';
 import { uploadPhoto } from './photo-upload';
+import { uploadEvidence } from './evidence-upload';
+import { isPrivateEvidenceUrl } from './evidence-link';
+import { useAuthStore } from '../stores/auth-store';
 import { requestWorkshop, workshopActorId, WorkshopApiError } from './workshop-api';
 
 const DB_NAME = 'hermes-offline';
@@ -82,14 +85,16 @@ async function replayWorkshopCapture(capture: QueuedWorkshopCapture, id: number)
   if (active) return active;
   const task = (async () => {
     if (workshopActorId() !== capture.actorId) throw new Error('Abre la sesión que creó el registro pendiente.');
-    if (capture.photos.some((photo) => !photo.url)) {
-      const results = await Promise.allSettled(capture.photos.map(async (photo) => {
-        photo.url ||= await uploadPhoto(photo.file, captureBuckets[capture.endpoint]);
-      }));
+    const panama = useAuthStore.getState().project === 'tmf-panama';
+    const uploaded = (photo: QueuedWorkshopCapture['photos'][number]) => panama ? isPrivateEvidenceUrl(photo.url) : Boolean(photo.url);
+    for (const [index, photo] of capture.photos.entries()) {
+      if (uploaded(photo)) continue;
+      if (workshopActorId() !== capture.actorId) throw new Error('Abre la sesión que creó el registro pendiente.');
+      photo.url = panama ? await uploadEvidence(photo.file, {
+        kind: capture.endpoint, units: [String(capture.input.unit ?? '')], slot: index,
+        operationId: capture.mutationId, expectedUserId: capture.actorId,
+      }) : await uploadPhoto(photo.file, captureBuckets[capture.endpoint]);
       await putWorkshopCapture(capture, id);
-      if (results.some((result) => result.status === 'rejected') || capture.photos.some((photo) => !photo.url)) {
-        throw new Error('Evidencia pendiente. Reintenta para completar las fotos.');
-      }
     }
     if (workshopActorId() !== capture.actorId) throw new Error('Abre la sesión que creó el registro pendiente.');
     const photos = capture.photos.map((photo) => photo.url);
@@ -121,7 +126,7 @@ export async function saveWorkshopCapture<T>(input: WorkshopCapture): Promise<{ 
   try {
     return { kind: 'saved', result: await replayWorkshopCapture(capture, id) as T };
   } catch (error) {
-    if (error instanceof WorkshopApiError && error.status === 400) {
+    if (error instanceof WorkshopApiError && [400, 413, 415].includes(error.status)) {
       await clearSubmission(id);
       throw error;
     }

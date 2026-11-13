@@ -71,6 +71,7 @@ export interface WorkOrder {
   prioridad: OTPriority;
   mecanico_asignado: string;
   mecanico_usuario_id?: string;
+  version?: string;
   estado: OTEstado;
   foto_url: string;
   averia_ref: string;

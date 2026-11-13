@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
-import { requireSession } from './_lib/session-auth.js';
-import { canonicalTab, createHermesSheets, createPanamaOperationsSheets } from './_lib/hermes-google-sheets.js';
+import { isSameOriginAuthRequest, requireSession } from './_lib/session-auth.js';
+import { canonicalTab, createHermesSheets } from './_lib/hermes-google-sheets.js';
+import { dispatchEvidence } from './_lib/hermes-evidence.js';
+import { panamaOperationalStore } from './_lib/hermes-operational-store.js';
 import { rejectIfRateLimited } from './_lib/rate-limit.js';
 import meterHandler from './_lib/cmms-meter.js';
-import { dispatchPanama, PANAMA_PROJECT, readPanamaConsultationInventory, readOfficialPanamaShifts } from './_lib/hermes-panama.js';
+import { dispatchPanama, PANAMA_PROJECT, readOfficialPanamaShifts } from './_lib/hermes-panama.js';
 import { createPanamaDemoSheets } from './_lib/hermes-panama-demo.js';
 import { technicalDocuments } from './_lib/hermes-technical-library.js';
 import { validatePanamaMeterAppend } from './_lib/hermes-shifts.js';
@@ -74,6 +76,7 @@ const PANAMA_OPERATION_GROUPS = new Map([
   ['activos', ['api/sheets/append:Activos']],
 ]);
 const operationGroup = new Map([...PANAMA_OPERATION_GROUPS].flatMap(([group, routes]) => routes.map(route => [route, group])));
+const liveGroups = 'taller,inspecciones,pm,turnos,compras,recepcion,finanzas,gastos,horometro,combustible,fletes,llantas,proveedores,activos';
 
 function enabledPanamaGroups(value) {
   return new Set(String(value ?? '').split(',').map(group => group.trim()).filter(group => PANAMA_OPERATION_GROUPS.has(group)));
@@ -143,6 +146,12 @@ async function sheetAppend(req, res, sheets, session) {
     return invalid(res, 400, 'Datos de captura inválidos.');
   }
   if (rule.unit !== undefined && (!unitCode(values[rule.unit]) || !supportsUnit(session, values[rule.unit]))) return invalid(res, 403, 'Unidad fuera de tu alcance.');
+  if (sheets.nativeOperations && rule.unit !== undefined && tab !== 'Activos') {
+    const fleet = await sheets.read('01 Inventario');
+    if (!fleet.slice(3).some(asset => unitCode(asset[1]) === unitCode(values[rule.unit]))) {
+      return invalid(res, 400, 'La unidad no figura en el inventario TMF.');
+    }
+  }
   const row = values.slice();
   if (rule.actor !== undefined) row[rule.actor] = session.userName;
   if (session.project === PANAMA_PROJECT && rule.actorId !== undefined) {
@@ -218,10 +227,19 @@ export function createHermesGateway({
       const sheets = demo ? demoSheets : operationalSheets;
       const permittedGroups = session.project === PANAMA_PROJECT && !demo ? panamaWriteGroups : undefined;
       const writeEnabled = demo || (operationalWrites && (!permittedGroups || permittedGroups.size > 0));
+      const dispatchCapture = writeEnabled && !pausedOperations.has('api/panama/turnos/despacho')
+        && (!permittedGroups || permittedGroups.has('despacho'));
+      if (path === 'api/evidence') {
+        return await dispatchEvidence({ req, res, session, sheets,
+          canUpload: domainPath => enablePanamaOperations && writeEnabled && !pausedOperations.has(domainPath)
+            && (!permittedGroups || permittedGroups.has(operationGroup.get(domainPath))) });
+      }
       if (path === 'api/panama/capacidades') {
         if (session.project !== PANAMA_PROJECT) return invalid(res, 403, 'Consulta reservada a TMF Panamá.');
         if (req.method !== 'GET') return invalid(res, 405, 'Método no permitido.');
-        return res.status(200).json({ fuelCapture: enablePanamaOperations && writeEnabled && (demo || (enablePanamaFuelCapture && (!permittedGroups || permittedGroups.has('combustible')))) });
+        return res.status(200).json({
+          fuelCapture: enablePanamaOperations && writeEnabled && (demo || (enablePanamaFuelCapture && (!permittedGroups || permittedGroups.has('combustible')))),
+        });
       }
       if (path === 'api/panama/documentos-tecnicos') {
         if (session.project !== PANAMA_PROJECT || !WORKSHOP.includes(session.role)) return invalid(res, 403, 'Consulta no autorizada.');
@@ -285,16 +303,25 @@ export function createHermesGateway({
       }
 
       if (req.method !== 'GET') {
+        if (!isSameOriginAuthRequest(req)) return invalid(res, 403, 'Solicitud no autorizada.');
+        if (req.body?.expectedUserId && req.body.expectedUserId !== session.userId) {
+          return invalid(res, 403, 'El registro pertenece a otra sesión.');
+        }
         if (!writeEnabled) return invalid(res, 503, 'Este despliegue permite consulta. Usa el procedimiento vigente de tu área.');
         const routeKey = path === 'api/sheets/append' ? `${path}:${canonicalTab(req.body?.tab)}` : path;
+        if (pausedOperations.has(routeKey)) return invalid(res, 503, 'Operación en pausa.');
         const group = operationGroup.get(routeKey);
         if (permittedGroups && (!group || !permittedGroups.has(group))) {
           return invalid(res, 503, 'Este flujo está en consulta. Usa el procedimiento vigente de tu área.');
         }
       }
       if (shiftRoute) {
-        const result = await shifts({ path, method: req.method, body: req.body ?? {}, session, sheets, listShiftOperators,
+        const result = await shifts({ path, method: req.method, body: req.body ?? {}, session, sheets,
+          listShiftOperators: dispatchCapture ? listShiftOperators : undefined,
           readOfficialShifts: demo ? undefined : readOfficialShifts });
+        if (path === 'api/panama/turnos/despacho' && req.method === 'GET') {
+          return res.status(result.status).json({ ...result.body, captureAvailable: dispatchCapture });
+        }
         return res.status(result.status).json(result.body);
       }
       if (path === 'api/sheets/append') {
@@ -322,18 +349,17 @@ export function createHermesGateway({
   };
 }
 
-const panamaOperations = createPanamaOperationsSheets();
+const live = process.env.VERCEL_ENV === 'production';
+const readOnly = ['1', 'true'].includes(process.env.HERMES_READ_ONLY);
+const productionGroups = enabledPanamaGroups(process.env.HERMES_PANAMA_WRITE_GROUPS ?? liveGroups);
+if (process.env.HERMES_PANAMA_DISPATCH_VERIFIED !== 'true') productionGroups.delete('despacho');
 export default createHermesGateway({
   demoSheets: process.env.VERCEL_ENV === 'preview' ? createPanamaDemoSheets() : undefined,
-  sheets: {
-    ...panamaOperations,
-    read: (tab, options) => tab === '01 Inventario' ? readPanamaConsultationInventory() : panamaOperations.read(tab, options),
-  },
+  sheets: panamaOperationalStore,
   panamaOnly: true,
   enablePanamaOperations: true,
   readOfficialShifts: readOfficialPanamaShifts,
-  panamaWriteGroups: enabledPanamaGroups(process.env.HERMES_PANAMA_WRITE_GROUPS),
-  enablePanamaFuelCapture: process.env.HERMES_PANAMA_FUEL_CAPTURE === 'true',
-  // This production release is for consultation while operational access is being verified.
-  writeEnabled: false,
+  panamaWriteGroups: productionGroups,
+  enablePanamaFuelCapture: process.env.HERMES_PANAMA_FUEL_CAPTURE !== 'false',
+  writeEnabled: live && !readOnly,
 });

@@ -1,3 +1,5 @@
+import { EVIDENCE_LINK_PATTERN, isPrivateEvidenceUrl } from './evidence-link';
+
 export interface AveriaEntry {
   fecha: string;
   hora: string;
@@ -19,7 +21,7 @@ const URL_RE = /^https?:\/\//i;
 const OT_RE = /\bOT-(?:\d{8}-\d{4}-[a-z0-9]{4}|[a-z0-9]+)\b/i;
 
 function isUrl(value: string): boolean {
-  return URL_RE.test(value.trim());
+  return URL_RE.test(value.trim()) || isPrivateEvidenceUrl(value.trim());
 }
 
 function extractOtId(value: string): string {
@@ -77,7 +79,7 @@ export function openAveriaUnitSet(rows: string[][]): Set<string> {
   return units;
 }
 
-const PHOTO_URL_RE = /https?:\/\/[^\s,|"'<>]+/gi;
+const PHOTO_URL_RE = new RegExp(`https?:\\/\\/[^\\s,|"'<>]+|(?<![\\w/])${EVIDENCE_LINK_PATTERN}(?![\\w%&#?=/-])`, 'gi');
 
 function normalizePhotoUrl(value: string): string {
   return value.trim().replace(/[)\].,;]+$/g, '');
@@ -103,7 +105,7 @@ export function photoUrls(value: string): string[] {
     if (prefix.endsWith('blob:')) continue;
 
     const url = normalizePhotoUrl(rawUrl);
-    if (!url || seen.has(url) || !isHttpPhotoUrl(url)) continue;
+    if (!url || seen.has(url) || !(isHttpPhotoUrl(url) || isPrivateEvidenceUrl(url))) continue;
     seen.add(url);
     urls.push(url);
   }

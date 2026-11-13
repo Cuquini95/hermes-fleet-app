@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { STICKER_INSPECTION_TEMPLATES, stickerTemplateForEquipment } from '../../src/data/sticker-inspection-templates.js';
 import { buildDispatchReadinessMap } from '../../src/lib/dispatch-readiness.js';
 import { PANAMA_PROJECT } from './hermes-panama.js';
-import { PANAMA_READINESS_TAB } from './hermes-google-sheets.js';
+import { HermesSheetError, PANAMA_READINESS_TAB } from './hermes-google-sheets.js';
+import { isEvidenceError, verifyEvidence } from './hermes-evidence.js';
 
 const TAB = {
   inventory: '01 Inventario', orders: 'ORDENES_TRABAJO', history: 'OT_STATUS_LOG', failures: 'Averias',
@@ -109,7 +110,11 @@ function orderVisible(session, row) {
     && (session.role !== 'mecanico' || row[17] === session.userId));
 }
 
-function attachmentUrls(context, input, buckets) {
+async function attachmentUrls(context, input, kind, unit, bucket, recordId) {
+  if (isPanama(context)) {
+    return verifyEvidence(input, { kind, units: [unit], operationId: context.mutationId, recordId,
+      session: context.session, storage: context.evidenceStorage });
+  }
   const urls = input ?? [];
   assert(Array.isArray(urls) && urls.length <= 40, 400, 'Evidencia inválida');
   if (!urls.length) return [];
@@ -125,7 +130,7 @@ function attachmentUrls(context, input, buckets) {
     let url;
     try { url = new URL(clean); } catch { throw new WorkshopError(400, 'Evidencia inválida'); }
     assert(url.origin === allowedOrigin && url.protocol === 'https:' && !url.username && !url.password
-      && buckets.some((bucket) => url.pathname.startsWith(`/storage/v1/object/public/${bucket}/`)), 400, 'Evidencia inválida');
+      && url.pathname.startsWith(`/storage/v1/object/public/${bucket}/`), 400, 'Evidencia inválida');
     return clean;
   });
 }
@@ -137,7 +142,7 @@ function historyRow(context, otId, field, before, after) {
 function orderRow(context, data) {
   const { id, unit, type, description, priority, photos = [], reference = '', parts = '', notes = '', mechanic } = data;
   return [context.mutationId, id, context.date, unit, type, description, priority, priority, mechanic?.userName || '', 'Abierta',
-    photos.join(', '), reference, parts, '', '', notes, '0', mechanic?.userId || '', context.mutationId, context.session.userId];
+    photos.join(', '), reference, parts, '', '', notes, '0', mechanic?.userId || '', nextOrderVersion(context), context.session.userId];
 }
 
 function failureWrites(context, data) {
@@ -178,15 +183,15 @@ async function report(context) {
   const location = text(body.location, 'Ubicación', 180);
   const downtime = text(body.downtime, 'Tiempo de paro', 40);
   assert(typeof body.canMove === 'boolean', 400, 'Indica si la unidad puede moverse');
-  const photos = attachmentUrls(context, body.photos, ['falla-photos']);
+  const photos = await attachmentUrls(context, body.photos, 'report', code, 'falla-photos');
   const clientAffected = !['', 'n/a', 'ninguno', '--', 'na', 'none'].includes(customer.toLowerCase());
   const priority = body.canMove ? 'MEDIA' : clientAffected ? 'CRITICA' : 'ALTA';
   const notes = `Ubicación: ${location}. Cliente: ${customer}. Puede moverse: ${body.canMove ? 'Sí' : 'No'}`;
   const previousOtId = isPanama(context) ? text(body.previousOtId, 'OT anterior', 90) : '';
   if (previousOtId) {
     const previous = (await context.sheets.read(TAB.orders)).filter(row => row[1] === previousOtId);
-    assert(previous.length === 1 && previous[0][3]?.trim().toUpperCase() === code, 404, 'OT anterior no disponible para esta unidad');
-    assert(previous[0][9] === 'Completado' && normalizeModel(previous[0][4]) === normalizeModel(type), 409,
+    assert(previous.length === 1 && previous[0][3]?.trim().toUpperCase() === code, 400, 'OT anterior no disponible para esta unidad');
+    assert(previous[0][9] === 'Completado' && normalizeModel(previous[0][4]) === normalizeModel(type), 400,
       'Selecciona una OT cerrada de la misma unidad y tipo de falla');
   }
   const writes = failureWrites(context, { id: context.otId, unit: code, type, description, priority, photos, downtime, notes });
@@ -229,7 +234,7 @@ async function dvir(context) {
   const observations = [text(body.observations, 'Observaciones', 2500), ...checks.map((c) => c.detail)].filter(Boolean).join('\n');
   const score = `${checks.filter((c) => c.status === 'ok').length}/${checks.length}`;
   const result = checks.some((c) => c.status === 'falla') ? 'reprobado' : checks.some((c) => c.status === 'alerta') ? 'condicional' : 'aprobado';
-  const photos = attachmentUrls(context, body.photos, ['dvir-photos']);
+  const photos = await attachmentUrls(context, body.photos, 'dvir', code, 'dvir-photos');
   const otId = result === 'reprobado' ? context.otId : null;
   const inspectionId = `INS-${context.otId.slice(3)}`;
   const writes = [{ tab: TAB.inspections, append: [[context.mutationId, inspectionId, date, time, code, model, session.userName,
@@ -240,9 +245,15 @@ async function dvir(context) {
   return commitRestriction(context, code, writes, { inspectionId, otId, result, score });
 }
 
-function orderVersion(row) {
+export function orderVersion(row) {
   return row[18] || digest(row);
 }
+
+export function orderWriteGuard(row) {
+  return `workshop-order:${row[1]}:${orderVersion(row)}`;
+}
+
+const nextOrderVersion = ({ sheets, key, mutationId }) => sheets.nativeOperations ? digest(key) : mutationId;
 
 function storedObject(value) {
   try { return value ? JSON.parse(value) : null; } catch { return null; }
@@ -259,7 +270,8 @@ function historyTime(value = '', panama = false) {
 
 async function getOrder(context, value) {
   const otId = text(value, 'Folio de OT', 90, true);
-  const [rows, logs] = await Promise.all([context.sheets.read(TAB.orders), context.sheets.read(TAB.history)]);
+  const { sheets } = context;
+  const [rows, logs] = await Promise.all([sheets.read(TAB.orders), sheets.nativeOperations ? [] : sheets.read(TAB.history)]);
   const matches = rows.map((row, index) => ({ row, index })).filter(({ row }) => row[1] === otId);
   assert(matches.length <= 1, 409, 'Hay más de una fila para ese folio. Revisa la orden.');
   const found = matches[0];
@@ -269,7 +281,11 @@ async function getOrder(context, value) {
   for (const log of logs.filter((row) => row[1] === otId).sort((a, b) => historyTime(a[0], isPanama(context)) - historyTime(b[0], isPanama(context)))) {
     if (Object.hasOwn(FIELD_COLUMNS, log[2])) effective[FIELD_COLUMNS[log[2]]] = log[4];
   }
-  return { otId, ...found, effective, version: orderVersion(found.row) };
+  const version = orderVersion(found.row);
+  if (sheets.nativeOperations && context.body?.expectedVersion != null) {
+    assert(context.body.expectedVersion === version, 409, 'La orden cambió. Actualiza antes de guardar.');
+  }
+  return { otId, ...found, effective };
 }
 
 async function mechanicsFor(context) {
@@ -370,9 +386,9 @@ async function pmAcceptanceWrites(context, order, execution) {
 }
 
 async function transition(context) {
-  const { body, session, sheets, mutationId } = context;
+  const { body, session, sheets } = context;
   const order = await getOrder(context, body.otId);
-  const { otId, row, index, effective, version } = order;
+  const { otId, row, index, effective } = order;
   const field = text(body.field, 'Campo', 30, true);
   assert(Object.hasOwn(FIELD_COLUMNS, field), 400, 'Campo de OT inválido');
   const mechanic = session.role === 'mecanico';
@@ -433,7 +449,7 @@ async function transition(context) {
   if (field === 'progreso') value = String(decimal(value, 'Progreso', 0, 100));
   if (field === 'costo_estimado') value = decimal(value, 'Costo estimado', 0, 1e9).toFixed(2);
   if (field === 'foto_url') {
-    const photos = attachmentUrls(context, body.value, ['falla-photos']);
+    const photos = await attachmentUrls(context, body.value, 'order', unit, 'falla-photos', otId);
     assert(photos.length > 0, 400, 'Adjunta una evidencia');
     value = [...new Set([...before.split(', ').filter(Boolean), ...photos])].join(', ');
     assert(value.length <= 48000, 409, 'La orden alcanzó el límite de evidencia');
@@ -441,10 +457,10 @@ async function transition(context) {
 
   writes.push(
     { tab: TAB.orders, row: index, col, values: [value] },
-    { tab: TAB.orders, row: index, col: 18, values: [mutationId] },
+    { tab: TAB.orders, row: index, col: 18, values: [nextOrderVersion(context)] },
     { tab: TAB.history, append: [historyRow(context, otId, field, before, value)] },
   );
-  return commit(context, writes, { otId }, `workshop-order:${otId}:${version}`, readiness);
+  return commit(context, writes, { otId }, orderWriteGuard(row), readiness);
 }
 
 function scheduleValue(context, { otId, unit, mechanic, hours, date, priority, notes }) {
@@ -482,7 +498,7 @@ async function pm(context) {
 
 async function schedule(context) {
   const { body, sheets } = context;
-  const { otId, row, index, effective, version } = await getOrder(context, body.otId);
+  const { otId, row, index, effective } = await getOrder(context, body.otId);
   assert(['Abierta', 'En Espera de Asignación', 'En Reparación', 'Esperando Pieza'].includes(effective[9]), 409, 'La OT no está disponible para programar');
   const unit = row[3].toUpperCase();
   const changeAssignee = Object.hasOwn(body, 'mechanicId');
@@ -499,7 +515,7 @@ async function schedule(context) {
   const previous = matching[0] ?? -1;
   const writes = [
     previous >= 0 ? { tab: TAB.schedule, row: previous, values: result } : { tab: TAB.schedule, append: [result] },
-    { tab: TAB.orders, row: index, col: 18, values: [context.mutationId] },
+    { tab: TAB.orders, row: index, col: 18, values: [nextOrderVersion(context)] },
     { tab: TAB.history, append: [historyRow(context, otId, 'programacion', previous >= 0 ? rows[previous][1] : '',
       `${date} · ${hours} h · ${mechanic?.userName || 'Sin asignar'}`)] },
   ];
@@ -508,7 +524,7 @@ async function schedule(context) {
     { tab: TAB.orders, row: index, col: 17, values: [mechanic?.userId || ''] },
     { tab: TAB.history, append: [historyRow(context, otId, 'mecanico_asignado', effective[8] || '', mechanic?.userName || '')] },
   );
-  return commit(context, writes, { schedule: result }, `workshop-order:${otId}:${version}`);
+  return commit(context, writes, { schedule: result }, orderWriteGuard(row));
 }
 
 function pendingOperationalReturn(row) {
@@ -528,7 +544,7 @@ async function returnQueue({ session, sheets }, details = false) {
 
 async function operationalReturn(context) {
   const { body, session, sheets } = context;
-  const { row, effective, index, otId, version } = await getOrder(context, body.otId);
+  const { row, effective, index, otId } = await getOrder(context, body.otId);
   assert(pendingOperationalReturn(effective), 409, 'La OT no tiene una entrega pendiente de Operaciones');
   const execution = storedObject(row[WORKFLOW.execution]);
   const technical = storedObject(row[WORKFLOW.technical]);
@@ -568,9 +584,9 @@ async function operationalReturn(context) {
   }
   const history = decision === 'accepted' ? `Recibida · ${receipt.returnedAt} · ${notes}` : `Devuelta a Taller · ${receipt.dueDate} · ${notes}`;
   writes.push({ tab: TAB.orders, row: index, col: WORKFLOW.operations, values: [JSON.stringify(receipt)] },
-    { tab: TAB.orders, row: index, col: 18, values: [context.mutationId] },
+    { tab: TAB.orders, row: index, col: 18, values: [nextOrderVersion(context)] },
     { tab: TAB.history, append: [historyRow(context, otId, 'retorno_operativo', '', history)] });
-  return commit(context, writes, { otId, receipt }, `workshop-order:${otId}:${version}`, readiness);
+  return commit(context, writes, { otId, receipt }, orderWriteGuard(row), readiness);
 }
 
 const STICKER_COLORS = ['green', 'yellow', 'red'];
@@ -611,7 +627,7 @@ async function sticker(context) {
   }
   assert(Array.isArray(body.checks) && body.checks.length === template.items.length, 400, 'Completa la lista de inspección');
   const checkByItem = new Map(body.checks.map((check) => [check?.itemId, check]));
-  const photos = attachmentUrls(context, body.photos, ['sticker-inspection-photos']);
+  const photos = await attachmentUrls(context, body.photos, 'sticker', code, 'sticker-inspection-photos');
   const findings = [];
   for (const item of template.items) {
     const check = checkByItem.get(item.id);
@@ -619,8 +635,9 @@ async function sticker(context) {
     assert(!item.hardStop || check.status !== 'no_aplica', 400, 'Los puntos críticos requieren una comprobación');
     if (check.status !== 'no_cumple' && check.status !== 'condicionado') continue;
     const comment = text(check.comment, 'Comentario del hallazgo', 500, true);
-    const evidence = attachmentUrls(context, check.photos, ['sticker-inspection-photos']);
-    assert(evidence.length > 0 && evidence.every((url) => photos.includes(url)), 400, 'Adjunta la evidencia de cada hallazgo');
+    const evidence = check.photos;
+    assert(Array.isArray(evidence) && evidence.length > 0 && evidence.length <= photos.length
+      && evidence.every((url) => photos.includes(url)), 400, 'Adjunta la evidencia de cada hallazgo');
     assert(typeof check.canOperate === 'boolean', 400, 'Indica si el hallazgo permite operar');
     const dueDate = check.status === 'condicionado' ? isoDate(check.dueDate) : '';
     assert(!dueDate || dueDate >= date, 400, 'La fecha compromiso precede a la inspección');
@@ -796,10 +813,13 @@ export async function dispatchWorkshop(input) {
     }
     if (method === 'GET' && endpoint === 'orders') {
       assert(ORDER_READ.has(session.role), 403, 'Tu rol no puede consultar el taller');
-      const [rows, logs] = await Promise.all([sheets.read(TAB.orders, { cached: true }), sheets.read(TAB.history, { cached: true })]);
+      const [rows, logs] = await (sheets.readMany?.([TAB.orders, TAB.history]) ?? Promise.all([
+        sheets.read(TAB.orders, { cached: true }), sheets.read(TAB.history, { cached: true }),
+      ]));
       const orders = rows.filter((row) => orderVisible(session, row));
       const ids = new Set(orders.map((row) => row[1]));
-      return { status: 200, body: { orders, history: logs.filter((row) => ids.has(row[1])) } };
+      return { status: 200, body: { orders, history: logs.filter((row) => ids.has(row[1])),
+        ...(sheets.nativeOperations && { nativeOperations: true }) } };
     }
     if (method === 'GET' && endpoint === 'schedule') {
       assert(MANAGEMENT.has(session.role), 403, 'Tu rol no puede consultar el calendario');
@@ -822,7 +842,9 @@ export async function dispatchWorkshop(input) {
     const mutationId = text(body.mutationId, 'Identificador de operación', 36, true).toLowerCase();
     assert(UUID.test(mutationId), 400, 'Identificador de operación inválido');
     const key = `workshop:${endpoint}:${session.userId}:${mutationId}`;
-    const fingerprint = digest(body);
+    const operation = { ...body };
+    delete operation.expectedUserId;
+    const fingerprint = digest(operation);
     if (create) requireUnit(session, body.unit);
     const prior = await sheets.replay({ key, fingerprint });
     if (prior) return { status: 200, body: { ...prior, replayed: true } };
@@ -832,7 +854,9 @@ export async function dispatchWorkshop(input) {
       time: timeFormatter.format(date), otId: `OT-${digest(key).slice(0, 16).toUpperCase()}` });
   } catch (error) {
     const status = Number(error?.status ?? error?.statusCode);
-    if (error instanceof WorkshopError) return { status, body: { error: error.message } };
+    if (error instanceof WorkshopError || isEvidenceError(error) || (error instanceof HermesSheetError && status === 400)) {
+      return { status, body: { error: error.message } };
+    }
     if (status === 409) return { status, body: { error: 'La operación ya existe o el registro cambió. Actualiza y vuelve a revisar.' } };
     return { status: 503, body: { error: 'No se pudo confirmar el guardado en Taller. Reintenta la misma operación.' } };
   }

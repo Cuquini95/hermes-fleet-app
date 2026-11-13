@@ -1,3 +1,5 @@
+import { uploadEvidence } from './evidence-upload';
+
 export interface InventoryMovement {
   id: string;
   at: string;
@@ -20,7 +22,7 @@ export interface PurchaseIssuer {
   address: string;
   phone: string;
   taxId?: string;
-  taxBps: number;
+  taxBps?: number;
   taxLabel: string;
   template: 'ultratk' | 'transplus';
 }
@@ -38,6 +40,7 @@ export interface PurchaseReceipt {
   actorId: string;
   quantity: string;
   reference: string;
+  stockDisposition?: 'posted' | 'unregistered' | 'document';
 }
 
 export interface PurchaseLine {
@@ -71,8 +74,10 @@ export interface PurchaseOrder {
   vendorName: string;
   vendorRfc: string;
   vendorAddress: string;
+  vendorSource?: 'catalog' | 'manual';
   unit: string;
   subtotal: string;
+  discount?: string;
   tax: string;
   shipping: string;
   other: string;
@@ -136,7 +141,8 @@ const pending = new Map<string, string>();
 let sessionOwner = '';
 let sessionGeneration = 0;
 const receiptUploadPath = String(import.meta.env.VITE_HERMES_EXPENSE_RECEIPT_UPLOAD_PATH ?? '');
-export const canAttachExpenseReceipt = /^\/(?!\/)[a-zA-Z0-9/_-]+$/.test(receiptUploadPath);
+const legacyReceiptUpload = /^\/(?!\/)[a-zA-Z0-9/_-]+$/.test(receiptUploadPath);
+export const canAttachExpenseReceipt = (project: string) => project === 'tmf-panama' || legacyReceiptUpload;
 
 export function setPurchaseSession(owner: string) {
   if (sessionOwner === owner) return;
@@ -147,10 +153,12 @@ export function setPurchaseSession(owner: string) {
 
 export class PurchaseApiError extends Error {
   status: number;
+  readonly confirmationPending: boolean;
 
   constructor(status: number, message: string) {
     super(message);
     this.status = status;
+    this.confirmationPending = status < 400 || status >= 500 || status === 408;
   }
 }
 
@@ -177,22 +185,29 @@ function storedOperation(key: string): string | undefined {
 }
 
 /** Keep the same operation after an interrupted response or a page reload. */
-export async function purchaseWrite<T>(action: string, body: object): Promise<T> {
+export async function purchaseWrite<T>(
+  action: string,
+  body: object,
+  attachmentOperationId?: string,
+  confirm?: (data: T) => boolean | undefined,
+): Promise<T> {
   const generation = sessionGeneration;
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(body)));
   if (generation !== sessionGeneration) throw new DOMException('Cambió la sesión', 'AbortError');
   const fingerprint = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
   const key = 'hermes:purchase:' + sessionOwner + ':' + action + ':' + fingerprint;
-  const operationId = storedOperation(key) || crypto.randomUUID();
+  const operationId = attachmentOperationId || storedOperation(key) || crypto.randomUUID();
   pending.set(key, operationId);
   try { sessionStorage.setItem(key, operationId); } catch { /* use the in-memory key */ }
   const response = await fetch(BASE + action, {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, operationId }),
+    body: JSON.stringify({ ...body, operationId, ...(sessionOwner && { expectedUserId: sessionOwner }) }),
+    ...(action === 'expense-save' && { signal: AbortSignal.timeout(25_000) }),
   });
   const data = await readResponse<T>(response);
+  if (confirm && !confirm(data)) throw new PurchaseApiError(response.status, 'No se pudo confirmar el folio del gasto.');
   pending.delete(key);
   try { sessionStorage.removeItem(key); } catch { /* already cleared in memory */ }
   return data;
@@ -206,9 +221,14 @@ export function purchaseRequests(signal?: AbortSignal) {
   return purchaseRead<{ items: PurchaseRequestLine[] }>('requests', undefined, signal);
 }
 
-export async function uploadExpenseReceipt(file: File, operationId: string) {
-  if (!canAttachExpenseReceipt) throw new Error('Adjuntos de Gastos pendientes de activar.');
+export async function uploadExpenseReceipt(file: File, operationId: string, units: string[], project: string, expectedUserId: string) {
+  if (!canAttachExpenseReceipt(project)) throw new Error('Adjuntos de Gastos pendientes de activar.');
   const generation = sessionGeneration;
+  if (project === 'tmf-panama') {
+    const url = await uploadEvidence(file, { kind: 'receipt', units, operationId, expectedUserId, slot: 0 });
+    if (generation !== sessionGeneration) throw new DOMException('Cambió la sesión', 'AbortError');
+    return url;
+  }
   const body = new FormData();
   body.set('file', file);
   body.set('operationId', operationId);

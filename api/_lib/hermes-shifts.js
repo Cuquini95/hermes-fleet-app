@@ -269,7 +269,8 @@ export async function dispatchShifts({ path, method, body, session, sheets, list
     return { status: action === 'deliver' ? 201 : 200, body: existing };
   }
 
-  const records = rowsToRecords(await sheets.read(PANAMA_SHIFT_TAB));
+  const rows = await sheets.read(PANAMA_SHIFT_TAB);
+  const records = rowsToRecords(rows);
   const previous = action === 'deliver' ? null : currentRecord(records, session, body);
   const data = fields ?? previous;
   requireValue(hasIdentityUnit(session, data.unit), 403, 'Unidad fuera de tu alcance.');
@@ -309,7 +310,9 @@ export async function dispatchShifts({ path, method, body, session, sheets, list
     record.createdAt = previous.createdAt;
     record.history = [...previous.history, ...record.history];
   }
-  const saved = await sheets.commit({ key, fingerprint, guard: `panama:shift:${id}:${version}`,
+  const previousUnitEvent = rows.findLast(item => item[1] === data.unit && FOLIO.test(item[0]));
+  const unitGuard = `panama:shift-unit:${sha([data.unit, previousUnitEvent?.[0], previousUnitEvent?.[4]])}`;
+  const saved = await sheets.commit({ key, fingerprint, guards: [`panama:shift:${id}:${version}`, unitGuard],
     writes: [{ tab: PANAMA_SHIFT_TAB, append: [row] }], result: { record } });
   return { status: action === 'deliver' ? 201 : 200, body: saved.result };
 }

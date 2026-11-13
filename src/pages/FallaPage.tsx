@@ -166,7 +166,7 @@ function FallaForm({ scope, isPanama }: { scope: string; isPanama: boolean }) {
       writes.current = write.catch(() => setDraftError(true));
       showToast(`OT creada. ${response.result.otId} disponible en Órdenes`);
     } catch (error) {
-      if (error instanceof WorkshopApiError && error.status === 400) {
+      if (error instanceof WorkshopApiError && [400, 413, 415].includes(error.status)) {
         await updateDraft({ mutationId: '', pending: '' });
       }
       showToast(error instanceof Error ? error.message : 'No se pudo preparar el reporte', 'error');

@@ -67,12 +67,13 @@ async function requestDispatch(data?: DispatchFields & { mutationId: string; exp
   if (data ? !result?.assignment?.id : !Array.isArray(result?.assignments) || !Array.isArray(result?.operators)) {
     throw new Error('El servidor no confirmó el despacho.');
   }
-  return result as { assignment: DispatchAssignment; assignments: DispatchAssignment[]; operators: DispatchOperator[] };
+  return result as { assignment: DispatchAssignment; assignments: DispatchAssignment[]; operators: DispatchOperator[]; captureAvailable?: boolean };
 }
 
 function DispatchPanel({ userId, canAssign, units }: { userId: string; canAssign: boolean; units: { unit_id: string; model: string }[] }) {
   const [assignments, setAssignments] = useState<DispatchAssignment[]>([]);
   const [operators, setOperators] = useState<DispatchOperator[]>([]);
+  const [captureAvailable, setCaptureAvailable] = useState<boolean>();
   const [fields, setFields] = useState<DispatchFields>({ unit: '', date: mexicoDateInput(), shift: '', site: '', operatorId: '' });
   const [retry, setRetry] = useState<Parameters<typeof requestDispatch>[0]>();
   const [error, setError] = useState('');
@@ -85,7 +86,12 @@ function DispatchPanel({ userId, canAssign, units }: { userId: string; canAssign
   useEffect(() => {
     const controller = new AbortController();
     requestDispatch(undefined, controller.signal)
-      .then(result => { if (!controller.signal.aborted) { setAssignments(result.assignments); setOperators(result.operators); } })
+      .then(result => {
+        if (controller.signal.aborted) return;
+        setAssignments(result.assignments);
+        setOperators(result.operators);
+        setCaptureAvailable(result.captureAvailable !== false);
+      })
       .catch(cause => { if (!controller.signal.aborted) setError(cause.message); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
@@ -133,7 +139,8 @@ function DispatchPanel({ userId, canAssign, units }: { userId: string; canAssign
     </div>
     {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
     {message && <p role="status" className="text-sm text-emerald-900">{message}</p>}
-    {canAssign && <form className="space-y-3" onSubmit={assign}>
+    {captureAvailable === false && <p className="text-sm text-amber-800">Despacho pendiente de validar con HSE.</p>}
+    {canAssign && captureAvailable && <form className="space-y-3" onSubmit={assign}>
       <fieldset disabled={loading || saving || !!retry} className="grid min-w-0 gap-3 sm:grid-cols-2">
         <label className={labelClass}>Unidad para despacho<select className={inputClass} required {...bind('unit')}>
           <option value="">Selecciona una unidad</option>

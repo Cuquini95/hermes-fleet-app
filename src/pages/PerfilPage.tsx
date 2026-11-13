@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { ROLE_LABELS } from '../types/roles';
+import { isPrivateEvidenceUrl } from '../lib/evidence-link';
 
 interface ActivityEntry {
   type: string;
@@ -24,6 +25,7 @@ interface ActivityEntry {
   folio: string;
   detail: string;
   row: string[];
+  evidence?: string[];
 }
 
 interface PersonalHistory {
@@ -254,6 +256,11 @@ function Profile({ userId }: { userId: string }) {
                             {[entry.unit, entry.folio, entry.detail].filter(Boolean).join(' · ')}
                           </p>
                           <p className="text-xs text-text-secondary mt-0.5">{entry.date} {entry.time}</p>
+                          {entry.evidence?.filter(isPrivateEvidenceUrl).map((url, index) => (
+                            <a key={url} href={url} target="_blank" rel="noreferrer" className="mr-2 inline-block py-1 text-xs font-semibold text-amber underline">
+                              {`Ver evidencia ${index + 1}`}
+                            </a>
+                          ))}
                         </div>
                       </div>
                     ))}

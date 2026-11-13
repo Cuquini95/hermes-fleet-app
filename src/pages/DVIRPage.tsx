@@ -133,7 +133,7 @@ export default function DVIRPage() {
         ? `Inspección registrada. OT creada ${response.result.otId}`
         : `Inspección registrada. ${response.result.inspectionId} (${response.result.score})`);
     } catch (error) {
-      if (error instanceof WorkshopApiError && error.status === 400) {
+      if (error instanceof WorkshopApiError && [400, 413, 415].includes(error.status)) {
         mutationId.current = '';
         setPending('');
       }

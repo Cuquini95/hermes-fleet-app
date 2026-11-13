@@ -270,6 +270,7 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
   const memberships = new Map(directory.map(item => [item.user.id, item.membership]));
   const sessions = new Map();
   const photos = new Map();
+  const evidence = new Map();
   const alerts = [];
   const errors = [];
   const outboundBlocked = [];
@@ -333,22 +334,36 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
           return json(res, 200, entry ? [{ ...entry, hermes_memberships: memberships.get(entry.user_id) }] : []);
         }
       }
-      if (path.startsWith('/storage/v1/object/')) {
-        const key = path.replace(/^\/storage\/v1\/object\/(public\/)?/, '');
+      if (path === '/rest/v1/hermes_panama_evidence') {
+        const id = firstEq(url.searchParams, 'id');
+        if (req.method === 'GET') return json(res, 200, evidence.has(id) ? [evidence.get(id)] : []);
         if (req.method === 'POST') {
-          photos.set(key, Buffer.isBuffer(body) ? body : photoPng);
-          return json(res, 200, { Key: key, Id: 'adjunto-sintético' });
+          if (evidence.has(body.id)) return json(res, 201, []);
+          const row = { ...body, ready: false };
+          evidence.set(body.id, row);
+          return json(res, 201, [row]);
         }
-        if (req.method === 'GET' && photos.has(key)) {
-          res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
-          return res.end(photos.get(key));
+        if (req.method === 'PATCH') {
+          if (evidence.has(id) && body?.ready === true) evidence.get(id).ready = true;
+          return res.writeHead(204).end();
+        }
+      }
+      if (path.startsWith('/storage/v1/object/')) {
+        const item = path.match(/^\/storage\/v1\/object\/(authenticated\/)?hermes-panama-evidence\/(live|demo)\/([a-f0-9]{64})$/);
+        if (!item) return json(res, 404, { error: 'Foto de prueba no encontrada' });
+        if (req.headers.apikey !== qaServiceKey) return json(res, 401, { error: 'Almacenamiento de prueba requiere servicio autorizado' });
+        const key = `${item[2]}/${item[3]}`;
+        if (req.method === 'POST' && !item[1] && Buffer.isBuffer(body) && req.headers['x-upsert'] === 'false') {
+          if (photos.has(key)) return json(res, 409, { code: 'ResourceAlreadyExists' });
+          photos.set(key, { body, mime: req.headers['content-type'] });
+          return json(res, 201, { Key: key });
+        }
+        if (req.method === 'GET' && item[1] && photos.has(key)) {
+          const photo = photos.get(key);
+          res.writeHead(200, { 'Content-Type': photo.mime, 'Content-Length': photo.body.length, 'Cache-Control': 'no-store' });
+          return res.end(photo.body);
         }
         return json(res, 404, { error: 'Foto de prueba no encontrada' });
-      }
-      if (path === '/api/qa/receipt-upload' && req.method === 'POST' && Buffer.isBuffer(body)) {
-        const key = `receipt-photos/${randomUUID()}.jpg`;
-        photos.set(key, body);
-        return json(res, 200, { receiptUrl: `${origin}/storage/v1/object/public/${key}` });
       }
       if (path === '/hermes-api/api/ocr/receipt' && req.method === 'POST') {
         return json(res, 200, { proveedor: 'Proveedor QA', rfc_proveedor: 'QAT000000000', folio_factura: 'FAC-QA-MOVIL',
@@ -393,12 +408,12 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
     HERMES_AUTH_SUPABASE_SERVICE_ROLE_KEY: qaServiceKey, HERMES_AUTH_PROJECT: qaProject,
     HERMES_UPSTREAM_URL: '', HERMES_UPSTREAM_TOKEN: '', HERMES_GOOGLE_SERVICE_ACCOUNT_JSON: '',
     HERMES_GOOGLE_SHEET_ID: '', HERMES_GOOGLE_SHEETS_ID: '', TELEGRAM_BOT_TOKEN: '',
-    HERMES_WORKSHOP_STORAGE_ORIGIN: origin, HERMES_EXPENSE_PRICE_CURRENCY: 'USD',
+    HERMES_EXPENSE_PRICE_CURRENCY: 'USD',
     HERMES_PANAMA_PM_CHECKLISTS_JSON: JSON.stringify(['PM-250', 'PM-1'].map(level => ({
       model: 'Komatsu D65EX-16', level, reference: 'Checklist sintético QA, revisión 1',
       tasks: [{ id: 'review-qa', label: 'Comprobación sintética de mantenimiento' }],
     }))),
-    HERMES_PURCHASE_ISSUERS_JSON: JSON.stringify([{ id: 'TP_PA_QA', name: 'Trans Plus Panamá QA', currency: 'USD', taxLabel: 'ITBMS', taxBps: 700, template: 'transplus' }]), HERMES_EXPENSE_RECEIPT_URL_PREFIX: `${origin}/storage/v1/object/public/receipt-photos/`,
+    HERMES_PURCHASE_ISSUERS_JSON: JSON.stringify([{ id: 'TP_PA_QA', name: 'Trans Plus Panamá QA', currency: 'USD', taxLabel: 'ITBMS', taxBps: 700, template: 'transplus' }]),
   });
   async function stop() {
     globalThis.fetch = originalFetch;
@@ -425,8 +440,7 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
     }
     return {
       origin, repoDirectory, sheet, photos, alerts, errors, outboundBlocked, stop, peakLogins: () => peakLogins,
-      buildEnv: { VITE_HERMES_API_URL: '/hermes-api', VITE_SUPABASE_URL: origin, VITE_SUPABASE_ANON_KEY: qaPublicKey,
-        VITE_HERMES_EXPENSE_RECEIPT_UPLOAD_PATH: '/api/qa/receipt-upload', VITE_SENTRY_DSN: '' },
+      buildEnv: { VITE_HERMES_API_URL: '/hermes-api', VITE_SENTRY_DSN: '' },
     };
   } catch (error) {
     await stop();

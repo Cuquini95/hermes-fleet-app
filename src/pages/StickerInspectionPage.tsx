@@ -286,7 +286,7 @@ export default function StickerInspectionPage() {
         : `Inspección ${result.result.folio} guardada y pendiente de revisión`);
       void refreshReviews();
     } catch (error) {
-      if (error instanceof WorkshopApiError && error.status === 400) {
+      if (error instanceof WorkshopApiError && [400, 413, 415].includes(error.status)) {
         captureId.current = '';
         setPending('');
       }

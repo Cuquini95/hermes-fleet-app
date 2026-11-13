@@ -73,6 +73,12 @@ describe('parseAveriaRow', () => {
     ]);
   });
 
+  it('recognizes only the exact same-origin evidence path among relative URLs', () => {
+    const privateLink = `/hermes-api/api/evidence?id=${'a'.repeat(64)}`;
+    expect(photoUrls(`Fotos: ${privateLink}, ${PHOTO_URL}, /otra/ruta, ${privateLink}&otro=1`)).toEqual([privateLink, PHOTO_URL]);
+    expect(firstPhotoUrl(`//foreign.example${privateLink}`)).toBe('');
+  });
+
   it('ignores session-only blob URLs and non-url placeholders', () => {
     expect(photoUrls('blob:http://localhost:5173/temp, Foto 1, pending-upload')).toEqual([]);
   });

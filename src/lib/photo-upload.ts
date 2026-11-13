@@ -11,7 +11,7 @@ export async function compressImage(file: File, maxWidth = 1200): Promise<Blob> 
     const img = new Image();
     img.onload = () => {
       URL.revokeObjectURL(img.src);
-      const scale = Math.min(1, maxWidth / img.width);
+      const scale = Math.min(1, maxWidth / Math.max(img.width, img.height));
       canvas.width = img.width * scale;
       canvas.height = img.height * scale;
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
@@ -21,7 +21,10 @@ export async function compressImage(file: File, maxWidth = 1200): Promise<Blob> 
         0.85
       );
     };
-    img.onerror = () => reject(new Error('Image load failed'));
+    img.onerror = () => {
+      URL.revokeObjectURL(img.src);
+      reject(new Error('Image load failed'));
+    };
     img.src = URL.createObjectURL(file);
   });
 }
@@ -56,7 +59,7 @@ export async function uploadPhoto(file: File, bucket: string, path?: string): Pr
 }
 
 /** Read a File and resolve to its base64-encoded payload (without the data: prefix). */
-export function fileToBase64(file: File): Promise<string> {
+export function fileToBase64(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {

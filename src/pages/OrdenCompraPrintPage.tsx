@@ -43,13 +43,14 @@ export default function OrdenCompraPrintPage() {
   const ultratk = issuer?.template === 'ultratk';
   const accent = ultratk ? '#C91D17' : '#182133';
   const amount = (value: string) => issuer ? displayMoney(value, issuer.currency) : value || '—';
-  const totals: [string, string][] = [
-    ['Subtotal', order.subtotal],
+  const totals: [string, string][] = [['Subtotal', order.subtotal]];
+  if (order.discount && Number(order.discount) > 0) totals.push(['Descuento', order.discount]);
+  totals.push(
     [issuer?.taxLabel || 'Impuesto', order.tax],
     ['Envío', order.shipping],
     ['Otros cargos', order.other],
     ['Total', order.total],
-  ];
+  );
   const approvedAt = authorized ? new Intl.DateTimeFormat('es-MX', {
     dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Panama',
   }).format(new Date(order.approvedAt)) : '';

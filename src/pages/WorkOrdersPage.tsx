@@ -60,7 +60,7 @@ export default function WorkOrdersPage() {
       <div className="py-4">
         <h2 className="font-semibold text-lg text-text mb-3">Órdenes de Trabajo</h2>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
-          <p className="text-sm text-amber-900" role="alert">{showMaster ? 'No se pudo consultar el libro operativo de órdenes.' : error}</p>
+          <p className="text-sm text-amber-900" role="alert">{showMaster ? 'No se pudieron consultar las órdenes de Hermes.' : error}</p>
           <button
             type="button"
             onClick={() => fetchWorkOrders()}
@@ -111,14 +111,11 @@ export default function WorkOrdersPage() {
 
       {/* List */}
       {filtered.length === 0 ? (
-        <>
-          <EmptyState
-            type="workorders"
-            title="Sin órdenes"
-            description="No hay órdenes de trabajo de Hermes con este filtro"
-          />
-          {showMaster && fetched && workorders.length === 0 && filter === 'Todas' && <PanamaSourceRecords source="orders" />}
-        </>
+        <EmptyState
+          type="workorders"
+          title="Sin órdenes"
+          description="No hay órdenes de trabajo de Hermes con este filtro"
+        />
       ) : (
         filtered.map((ot) => (
           <OTCard
@@ -128,6 +125,7 @@ export default function WorkOrdersPage() {
           />
         ))
       )}
+      {showMaster && fetched && filter === 'Todas' && <div className="mt-4"><PanamaSourceRecords source="orders" /></div>}
     </div>
   );
 }

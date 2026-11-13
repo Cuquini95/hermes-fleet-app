@@ -12,7 +12,7 @@ export default function OperationalReturnCard({ order, mayReview, onSave }: {
   const [dueDate, setDueDate] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const pending = useRef(new Map<string, string>());
+  const pending = useRef(new Map<string, { mutationId: string; expectedVersion?: string }>());
   const sending = useRef(false);
   const receipt = order.operations;
   const needsReturn = order.estado === 'Completado' && receipt?.decision !== 'accepted';
@@ -22,19 +22,22 @@ export default function OperationalReturnCard({ order, mayReview, onSave }: {
     if (sending.current) return;
     const data = { otId: order.ot_id, decision, notes, ...(decision === 'returned' && { dueDate }) };
     const key = JSON.stringify(data);
-    const mutationId = pending.current.get(key) ?? crypto.randomUUID();
-    pending.current.set(key, mutationId);
+    const attempt = pending.current.get(key) ?? { mutationId: crypto.randomUUID(), expectedVersion: order.version };
+    pending.current.set(key, attempt);
     sending.current = true;
     setSaving(true);
     setError('');
     try {
-      await requestWorkshop('returns', { ...data, mutationId });
+      await requestWorkshop('returns', { ...data, ...attempt });
       pending.current.delete(key);
       await onSave();
       setNotes('');
       setDueDate('');
     } catch (err) {
-      if (err instanceof WorkshopApiError && [400, 403, 404, 409].includes(err.status)) pending.current.delete(key);
+      if (err instanceof WorkshopApiError && [400, 403, 404, 409].includes(err.status)) {
+        pending.current.delete(key);
+        if (err.status === 409) await onSave();
+      }
       setError(err instanceof Error ? err.message : 'No se pudo confirmar el retorno');
     } finally {
       setSaving(false);

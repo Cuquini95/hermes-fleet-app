@@ -12,7 +12,7 @@ function setup(t) {
   process.env.HERMES_PANAMA_EXPENSE_CLOSED_THROUGH = '2026-10';
   process.env.HERMES_PANAMA_EXPENSE_REVIEWER_IDS = 'fixture-reviewer,fixture-author';
   t.after(() => {
-    for (const k of ['HERMES_PANAMA_EXPENSE_CLOSED_THROUGH', 'HERMES_PANAMA_EXPENSE_REVIEWER_IDS']) {
+    for (const k of ['HERMES_PANAMA_EXPENSE_CLOSED_THROUGH', 'HERMES_PANAMA_EXPENSE_REVIEWER_IDS', 'HERMES_PURCHASE_ISSUERS_JSON']) {
       if (original[k] === undefined) delete process.env[k];
       else process.env[k] = original[k];
     }
@@ -61,6 +61,25 @@ test('Panamá registra los centavos, el impuesto del documento, entidad, moneda 
   assert.equal(rows.length, 2);
   assert.ok(rows.every((row) => row[16] === 'Pendiente' && row[21] === 'TP_PA_DEMO' && row[22] === 'USD' && row[23] === 'ITBMS' && row[24] === '01/11/2026'));
   assert.equal(rows.reduce((total, row) => total + Math.round(Number(row[8]) * 100), 0), 1400);
+});
+test('Panamá permite capturar un gasto exento con el emisor verificado sin habilitar su revisión', async (t) => {
+  const { ledger, call } = setup(t);
+  delete process.env.HERMES_PURCHASE_ISSUERS_JSON;
+  const capture = { ...unassignedManager, previewDemo: false };
+  const options = await call('expense-options', null, capture);
+  assert.deepEqual(options.body.entities, [{ id: 'TP_PA', name: 'TRANSPLUS, S.A.', currency: 'USD', taxLabel: 'ITBMS' }]);
+  assert.equal(options.body.canReview, false);
+
+  const input = expenseInput({ entity: 'TP_PA', subtotal: '214.00', iva: '0', folio_factura: 'EXENTO-QA' });
+  assert.equal((await call('expense-save', expenseInput({ entity: 'TP_PA', iva: '' }), capture)).status, 400);
+  const saved = await call('expense-save', input, capture);
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  assert.deepEqual(ledger[TAB.expenses].slice(1).map(row => [row[7], row[8], row[16], row[21], row[22]]), [
+    ['100.00', '0.00', 'Pendiente', 'TP_PA', 'USD'], ['114.00', '0.00', 'Pendiente', 'TP_PA', 'USD'],
+  ]);
+  assert.equal((await call('expense-review', {
+    operationId: randomUUID(), id: saved.body.ids[0], status: 'Aprobado', reason: 'Revisión QA',
+  }, capture)).status, 403);
 });
 test('Panamá requiere revisor designado e independiente, con trazabilidad y bloqueo de período', async (t) => {
   const { ledger, call } = setup(t);

@@ -25,6 +25,7 @@ interface WorkOrderState {
     field: OTStatusField,
     newValue: string | string[],
     execution?: WorkshopExecutionInput,
+    operationId?: string,
   ) => Promise<void>;
   getWorkOrderById: (otId: string) => WorkOrder | undefined;
   initRealtime: () => () => void;
@@ -47,6 +48,7 @@ function parseWorkOrderRow(row: string[]): WorkOrder | null {
     prioridad:         (row[OT_COL.PRIORIDAD]      ?? 'MEDIA') as OTPriority,
     mecanico_asignado: row[OT_COL.MECANICO]        ?? '',
     mecanico_usuario_id: row[17]                  ?? '',
+    version:           row[18]                   || undefined,
     estado:            (row[OT_COL.ESTADO]         ?? 'Abierta') as OTEstado,
     foto_url:          row[OT_COL.FOTO_URL]        ?? '',
     averia_ref:        row[OT_COL.AVERIA_REF]      ?? '',
@@ -115,7 +117,7 @@ function applyStatusLog(workorders: WorkOrder[], log: StatusLogEntry[]): WorkOrd
 }
 
 const emptyState = { workorders: [], statusLog: [], loading: false, error: null, fetched: false };
-const pendingUpdates = new Map<string, string>();
+const pendingUpdates = new Map<string, { mutationId: string; expectedVersion?: string }>();
 let requestSequence = 0;
 
 export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
@@ -127,11 +129,11 @@ export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
     const sequence = ++requestSequence;
     set({ loading: true, error: null });
     try {
-      const { orders, history } = await requestWorkshop<{ orders: string[][]; history: string[][] }>('orders');
+      const { orders, history, nativeOperations } = await requestWorkshop<{ orders: string[][]; history: string[][]; nativeOperations?: boolean }>('orders');
       if (actorId !== workshopActorId() || sequence !== requestSequence) return;
       const workorders = orders.map(parseWorkOrderRow).filter((row): row is WorkOrder => row !== null);
       const statusLog = history.map(parseStatusLogRow).filter((row): row is StatusLogEntry => row !== null);
-      set({ workorders: applyStatusLog(workorders, statusLog), statusLog, loading: false, fetched: true });
+      set({ workorders: nativeOperations ? workorders : applyStatusLog(workorders, statusLog), statusLog, loading: false, fetched: true });
     } catch (error) {
       if (actorId !== workshopActorId() || sequence !== requestSequence) return;
       set({
@@ -141,18 +143,22 @@ export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
     }
   },
 
-  updateOTField: async (otId, field, newValue, execution) => {
+  updateOTField: async (otId, field, newValue, execution, operationId) => {
     const actorId = workshopActorId();
     if (!actorId) throw new Error('Abre una sesión individual para actualizar la OT.');
     const key = JSON.stringify([actorId, otId, field, newValue, execution]);
-    const mutationId = pendingUpdates.get(key) ?? crypto.randomUUID();
-    pendingUpdates.set(key, mutationId);
+    const attempt = pendingUpdates.get(key) ?? { mutationId: operationId ?? crypto.randomUUID(), expectedVersion: get().getWorkOrderById(otId)?.version };
+    pendingUpdates.set(key, attempt);
     try {
-      await requestWorkshop('transition', { mutationId, otId, field, value: newValue, execution });
+      await requestWorkshop('transition', { mutationId: attempt.mutationId, otId, field, value: newValue, execution,
+        ...(attempt.expectedVersion && { expectedVersion: attempt.expectedVersion }) });
       pendingUpdates.delete(key);
       if (actorId === workshopActorId()) await get().fetchWorkOrders();
     } catch (error) {
-      if (error instanceof WorkshopApiError && [400, 403, 404, 409].includes(error.status)) pendingUpdates.delete(key);
+      if (error instanceof WorkshopApiError && [400, 403, 404, 409].includes(error.status)) {
+        pendingUpdates.delete(key);
+        if (error.status === 409 && actorId === workshopActorId()) await get().fetchWorkOrders();
+      }
       throw error;
     }
   },
