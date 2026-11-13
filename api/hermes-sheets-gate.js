@@ -333,6 +333,6 @@ export default createHermesGateway({
   readOfficialShifts: readOfficialPanamaShifts,
   panamaWriteGroups: enabledPanamaGroups(process.env.HERMES_PANAMA_WRITE_GROUPS),
   enablePanamaFuelCapture: process.env.HERMES_PANAMA_FUEL_CAPTURE === 'true',
-  writeEnabled: process.env.VERCEL_ENV === 'production' && process.env.HERMES_PANAMA_WRITES_ENABLED === 'true'
-    && !['1', 'true'].includes(process.env.HERMES_READ_ONLY),
+  // This production release is for consultation while operational access is being verified.
+  writeEnabled: false,
 });
