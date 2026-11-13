@@ -281,6 +281,6 @@ export default createHermesGateway({
   },
   panamaOnly: true,
   enablePanamaOperations: true,
-  writeEnabled: process.env.VERCEL_ENV === 'production' && process.env.HERMES_PANAMA_WRITES_ENABLED === 'true'
-    && !['1', 'true'].includes(process.env.HERMES_READ_ONLY),
+  // This release serves the production workbook for consultation.
+  writeEnabled: false,
 });
