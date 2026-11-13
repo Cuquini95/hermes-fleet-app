@@ -63,12 +63,8 @@ export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
 
   if (!open) return null
 
-  const isLoading = status === 'loading'
-  const hasNoData =
-    raw.gastos.length === 0 &&
-    raw.combustible.length === 0 &&
-    raw.fletes.length === 0 &&
-    raw.averias.length === 0
+  const isLoading = status === 'loading' || status === 'idle'
+  const hasNoData = Object.values(raw).every(rows => rows.length === 0)
   const units = store.getUnits()
 
   function toggleUnit(unit: string) {
@@ -169,7 +165,7 @@ export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
             {/* PDF button */}
             <button
               onClick={handlePdfClick}
-              disabled={isLoading || status === 'error' || hasNoData}
+              disabled={isLoading || fetchErrors.length > 0 || hasNoData}
               aria-label="Generar reporte PDF"
               className="bg-violet-700 hover:bg-violet-600 text-white px-2 py-1 rounded text-xs font-semibold disabled:opacity-50 transition-colors shrink-0"
             >
@@ -264,18 +260,14 @@ export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
 
         {/* Body */}
         <div className="px-6 py-4 space-y-6">
-          {/* Error/warning banner */}
-          {fetchErrors.length > 0 && (
-            <div className="bg-yellow-900/40 border border-yellow-700 text-yellow-300 rounded px-4 py-2 text-sm">
-              ⚠️ Algunos datos no pudieron cargarse. Mostrando datos parciales.
-            </div>
-          )}
-
-          {/* Loading state */}
-          {isLoading && hasNoData ? (
+          {isLoading ? (
             <div className="flex flex-col items-center justify-center py-16 text-slate-400">
               <span className="text-3xl animate-spin mb-3">↻</span>
               <span className="text-sm">Cargando datos...</span>
+            </div>
+          ) : fetchErrors.length > 0 ? (
+            <div role="status" className="rounded border border-yellow-700 bg-yellow-900/40 px-4 py-2 text-sm text-yellow-300">
+              Analítica sin verificar. Faltan fuentes para calcular los indicadores.
             </div>
           ) : (
             <>

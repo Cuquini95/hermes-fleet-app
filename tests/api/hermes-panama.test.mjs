@@ -133,3 +133,12 @@ test('snapshot sections retain their timestamp and scope; unavailable sources st
   assert.equal(body.sections.shifts, null);
   assert.equal(body.snapshots.shifts, undefined);
 });
+
+test('a focused master consultation reads only the requested source permitted by the session', async () => {
+  const result = await dispatchPanama({ ...query, query: { sections: 'failures,costs' }, read: async ({ key }) => {
+    assert.equal(key, 'failures');
+    return fixtures.failures;
+  } });
+  assert.deepEqual(Object.keys(result.body.sections), ['failures']);
+  assert.equal(result.body.sections.failures[0].order, 'OT-QA-1');
+});

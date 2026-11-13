@@ -23,9 +23,10 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { useCartStore, type CartItem } from '../stores/cart-store';
-import { purchaseRequests, purchaseWrite, type PurchaseRequestLine } from '../lib/purchasing-api';
+import { PurchaseApiError, purchaseRequests, purchaseWrite, type PurchaseRequestLine } from '../lib/purchasing-api';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { useCatalogoStore } from '../stores/catalogo-store';
+import PanamaSourceRecords from '../components/workshop/PanamaSourceRecords';
 
 const URGENCIA_CONFIG = {
   Normal:  { color: '#16A34A', bg: '#F0FDF4' },
@@ -60,6 +61,7 @@ type Tab = 'carrito' | 'pendientes' | 'historial';
 export default function PedidosPage() {
   const navigate = useNavigate();
   const role = useAuthStore((s) => s.role);
+  const isPanama = useAuthStore((s) => s.project === 'tmf-panama');
   const canReceive = useAuthStore((s) => s.project === 'tmf-panama' && s.canReceivePurchases);
   const equipment = useEquipmentList();
   const { items, removeItem, updateItem, clearCart } = useCartStore();
@@ -78,8 +80,8 @@ export default function PedidosPage() {
   const submitLock = useRef(false);
   const historialQuery = useRef<AbortController | null>(null);
   const [historial, setHistorial] = useState<PurchaseRequestLine[]>([]);
-  const [loadingHistorial, setLoadingHistorial] = useState(false);
-  const [historialError, setHistorialError] = useState(false);
+  const [loadingHistorial, setLoadingHistorial] = useState(true);
+  const [historialError, setHistorialError] = useState<'source' | 'access' | null>(null);
   const [submitError, setSubmitError] = useState('');
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
 
@@ -94,14 +96,14 @@ export default function PedidosPage() {
     const controller = new AbortController();
     historialQuery.current = controller;
     setLoadingHistorial(true);
-    setHistorialError(false);
+    setHistorialError(null);
     try {
       const { items: rows } = await purchaseRequests(controller.signal);
       if (controller.signal.aborted) return;
       setHistorial(rows);
-    } catch {
+    } catch (error) {
       if (controller.signal.aborted) return;
-      setHistorialError(true);
+      setHistorialError(error instanceof PurchaseApiError && [401, 403].includes(error.status) ? 'access' : 'source');
       setHistorial([]);
     } finally {
       if (!controller.signal.aborted) setLoadingHistorial(false);
@@ -400,25 +402,18 @@ export default function PedidosPage() {
             </div>
           )}
 
-          {/* Connection error */}
           {!loadingHistorial && historialError && (
-            <div className="flex flex-col items-center gap-4 py-10">
-              <WifiOff size={40} color="#9CA3AF" />
-              <div className="text-center">
-                <p className="text-sm font-semibold text-text">Sin conexión al servidor</p>
-                <p className="text-xs text-text-secondary mt-1">
-                  No se pudieron cargar los pedidos. Reintenta la consulta.
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                <p role="alert" className="text-sm text-amber-900">
+                  {historialError === 'access' ? 'Verifica tu sesión y los permisos de tu cuenta.' : isPanama ? 'El libro operativo no responde. Pedidos pendientes e historial de Hermes sin verificar.' : 'No se pudieron consultar los pedidos.'}
                 </p>
+                <button type="button" onClick={() => void loadHistorial()} className="flex min-h-10 shrink-0 items-center gap-2 rounded-lg bg-[#162252] px-3 text-sm font-semibold text-white">
+                  <RefreshCw size={15} /> Reintentar
+                </button>
               </div>
-              <button
-                onClick={() => void loadHistorial()}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-white text-sm"
-                style={{ backgroundColor: '#162252' }}
-              >
-                <RefreshCw size={15} />
-                Reintentar
-              </button>
-            </div>
+              {isPanama && historialError === 'source' && <PanamaSourceRecords source="purchases" />}
+            </>
           )}
 
           {/* Empty (loaded successfully but zero rows) */}
@@ -426,7 +421,7 @@ export default function PedidosPage() {
             <div className="flex flex-col items-center gap-4 py-10">
               <ClipboardList size={48} color="#9CA3AF" />
               <p className="text-text-secondary text-center text-sm">
-                No hay pedidos registrados aún.
+                {isPanama ? 'Sin pedidos de Hermes en esta vista.' : 'No hay pedidos registrados aún.'}
               </p>
               <button
                 onClick={() => loadHistorial()}
@@ -438,6 +433,8 @@ export default function PedidosPage() {
               </button>
             </div>
           )}
+
+          {isPanama && !loadingHistorial && !historialError && historial.length === 0 && <PanamaSourceRecords source="purchases" />}
 
           {visibleRows.map((row) => (
             <PedidoRowCard

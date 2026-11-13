@@ -16,6 +16,7 @@ import BriefingCard from './BriefingCard';
 import PanamaFinanceHandoff from './PanamaFinanceHandoff';
 import { usePullToRefresh } from '../../hooks/usePullToRefresh';
 import PullIndicator from '../ui/PullIndicator';
+import PanamaSourceRecords from '../workshop/PanamaSourceRecords';
 
 type Tab = 'general' | 'briefing' | 'pedidos' | 'datos';
 
@@ -33,11 +34,13 @@ export default function ExecutiveDashboard() {
   const data = useDashboardData(equipment);
   const equipmentError = useEquipmentStore((state) => state.error);
   const dispatch = useFleetDispatch(equipment);
+  const { refresh: refreshData } = data;
+  const { refresh: refreshDispatch } = dispatch;
   const snapshot = dispatchAvailability(equipment, dispatch.readiness, dispatch.verified && !dispatch.loading && !equipmentError);
   const refreshAll = useCallback(() => {
-    data.refresh();
-    return dispatch.refresh();
-  }, [data.refresh, dispatch.refresh]);
+    refreshData();
+    return refreshDispatch();
+  }, [refreshData, refreshDispatch]);
   const role = useAuthStore((s) => s.role);
   const project = useAuthStore((s) => s.project);
 
@@ -99,7 +102,12 @@ export default function ExecutiveDashboard() {
               Consultar maestros TMF · Flota, Taller, PM y costos
             </Link>
           )}
-          {data.error && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{data.error}</p>}
+          {data.error && (
+            <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+              <span>{data.error}</span>
+              {project === 'tmf-panama' && <span className="mt-1 block">El tablero requiere el libro operativo para verificar estos indicadores.</span>}
+            </p>
+          )}
 
           {/* KPI row */}
           {data.loading ? (
@@ -137,6 +145,8 @@ export default function ExecutiveDashboard() {
               />
             </div>
           )}
+
+          {project === 'tmf-panama' && data.error && <PanamaSourceRecords source="orders" limit={3} />}
 
           {/* Fleet grid */}
           <FleetGrid equipment={equipment} dispatch={dispatch} />

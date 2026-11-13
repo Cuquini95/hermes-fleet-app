@@ -216,12 +216,14 @@ export async function dispatchPanama({ path, method, query, session, read = read
     return { status: 403, body: { error: 'Consulta reservada a Taller y Operaciones.' } };
   }
 
+  const requested = path === 'api/panama/summary' && typeof query?.sections === 'string'
+    ? new Set(query.sections.split(',')) : null;
   const visible = path === 'api/panama/maintenance'
     ? [...sourceSpecs.filter(spec => ['maintenance', 'dozers', 'excavators'].includes(spec.key)), maintenancePlan, maintenanceAnchor]
     : sourceSpecs.filter(spec => spec.managementRole ? session.role === spec.managementRole
     : !spec.managementOnly || management.has(session.role));
   const snapshots = {};
-  const sections = await Promise.all(visible.map(async spec => {
+  const sections = await Promise.all(visible.filter(spec => !requested || requested.has(spec.key)).map(async spec => {
     try {
       const source = await read(spec);
       const records = visibleRecords(rowsOf(source), spec, session);

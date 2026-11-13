@@ -221,12 +221,19 @@ export async function readRange(
     signal,
   );
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Sheets API error ${response.status}: ${text}`);
+    const messages: Record<number, string> = {
+      401: 'Tu sesión expiró. Vuelve a ingresar.',
+      403: 'Tu cuenta no tiene permiso para esta consulta.',
+      429: 'Hay demasiadas consultas. Intenta de nuevo en un momento.',
+    };
+    throw new Error(messages[response.status] ?? 'La fuente de datos no está disponible. Reintenta la consulta.');
   }
   const data = await response.json();
   if (startedIn !== cacheGeneration) throw new DOMException('Cambió la sesión', 'AbortError');
-  const rows: string[][] = data.data || [];
+  if (!Array.isArray(data?.data) || data.data.some((row: unknown) => !Array.isArray(row))) {
+    throw new Error('La fuente de datos devolvió una respuesta inválida.');
+  }
+  const rows: string[][] = data.data;
 
   // Cache only full fetches (no pagination)
   if (limit === undefined && offset === undefined) {

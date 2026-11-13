@@ -13,6 +13,7 @@ import { useEquipmentStore } from '../../stores/equipment-store';
 import { fetchPanamaMaintenance } from '../../lib/panama-maintenance';
 import { briefingPmAlerts } from './briefing-pm';
 import { parseInventoryRows } from '../../lib/inventory-rows';
+import { mexicoDate, mexicoDateInput, mexicoTimeInput } from '../../lib/date-utils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -37,45 +38,35 @@ interface CriticalPart {
 
 interface BriefingData {
   fuelAnomalies: FuelAnomaly[];
-  fuelTotalDiesel: number;
+  fuelTotalDiesel: number | null;
   dvirCompliantCount: number;
-  dvirExpectedCount: number;
+  dvirExpectedCount: number | null;
   missingChecklists: MissingChecklist[];
   criticalParts: CriticalPart[];
 }
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
-function parseSheetDate(raw: string): Date | null {
-  // Accepts dd/MM/yyyy
-  const parts = raw.trim().split('/');
-  if (parts.length !== 3) return null;
-  const [d, m, y] = parts.map(Number);
-  if (!d || !m || !y) return null;
-  const dt = new Date(y, m - 1, d);
-  if (isNaN(dt.getTime())) return null;
-  return dt;
-}
-
-function startOfDay(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+function sheetDateKey(raw: string): string {
+  const value = raw.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value);
+  if (!match) return '';
+  const [, day = '', month = '', year = ''] = match;
+  return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
 }
 
 function formatTodayLabel(date: Date): string {
-  const day = String(date.getDate()).padStart(2, '0');
+  const [day, month, year] = mexicoDate(date).split('/');
   const months = [
     'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
     'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
   ];
-  const month = months[date.getMonth()];
-  const year = date.getFullYear();
-  return `${day} ${month} ${year}`;
+  return `${day} ${months[Number(month) - 1]} ${year}`;
 }
 
 function formatTime(date: Date): string {
-  const h = String(date.getHours()).padStart(2, '0');
-  const m = String(date.getMinutes()).padStart(2, '0');
-  return `${h}:${m} hrs`;
+  return `${mexicoTimeInput(date)} hrs`;
 }
 
 function msAgo(date: Date): number {
@@ -93,26 +84,24 @@ function formatMinutesAgo(ms: number): string {
 
 function buildBriefingFromSheets(
   equipmentList: ReturnType<typeof useEquipmentList>,
-  combustibleRows: string[][],
-  inspeccionesRows: string[][],
-  inventarioRows: string[][]
+  combustibleRows: string[][] | null,
+  inspeccionesRows: string[][] | null,
+  inventarioRows: string[][] | null,
+  fleetAvailable: boolean,
 ): BriefingData {
   // --- Fuel: last 7 days diesel ---
   const now = new Date();
-  const sevenDaysAgo = startOfDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6));
+  const today = mexicoDateInput(now);
+  const weekStart = mexicoDateInput(new Date(now.getTime() - 6 * 86_400_000));
   const dieselByUnit = new Map<string, number>();
   let fuelTotalDiesel = 0;
 
-  for (const row of combustibleRows) {
-    const dateStr = (row[0] ?? '').trim();
-    const tipo = (row[5] ?? '').trim().toLowerCase();
-    const unit = (row[2] ?? '').trim().toUpperCase();
-    const liters = parseFloat((row[6] ?? '').replace(',', '.'));
-    if (tipo !== 'diesel') continue;
-    if (!unit || isNaN(liters)) continue;
-    const date = parseSheetDate(dateStr);
-    if (!date) continue;
-    if (date < sevenDaysAgo) continue;
+  for (const row of combustibleRows ?? []) {
+    const date = sheetDateKey(row[1] ?? '');
+    const type = (row[5] ?? '').trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+    const unit = (row[3] ?? '').trim().toUpperCase();
+    const liters = Number((row[6] ?? '').trim().replace(/,(?=\d{3}(?:\D|$))/g, '').replace(',', '.'));
+    if (type !== 'diesel' || !unit || !Number.isFinite(liters) || liters <= 0 || date < weekStart || date > today) continue;
     dieselByUnit.set(unit, (dieselByUnit.get(unit) ?? 0) + liters);
     fuelTotalDiesel += liters;
   }
@@ -133,21 +122,11 @@ function buildBriefingFromSheets(
   fuelAnomalies.sort((a, b) => b.pctAbove - a.pctAbove);
 
   // --- DVIR compliance today ---
-  const todayStart = startOfDay(now);
-  const allUnitsToday = new Set<string>();
   const reportedUnitsToday = new Set<string>();
-  const missingByUnit = new Map<string, string>();
 
-  for (const row of inspeccionesRows) {
-    const dateStr = (row[2] ?? '').trim();
+  for (const row of inspeccionesRows ?? []) {
     const unit = (row[4] ?? '').trim().toUpperCase();
-    if (!unit) continue;
-    const date = parseSheetDate(dateStr);
-    if (!date) continue;
-    if (startOfDay(date).getTime() !== todayStart.getTime()) continue;
-    allUnitsToday.add(unit);
-    reportedUnitsToday.add(unit);
-    missingByUnit.delete(unit); // remove if found
+    if (unit && sheetDateKey(row[2] ?? '') === today) reportedUnitsToday.add(unit);
   }
 
   // Find active units not in today's reports
@@ -166,7 +145,7 @@ function buildBriefingFromSheets(
   const dvirCompliantCount = dvirExpectedCount - missingChecklists.length;
 
   // --- Critical parts ---
-  const criticalParts: CriticalPart[] = parseInventoryRows(inventarioRows)
+  const criticalParts: CriticalPart[] = parseInventoryRows(inventarioRows ?? [])
     .filter((item) => item.stock <= item.minimum)
     .map((item) => ({
       partNumber: item.partNumber,
@@ -177,9 +156,9 @@ function buildBriefingFromSheets(
 
   return {
     fuelAnomalies,
-    fuelTotalDiesel: Math.round(fuelTotalDiesel),
+    fuelTotalDiesel: combustibleRows === null ? null : Math.round(fuelTotalDiesel),
     dvirCompliantCount,
-    dvirExpectedCount,
+    dvirExpectedCount: inspeccionesRows === null || !fleetAvailable ? null : dvirExpectedCount,
     missingChecklists,
     criticalParts,
   };
@@ -241,13 +220,14 @@ export default function BriefingCard({ dispatch }: { dispatch?: FleetDispatch })
   const fallback = useFleetDispatch(equipmentList, !dispatch);
   const fleet = dispatch ?? fallback;
   const equipmentError = useEquipmentStore((state) => state.error);
+  const equipmentFetched = useEquipmentStore((state) => state.fetched);
   const snapshot = dispatchAvailability(equipmentList, fleet.readiness, fleet.verified && !fleet.loading && !equipmentError);
 
-  const [rows, setRows] = useState<[string[][], string[][], string[][]] | null>(null);
-  const [pm, setPm] = useState<ReturnType<typeof briefingPmAlerts>>({ verified: false, alerts: [] });
-  const data = rows ? buildBriefingFromSheets(equipmentList, ...rows) : null;
+  const [rows, setRows] = useState<[string[][] | null, string[][] | null, string[][] | null] | null>(null);
+  const [pm, setPm] = useState<ReturnType<typeof briefingPmAlerts> & { sourceDate?: string }>({ verified: false, alerts: [] });
+  const rosterVerified = equipmentFetched && !equipmentError && equipmentList.every(unit => unit.status !== 'no_verificado');
+  const data = rows ? buildBriefingFromSheets(equipmentList, ...rows, rosterVerified) : null;
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null);
   const [now, setNow] = useState(() => new Date());
 
@@ -257,42 +237,38 @@ export default function BriefingCard({ dispatch }: { dispatch?: FleetDispatch })
     if (abortRef.current) abortRef.current.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+    const signal = AbortSignal.any([ctrl.signal, AbortSignal.timeout(8000)]);
+    const [maintenance, fuel, inspections, inventory] = await Promise.allSettled([
+      fetchPanamaMaintenance(ctrl.signal, signal),
+      readRange(SHEET_TABS.COMBUSTIBLE, signal, undefined, 0),
+      readRange(SHEET_TABS.INSPECCIONES, signal, undefined, 0),
+      readRange(SHEET_TABS.INVENTARIO, signal, undefined, 0),
+    ]);
+    if (ctrl.signal.aborted) return;
+    const values = (result: PromiseSettledResult<string[][]>) => result.status === 'fulfilled' ? result.value : null;
+    setRows([values(fuel), values(inspections), values(inventory)]);
+    setPm(maintenance.status === 'fulfilled'
+      ? { ...briefingPmAlerts(maintenance.value), sourceDate: maintenance.value.sourceDate }
+      : { verified: false, alerts: [] });
+    setFetchedAt(new Date());
+    setLoading(false);
+  }
+
+  function refresh() {
     setLoading(true);
-    setError(null);
-
-
-    try {
-      const [maintenance, combustibleRows, inspeccionesRows, inventarioRows] =
-        await Promise.all([
-          fetchPanamaMaintenance(ctrl.signal),
-          readRange(SHEET_TABS.COMBUSTIBLE, ctrl.signal),
-          readRange(SHEET_TABS.INSPECCIONES, ctrl.signal),
-          readRange(SHEET_TABS.INVENTARIO, ctrl.signal),
-        ]);
-
-      if (ctrl.signal.aborted) return;
-
-      setRows([combustibleRows, inspeccionesRows, inventarioRows]);
-      setPm(briefingPmAlerts(maintenance));
-      setFetchedAt(new Date());
-    } catch (err: unknown) {
-      if (ctrl.signal.aborted) return;
-      setRows(null);
-      setError(err instanceof Error ? err.message : 'Error al cargar datos');
-    } finally {
-      if (!ctrl.signal.aborted) setLoading(false);
-    }
+    void fetchAll();
+    void fleet.refresh();
   }
 
   useEffect(() => {
-    fetchAll();
+    const initialLoad = window.setTimeout(() => { void fetchAll(); }, 0);
     // Tick clock every minute
     const clockInterval = setInterval(() => setNow(new Date()), 60_000);
     return () => {
+      window.clearTimeout(initialLoad);
       abortRef.current?.abort();
       clearInterval(clockInterval);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const todayLabel = formatTodayLabel(now);
@@ -312,16 +288,6 @@ export default function BriefingCard({ dispatch }: { dispatch?: FleetDispatch })
       {/* Body */}
       {loading && !data ? (
         <BriefingSkeleton />
-      ) : error ? (
-        <div className="p-4">
-          <p className="text-sm text-red-600">{error}</p>
-          <button
-            onClick={() => { void fetchAll(); void fleet.refresh(); }}
-            className="mt-2 text-xs text-text-secondary underline hover:text-text"
-          >
-            Reintentar
-          </button>
-        </div>
       ) : data ? (
         <div className="p-4 space-y-4">
           <Section label={snapshot.pct === null ? 'DESPACHO SIN VERIFICAR' : `APTOS PARA DESPACHO: ${snapshot.pct}% (${snapshot.available}/${snapshot.total} equipos)`}>
@@ -337,8 +303,9 @@ export default function BriefingCard({ dispatch }: { dispatch?: FleetDispatch })
             )}
           </Section>
 
-          <Section label="ALERTAS PM:">
-            {!pm.verified && <Line color="amber">Pendiente de verificar en PM FLOTA.</Line>}
+          <Section label="ALERTAS PM">
+            {pm.sourceDate && <Line color="default">Corte de PM FLOTA del {new Date(pm.sourceDate).toLocaleString('es-PA', { timeZone: 'America/Panama', dateStyle: 'short', timeStyle: 'short' })} · hora de Panamá</Line>}
+            {!pm.verified && <Line color="amber">Verificación de PM pendiente.</Line>}
             {pm.alerts.length === 0 && pm.verified && <Line color="green">Sin alertas en el maestro.</Line>}
             {pm.alerts.slice(0, 5).map((entry) => (
               <Line key={entry.unit + entry.level} color={entry.state === 'overdue' ? 'red' : 'amber'}>
@@ -351,8 +318,8 @@ export default function BriefingCard({ dispatch }: { dispatch?: FleetDispatch })
           </Section>
 
           {/* Combustible */}
-          <Section label={`COMBUSTIBLE (semana): ${data.fuelTotalDiesel.toLocaleString()} L diesel total`}>
-            {data.fuelAnomalies.length === 0 ? (
+          <Section label={data.fuelTotalDiesel === null ? 'COMBUSTIBLE (7 DÍAS)' : `COMBUSTIBLE (7 DÍAS) · ${data.fuelTotalDiesel.toLocaleString()} L diésel total`}>
+            {data.fuelTotalDiesel === null ? <Line color="amber">Fuente de combustible no disponible.</Line> : data.fuelAnomalies.length === 0 ? (
               <Line color="green">Sin anomalías detectadas</Line>
             ) : (
               data.fuelAnomalies.slice(0, 4).map((f) => (
@@ -365,9 +332,11 @@ export default function BriefingCard({ dispatch }: { dispatch?: FleetDispatch })
 
           {/* DVIR Compliance */}
           <Section
-            label={`CHECKLIST COMPLIANCE: ${data.dvirExpectedCount > 0 ? Math.round((data.dvirCompliantCount / data.dvirExpectedCount) * 100) : 0}% (${data.dvirCompliantCount}/${data.dvirExpectedCount} unidades hoy)`}
+            label={data.dvirExpectedCount ? `INSPECCIONES DVIR · ${Math.round((data.dvirCompliantCount / data.dvirExpectedCount) * 100)}% (${data.dvirCompliantCount}/${data.dvirExpectedCount} unidades hoy)` : 'INSPECCIONES DVIR'}
           >
-            {data.missingChecklists.length === 0 ? (
+            {data.dvirExpectedCount === null ? <Line color="amber">Cobertura DVIR sin verificar.</Line> : data.dvirExpectedCount === 0 ? (
+              <Line color="default">Sin equipos activos en el alcance.</Line>
+            ) : data.missingChecklists.length === 0 ? (
               <Line color="green">Todos los checklists reportados</Line>
             ) : (
               data.missingChecklists.slice(0, 5).map((m) => (
@@ -376,14 +345,14 @@ export default function BriefingCard({ dispatch }: { dispatch?: FleetDispatch })
                 </Line>
               ))
             )}
-            {data.missingChecklists.length > 5 && (
+            {data.dvirExpectedCount !== null && data.missingChecklists.length > 5 && (
               <Line color="default">+{data.missingChecklists.length - 5} unidades más sin reporte</Line>
             )}
           </Section>
 
           {/* Partes Críticas */}
-          <Section label="PARTES CRÍTICAS:">
-            {data.criticalParts.length === 0 ? (
+          <Section label="PARTES CRÍTICAS">
+            {rows?.[2] === null ? <Line color="amber">Inventario de repuestos no disponible.</Line> : data.criticalParts.length === 0 ? (
               <Line color="green">Sin partes críticas</Line>
             ) : (
               data.criticalParts.slice(0, 5).map((p) => (
@@ -400,13 +369,13 @@ export default function BriefingCard({ dispatch }: { dispatch?: FleetDispatch })
       ) : null}
 
       {/* Footer */}
-      {(fetchedAt || error) && (
+      {fetchedAt && (
         <div className="px-4 pb-3 flex items-center justify-between">
           <p className="text-xs text-text-secondary">
-            {updatedLabel ? `Actualizado ${updatedLabel}` : ''}
+            {updatedLabel ? `Consultado ${updatedLabel}` : ''}
           </p>
           <button
-            onClick={() => { void fetchAll(); void fleet.refresh(); }}
+            onClick={refresh}
             disabled={loading}
             className="text-xs text-text-secondary hover:text-text underline disabled:opacity-40"
           >

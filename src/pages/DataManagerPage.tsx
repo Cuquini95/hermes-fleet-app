@@ -12,6 +12,8 @@ import {
 import { readRange } from '../lib/sheets-api';
 import { useAnalyticsStore } from '../stores/analyticsStore';
 import AnalyticsModal from '../components/analytics/AnalyticsModal';
+import PanamaSourceRecords from '../components/workshop/PanamaSourceRecords';
+import { useAuthStore } from '../stores/auth-store';
 
 // ── Collection definitions ───────────────────────────────────────────────────
 
@@ -223,7 +225,7 @@ function looksLikeHeaderRow(row: string[], columns: ColumnDef[]): boolean {
 }
 
 function formatCurrency(raw: string): string {
-  const cleaned = raw.replace(/[^0-9.\-]/g, '');
+  const cleaned = raw.replace(/[^0-9.-]/g, '');
   const n = parseFloat(cleaned);
   if (!Number.isFinite(n)) return raw;
   return n.toLocaleString('es-MX', {
@@ -313,7 +315,13 @@ const PAGE_SIZE = 50;
 type TabCache = Record<string, string[][]>;
 
 export default function DataManagerPage() {
-  const [activeId, setActiveId] = useState<string>(COLLECTIONS[0].id);
+  const userId = useAuthStore(state => state.userId);
+  const project = useAuthStore(state => state.project);
+  return <DataManager key={`${project}:${userId}`} isPanama={project === 'tmf-panama'} />;
+}
+
+function DataManager({ isPanama }: { isPanama: boolean }) {
+  const [activeId, setActiveId] = useState<string>(() => isPanama ? 'averias' : COLLECTIONS[0].id);
   const [cache, setCache] = useState<TabCache>({});
   const [loadingTabs, setLoadingTabs] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string | null>>({});
@@ -322,6 +330,12 @@ export default function DataManagerPage() {
   const [copied, setCopied] = useState(false);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const requests = useRef(new Map<string, AbortController>());
+
+  useEffect(() => {
+    const activeRequests = requests.current;
+    return () => { for (const request of activeRequests.values()) request.abort(); activeRequests.clear(); };
+  }, []);
 
   const active: Collection = useMemo(
     () => COLLECTIONS.find((c) => c.id === activeId) ?? COLLECTIONS[0],
@@ -329,16 +343,22 @@ export default function DataManagerPage() {
   );
 
   const loadTab = useCallback(async (collection: Collection) => {
+    requests.current.get(collection.id)?.abort();
+    const controller = new AbortController();
+    requests.current.set(collection.id, controller);
     setLoadingTabs((prev) => ({ ...prev, [collection.id]: true }));
     setErrors((prev) => ({ ...prev, [collection.id]: null }));
     try {
-      const rows = await readRange(collection.tab);
-      setCache((prev) => ({ ...prev, [collection.id]: rows }));
+      const rows = await readRange(collection.tab, controller.signal, undefined, 0);
+      if (!controller.signal.aborted) setCache((prev) => ({ ...prev, [collection.id]: rows }));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error al cargar datos';
-      setErrors((prev) => ({ ...prev, [collection.id]: msg }));
+      if (!controller.signal.aborted) setErrors((prev) => ({ ...prev, [collection.id]: msg }));
     } finally {
-      setLoadingTabs((prev) => ({ ...prev, [collection.id]: false }));
+      if (!controller.signal.aborted) {
+        requests.current.delete(collection.id);
+        setLoadingTabs((prev) => ({ ...prev, [collection.id]: false }));
+      }
     }
   }, []);
 
@@ -407,16 +427,13 @@ export default function DataManagerPage() {
     return () => observer.disconnect();
   }, [displayLimit, activeId, search, hasMore]);
 
-  // Pre-fetch analytics data on mount
-  useEffect(() => {
-    useAnalyticsStore.getState().fetch();
-  }, []);
-
   const isLoading = !!loadingTabs[active.id];
   const error = errors[active.id];
+  const verified = !!cache[active.id] && !error && !isLoading;
+  const master = !isPanama ? null : active.id === 'averias' ? 'failures' : active.id === 'ot' ? 'orders' : null;
   const loadedRowCounts = (id: string): number | null => {
     const raw = cache[id];
-    if (!raw) return null;
+    if (!raw || errors[id]) return null;
     const filtered = raw.filter((r) => !isRowEmpty(r));
     const firstRow = filtered[0];
     const coll = COLLECTIONS.find((c) => c.id === id);
@@ -470,7 +487,7 @@ export default function DataManagerPage() {
                     : 'text-[#6B7280] hover:text-[#1A2B2B]'
                 }`}
               >
-                <span className="text-base leading-none">{col.icon}</span>
+                <span className="text-base leading-none" aria-hidden="true">{col.icon}</span>
                 <span>{col.label}</span>
                 {count !== null && (
                   <span
@@ -493,8 +510,8 @@ export default function DataManagerPage() {
       </div>
 
       {/* ── Toolbar ───────────────────────────────────────────────────────── */}
-      <div className="px-4 py-3 flex items-center gap-2 border-b border-[#E5E7EB]">
-        <div className="flex-1 relative">
+      <div className="flex flex-wrap items-center gap-2 border-b border-[#E5E7EB] px-4 py-3">
+        <div className="relative min-w-0 basis-full sm:flex-1">
           <Search
             size={15}
             className="absolute left-3 top-1/2 -translate-y-1/2 text-[#9CA3AF] pointer-events-none"
@@ -510,10 +527,10 @@ export default function DataManagerPage() {
 
         <div className="hidden sm:flex items-center gap-2 text-xs text-[#6B7280] px-2">
           <span className="font-mono font-semibold text-[#162252]">
-            {visibleRows.length}
+            {verified ? visibleRows.length : '—'}
           </span>
           <span>registros</span>
-          {search && cleanRows.length !== visibleRows.length && (
+          {verified && search && cleanRows.length !== visibleRows.length && (
             <span className="text-[#9CA3AF]">/ {cleanRows.length}</span>
           )}
         </div>
@@ -532,7 +549,7 @@ export default function DataManagerPage() {
         <button
           type="button"
           onClick={handleCopy}
-          disabled={visibleRows.length === 0}
+          disabled={!verified || visibleRows.length === 0}
           title="Copiar para Excel"
           aria-label="Copiar tabla para Excel"
           className="flex items-center gap-1.5 px-3 h-9 rounded-lg border border-[#E5E7EB] bg-white text-[#162252] text-xs font-semibold hover:bg-[#F1F5F9] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
@@ -544,7 +561,7 @@ export default function DataManagerPage() {
         <button
           type="button"
           onClick={handleExport}
-          disabled={visibleRows.length === 0}
+          disabled={!verified || visibleRows.length === 0}
           title="Exportar CSV"
           aria-label="Exportar como CSV"
           className="flex items-center gap-1.5 px-3 h-9 rounded-lg bg-[#162252] text-white text-xs font-semibold hover:bg-[#1E3A8A] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
@@ -555,9 +572,10 @@ export default function DataManagerPage() {
 
         <button
           type="button"
-          onClick={() => setAnalyticsOpen(true)}
+          onClick={() => { setAnalyticsOpen(true); void useAnalyticsStore.getState().fetch(); }}
+          disabled={!verified}
           aria-label="Abrir analítica"
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-700 hover:bg-violet-600 text-white text-sm rounded-md font-medium transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-700 hover:bg-violet-600 text-white text-sm rounded-md font-medium transition-colors disabled:opacity-40"
         >
           <span aria-hidden="true">📊</span> Analítica
         </button>
@@ -566,22 +584,30 @@ export default function DataManagerPage() {
       {/* ── Mobile row count ──────────────────────────────────────────────── */}
       <div className="sm:hidden px-4 pt-2 text-xs text-[#6B7280]">
         <span className="font-mono font-semibold text-[#162252]">
-          {visibleRows.length}
+          {verified ? visibleRows.length : '—'}
         </span>{' '}
         registros
-        {search && cleanRows.length !== visibleRows.length && (
+        {verified && search && cleanRows.length !== visibleRows.length && (
           <span className="text-[#9CA3AF]"> de {cleanRows.length}</span>
         )}
       </div>
 
       {/* ── Table ─────────────────────────────────────────────────────────── */}
       <div className="px-4 py-3">
-        {error ? (
+        {error ? master ? (
+          <div className="space-y-3">
+            <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Libro operativo no disponible para {active.label.toLowerCase()}.</p>
+            <PanamaSourceRecords key={master} source={master} search={search} />
+          </div>
+        ) : (
           <ErrorState message={error} onRetry={() => loadTab(active)} />
-        ) : isLoading && !cache[active.id] ? (
+        ) : !cache[active.id] ? (
           <SkeletonTable columns={active.columns} />
         ) : visibleRows.length === 0 ? (
-          <EmptyState message={search ? 'Sin resultados para tu búsqueda' : active.emptyMessage} />
+          <div className="space-y-3">
+            <EmptyState message={search ? 'Sin resultados para tu búsqueda' : master ? 'Sin registros de Hermes en esta categoría.' : active.emptyMessage} />
+            {master && cleanRows.length === 0 && <PanamaSourceRecords key={master} source={master} search={search} />}
+          </div>
         ) : (
           <>
             <DataTable columns={active.columns} rows={pagedRows} />

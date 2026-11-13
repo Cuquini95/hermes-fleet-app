@@ -316,6 +316,7 @@ export function createHermesGateway({
     } catch (error) {
       const status = error?.status;
       if (Number.isInteger(status) && status >= 400 && status < 500 && !error.response) return invalid(res, status, error.message);
+      if (req.method === 'GET') return invalid(res, 503, 'La fuente de datos no está disponible. Reintenta la consulta.');
       return invalid(res, 503, 'No se pudo confirmar la operación. Consulta el registro antes de reintentar.');
     }
   };

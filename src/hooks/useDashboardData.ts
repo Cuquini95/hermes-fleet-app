@@ -61,15 +61,14 @@ export function useDashboardData(equipmentList: Equipment[]): DashboardData {
   const abortRef = useRef<AbortController | null>(null);
 
   const equipmentError = useEquipmentStore((state) => state.error);
-  const hasAvailability = averiaRows !== null && equipmentList.length > 0 && !equipmentError;
+  const hasAvailability = averiaRows !== null && equipmentList.length > 0 && !equipmentError
+    && equipmentList.every(unit => unit.status !== 'no_verificado');
   const scope = new Set(equipmentList.map((equipment) => equipment.unit_id.toUpperCase()));
   const scopedRows = (averiaRows ?? []).filter((row) => scope.has((row[2] ?? '').trim().toUpperCase()));
   const availabilityTrend = hasAvailability ? buildAvailabilityTrend(equipmentList, scopedRows) : [];
   const alertsToday = averiaRows === null ? null : countAlertsToday(averiaRows);
 
   const fetchAll = useCallback(async (signal: AbortSignal, refresh = false) => {
-    setLoading(true);
-    setError(null);
     const offset = refresh ? 0 : undefined;
     const results = await Promise.allSettled([
       fetchCriticalOTs(signal, offset),
@@ -89,9 +88,11 @@ export function useDashboardData(equipmentList: Equipment[]): DashboardData {
   useEffect(() => {
     const controller = new AbortController();
     abortRef.current = controller;
-    void fetchAll(controller.signal);
+    const initialLoad = window.setTimeout(() => { void fetchAll(controller.signal); }, 0);
     return () => {
+      window.clearTimeout(initialLoad);
       controller.abort();
+      abortRef.current?.abort();
       abortRef.current = null;
     };
   }, [fetchAll]);
@@ -100,6 +101,8 @@ export function useDashboardData(equipmentList: Equipment[]): DashboardData {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    setLoading(true);
+    setError(null);
     void fetchAll(controller.signal, true);
     void useEquipmentStore.getState().refetch();
   }, [fetchAll]);

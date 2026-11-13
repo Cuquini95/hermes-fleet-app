@@ -49,6 +49,7 @@ export interface MaintenanceComponent {
 
 export interface PanamaMaintenance {
   entries: MaintenanceEntry[] | null;
+  sourceDate?: string;
   historyAvailable: boolean;
   acceptedHistory: AcceptedPm[];
   components: MaintenanceComponent[] | null;
@@ -167,18 +168,19 @@ export function maintenanceFullyVerified(data: PanamaMaintenance): boolean {
     && data.components.every(row => row.critical !== null && row.upcoming !== null && row.noData === 0);
 }
 
-export async function fetchPanamaMaintenance(signal?: AbortSignal): Promise<PanamaMaintenance> {
+export async function fetchPanamaMaintenance(signal?: AbortSignal, historySignal = signal): Promise<PanamaMaintenance> {
   const [source, history] = await Promise.allSettled([
     fetch('/hermes-api/api/panama/maintenance', { cache: 'no-store', credentials: 'same-origin', signal })
       .then(async response => {
         if (!response.ok) throw new Error('No se pudo consultar el maestro PM FLOTA.');
         const data = await response.json();
         if (data?.project !== 'tmf-panama' || !data.sections) throw new Error('Respuesta fuera del proyecto.');
-        return data.sections as Sources;
+        return { sections: data.sections as Sources, sourceDate: data.snapshots?.maintenance as string | undefined };
       }),
     // An explicit offset bypasses the shared client cache when refreshing after an acceptance.
-    readRange(SHEET_TABS.HISTORIAL_PM, signal, undefined, 0),
+    readRange(SHEET_TABS.HISTORIAL_PM, historySignal, undefined, 0),
   ]);
   if (signal?.aborted) throw new DOMException('Consulta cancelada', 'AbortError');
-  return buildPanamaMaintenance(source.status === 'fulfilled' ? source.value : {}, history.status === 'fulfilled' ? history.value : null);
+  const master = source.status === 'fulfilled' ? source.value : undefined;
+  return { ...buildPanamaMaintenance(master?.sections ?? {}, history.status === 'fulfilled' ? history.value : null), sourceDate: master?.sourceDate };
 }

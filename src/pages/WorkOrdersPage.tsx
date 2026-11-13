@@ -6,6 +6,8 @@ import EmptyState from '../components/ui/EmptyState';
 import { SkeletonList } from '../components/ui/Skeleton';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import PullIndicator from '../components/ui/PullIndicator';
+import PanamaSourceRecords from '../components/workshop/PanamaSourceRecords';
+import { useAuthStore } from '../stores/auth-store';
 
 type FilterKey = 'Todas' | 'CRITICA' | 'ALTA' | 'MEDIA' | 'Abierta' | 'En Reparación' | 'Esperando Pieza' | 'Resuelta' | 'Completado';
 
@@ -25,6 +27,7 @@ const FILTER_LABELS: Record<FilterKey, string> = {
 
 export default function WorkOrdersPage() {
   const navigate = useNavigate();
+  const showMaster = useAuthStore(state => state.project === 'tmf-panama' && state.role !== 'mecanico');
   const { workorders, loading, error, fetched, fetchWorkOrders } = useWorkOrderStore();
   const [filter, setFilter] = useState<FilterKey>('Todas');
 
@@ -55,18 +58,18 @@ export default function WorkOrdersPage() {
   if (error && workorders.length === 0) {
     return (
       <div className="py-4">
-        <h2 className="font-semibold text-lg text-text mb-3">Ordenes de Trabajo</h2>
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-border text-center">
-          <p className="text-red-600 text-sm mb-2">Error al cargar ordenes</p>
-          <p className="text-xs text-text-secondary mb-3">{error}</p>
+        <h2 className="font-semibold text-lg text-text mb-3">Órdenes de Trabajo</h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+          <p className="text-sm text-amber-900" role="alert">{showMaster ? 'No se pudo consultar el libro operativo de órdenes.' : error}</p>
           <button
             type="button"
             onClick={() => fetchWorkOrders()}
-            className="px-4 py-2 bg-amber text-white rounded-xl text-sm font-medium"
+            className="min-h-10 rounded-lg bg-[#162252] px-3 text-sm font-semibold text-white"
           >
             Reintentar
           </button>
         </div>
+        {showMaster && <PanamaSourceRecords source="orders" />}
       </div>
     );
   }
@@ -108,11 +111,14 @@ export default function WorkOrdersPage() {
 
       {/* List */}
       {filtered.length === 0 ? (
-        <EmptyState
-          type="workorders"
-          title="Sin órdenes"
-          description="No hay órdenes de trabajo con este filtro"
-        />
+        <>
+          <EmptyState
+            type="workorders"
+            title="Sin órdenes"
+            description="No hay órdenes de trabajo de Hermes con este filtro"
+          />
+          {showMaster && fetched && workorders.length === 0 && filter === 'Todas' && <PanamaSourceRecords source="orders" />}
+        </>
       ) : (
         filtered.map((ot) => (
           <OTCard

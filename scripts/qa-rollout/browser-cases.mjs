@@ -135,6 +135,55 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
   }
 
   try {
+    if (withGateway) await record('MÓVIL-GERENCIA-CONSULTA-SIN-LIBRO', () => inRole('gerencia', 390, async page => {
+      const unavailable = [tabs.orders, tabs.failure, tabs.dvir, tabs.pmHistory, tabs.requests, tabs.parts, 'Combustible', 'Reporte_Fletes_Transporte'];
+      const capturedAt = '2026-11-13T19:23:49Z';
+      const master = {
+        failures: [{ id: 'TMF-QA-1', unit: 'DZ203', description: 'Avería del maestro QA', order: 'OT-TMF-QA' }],
+        orders: [{ id: 'OT-TMF-QA', unit: 'DZ203', description: 'Trabajo del maestro QA', status: 'ABIERTA' }],
+        purchases: [{ id: 'COT-TMF-QA', unit: 'DZ203', description: 'Cotización del maestro QA', status: 'Entregada', amount: '85', currency: 'USD' }],
+        maintenance: [{ unit: 'EX401', status: 'VENCIDO', next: 'PM 500', due: '2000', hours: '2210', remaining: '-210', reading: 'ATRASADA' }],
+      };
+      await page.route(/\/hermes-api\/api\/panama\/(summary|maintenance)(\?|$)/, async route => {
+        const url = new URL(route.request().url());
+        const keys = url.pathname.endsWith('/maintenance') ? ['maintenance'] : (url.searchParams.get('sections') ?? '').split(',');
+        const sections = Object.fromEntries(keys.filter(key => Object.hasOwn(master, key)).map(key => [key, master[key]]));
+        await route.fulfill({ json: { project: 'tmf-panama', sections, snapshots: Object.fromEntries(Object.keys(sections).map(key => [key, capturedAt])) } });
+      });
+      const readiness = /\/hermes-api\/api\/workshop\/readiness(\?|$)/;
+      await page.route(readiness, route => route.fulfill({ json: { failures: [], stickers: [], inspections: [], returns: [], unavailable: ['failures', 'stickers', 'inspections', 'returns'] } }));
+      sheet.setUnavailable(unavailable, true);
+      try {
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await clickByName(page, 'Briefing');
+        await visible(page.getByText('210 h sobre límite', { exact: false }));
+        await visible(page.getByText('Fuente de combustible no disponible.', { exact: true }));
+        await visible(page.getByText('DESPACHO SIN VERIFICAR', { exact: true }));
+        assert.equal(await page.getByText(/0 L diésel total|Sin anomalías detectadas/).count(), 0);
+        await noHorizontalOverflow(page, 390);
+
+        await page.goto(`${origin}/pedidos`);
+        await visible(page.getByText('Cotización del maestro QA', { exact: true }));
+        await visible(page.getByText(/Corte del/));
+        assert.equal(await page.getByText('No hay pedidos registrados aún.').count(), 0);
+        await noHorizontalOverflow(page, 390);
+
+        await page.goto(`${origin}/workorders`);
+        await visible(page.getByText('OT-TMF-QA', { exact: true }));
+        await visible(page.getByText('Trabajo del maestro QA', { exact: true }));
+        await noHorizontalOverflow(page, 390);
+
+        await page.goto(`${origin}/data`);
+        await visible(page.getByText('Avería del maestro QA', { exact: true }));
+        await clickByName(page, /Fletes/);
+        await visible(page.getByText('La fuente de datos no está disponible.', { exact: false }));
+        assert.equal(await page.getByText('0 registros', { exact: true }).count(), 0);
+        assert.equal(await page.getByRole('button', { name: 'Exportar como CSV' }).isEnabled(), false);
+        await noHorizontalOverflow(page, 390);
+        return { pmVisible: true, orderVisible: true, purchaseVisible: true, failureVisible: true, unknownDataPreserved: true };
+      } finally { sheet.setUnavailable(unavailable, false); }
+    }, firstAccount('gerencia')));
+
     for (const width of [360, 390]) {
       for (const [role, [label, path]] of Object.entries(roleMenus)) {
         await record(`MÓVIL-${width}-${role}`, () => inRole(role, width, async page => {

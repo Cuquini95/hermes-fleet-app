@@ -265,6 +265,18 @@ test('Panamá health distinguishes the official fleet from its writable workbook
   ]);
 });
 
+test('a failed Panama consultation reports an unavailable source rather than an uncertain write', async () => {
+  const gateway = createHermesGateway({
+    sessionReader: async () => ({ ...operator, project: 'tmf-panama' }),
+    sheets: { read: async () => { throw new Error('upstream service information'); } },
+    enablePanamaOperations: true,
+  });
+  const result = response();
+  await gateway({ method: 'GET', query: { path: 'api/sheets/read', tab: 'Averías' } }, result);
+  assert.equal(result.statusCode, 503);
+  assert.equal(result.body.error, 'La fuente de datos no está disponible. Reintenta la consulta.');
+});
+
 test('the Panama inventory sheet read preserves layout while filtering parts to the assigned units', async () => {
   const own = ['QA-FILTRO-001', 'Filtro QA', '', '', 'pza', '8', '3', '75', '', '', 'Komatsu D65EX-16'];
   const other = ['QA-SIN-ALCANCE', 'Otro filtro QA', '', '', 'pza', '8', '3', '75', '', '', 'QA-EX401'];
