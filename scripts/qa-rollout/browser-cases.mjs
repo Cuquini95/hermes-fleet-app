@@ -93,6 +93,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     await option.selectOption({ label: target });
     if (target === 'Resuelta') {
       await page.getByLabel('Resultado de la prueba funcional').fill('Prueba funcional registrada en QA móvil');
+      await page.getByLabel('Horas reales de trabajo').fill('2.25');
       if (isPM) {
         await page.getByLabel('Comprobación sintética de mantenimiento').check();
         await page.getByLabel('Horómetro de ejecución').fill('1975');
@@ -388,9 +389,11 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await visible(page.getByText(/Equipo recibido por /));
         const row = sheet.read(tabs.orders).find(order => order[1] === folio);
         assert(row[14] && row[10]?.startsWith(origin));
+        assert.equal(JSON.parse(row[20]).laborHours, 2.25);
+        await visible(page.getByText('2.25 h de trabajo registradas', { exact: true }));
         assert.equal(sheet.read(tabs.failure).find(item => item[13] === folio)?.[9], 'Completado');
         await shot(page, 'ot-cerrada-supervisor-390.png');
-        return { folio, closedAt: row[14], returnedAt: JSON.parse(row[22]).returnedAt, progress: 50, cost: 85.25, evidenceLinked: true };
+        return { folio, closedAt: row[14], returnedAt: JSON.parse(row[22]).returnedAt, progress: 50, cost: 85.25, laborHours: 2.25, evidenceLinked: true };
       });
     });
 
@@ -459,7 +462,9 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       const folio = await inRole('operador', 360, async page => {
         await page.goto(`${origin}/sticker-inspection`, { waitUntil: 'domcontentloaded' });
         await page.getByLabel('Unidad / NFC / QR').selectOption('EX401');
-        await page.getByLabel('Tipo de equipo').selectOption('tractor_oruga');
+        const equipmentType = page.getByLabel('Tipo de equipo');
+        assert.equal(await equipmentType.inputValue(), 'tractor_oruga');
+        assert.equal(await equipmentType.isEnabled(), false);
         await page.getByLabel('Empresa', { exact: true }).fill('Hermes QA');
         const answers = page.getByRole('button', { name: 'Cumple', exact: true });
         const count = await answers.count();

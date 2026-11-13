@@ -18,6 +18,7 @@ export interface StatusLogEntry {
 
 export interface WorkshopExecutionInput {
   functionalTest: string;
+  laborHours?: string | number;
   performedOn?: string;
   meter?: string;
   completedItems?: string[];

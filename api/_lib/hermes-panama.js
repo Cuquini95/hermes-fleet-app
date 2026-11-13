@@ -61,6 +61,11 @@ function readSource(spec) {
   return entry.promise;
 }
 
+export async function readOfficialPanamaShifts() {
+  const spec = sourceSpecs.find(source => source.key === 'shifts');
+  return visibleRecords(await readSource(spec), { ...spec, limit: undefined }, { allUnits: true });
+}
+
 const equipmentDetails = {
   key: 'equipmentDetails', env: 'HERMES_PANAMA_EQUIPMENT_SHEET_ID', range: "'EQUIPOS'!A3:M",
   unit: 'CÓDIGO', country: 'PAÍS',

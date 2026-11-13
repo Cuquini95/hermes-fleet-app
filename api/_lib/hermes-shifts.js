@@ -198,13 +198,55 @@ async function dispatchAssignment({ method, body, session, sheets, listShiftOper
   return { status: saved.replayed ? 200 : 201, body: { assignment: current } };
 }
 
-export async function dispatchShifts({ path, method, body, session, sheets, listShiftOperators = async () => [] }) {
+const officialMonths = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+function officialShiftDate(value) {
+  const date = String(value ?? '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(date)) return date;
+  const formatted = /^(\d{1,2})-([a-z]{3})-(\d{4})$/i.exec(date);
+  if (!formatted) return '';
+  const month = officialMonths.indexOf(formatted[2].toLowerCase()) + 1;
+  return month ? `${formatted[3]}-${String(month).padStart(2, '0')}-${formatted[1].padStart(2, '0')}` : '';
+}
+
+const shiftKey = ({ unit, date, shift }) => JSON.stringify([canonical(unit), date, canonical(shift)]);
+const officialReading = value => /^\d[\d,]*(?:\.\d+)?$/.test(String(value).trim()) ? Number(String(value).replaceAll(',', '')) : NaN;
+
+function reconcileAccepted(records, official) {
+  const byShift = new Map();
+  for (const row of official) {
+    const key = shiftKey({ ...row, date: officialShiftDate(row.date) });
+    const matches = byShift.get(key) ?? [];
+    matches.push(row);
+    byShift.set(key, matches);
+  }
+  return records.map(record => {
+    if (record.status !== ACCEPTED) return record;
+    const matches = byShift.get(shiftKey(record)) ?? [];
+    if (!matches.length) return record;
+    if (matches.length > 1) return { ...record, officialStatus: 'Duplicado en REGISTRO. Requiere revisión.' };
+    const [match] = matches;
+    const readingsMatch = officialReading(match.start) === record.initialHours && officialReading(match.end) === record.finalHours;
+    return { ...record, officialReference: match.id, officialStatus: readingsMatch
+      ? 'Lecturas conciliadas con REGISTRO' : 'Lecturas distintas en REGISTRO. Requiere revisión.' };
+  });
+}
+
+export async function dispatchShifts({ path, method, body, session, sheets, listShiftOperators = async () => [], readOfficialShifts }) {
   requireValue(session.project === PANAMA_PROJECT && READ.has(session.role), 403, 'Relevo reservado a los roles autorizados de TMF Panamá.');
   if (path === 'api/panama/turnos/despacho') return dispatchAssignment({ method, body, session, sheets, listShiftOperators });
   if (path === 'api/panama/turnos') {
     requireValue(method === 'GET', 405, 'Método no permitido.');
     const records = rowsToRecords(await sheets.read(PANAMA_SHIFT_TAB, { cached: true }));
-    return { status: 200, body: { records: [...records.values()].filter(record => visible(session, record)).reverse() } };
+    let scoped = [...records.values()].filter(record => visible(session, record)).reverse();
+    if (readOfficialShifts && scoped.some(record => record.status === ACCEPTED)) {
+      try { scoped = reconcileAccepted(scoped, await readOfficialShifts()); }
+      catch {
+        scoped = scoped.map(record => record.status === ACCEPTED
+          ? { ...record, officialStatus: 'REGISTRO no disponible para conciliar' } : record);
+      }
+    }
+    return { status: 200, body: { records: scoped } };
   }
 
   const deliver = path === 'api/panama/turnos/entregar';

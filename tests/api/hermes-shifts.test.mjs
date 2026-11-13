@@ -15,7 +15,7 @@ const input = (changes = {}) => ({
   support: 'Parte EX401-20261112-D', trips: '2', tonnes: '30.5', stops: 'Sin paradas', client: 'TMF QA', ...changes,
 });
 
-function isolatedGateway() {
+function isolatedGateway(readOfficialShifts) {
   const tabs = new Map([['01 Inventario', [[], [], ['#', 'COD1'], ['1', 'EX401'], ['2', 'EX405']]]]);
   const receipts = new Map();
   const guards = new Set();
@@ -46,7 +46,7 @@ function isolatedGateway() {
       return { replayed: false, result };
     },
   };
-  const gateway = createHermesGateway({ sheets, writeEnabled: true, enablePanamaOperations: true,
+  const gateway = createHermesGateway({ sheets, writeEnabled: true, enablePanamaOperations: true, readOfficialShifts,
     sessionReader: async req => req.session,
     listShiftOperators: async (_session, unit) => !unit || operator.assignedUnits.includes(unit) ? [operator] : [] });
   async function request(endpoint, session, body, prefix = 'api/panama/turnos') {
@@ -185,4 +185,31 @@ test('despacho rechaza una avería confirmada entre la validación y el guardado
   assert.equal((await request('despacho', supervisor, assignment)).status, 409);
   assert.equal(tabs.get('HERMES_PA_DESPACHO'), undefined);
   assert.match((await request('despacho', supervisor, assignment)).body.error, /Despacho bloqueado/);
+});
+
+
+test('accepted shifts reconcile with the official TMF day and meter readings without editing the master', async () => {
+  const match = { id: '20261112|Día|EX401', unit: 'EX401', date: '12-Nov-2026', shift: 'Día', start: '5,520.0', end: '5,528.0' };
+  let official = [];
+  const { request } = isolatedGateway(async () => {
+    if (!official) throw new Error('REGISTRO unavailable');
+    return official;
+  });
+  const { body: { record } } = await request('entregar', operator, input());
+  const accepted = await request('revisar', supervisor, { mutationId: randomUUID(), id: record.id, version: record.version, action: 'accept' });
+  assert.equal(accepted.status, 200);
+  const next = async () => (await request('', coordinator)).body.records[0];
+  assert.match((await next()).officialStatus, /Pendiente/);
+  official = [match];
+  const reconciled = await next();
+  assert.equal(reconciled.id, record.id);
+  assert.equal(reconciled.version, accepted.body.record.version);
+  assert.equal(reconciled.officialReference, match.id);
+  assert.equal(reconciled.officialStatus, 'Lecturas conciliadas con REGISTRO');
+  official = [{ ...match, end: '5529' }];
+  assert.match((await next()).officialStatus, /Lecturas distintas/);
+  official = [match, match];
+  assert.match((await next()).officialStatus, /Duplicado/);
+  official = null;
+  assert.match((await next()).officialStatus, /no disponible/);
 });

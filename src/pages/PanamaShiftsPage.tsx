@@ -12,7 +12,7 @@ type ShiftAction = 'deliver' | 'correct' | 'accept' | 'return';
 type ShiftPart = Omit<ShiftFields, 'initialHours' | 'finalHours' | 'trips' | 'tonnes'> & {
   id: string; version: number; hours: number; initialHours: number; finalHours: number; trips: number; tonnes: number;
   status: 'Pendiente de revisión' | 'Aceptado por Supervisión' | 'Devuelto';
-  officialStatus: string; createdBy: Actor; createdAt: string; reviewedBy: Actor | null; reviewedAt: string | null; comment: string;
+  officialStatus: string; officialReference?: string; createdBy: Actor; createdAt: string; reviewedBy: Actor | null; reviewedAt: string | null; comment: string;
   history: { action: ShiftAction; actor: Actor; at: string; comment: string }[];
 };
 type Mutation = { endpoint: 'entregar' | 'revisar'; data: Record<string, unknown> };
@@ -334,7 +334,7 @@ function ShiftQueue({ userId }: { userId: string }) {
               </dl>
               <p className="text-sm text-slate-700">Entregó {record.createdBy.name} · {localTime.format(new Date(record.createdAt))}</p>
               {record.reviewedBy && record.reviewedAt && <p className="break-words text-sm text-slate-700">Revisó {record.reviewedBy.name} · {localTime.format(new Date(record.reviewedAt))}{record.comment ? ` · ${record.comment}` : ''}</p>}
-              <p className="text-sm font-semibold text-amber-900">{record.officialStatus}</p>
+              <p className="break-words text-sm font-semibold text-amber-900">{record.officialStatus}{record.officialReference && ` · ${record.officialReference}`}</p>
               {(role === 'gerencia' || role === 'coordinador') && record.status === 'Aceptado por Supervisión' && record.reviewedAt && record.reviewedBy && (
                 <button type="button" className={buttonClass} onClick={() => downloadBlob(
                   new Blob([shiftHandoffCsv(record)], { type: 'text/csv;charset=utf-8' }),

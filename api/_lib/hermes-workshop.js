@@ -333,7 +333,10 @@ async function executionFor(context, order) {
   const { body, session } = context;
   assert(order.row[17] === session.userId, 403, 'La entrega corresponde al ejecutor asignado');
   const functionalTest = text(body.execution?.functionalTest, 'Resultado de la prueba funcional', 1500, true);
-  const execution = { userId: session.userId, userName: session.userName, submittedAt: context.now, functionalTest };
+  const reportedHours = body.execution?.laborHours;
+  const laborHours = reportedHours == null ? null : decimal(reportedHours, 'Horas de trabajo', 0.01, 9999);
+  const execution = { userId: session.userId, userName: session.userName, submittedAt: context.now, functionalTest,
+    ...(laborHours !== null && { laborHours }) };
   if (order.row[4] !== 'PM') return { execution };
   const pm = await pmDefinition(context, order);
   assert(pm.checklist, 409, 'Falta un checklist validado para el modelo y nivel de PM');
@@ -395,7 +398,8 @@ async function transition(context) {
     if (isPanama(context) && value === 'Resuelta' && before !== value) {
       const submitted = await executionFor(context, order);
       writes.push({ tab: TAB.orders, row: index, col: WORKFLOW.execution, values: [JSON.stringify(submitted.execution)] },
-        { tab: TAB.history, append: [historyRow(context, otId, 'entrega_tecnica', '', submitted.execution.functionalTest)] });
+        { tab: TAB.history, append: [historyRow(context, otId, 'entrega_tecnica', '', submitted.execution.laborHours == null
+          ? submitted.execution.functionalTest : `${submitted.execution.functionalTest} · ${submitted.execution.laborHours} h de trabajo`)] });
       if (submitted.pm) writes.push({ tab: TAB.orders, row: index, col: WORKFLOW.pm, values: [JSON.stringify(submitted.pm)] });
     }
     if (isPanama(context) && before === 'Resuelta' && value === 'En Reparación') {

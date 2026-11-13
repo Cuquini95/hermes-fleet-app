@@ -3,7 +3,7 @@ import { requireSession } from './_lib/session-auth.js';
 import { canonicalTab, createHermesSheets, createPanamaOperationsSheets } from './_lib/hermes-google-sheets.js';
 import { rejectIfRateLimited } from './_lib/rate-limit.js';
 import meterHandler from './_lib/cmms-meter.js';
-import { dispatchPanama, PANAMA_PROJECT, readPanamaInventory } from './_lib/hermes-panama.js';
+import { dispatchPanama, PANAMA_PROJECT, readPanamaInventory, readOfficialPanamaShifts } from './_lib/hermes-panama.js';
 import { createPanamaDemoSheets } from './_lib/hermes-panama-demo.js';
 import { technicalDocuments } from './_lib/hermes-technical-library.js';
 import { validatePanamaMeterAppend } from './_lib/hermes-shifts.js';
@@ -170,6 +170,7 @@ export function createHermesGateway({
   dispatchWorkshop = workshop,
   dispatchPurchasing = purchasing,
   readPanama,
+  readOfficialShifts,
   panamaTechnicalCatalog = () => process.env.HERMES_PANAMA_TECHNICAL_CATALOG_JSON,
   panamaOnly = false,
   enablePanamaOperations = false,
@@ -258,7 +259,8 @@ export function createHermesGateway({
 
       if (req.method !== 'GET' && !writeEnabled) return invalid(res, 503, 'Este despliegue permite consulta.');
       if (shiftRoute) {
-        const result = await shifts({ path, method: req.method, body: req.body ?? {}, session, sheets, listShiftOperators });
+        const result = await shifts({ path, method: req.method, body: req.body ?? {}, session, sheets, listShiftOperators,
+          readOfficialShifts: demo ? undefined : readOfficialShifts });
         return res.status(result.status).json(result.body);
       }
       if (path === 'api/sheets/append') {
@@ -294,6 +296,7 @@ export default createHermesGateway({
   },
   panamaOnly: true,
   enablePanamaOperations: true,
+  readOfficialShifts: readOfficialPanamaShifts,
   // This release serves the production workbook for consultation.
   writeEnabled: false,
 });

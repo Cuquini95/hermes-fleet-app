@@ -396,3 +396,16 @@ test('un retorno no se confirma si otra avería se guarda entre la validación y
   assert.match((await request('returns', supervisor, body)).body.error, /Retorno bloqueado/);
   assert.equal((await sheets.read('OT_STATUS_LOG')).filter(row => row[2] === 'retorno_operativo').length, 0);
 });
+
+
+test('Taller puede revisar las horas reales del mecánico después de guardar la entrega', async () => {
+  const { request } = fixture();
+  const otId = await startRepair(request);
+  const invalid = await transition(request, mechanic, otId, 'Resuelta', { ...executionProof, laborHours: '-2' });
+  assert.equal(invalid.status, 400);
+  assert.equal((await transition(request, mechanic, otId, 'Resuelta', { ...executionProof, laborHours: '2.25' })).status, 200);
+  const { body } = await request('orders', workshop);
+  const row = body.orders.find(item => item[1] === otId);
+  assert.equal(JSON.parse(row[20]).laborHours, 2.25);
+  assert.match(body.history.find(item => item[2] === 'entrega_tecnica')[4], /2.25 h de trabajo/);
+});
