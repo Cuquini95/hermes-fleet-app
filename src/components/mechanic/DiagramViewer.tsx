@@ -1,3 +1,5 @@
+import PanamaTechnicalLibrary from './PanamaTechnicalLibrary';
+import { useAuthStore } from '../../stores/auth-store';
 import { useState, useEffect } from 'react';
 import { Search, FileText, ExternalLink } from 'lucide-react';
 import { HERMES_API_BASE } from '../../lib/hermes-api-base';
@@ -27,6 +29,11 @@ function matchesBrand(diagramName: string, brand: string): boolean {
 }
 
 export default function DiagramViewer() {
+  const project = useAuthStore(state => state.project);
+  return project === 'tmf-panama' ? <PanamaTechnicalLibrary kind="diagram" /> : <LegacyDiagramViewer />;
+}
+
+function LegacyDiagramViewer() {
   const [query, setQuery] = useState('');
   const [selectedEquipo, setSelectedEquipo] = useState('Todos');
   const [diagrams, setDiagrams] = useState<DiagramEntry[]>([]);

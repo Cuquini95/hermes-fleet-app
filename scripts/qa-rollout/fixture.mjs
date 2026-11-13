@@ -66,11 +66,12 @@ function fixtureRows() {
     [tabs.providers, [['Nombre','RFC','Dirección','Ciudad','Estado','CP','Teléfono','Email','Contacto'], ['Proveedor QA','QAT000000000','Calle de prueba 10','Ciudad QA','Jalisco','00000','0000000000','proveedor@example.invalid','Contacto QA']]],
     [tabs.purchases, [['OC_ID','FECHA','PROVEEDOR','RFC','DIRECCION','UNIDAD','SUBTOTAL','IVA','ENVIO','OTROS','TOTAL','ESTADO','COMENTARIOS','APROBADA_POR','FECHA_ENTREGA']]],
     [tabs.lines, [['OC_ID','ITEM','DESCRIPCION','CANTIDAD','PRECIO_UNITARIO','TOTAL'], ['OC-001','1','Partida histórica ficticia sin cabecera','1','12','12']]],
+    ['Movimientos Repuestos PA', [['ID']]],
     [tabs.parts, [[], [], [], [], ['SKU','Descripción','OEM','Serie','Unidad','Stock','Mínimo','Precio','Ubicación','','Equipo','','','Proveedor'], ['QA-001','Filtro hidráulico de prueba','OEM-QA-001','','pza','8','3','123.45','Almacén QA','','DZ203','','','Proveedor QA'], ['QA-002','Sello de prueba','OEM-QA-002','','pza','1','2','21.50','Almacén QA','','EX401','','','Proveedor QA']]],
     [tabs.expenses, [
       ['ID','FECHA','HORA','TIPO','PROVEEDOR','RFC','FOLIO_FACTURA','SUBTOTAL','IVA','TOTAL','UNIDAD','OT','RESPONSABLE','METODO_PAGO','LINE_ITEMS','IMAGEN_URL','ESTADO'],
-      ['GST-HIST-SIM','04/10/2026','09:00:00','Refaccion','Proveedor QA','QAT000000000','FAC-HIST-SIM','200.00','32.00','232.00','DZ203','','QA Gerencia','Transferencia','[QA-001] Filtro hidráulico de prueba x2 $200.00','','Aprobado'],
-      ['GST-MES-ANTERIOR-SIM',priorMonthDate(),'11:00:00','Servicio','Proveedor QA mes anterior','QAT000000001','FAC-ANTERIOR-SIM','100.25','16.04','116.29','EX401','','QA Gerencia','Transferencia','','','Aprobado'],
+      ['GST-HIST-SIM','04/10/2026','09:00:00','Refaccion','Proveedor QA','QAT000000000','FAC-HIST-SIM','200.00','32.00','232.00','DZ203','','QA Gerencia','Transferencia','[QA-001] Filtro hidráulico de prueba x2 $200.00','','Aprobado','','','232.00','','TP_PA_QA','USD','ITBMS','04/10/2026'],
+      ['GST-MES-ANTERIOR-SIM',priorMonthDate(),'11:00:00','Servicio','Proveedor QA mes anterior','QAT000000001','FAC-ANTERIOR-SIM','100.25','16.04','116.29','EX401','','QA Gerencia','Transferencia','','','Aprobado','','','116.29','','TP_PA_QA','USD','ITBMS',priorMonthDate()],
     ]],
     [tabs.changes, [['TIMESTAMP','ACTOR','ROL','ACCION','FOLIO','DETALLE']]],
     ['Combustible', [['Registro QA'], ['ID','FECHA','HORA','UNIDAD','OPERADOR','TIPO','LITROS'],
@@ -192,7 +193,11 @@ function account(number, role, project = qaProject) {
     membership: {
       user_id: id, email, user_name: `QA ${role} ${number}`, role, projects: [project],
       assigned_units: restricted ? units : [], unit_scope: restricted ? 'assigned' : 'all',
-      active: true, can_approve_purchases: role === 'gerencia', can_review_panama_hse: project === qaProject && number === 5 && role === 'supervisor',
+      active: true, can_approve_purchases: role === 'gerencia' && ![12, 18].includes(number),
+      can_receive_purchases: project === qaProject && number === 99 && role === 'jefe_taller',
+      can_record_purchase_invoices: project === qaProject && number === 12 && role === 'gerencia',
+      can_record_purchase_payments: project === qaProject && number === 18 && role === 'gerencia',
+      can_review_panama_hse: project === qaProject && number === 5 && role === 'supervisor',
     },
   };
 }

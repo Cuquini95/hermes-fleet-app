@@ -59,6 +59,7 @@ function cents(value: string) {
 }
 
 export default function AdminOrdenesCompraPage() {
+  const isPanama = useAuthStore((state) => state.project === 'tmf-panama');
   const [params, setParams] = useSearchParams();
   const initialLine = params.get('partida') ?? '';
   const [data, setData] = useState<PurchaseOverview | null>(null);
@@ -70,6 +71,10 @@ export default function AdminOrdenesCompraPage() {
   const [message, setMessage] = useState('');
   const [receiving, setReceiving] = useState('');
   const [confirmDelete, setConfirmDelete] = useState('');
+  const [decision, setDecision] = useState<{ folio: string; status: 'Aprobada' | 'Rechazada' }>();
+  const [reason, setReason] = useState('');
+  const [reconciliation, setReconciliation] = useState<{ folio: string; action: 'order-invoice' | 'order-payment' }>();
+  const [document, setDocument] = useState({ reference: '', amount: '' });
   const locked = useRef(false);
   const converted = useRef('');
   const form = useRef<HTMLFormElement>(null);
@@ -183,9 +188,28 @@ export default function AdminOrdenesCompraPage() {
     });
   }
 
-  function changeStatus(order: PurchaseOrder, status: string) {
-    return run('order-status', { folio: order.folio, version: order.version, status }, (reply) => {
+  function changeStatus(order: PurchaseOrder, status: string, reason?: string) {
+    return run('order-status', { folio: order.folio, version: order.version, status, reason }, (reply) => {
+      setDecision(undefined);
       setMessage(reply.folio + ' · ' + status);
+    });
+  }
+
+  function decide(order: PurchaseOrder, status: 'Aprobada' | 'Rechazada') {
+    if (!isPanama) return void changeStatus(order, status);
+    setReason('');
+    setDecision({ folio: order.folio, status });
+  }
+
+  function openReconciliation(order: PurchaseOrder, action: 'order-invoice' | 'order-payment') {
+    setDocument({ reference: '', amount: '' });
+    setReconciliation({ folio: order.folio, action });
+  }
+
+  function reconcileOrder(order: PurchaseOrder, action: 'order-invoice' | 'order-payment') {
+    return run(action, { folio: order.folio, version: order.version, ...document }, (reply) => {
+      setReconciliation(undefined);
+      setMessage(reply.folio + (action === 'order-invoice' ? ' · factura conciliada' : ' · pago conciliado'));
     });
   }
 
@@ -319,14 +343,49 @@ export default function AdminOrdenesCompraPage() {
               {order.status === 'Borrador' && <button type="button" className={button} disabled={saving} onClick={() => edit(order)}>Editar</button>}
               {data.canApprove && order.status === 'Borrador' && (
                 <>
-                  <button type="button" className={primary} disabled={saving} onClick={() => void changeStatus(order, 'Aprobada')}>Aprobar</button>
-                  <button type="button" className={button} disabled={saving} onClick={() => void changeStatus(order, 'Rechazada')}>Rechazar</button>
+                  <button type="button" className={primary} disabled={saving} onClick={() => decide(order, 'Aprobada')}>Aprobar</button>
+                  <button type="button" className={button} disabled={saving} onClick={() => decide(order, 'Rechazada')}>Rechazar</button>
                 </>
               )}
-              {data.canApprove && isApprovalRecorded(order) && order.status !== 'Pagada' && <button type="button" className={button} disabled={saving} onClick={() => void changeStatus(order, 'Pagada')}>Marcar pagada</button>}
-              {isApprovalRecorded(order) && <button type="button" className={button} disabled={saving} onClick={() => setReceiving(receiving === order.folio ? '' : order.folio)}>Recepciones</button>}
+              {!isPanama && data.canApprove && isApprovalRecorded(order) && order.status !== 'Pagada' && <button type="button" className={button} disabled={saving} onClick={() => void changeStatus(order, 'Pagada')}>Marcar pagada</button>}
+              {isApprovalRecorded(order) && <button type="button" className={button} disabled={saving} onClick={() => setReceiving(receiving === order.folio ? '' : order.folio)}>{isPanama ? 'Ver recepciones' : 'Recepciones'}</button>}
+              {data.canRecordInvoice && order.status === 'Recibida' && !order.invoice && <button type="button" className={button} disabled={saving}
+                onClick={() => openReconciliation(order, 'order-invoice')}>Vincular factura</button>}
+              {data.canRecordPayment && order.status === 'Recibida' && order.invoice && !order.payment && <button type="button" className={button} disabled={saving}
+                onClick={() => openReconciliation(order, 'order-payment')}>Registrar pago conciliado</button>}
               {['Borrador', 'Rechazada'].includes(order.status) && <button type="button" className={button} disabled={saving} onClick={() => setConfirmDelete(order.folio)}>Eliminar orden</button>}
             </div>
+            {order.approvalReason && <p className="break-words text-sm text-gray-600">Decisión · {order.approvalReason}</p>}
+            {order.invoice && <p className="break-words text-sm text-gray-600">Factura {order.invoice.reference} · {order.invoice.by}</p>}
+            {order.payment && <p className="break-words text-sm text-gray-600">Pago conciliado {order.payment.reference} · {order.payment.by}</p>}
+            {decision?.folio === order.folio && (
+              <form className="space-y-2 rounded-lg bg-slate-50 p-3" onSubmit={(event) => {
+                event.preventDefault();
+                void changeStatus(order, decision.status, reason.trim());
+              }}>
+                <label className="block text-sm">{decision.status === 'Aprobada' ? 'Soporte de la aprobación Q25' : 'Motivo del rechazo'}
+                  <textarea className={input} maxLength={1000} required value={reason} onChange={(event) => setReason(event.target.value)} />
+                </label>
+                <button type="submit" className={primary} disabled={saving || !reason.trim()}>Confirmar {decision.status === 'Aprobada' ? 'aprobación' : 'rechazo'}</button>
+                <button type="button" className={button + ' ml-2'} onClick={() => setDecision(undefined)}>Cancelar</button>
+              </form>
+            )}
+            {reconciliation?.folio === order.folio && (
+              <form className="space-y-2 rounded-lg bg-slate-50 p-3" onSubmit={(event) => {
+                event.preventDefault();
+                void reconcileOrder(order, reconciliation.action);
+              }}>
+                {reconciliation.action === 'order-payment' && <p className="text-sm text-gray-600">Registra un pago ya confirmado fuera de Hermes contra la factura {order.invoice?.reference}.</p>}
+                <label className="block text-sm">{reconciliation.action === 'order-invoice' ? 'Folio de factura' : 'Referencia de pago'}
+                  <input className={input} maxLength={160} required value={document.reference} onChange={(event) => setDocument({ ...document, reference: event.target.value })} />
+                </label>
+                <label className="block text-sm">Importe confirmado ({order.issuer?.currency})
+                  <input className={input} inputMode="decimal" type="number" min="0.01" step="0.01" required value={document.amount} onChange={(event) => setDocument({ ...document, amount: event.target.value })} />
+                </label>
+                <button type="submit" className={primary} disabled={saving || !document.reference.trim()}>Confirmar registro</button>
+                <button type="button" className={button + ' ml-2'} onClick={() => setReconciliation(undefined)}>Cancelar</button>
+              </form>
+            )}
             {confirmDelete === order.folio && (
               <div className="flex flex-wrap gap-2 rounded-lg bg-red-50 p-2 text-sm">
                 <span className="w-full">Eliminar {order.folio} del listado</span>
@@ -335,7 +394,7 @@ export default function AdminOrdenesCompraPage() {
               </div>
             )}
             {openOrder?.folio === order.folio && (
-              <ReceptionForm key={openOrder.folio} order={openOrder} saving={saving} onReceive={(lineId, quantity, reference) =>
+              <ReceptionForm key={openOrder.folio} order={openOrder} saving={saving} readOnly={isPanama} onReceive={(lineId, quantity, reference) =>
                 run('order-receive', { folio: openOrder.folio, version: openOrder.version, lineId, quantity, reference }, (reply) => {
                   setMessage(reply.folio + ' · recepción registrada');
                 })} />
@@ -347,9 +406,10 @@ export default function AdminOrdenesCompraPage() {
   );
 }
 
-function ReceptionForm({ order, saving, onReceive }: {
+function ReceptionForm({ order, saving, readOnly, onReceive }: {
   order: PurchaseOrder;
   saving: boolean;
+  readOnly: boolean;
   onReceive: (lineId: string, quantity: string, reference: string) => Promise<void>;
 }) {
   const isPanama = useAuthStore((state) => state.project === 'tmf-panama');
@@ -373,7 +433,7 @@ function ReceptionForm({ order, saving, onReceive }: {
           ))}
         </div>
       ))}
-      {line && (
+      {line && !readOnly && (
         <form className="space-y-2" onSubmit={async (event) => {
           event.preventDefault();
           await onReceive(line.id, quantity, reference);

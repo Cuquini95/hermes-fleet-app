@@ -8,6 +8,8 @@ const STATUS_COLOR: Record<string, string> = {
   loading: '#94A3B8',
 };
 
+const CHECK_LABELS = { identity: 'Sesión', fleet: 'Maestro de flota', operations: 'Libro operativo' };
+
 const STATUS_LABEL: Record<string, string> = {
   ok: 'API OK',
   degraded: 'API degradada',
@@ -76,6 +78,19 @@ export default function ApiHealthDot() {
                 <span className="text-white capitalize">{health.status}</span>
               </div>
 
+              {health.checks && (
+                <dl className="space-y-1 border-t border-white/10 pt-2">
+                  {Object.entries(health.checks).map(([check, state]) => (
+                    <div key={check} className="flex justify-between gap-3">
+                      <dt className="text-white/80">{CHECK_LABELS[check as keyof typeof CHECK_LABELS] ?? check}</dt>
+                      <dd className={state === 'up' ? 'text-green-300' : 'text-amber-300'}>
+                        {state === 'up' ? 'Disponible' : 'No disponible'}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+
               {health.db && (
                 <div className="border-t border-white/10 pt-2">
                   <p className="text-white/50 mb-1">Base de datos</p>
@@ -106,7 +121,7 @@ export default function ApiHealthDot() {
               )}
               {health.lastChecked && (
                 <span className="text-white/30">
-                  Verificado {health.lastChecked.toLocaleTimeString('es-MX')}
+                  Verificado {health.lastChecked.toLocaleTimeString('es-PA', { timeZone: 'America/Panama' })}
                 </span>
               )}
             </>

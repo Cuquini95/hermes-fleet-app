@@ -1,3 +1,5 @@
+import PanamaTechnicalLibrary from './PanamaTechnicalLibrary';
+import { useAuthStore } from '../../stores/auth-store';
 import { useState } from 'react';
 import { Search, FileText, WifiOff } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -16,6 +18,11 @@ const EQUIPMENT_OPTIONS = [
 ];
 
 export default function ManualSearch() {
+  const project = useAuthStore(state => state.project);
+  return project === 'tmf-panama' ? <PanamaTechnicalLibrary kind="manual" /> : <LegacyManualSearch />;
+}
+
+function LegacyManualSearch() {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [selectedEquipo, setSelectedEquipo] = useState('Seleccionar equipo');

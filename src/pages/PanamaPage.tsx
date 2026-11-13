@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import PanamaComponentHistory from '../components/workshop/PanamaComponentHistory';
 import { useAuthStore } from '../stores/auth-store';
 
 const definitions = [
@@ -20,6 +21,7 @@ type Sections = Record<string, SourceRow[] | null>;
 export default function PanamaPage() {
   const name = useAuthStore(state => state.userName);
   const userId = useAuthStore(state => state.userId);
+  const canSeeComponents = useAuthStore(state => state.project === 'tmf-panama' && state.role !== 'operador');
   const canSeeShifts = useAuthStore(state => state.project === 'tmf-panama' && ['operador', 'supervisor', 'coordinador', 'gerencia'].includes(state.role ?? ''));
   const canReceive = useAuthStore(state => state.project === 'tmf-panama' && state.canReceivePurchases);
   const logout = useAuthStore(state => state.logout);
@@ -66,6 +68,7 @@ export default function PanamaPage() {
           <button type="button" onClick={() => setReload(value => value + 1)} className="rounded-lg bg-[#162252] px-4 py-2 font-semibold text-white">Actualizar</button>
         </div>
         {failed ? <p role="alert">La consulta está temporalmente fuera de servicio.</p> : !sections && <p role="status">Consultando los maestros de Panamá…</p>}
+        {canSeeComponents && <PanamaComponentHistory />}
         {sections && definitions.filter(({ key }) => Object.hasOwn(sections, key)).map(({ key, title, fields }) => {
           const rows = sections[key]?.filter(row => row.unit.toUpperCase().includes(filter.trim().toUpperCase()));
           return (

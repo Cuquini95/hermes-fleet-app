@@ -117,6 +117,7 @@ export default function StickerInspectionPage() {
   const project = useAuthStore((s) => s.project);
   const hseReviewer = useAuthStore((s) => s.canReviewPanamaHse);
   const canSupervisorApprove = (role === 'supervisor' || role === 'gerencia') && (project !== 'tmf-panama' || hseReviewer);
+  const canApproveAtCapture = project !== 'tmf-panama' && canSupervisorApprove;
 
   const [fecha, setFecha] = useState(mexicoDateInput());
   const [hora, setHora] = useState(mexicoTimeInput());
@@ -263,7 +264,7 @@ export default function StickerInspectionPage() {
         mutationId: captureId.current,
         input: {
           unit: unitId, templateId, company, date: fecha, time: hora, finalColor, overrideReason,
-          approve: canSupervisorApprove && supervisorApproval,
+          approve: canApproveAtCapture && supervisorApproval,
           checks: template.items.map(({ id }) => {
             const answer = responses[id]!;
             return { itemId: id, status: answer.status, comment: answer.comment, canOperate: answer.canOperate, dueDate: answer.dueDate };
@@ -459,7 +460,7 @@ export default function StickerInspectionPage() {
           </Field>
         )}
 
-        {canSupervisorApprove && (
+        {canApproveAtCapture && (
           <label className="mt-3 flex items-center gap-3 rounded-xl border border-border p-3">
             <input
               type="checkbox"
@@ -568,7 +569,7 @@ export default function StickerInspectionPage() {
         disabled={!canSubmit}
         className="mt-5 w-full bg-amber text-white rounded-xl py-4 font-semibold text-base disabled:opacity-40 disabled:cursor-not-allowed transition-opacity btn-press"
       >
-        {submitting ? 'Guardando…' : pending ? 'Reintentar' : canSupervisorApprove && supervisorApproval ? 'Aprobar inspección' : 'Guardar para revisión'}
+        {submitting ? 'Guardando…' : pending ? 'Reintentar' : canApproveAtCapture && supervisorApproval ? 'Aprobar inspección' : 'Guardar para revisión'}
       </button>
 
       {lastSticker?.approvalState === 'aprobado_supervisor' && (

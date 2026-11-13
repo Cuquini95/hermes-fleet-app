@@ -47,6 +47,17 @@ export function isInventoryDataRow(row: string[] | undefined): row is string[] {
 }
 
 export function parseInventoryRows(rows: string[][]): InventoryItem[] {
+  const canonicalIndex = rows.findIndex(row => row[0]?.trim().toUpperCase() === 'SKU' && row[5]?.trim().toUpperCase() === 'STOCK');
+  if (canonicalIndex >= 0) return rows.slice(canonicalIndex + 1).flatMap((row) => {
+    const [partNumber, description, oemRef, , unit, stockCell, minimumCell, , location] = row;
+    const stock = parseNumberCell(stockCell);
+    const minimum = parseNumberCell(minimumCell);
+    if (!partNumber?.trim() || !description?.trim() || stock === null || minimum === null) return [];
+    return [{
+      partNumber: partNumber.trim(), description: description.trim(), oemRef: oemRef?.trim() ?? '',
+      stock, minimum, unit: unit?.trim() ?? '', category: location?.trim() ?? '',
+    }];
+  });
   return rows.reduce<InventoryItem[]>((items, row) => {
     if (!isInventoryDataRow(row)) return items;
 

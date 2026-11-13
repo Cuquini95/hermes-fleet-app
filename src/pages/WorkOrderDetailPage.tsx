@@ -1,9 +1,10 @@
+import PanamaPartsMovements from '../components/workshop/PanamaPartsMovements';
 /**
  * @fileoverview Monolithic by design (> 400 LOC).
  * Work-order detail: tasks, parts, signatures, photos in one timeline view.
  */
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Clock, Wrench, ChevronRight } from 'lucide-react';
 import { useWorkOrderStore, orderHistoryTime } from '../stores/workorder-store';
 import { useAuthStore } from '../stores/auth-store';
@@ -310,7 +311,11 @@ export default function WorkOrderDetailPage() {
         <div>
           <p className="text-xs text-text-secondary mb-1">Descripcion</p>
           <p className="text-sm text-text break-words">{wo.descripcion}</p>
+          {wo.previousOtId && <Link className="mt-2 inline-flex min-h-11 items-center text-sm font-semibold text-amber underline"
+            to={`/workorders/${encodeURIComponent(wo.previousOtId)}`}>Reincidencia de {wo.previousOtId}</Link>}
         </div>
+
+        <PanamaPartsMovements ot={wo.ot_id} />
 
         {wo.partes_necesarias && (
           <div>

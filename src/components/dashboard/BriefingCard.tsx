@@ -3,18 +3,18 @@
  * Dashboard briefing card — fetches multiple ranges, computes KPIs, and renders them in one pass; extraction would create thin wrappers.
  */
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { readRange, SHEET_TABS } from '../../lib/sheets-api';
 import { useEquipmentList } from '../../hooks/useEquipmentList';
+import { useFleetDispatch, type FleetDispatch } from '../../hooks/useFleetDispatch';
+import { dispatchAvailability } from '../../lib/availability';
+import { normalizeUnitId } from '../../lib/dispatch-readiness';
+import { useEquipmentStore } from '../../stores/equipment-store';
+import { fetchPanamaMaintenance } from '../../lib/panama-maintenance';
+import { briefingPmAlerts } from './briefing-pm';
 import { parseInventoryRows } from '../../lib/inventory-rows';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-interface PmAlert {
-  unit: string;
-  type: string;
-  hoursOverdue: number | null; // null = near-due
-  hoursRemaining: number | null; // null = overdue
-}
 
 interface FuelAnomaly {
   unit: string;
@@ -36,14 +36,6 @@ interface CriticalPart {
 }
 
 interface BriefingData {
-  total: number;
-  operativo: number;
-  alerta: number;
-  taller: number;
-  inactivo: number;
-  availabilityPct: number;
-  tallerUnits: string[];
-  pmAlerts: PmAlert[];
   fuelAnomalies: FuelAnomaly[];
   fuelTotalDiesel: number;
   dvirCompliantCount: number;
@@ -101,67 +93,10 @@ function formatMinutesAgo(ms: number): string {
 
 function buildBriefingFromSheets(
   equipmentList: ReturnType<typeof useEquipmentList>,
-  pmRows: string[][],
-  horometroRows: string[][],
   combustibleRows: string[][],
   inspeccionesRows: string[][],
   inventarioRows: string[][]
 ): BriefingData {
-  // --- Fleet status from equipment catalog ---
-  const total = equipmentList.length;
-  const operativo = equipmentList.filter((e) => e.status === 'operativo').length;
-  const alerta = equipmentList.filter((e) => e.status === 'alerta').length;
-  const taller = equipmentList.filter((e) => e.status === 'taller').length;
-  const inactivo = equipmentList.filter((e) => e.status === 'inactivo').length;
-  const availabilityPct = total > 0 ? Math.round(((operativo + alerta) / total) * 100) : 0;
-  const tallerUnits = equipmentList
-    .filter((e) => e.status === 'taller' || e.status === 'alerta')
-    .map((e) => e.unit_id);
-
-  // --- Latest horómetro per unit ---
-  const latestHorometro = new Map<string, number>();
-  for (const row of horometroRows) {
-    const unit = (row[2] ?? '').trim().toUpperCase();
-    const hrs = parseFloat((row[5] ?? '').replace(',', '.'));
-    if (!unit || isNaN(hrs)) continue;
-    const prev = latestHorometro.get(unit);
-    if (prev === undefined || hrs > prev) {
-      latestHorometro.set(unit, hrs);
-    }
-  }
-
-  // --- PM alerts: last PM record per unit, then check against horómetro ---
-  const lastPmPerUnit = new Map<string, { type: string; nextDue: number }>();
-  for (const row of pmRows) {
-    const unit = (row[1] ?? '').trim().toUpperCase();
-    const type = (row[2] ?? '').trim();
-    const nextDue = parseFloat((row[4] ?? '').replace(',', '.'));
-    if (!unit || isNaN(nextDue)) continue;
-    // Keep the record with the highest nextDue (latest PM)
-    const prev = lastPmPerUnit.get(unit);
-    if (!prev || nextDue > prev.nextDue) {
-      lastPmPerUnit.set(unit, { type, nextDue });
-    }
-  }
-
-  const pmAlerts: PmAlert[] = [];
-  for (const [unit, { type, nextDue }] of lastPmPerUnit) {
-    const current = latestHorometro.get(unit);
-    if (current === undefined) continue;
-    if (current >= nextDue) {
-      pmAlerts.push({ unit, type, hoursOverdue: Math.round(current - nextDue), hoursRemaining: null });
-    } else if (current >= nextDue - 50) {
-      pmAlerts.push({ unit, type, hoursOverdue: null, hoursRemaining: Math.round(nextDue - current) });
-    }
-  }
-  pmAlerts.sort((a, b) => {
-    // Overdue first, then near-due sorted by hours remaining
-    if (a.hoursOverdue !== null && b.hoursOverdue === null) return -1;
-    if (a.hoursOverdue === null && b.hoursOverdue !== null) return 1;
-    if (a.hoursOverdue !== null && b.hoursOverdue !== null) return b.hoursOverdue - a.hoursOverdue;
-    return (a.hoursRemaining ?? 0) - (b.hoursRemaining ?? 0);
-  });
-
   // --- Fuel: last 7 days diesel ---
   const now = new Date();
   const sevenDaysAgo = startOfDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6));
@@ -241,14 +176,6 @@ function buildBriefingFromSheets(
     }));
 
   return {
-    total,
-    operativo,
-    alerta,
-    taller,
-    inactivo,
-    availabilityPct,
-    tallerUnits,
-    pmAlerts,
     fuelAnomalies,
     fuelTotalDiesel: Math.round(fuelTotalDiesel),
     dvirCompliantCount,
@@ -309,10 +236,16 @@ function Line({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function BriefingCard() {
+export default function BriefingCard({ dispatch }: { dispatch?: FleetDispatch }) {
   const equipmentList = useEquipmentList();
+  const fallback = useFleetDispatch(equipmentList, !dispatch);
+  const fleet = dispatch ?? fallback;
+  const equipmentError = useEquipmentStore((state) => state.error);
+  const snapshot = dispatchAvailability(equipmentList, fleet.readiness, fleet.verified && !fleet.loading && !equipmentError);
 
-  const [data, setData] = useState<BriefingData | null>(null);
+  const [rows, setRows] = useState<[string[][], string[][], string[][]] | null>(null);
+  const [pm, setPm] = useState<ReturnType<typeof briefingPmAlerts>>({ verified: false, alerts: [] });
+  const data = rows ? buildBriefingFromSheets(equipmentList, ...rows) : null;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null);
@@ -327,11 +260,11 @@ export default function BriefingCard() {
     setLoading(true);
     setError(null);
 
+
     try {
-      const [pmRows, horometroRows, combustibleRows, inspeccionesRows, inventarioRows] =
+      const [maintenance, combustibleRows, inspeccionesRows, inventarioRows] =
         await Promise.all([
-          readRange(SHEET_TABS.HISTORIAL_PM, ctrl.signal),
-          readRange(SHEET_TABS.HOROMETROS, ctrl.signal),
+          fetchPanamaMaintenance(ctrl.signal),
           readRange(SHEET_TABS.COMBUSTIBLE, ctrl.signal),
           readRange(SHEET_TABS.INSPECCIONES, ctrl.signal),
           readRange(SHEET_TABS.INVENTARIO, ctrl.signal),
@@ -339,18 +272,12 @@ export default function BriefingCard() {
 
       if (ctrl.signal.aborted) return;
 
-      const result = buildBriefingFromSheets(
-        equipmentList,
-        pmRows,
-        horometroRows,
-        combustibleRows,
-        inspeccionesRows,
-        inventarioRows
-      );
-      setData(result);
+      setRows([combustibleRows, inspeccionesRows, inventarioRows]);
+      setPm(briefingPmAlerts(maintenance));
       setFetchedAt(new Date());
     } catch (err: unknown) {
       if (ctrl.signal.aborted) return;
+      setRows(null);
       setError(err instanceof Error ? err.message : 'Error al cargar datos');
     } finally {
       if (!ctrl.signal.aborted) setLoading(false);
@@ -389,7 +316,7 @@ export default function BriefingCard() {
         <div className="p-4">
           <p className="text-sm text-red-600">{error}</p>
           <button
-            onClick={fetchAll}
+            onClick={() => { void fetchAll(); void fleet.refresh(); }}
             className="mt-2 text-xs text-text-secondary underline hover:text-text"
           >
             Reintentar
@@ -397,38 +324,30 @@ export default function BriefingCard() {
         </div>
       ) : data ? (
         <div className="p-4 space-y-4">
-          {/* Disponibilidad */}
-          <Section
-            label={`DISPONIBILIDAD: ${data.availabilityPct}% (${data.operativo + data.alerta}/${data.total} equipos)`}
-          >
-            {data.tallerUnits.length > 0 ? (
-              <Line color="amber">
-                EN TALLER/ALERTA: {data.tallerUnits.join(', ')}
+          <Section label={snapshot.pct === null ? 'DESPACHO SIN VERIFICAR' : `APTOS PARA DESPACHO: ${snapshot.pct}% (${snapshot.available}/${snapshot.total} equipos)`}>
+            {snapshot.pct === null && <Line color="amber">{fleet.message || 'Verificando la flota y las restricciones.'}</Line>}
+            {snapshot.exceptions.map((unit) => (
+              <Line key={unit} color="amber">
+                <Link to={`/fleet?unit=${encodeURIComponent(unit)}`} className="font-semibold underline">{unit}</Link>
+                {' · '}{fleet.readiness.get(normalizeUnitId(unit))?.reason ?? 'Estado de flota no disponible para despacho'}
               </Line>
-            ) : (
-              <Line color="green">Todos los equipos disponibles</Line>
+            ))}
+            {snapshot.pct !== null && snapshot.exceptions.length === 0 && (
+              <Line color="green">Todos los equipos del alcance están aptos para despacho.</Line>
             )}
-            <Line color="default">
-              Operativo: {data.operativo} · Alerta: {data.alerta} · Taller: {data.taller} · Inactivo: {data.inactivo}
-            </Line>
           </Section>
 
-          {/* Alertas PM */}
           <Section label="ALERTAS PM:">
-            {data.pmAlerts.length === 0 ? (
-              <Line color="green">Sin alertas</Line>
-            ) : (
-              data.pmAlerts.slice(0, 5).map((a) => (
-                <Line key={a.unit + a.type} color={a.hoursOverdue !== null ? 'red' : 'amber'}>
-                  {a.hoursOverdue !== null
-                    ? `⚠ ${a.unit} — ${a.type} VENCIDO (${a.hoursOverdue} hrs sobre límite)`
-                    : `⚠ ${a.unit} — ${a.type} en ${a.hoursRemaining} hrs`}
-                </Line>
-              ))
-            )}
-            {data.pmAlerts.length > 5 && (
-              <Line color="default">+{data.pmAlerts.length - 5} alertas más</Line>
-            )}
+            {!pm.verified && <Line color="amber">Pendiente de verificar en PM FLOTA.</Line>}
+            {pm.alerts.length === 0 && pm.verified && <Line color="green">Sin alertas en el maestro.</Line>}
+            {pm.alerts.slice(0, 5).map((entry) => (
+              <Line key={entry.unit + entry.level} color={entry.state === 'overdue' ? 'red' : 'amber'}>
+                <Link to="/pm" className="font-semibold underline">{entry.unit}</Link>
+                {' · '}{entry.level || 'PM'} {entry.state === 'overdue' ? 'vencido' : 'próximo'}
+                {entry.remaining !== null && ` · ${Math.abs(entry.remaining)} h ${entry.state === 'overdue' ? 'sobre límite' : 'restantes'}`}
+              </Line>
+            ))}
+            {pm.alerts.length > 5 && <Line color="default">+{pm.alerts.length - 5} alertas más</Line>}
           </Section>
 
           {/* Combustible */}
@@ -487,7 +406,7 @@ export default function BriefingCard() {
             {updatedLabel ? `Actualizado ${updatedLabel}` : ''}
           </p>
           <button
-            onClick={fetchAll}
+            onClick={() => { void fetchAll(); void fleet.refresh(); }}
             disabled={loading}
             className="text-xs text-text-secondary hover:text-text underline disabled:opacity-40"
           >

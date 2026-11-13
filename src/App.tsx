@@ -6,6 +6,7 @@ import { flushQueue } from './lib/offline-queue';
 import { ROLE_HOME } from './types/roles';
 import type { AppRole } from './types/roles';
 import RequireRole from './components/auth/RequireRole';
+import SessionUnavailable from './components/auth/SessionUnavailable';
 import AppShell from './components/layout/AppShell';
 import ErrorBoundary from './components/ErrorBoundary';
 
@@ -102,7 +103,9 @@ function RootRedirect() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const role = useAuthStore((s) => s.role);
   const sessionChecked = useAuthStore((s) => s.sessionChecked);
+  const sessionUnavailable = useAuthStore((s) => s.sessionUnavailable);
   if (!sessionChecked) return <div role="status" className="flex min-h-screen items-center justify-center text-sm text-slate-500">Validando sesión…</div>;
+  if (sessionUnavailable) return <SessionUnavailable />;
   if (isAuthenticated && role) return <Navigate to={ROLE_HOME[role]} replace />;
   return <Navigate to="/login" replace />;
 }

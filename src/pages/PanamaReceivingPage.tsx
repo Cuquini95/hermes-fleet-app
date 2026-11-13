@@ -169,12 +169,12 @@ function ReceiptForm({ pending, disabled, error, onReceive, onCancel }: {
         </label>
         <label className="block text-sm font-medium">
           Referencia o remisión
-          <input className={input + ' mt-1'} maxLength={160} value={reference} onChange={(event) => setReference(event.target.value)} />
+          <input className={input + ' mt-1'} maxLength={160} required value={reference} onChange={(event) => setReference(event.target.value)} />
         </label>
         {invalid && <p role="alert" className="text-sm text-red-700">Ingresa una cantidad de 0.001 a {pending}, con hasta tres decimales.</p>}
         {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
         <div className="flex flex-wrap gap-2">
-          <button type="submit" className={primary}>Registrar recepción</button>
+          <button type="submit" className={primary} disabled={!reference.trim()}>Registrar recepción</button>
           <button type="button" className={button} onClick={onCancel}>Cancelar</button>
         </div>
       </fieldset>

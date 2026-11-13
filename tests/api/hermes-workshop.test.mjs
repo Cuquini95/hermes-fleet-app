@@ -162,6 +162,39 @@ test('Operaciones devuelve la entrega con fecha y motivo y el equipo queda en re
   assert.equal((await transition(request, workshop, otId, 'Completado')).status, 409);
 });
 
+test('el retorno de una OT no libera otra avería abierta de la misma unidad', async () => {
+  const { request, sheets } = fixture();
+  const otId = await startRepair(request);
+  await transition(request, mechanic, otId, 'Resuelta', executionProof);
+  await transition(request, workshop, otId, 'Completado');
+  const independent = await request('report', operator, report({ type: 'Hidráulica', description: 'Otra avería del mismo equipo' }));
+  const payload = { mutationId: randomUUID(), otId, decision: 'accepted', notes: 'Validación QA de retorno' };
+  const blocked = await request('returns', supervisor, payload);
+  assert.equal(blocked.status, 409);
+  assert.match(blocked.body.error, /avería/i);
+  assert.equal((await sheets.read('ORDENES_TRABAJO')).find(row => row[1] === otId)[22], undefined);
+  assert.equal((await sheets.read('Averias')).find(row => row[13] === independent.body.otId)[9], 'Abierta');
+});
+
+test('una reincidencia conserva el cierre original y queda vinculada a una nueva OT', async () => {
+  const { request, sheets } = fixture();
+  const otId = await startRepair(request);
+  await transition(request, mechanic, otId, 'Resuelta', executionProof);
+  await transition(request, workshop, otId, 'Completado');
+  const payload = report({ previousOtId: otId, description: 'Reincidencia declarada QA' });
+  const recurrence = await request('report', operator, payload);
+  assert.equal(recurrence.status, 201);
+  assert.equal(recurrence.body.previousOtId, otId);
+  assert.notEqual(recurrence.body.otId, otId);
+  assert.equal((await request('report', operator, payload)).body.otId, recurrence.body.otId);
+  const [first, second] = await sheets.read('ORDENES_TRABAJO');
+  assert.equal(first[9], 'Completado');
+  assert.equal(second[24], otId);
+  const log = await sheets.read('OT_STATUS_LOG');
+  assert.equal(log.filter(row => row[1] === recurrence.body.otId && row[2] === 'reincidencia' && row[4] === otId).length, 1);
+  assert.equal((await request('report', operator, report({ previousOtId: recurrence.body.otId }))).status, 409);
+});
+
 test('un DVIR fallido mantiene el bloqueo aunque Taller cierre la reparación', async () => {
   const { request } = fixture();
   const checks = Array.from({ length: 12 }, (_, index) => ({ status: index === 2 ? 'falla' : 'ok', notes: 'Prueba QA' }));
@@ -315,4 +348,31 @@ test('un sticker mantiene el bloqueo y exige aprobación identificada', async ()
   const readiness = await request('readiness', operator);
   assert.equal(readiness.body.stickers.length, 2);
   assert.equal(readiness.body.stickers[1][12], 'red');
+});
+
+test('Panamá exige otro revisor HSE aunque quien capture ya tenga facultad HSE', async () => {
+  const { request } = fixture();
+  const { getStickerTemplate } = await import('../../src/data/sticker-inspection-templates.js');
+  const template = getStickerTemplate('camion_articulado');
+  const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Panama' }).format(new Date());
+  const body = { mutationId: randomUUID(), unit: 'CA20', templateId: template.id, company: 'QA', date,
+    time: '07:00', finalColor: 'green', checks: template.items.map(({ id }) => ({ itemId: id, status: 'cumple' })) };
+  assert.equal((await request('sticker', supervisor, { ...body, approve: true })).status, 403);
+  const pending = await request('sticker', supervisor, body);
+  assert.equal(pending.status, 201);
+  assert.equal(pending.body.canDispatch, false);
+  const review = { mutationId: randomUUID(), folio: pending.body.folio };
+  assert.equal((await request('stickerreview', supervisor, review)).status, 403);
+  assert.deepEqual((await request('stickers', supervisor)).body.stickers, []);
+  const independent = { ...account('hse-independent', 'supervisor'), canReviewPanamaHse: true };
+  assert.equal((await request('stickerreview', independent, review)).body.canDispatch, true);
+});
+
+test('Taller puede comprobar el checklist exacto por unidad y nivel antes de programar', async () => {
+  const { request } = fixture([{ model: 'Cat 745', level: 'PM250', reference: 'QA revisión 1', tasks: [{ id: 'oil', label: 'Tarea QA' }] }]);
+  const expected = { model: 'Cat 745', level: 'PM-250', checklist: { reference: 'QA revisión 1', tasks: [{ id: 'oil', label: 'Tarea QA' }] } };
+  assert.deepEqual(await request('pmtemplate', workshop, undefined, { unit: 'CA20', level: 'PM-250' }), { status: 200, body: expected });
+  assert.equal((await request('pmtemplate', workshop, undefined, { unit: 'CA20', level: 'PM-500' })).body.checklist, null);
+  assert.equal((await request('pmtemplate', { ...workshop, assignedUnits: ['DZ203'] }, undefined, { unit: 'CA20', level: 'PM-250' })).status, 403);
+  assert.equal((await request('pmtemplate', operator, undefined, { unit: 'CA20', level: 'PM-250' })).status, 403);
 });

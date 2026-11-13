@@ -91,6 +91,34 @@ test('original intake appends bind actor and unit and use a stable receipt on re
   assert.equal(received[0].writes[0].append[0][4], operator.userName);
 });
 
+test('Panamá verifica cronología y horas del horómetro individual antes de guardar', async () => {
+  const saved = [];
+  const receipts = new Map();
+  const readings = [['12/11/2026', '07:00:00', 'CA20', 'Equipo QA', 'QA', 'inicio', '390']];
+  const sheets = { read: async () => readings, replay: async ({ key }) => receipts.get(key) ?? null,
+    commit: async change => {
+      saved.push(change);
+      receipts.set(change.key, change.result);
+      readings.push(change.writes[0].append[0]);
+      return { result: change.result };
+    } };
+  const gate = createHermesGateway({ sheets, sessionReader: async () => ({ ...operator, project: 'tmf-panama' }),
+    writeEnabled: true, enablePanamaOperations: true });
+  const submit = async (hours, time = '19:00:00') => {
+    const res = response();
+    await gate({ method: 'POST', query: { path: 'api/sheets/append' }, body: {
+      tab: '04B Registro Horómetros', values: ['12/11/2026', time, 'CA20', 'Equipo QA', 'Operador QA', 'final', hours],
+    } }, res);
+    return res;
+  };
+  assert.equal((await submit('389')).statusCode, 409);
+  assert.equal((await submit('12000')).statusCode, 409);
+  assert.equal((await submit('396')).statusCode, 200);
+  assert.equal((await submit('396')).statusCode, 200);
+  assert.equal((await submit('395')).statusCode, 409);
+  assert.equal(saved.length, 1);
+});
+
 test('Panamá blocks TMF fuel capture until explicitly enabled in the isolated fixture', async () => {
   let writes = 0;
   const session = { ...operator, project: 'tmf-panama' };
@@ -164,6 +192,20 @@ function transport() {
 
 const save = (key, folio, guards) => ({ key, fingerprint: `fp-${folio}`, guards, result: { folio }, writes: [{ tab: 'Averias', append: [[folio]] }, { tab: 'ORDENES_TRABAJO', append: [[folio]] }] });
 
+test('formula reads bypass the cache of evaluated sheet values', async () => {
+  const requests = [];
+  const sheets = createHermesSheets({ spreadsheetId: 'isolated_fixture', request: async ({ url }) => {
+    const mode = new URL(url).searchParams.get('valueRenderOption');
+    requests.push(mode);
+    return { data: { values: [['SKU-QA', '', '', '', '', mode === 'FORMULA' ? '=SUM(F10:F20)' : 4]] } };
+  } });
+  const catalog = '12 Inventario Rep.';
+  assert.equal((await sheets.read(catalog, { cached: true }))[0][5], '4');
+  assert.equal((await sheets.read(catalog, { cached: true, valueRenderOption: 'FORMULA' }))[0][5], '=SUM(F10:F20)');
+  assert.equal((await sheets.read(catalog, { cached: true }))[0][5], '4');
+  assert.deepEqual(requests, ['UNFORMATTED_VALUE', 'FORMULA']);
+});
+
 test('a rejected batch leaves both sheets unchanged and a retry commits both with the same receipt', async () => {
   const fake = transport();
   const sheets = createHermesSheets({ spreadsheetId: 'isolated_fixture', request: fake.request });
@@ -198,4 +240,24 @@ test('overlapping versions prevent a concurrent second commit', async () => {
   assert.equal(outcomes.filter(x => x.status === 'fulfilled').length, 1);
   assert.equal(outcomes.find(x => x.status === 'rejected').reason.status, 409);
   assert.equal(fake.rows('ORDENES_TRABAJO').length, 2);
+});
+
+test('Panamá health distinguishes the official fleet from its writable workbook', async () => {
+  const checks = [];
+  const gateway = createHermesGateway({
+    sessionReader: async () => ({ ...operator, project: 'tmf-panama' }),
+    sheets: { read: async (tab) => {
+      checks.push(tab);
+      if (tab === 'Hermes_Transacciones') throw new Error('fixture: unavailable workbook');
+      return [['fleet header']];
+    } },
+    enablePanamaOperations: true, writeEnabled: true,
+  });
+  const result = response();
+  await gateway({ method: 'GET', query: { path: 'health' } }, result);
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.body.status, 'degraded');
+  assert.equal(result.body.writeEnabled, false);
+  assert.deepEqual(result.body.checks, { identity: 'up', fleet: 'up', operations: 'down' });
+  assert.deepEqual(checks, ['01 Inventario', 'Hermes_Transacciones']);
 });

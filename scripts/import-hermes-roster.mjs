@@ -27,12 +27,17 @@ export function planRosterImport(entries, users, existing, project, now = Date.n
     const userId = identities.get(email);
     const panamaOnly = project === 'tmf-panama' && Array.isArray(item?.projects)
       && item.projects.length === 1 && item.projects[0] === project;
+    const purchaseGrants = [item.canApprovePurchases, item.canReceivePurchases, item.canRecordPurchaseInvoices, item.canRecordPurchasePayments];
     let reason;
     if (!email) reason = 'correo_inválido';
     else if (emailCounts.get(email) > 1) reason = 'correo_duplicado';
     else if (!isRole(item.role)) reason = 'rol_pendiente';
     else if (!userId) reason = 'identidad_sin_confirmar';
     else if (owners.has(email) && owners.get(email) !== userId) reason = 'identidad_distinta_a_la_vinculada';
+    else if (purchaseGrants.some(grant => grant !== undefined && typeof grant !== 'boolean')) reason = 'facultad_de_compras_inválida';
+    else if (panamaOnly && purchaseGrants.filter(grant => grant === true).length > 1) reason = 'facultades_de_compras_incompatibles';
+    else if ((item.canRecordPurchaseInvoices === true || item.canRecordPurchasePayments === true)
+      && (!panamaOnly || item.role !== 'gerencia')) reason = 'facultad_contable_incompatible';
     else if (item.canApprovePurchases === true && item.role !== 'gerencia') reason = 'permiso_de_compra_incompatible';
     else if (item.canReceivePurchases !== undefined && typeof item.canReceivePurchases !== 'boolean') reason = 'permiso_de_recepción_inválido';
     else if (item.canReceivePurchases === true && !panamaOnly) reason = 'permiso_de_recepción_fuera_de_panamá';
@@ -48,6 +53,8 @@ export function planRosterImport(entries, users, existing, project, now = Date.n
       can_approve_purchases: item.canApprovePurchases === true,
       ...(project === 'tmf-panama' ? {
         can_receive_purchases: item.canReceivePurchases === true,
+        can_record_purchase_invoices: item.canRecordPurchaseInvoices === true,
+        can_record_purchase_payments: item.canRecordPurchasePayments === true,
         can_review_panama_hse: item.canReviewPanamaHse === true,
       } : {}),
     };

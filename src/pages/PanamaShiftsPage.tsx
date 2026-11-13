@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { mexicoDateInput } from '../lib/date-utils';
+import { downloadBlob } from '../lib/download-blob';
+import { shiftHandoffCsv } from '../lib/finance-handoff';
 import { useAuthStore } from '../stores/auth-store';
 
 type ShiftFields = Record<'unit' | 'date' | 'shift' | 'initialHours' | 'finalHours' | 'equipmentStatus' | 'support' | 'trips' | 'tonnes' | 'stops' | 'client', string>;
@@ -14,6 +16,10 @@ type ShiftPart = Omit<ShiftFields, 'initialHours' | 'finalHours' | 'trips' | 'to
   history: { action: ShiftAction; actor: Actor; at: string; comment: string }[];
 };
 type Mutation = { endpoint: 'entregar' | 'revisar'; data: Record<string, unknown> };
+type DispatchFields = Record<'unit' | 'date' | 'shift' | 'site' | 'operatorId', string>;
+type DispatchOperator = { userId: string; userName: string; allUnits: boolean; assignedUnits: string[] };
+type DispatchAssignment = { id: string; unit: string; date: string; shift: string; site: string; operator: Actor; assignedBy: Actor; assignedAt: string;
+  readiness: { level: 'ok' | 'restricted' | 'blocked'; reason: string } };
 
 const inputClass = 'w-full rounded-lg border border-slate-400 bg-white px-3 py-2 text-base font-normal';
 const labelClass = 'flex min-w-0 flex-col gap-1 text-sm font-semibold';
@@ -49,6 +55,113 @@ async function requestShifts<T>(mutation?: Mutation, signal?: AbortSignal): Prom
   return result;
 }
 
+async function requestDispatch(data?: DispatchFields & { mutationId: string; expectedUserId: string }, signal?: AbortSignal) {
+  const response = await fetch('/hermes-api/api/panama/turnos/despacho', {
+    method: data ? 'POST' : 'GET', cache: 'no-store', credentials: 'same-origin',
+    headers: data ? { 'Content-Type': 'application/json' } : undefined,
+    body: data ? JSON.stringify(data) : undefined,
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000),
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) throw new ShiftRequestError(result?.error ?? 'No se pudo confirmar el despacho.', response.status);
+  if (data ? !result?.assignment?.id : !Array.isArray(result?.assignments) || !Array.isArray(result?.operators)) {
+    throw new Error('El servidor no confirmó el despacho.');
+  }
+  return result as { assignment: DispatchAssignment; assignments: DispatchAssignment[]; operators: DispatchOperator[] };
+}
+
+function DispatchPanel({ userId, canAssign, units }: { userId: string; canAssign: boolean; units: { unit_id: string; model: string }[] }) {
+  const [assignments, setAssignments] = useState<DispatchAssignment[]>([]);
+  const [operators, setOperators] = useState<DispatchOperator[]>([]);
+  const [fields, setFields] = useState<DispatchFields>({ unit: '', date: mexicoDateInput(), shift: '', site: '', operatorId: '' });
+  const [retry, setRetry] = useState<Parameters<typeof requestDispatch>[0]>();
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [reload, setReload] = useState(0);
+  const writeLock = useRef(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    requestDispatch(undefined, controller.signal)
+      .then(result => { if (!controller.signal.aborted) { setAssignments(result.assignments); setOperators(result.operators); } })
+      .catch(cause => { if (!controller.signal.aborted) setError(cause.message); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [reload]);
+
+  function bind(key: keyof DispatchFields) {
+    return { value: fields[key], onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+      const value = event.target.value;
+      setFields(current => ({ ...current, [key]: value, ...(key === 'unit' ? { operatorId: '' } : {}) }));
+    } };
+  }
+
+  async function assign(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (writeLock.current) return;
+    writeLock.current = true;
+    const data = retry ?? { ...fields, mutationId: crypto.randomUUID(), expectedUserId: userId };
+    setSaving(true);
+    setError('');
+    setMessage('');
+    try {
+      const { assignment } = await requestDispatch(data);
+      setAssignments(current => [assignment, ...current.filter(item => item.id !== assignment.id)]);
+      setMessage(assignment.readiness.level === 'ok'
+        ? `Asignación ${assignment.id} confirmada para ${assignment.operator.name}.`
+        : `Asignación ${assignment.id} guardada. El equipo tiene una restricción vigente.`);
+      setRetry(undefined);
+      setFields(current => ({ ...current, operatorId: '', unit: '' }));
+    } catch (cause) {
+      const mayRetry = !(cause instanceof ShiftRequestError) || cause.status >= 500 || [408, 429].includes(cause.status);
+      setRetry(mayRetry ? data : undefined);
+      setError(cause instanceof Error ? cause.message : 'No se pudo confirmar el despacho.');
+    } finally {
+      writeLock.current = false;
+      setSaving(false);
+    }
+  }
+
+  const eligible = operators.filter(person => person.allUnits || person.assignedUnits.includes(fields.unit));
+  return <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4" aria-labelledby="dispatch-heading">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <h2 id="dispatch-heading" className="text-lg font-bold">Asignaciones de despacho</h2>
+      <button type="button" className={buttonClass} disabled={loading || saving || !!retry}
+        onClick={() => { setLoading(true); setError(''); setReload(value => value + 1); }}>Actualizar asignaciones</button>
+    </div>
+    {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
+    {message && <p role="status" className="text-sm text-emerald-900">{message}</p>}
+    {canAssign && <form className="space-y-3" onSubmit={assign}>
+      <fieldset disabled={loading || saving || !!retry} className="grid min-w-0 gap-3 sm:grid-cols-2">
+        <label className={labelClass}>Unidad para despacho<select className={inputClass} required {...bind('unit')}>
+          <option value="">Selecciona una unidad</option>
+          {units.map(item => <option key={item.unit_id} value={item.unit_id}>{item.unit_id} · {item.model}</option>)}
+        </select></label>
+        <label className={labelClass}>Operador para despacho<select className={inputClass} required {...bind('operatorId')}>
+          <option value="">Selecciona un operador habilitado</option>
+          {eligible.map(person => <option key={person.userId} value={person.userId}>{person.userName}</option>)}
+        </select></label>
+        <label className={labelClass}>Fecha de despacho<input className={inputClass} type="date" required {...bind('date')} /></label>
+        <label className={labelClass}>Turno de despacho<input className={inputClass} required maxLength={32} {...bind('shift')} /></label>
+        <label className={`${labelClass} sm:col-span-2`}>Sitio o frente<input className={inputClass} required maxLength={160} {...bind('site')} /></label>
+      </fieldset>
+      <button type="submit" className={primaryClass} disabled={saving || loading || (!retry && !eligible.length)}>
+        {saving ? 'Confirmando despacho…' : retry ? 'Reintentar la misma asignación' : 'Confirmar asignación'}
+      </button>
+    </form>}
+    {loading ? <p role="status" className="text-sm text-slate-600">Consultando asignaciones…</p>
+      : !assignments.length && !error && <p className="text-sm text-slate-600">Sin asignaciones en tu alcance.</p>}
+    {assignments.map(item => <article key={item.id} className="space-y-1 rounded-lg border border-slate-200 p-3 text-sm">
+      <h3 className="font-semibold">{item.unit} · {item.date} · {item.shift}</h3>
+      <p className="break-words">{item.id} · {item.site} · {item.operator.name}</p>
+      <p className="text-slate-700">Asignó {item.assignedBy.name} · {localTime.format(new Date(item.assignedAt))}</p>
+      {item.readiness.level !== 'ok' && <p className="font-semibold text-red-800">No despachar. {item.readiness.reason}</p>}
+    </article>)}
+  </section>;
+}
+
 export default function PanamaShiftsPage() {
   const project = useAuthStore(state => state.project);
   const userId = useAuthStore(state => state.userId);
@@ -74,7 +187,8 @@ function ShiftQueue({ userId }: { userId: string }) {
   const writeLock = useRef(false);
   const form = useRef<HTMLFormElement>(null);
   const allowDelivery = role === 'operador' || role === 'supervisor';
-  const invalidReading = fields.initialHours !== '' && fields.finalHours !== '' && Number(fields.finalHours) < Number(fields.initialHours);
+  const hours = Number(fields.finalHours) - Number(fields.initialHours);
+  const invalidReading = fields.initialHours !== '' && fields.finalHours !== '' && (hours < 0 || hours > 24);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -160,6 +274,7 @@ function ShiftQueue({ userId }: { userId: string }) {
         </header>
 
         <p className="rounded-xl border border-slate-200 bg-white p-4 text-sm">Supervisión revisa la entrega en Hermes. El controlador verifica una sola captura en REGISTRO TMF y conserva la referencia del parte.</p>
+        <DispatchPanel userId={userId} canAssign={role === 'supervisor' || role === 'coordinador'} units={equipment} />
         {message && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm font-semibold text-emerald-900">{message}</p>}
         {error && <div className="rounded-xl bg-red-50 p-3 text-sm text-red-900">
           <p role="alert">{error}</p>
@@ -181,7 +296,9 @@ function ShiftQueue({ userId }: { userId: string }) {
             <label className={labelClass}>Estado del equipo<input className={inputClass} required maxLength={100} {...bind('equipmentStatus')} /></label>
             <label className={labelClass}>Horómetro inicial (h)<input className={inputClass} type="number" inputMode="decimal" required min="0" max="99999999.999" step="0.001" {...bind('initialHours')} /></label>
             <label className={labelClass}>Horómetro final (h)<input className={inputClass} type="number" inputMode="decimal" required min="0" max="99999999.999" step="0.001" {...bind('finalHours')} /></label>
-            {invalidReading && <p role="alert" className="text-sm font-semibold text-red-800 sm:col-span-2">El horómetro final es inferior al inicial. Verifica la lectura en su origen.</p>}
+            {invalidReading && <p role="alert" className="text-sm font-semibold text-red-800 sm:col-span-2">
+              {hours < 0 ? 'El horómetro final es inferior al inicial.' : 'La diferencia del horómetro supera 24 horas.'} Verifica la lectura en su origen.
+            </p>}
             <label className={labelClass}>Viajes<input className={inputClass} type="number" inputMode="numeric" required min="0" max="99999999" step="1" {...bind('trips')} /></label>
             <label className={labelClass}>Toneladas<input className={inputClass} type="number" inputMode="decimal" required min="0" max="99999999.999" step="0.001" {...bind('tonnes')} /></label>
             <label className={labelClass}>Cliente<input className={inputClass} required maxLength={120} {...bind('client')} /></label>
@@ -218,6 +335,12 @@ function ShiftQueue({ userId }: { userId: string }) {
               <p className="text-sm text-slate-700">Entregó {record.createdBy.name} · {localTime.format(new Date(record.createdAt))}</p>
               {record.reviewedBy && record.reviewedAt && <p className="break-words text-sm text-slate-700">Revisó {record.reviewedBy.name} · {localTime.format(new Date(record.reviewedAt))}{record.comment ? ` · ${record.comment}` : ''}</p>}
               <p className="text-sm font-semibold text-amber-900">{record.officialStatus}</p>
+              {(role === 'gerencia' || role === 'coordinador') && record.status === 'Aceptado por Supervisión' && record.reviewedAt && record.reviewedBy && (
+                <button type="button" className={buttonClass} onClick={() => downloadBlob(
+                  new Blob([shiftHandoffCsv(record)], { type: 'text/csv;charset=utf-8' }),
+                  `Hermes-valorizacion-${record.id}.csv`,
+                )}>Descargar parte para conciliación</button>
+              )}
               {record.history.length > 1 && <details className="text-sm text-slate-700">
                 <summary>Actividad del parte</summary>
                 <ol className="mt-1 list-inside list-decimal space-y-1">

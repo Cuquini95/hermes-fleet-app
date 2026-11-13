@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
+import PanamaPartsMovements from '../components/workshop/PanamaPartsMovements';
 import { parseInventoryRows, type InventoryItem } from '../lib/inventory-rows';
 
 interface StockItem extends InventoryItem {
@@ -76,7 +77,7 @@ export default function InventoryPage() {
     setLoading(true);
     setError(null);
 
-    readRange(SHEET_TABS.INVENTARIO, ctrl.signal)
+    readRange(SHEET_TABS.INVENTARIO, ctrl.signal, 100000)
       .then((rows) => {
         setItems(parseRows(rows));
         setUpdatedAt(new Date());
@@ -136,6 +137,8 @@ export default function InventoryPage() {
           </button>
         </div>
       )}
+
+      <PanamaPartsMovements onMoved={() => setRetryKey((key) => key + 1)} />
 
       {/* Summary pills */}
       {!error && (

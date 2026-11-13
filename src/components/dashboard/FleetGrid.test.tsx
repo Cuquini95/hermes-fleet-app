@@ -130,13 +130,13 @@ describe('FleetGrid — click handler opens modal', () => {
     expect(source).toContain('onClick={() => setSelected({ unit, readiness })');
   });
 
-  it('source renders UnitDetailModal when selected is truthy', () => {
-    expect(source).toContain('UnitDetailModal');
-    expect(source).toContain('selected &&');
+  it('source renders UnitDetailModal for a selected tile or deep-linked unit', () => {
+    expect(source).toContain('const active = selected ?? (linkedUnit');
+    expect(source).toMatch(/\{active && \(\s+<UnitDetailModal/);
   });
 
-  it('source passes onClose that resets selected to null', () => {
-    expect(source).toContain('onClose={() => setSelected(null)');
+  it('source clears the tile and deep-link selections on close', () => {
+    expect(source).toMatch(/onClose=\{\(\) => \{ setSelected\(null\); onClearSelectedUnit\?\.\(\); \}/);
   });
 });
 

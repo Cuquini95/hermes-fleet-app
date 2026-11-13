@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
-import { precacheAndRoute, cleanupOutdatedCaches } from 'workbox-precaching';
+import { precacheAndRoute, cleanupOutdatedCaches, createHandlerBoundToURL } from 'workbox-precaching';
 import { clientsClaim } from 'workbox-core';
-import { registerRoute } from 'workbox-routing';
+import { NavigationRoute, registerRoute } from 'workbox-routing';
 import { CacheFirst } from 'workbox-strategies';
 import { ExpirationPlugin } from 'workbox-expiration';
 
@@ -13,6 +13,9 @@ clientsClaim();
 
 // ── Precache all build assets (manifest injected by vite-plugin-pwa) ──────────
 precacheAndRoute(self.__WB_MANIFEST);
+registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), {
+  denylist: [/^\/api(?:\/|$)/, /^\/hermes-api(?:\/|$)/],
+}));
 cleanupOutdatedCaches();
 
 // ── Runtime caching ───────────────────────────────────────────────────────────

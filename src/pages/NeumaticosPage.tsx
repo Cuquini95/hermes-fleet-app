@@ -3,6 +3,8 @@
  * Tire management view: inventory, rotation, and per-equipment assignment in one interactive surface.
  */
 import { useState } from 'react';
+import PanamaTireHistory from '../components/workshop/PanamaTireHistory';
+import { useAuthStore } from '../stores/auth-store';
 import { useNavigate } from 'react-router-dom';
 import {
   Disc3,
@@ -147,6 +149,7 @@ function nextSeq() { return String(_seq++); }
 export default function NeumaticosPage() {
   const navigate = useNavigate();
   const equipmentList = useEquipmentList();
+  const project = useAuthStore(state => state.project);
 
   const [step, setStep]             = useState<Step>('equipo');
   const [selectedUnit, setSelected] = useState('');
@@ -179,6 +182,7 @@ export default function NeumaticosPage() {
   // ── Validation ─────────────────────────────────────────────────────────
   function validate(): boolean {
     const e: Partial<Record<keyof LlantaForm, string>> = {};
+    if (project === 'tmf-panama' && !llanta.serie.trim()) e.serie = 'Requerido para rastrear el historial';
     if (!llanta.posicion)        e.posicion        = 'Requerido';
     if (!llanta.profundidadOrig) e.profundidadOrig = 'Requerido';
     if (!llanta.profundidad)     e.profundidad     = 'Requerido';
@@ -196,7 +200,7 @@ export default function NeumaticosPage() {
     const fecha = mexicoDate();
 
     const values: string[] = [
-      nextSeq(),                  // A  #
+      project === 'tmf-panama' ? crypto.randomUUID() : nextSeq(),                  // A  #
       selectedUnit,               // B  CÓDIGO UNIDAD
       equipment?.model ?? '',     // C  MODELO
       llanta.posicion,            // D  POSICIÓN
@@ -254,6 +258,7 @@ export default function NeumaticosPage() {
           <h1 className="text-xl font-bold text-text">Reporte de Neumáticos</h1>
         </div>
 
+        {project === 'tmf-panama' && <PanamaTireHistory key={project} />}
         <p className="text-sm text-text-secondary mb-4">Selecciona la unidad a inspeccionar</p>
 
         <div className="flex flex-col gap-2 mb-6">
@@ -471,8 +476,11 @@ export default function NeumaticosPage() {
                 value={llanta.serie}
                 onChange={(e) => setLlanta((f) => ({ ...f, serie: e.target.value }))}
                 placeholder="DOT 4320"
+                aria-invalid={Boolean(errors.serie)}
+                aria-describedby={errors.serie ? 'tire-serial-error' : undefined}
                 className="w-full border border-border rounded-xl px-3 py-2.5 text-text bg-white text-sm"
               />
+              {errors.serie && <p id="tire-serial-error" className="mt-1 text-xs text-critical">{errors.serie}</p>}
             </div>
           </div>
 

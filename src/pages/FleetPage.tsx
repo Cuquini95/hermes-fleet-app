@@ -1,22 +1,23 @@
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import FleetGrid from '../components/dashboard/FleetGrid';
 import { useFleetDispatch } from '../hooks/useFleetDispatch';
 import { useEquipmentStore } from '../stores/equipment-store';
 import { useAuthStore } from '../stores/auth-store';
+import { dispatchAvailability } from '../lib/availability';
 
 export default function FleetPage() {
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
   const equipment = useEquipmentList();
 
   const dispatch = useFleetDispatch(equipment);
   const role = useAuthStore((state) => state.role);
   const equipmentError = useEquipmentStore((state) => state.error);
-  const ready = useEquipmentStore((state) => state.fetched) && dispatch.verified && !equipmentError;
+  const ready = useEquipmentStore((state) => state.fetched) && dispatch.verified && !dispatch.loading && !equipmentError;
   const refetch = useEquipmentStore((state) => state.refetch);
-  const operativo = dispatch.effectiveEquipment.filter((e) => e.status === 'operativo').length;
-  const total = equipment.length;
+  const snapshot = dispatchAvailability(equipment, dispatch.readiness, ready);
 
   return (
     <div className="flex flex-col pb-4 animate-fade-up">
@@ -30,7 +31,7 @@ export default function FleetPage() {
         </button>
         <h1 className="text-xl font-bold text-text">Equipos</h1>
         <span className="ml-auto text-sm font-semibold text-text-secondary">
-          {ready ? `${operativo}/${total} operativos` : 'Disponibilidad por verificar'}
+          {snapshot.available !== null ? `${snapshot.available}/${snapshot.total} aptos para despacho` : 'Disponibilidad por verificar'}
         </span>
         <button type="button" onClick={() => void Promise.all([refetch(), dispatch.refresh()])} aria-label="Actualizar flota" className="p-2 rounded-xl bg-white border border-border">
           <RefreshCw size={18} />
@@ -52,7 +53,7 @@ export default function FleetPage() {
           </ul>
         </section>
       )}
-      <FleetGrid equipment={equipment} dispatch={dispatch} />
+      <FleetGrid equipment={equipment} dispatch={dispatch} selectedUnit={params.get('unit') ?? undefined} onClearSelectedUnit={() => setParams({}, { replace: true })} />
     </div>
   );
 }

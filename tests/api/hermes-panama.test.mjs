@@ -76,3 +76,47 @@ test('gateway keeps Panama in its own read routes and never writes its source', 
   assert.equal((await call('GET', 'api/sheets/read', { tab: '01 Inventario' })).code, 200);
   assert.equal(legacyReads, 1);
 });
+
+test('fleet projection joins the official equipment master by Panama TMF code without borrowing Mexican rows', async () => {
+  const { readPanamaInventory } = await import('../../api/_lib/hermes-panama.js');
+  const inventory = await readPanamaInventory(async spec => {
+    if (spec.key === 'fleet') return fixtures.fleet;
+    assert.equal(spec.key, 'equipmentDetails');
+    return [
+      ['CÓDIGO','TIPO','MARCA','MODELO','SERIE','PAÍS','PROYECTO','ESTADO','MEDIDOR'],
+      ['DZ203','Dozer','Komatsu','D155AX-6','PA-203','Panamá','TMF','Activo','Horómetro'],
+      ['DZ203','Dozer','Otra','MX','MX-203','México','TMF','Activo','Horómetro'],
+      ['EX401','Excavadora','Otra','OTRO','PA-X','Panamá','Otro','Activo','Horómetro'],
+    ];
+  });
+  assert.deepEqual(inventory[3].slice(1,7), ['DZ203','Dozer','Komatsu','D155AX-6','','PA-203']);
+  assert.equal(inventory[3][8], '');
+  assert.equal(inventory[4][6], '');
+});
+
+test('maintenance exposes PM FLOTA and its scoped interval and component sources independently', async () => {
+  const result = await dispatchPanama({ ...query, path: 'api/panama/maintenance', read: async spec => {
+    if (spec.key === 'maintenance') return [
+      ['EQUIPO','MODELO','¿CÓMO ESTÁ?','PRÓXIMO PM','TOCA A LAS (h)','HORÓMETRO HOY','HORAS QUE LE QUEDAN','ÚLTIMO PM ANOTADO','LECTURA','PLAN'],
+      ['DZ203','Komatsu D155AX-6','VENCIDO · PROVISIONAL','PM 500','2,225','2,280','-55','PM 250 a 1,975.0 h','AL DÍA','Propuesto'],
+      ['EX401','Develon DX360','VENCIDO','PM 250','8,300','8,399','-99','PM 500 a 8,050 h','AL DÍA','Aprobado'],
+    ];
+    if (spec.key === 'maintenancePlan') return [
+      ['EQUIPO','MODELO','¿ACTIVO?','PM CADA (h)','NIVEL 2 (h)','NIVEL 3 (h)','NIVEL 4 (h)','NIVEL 5 (h)','NIVEL 6 (h)','¿PLAN APROBADO?','PAQUETE / CHECKLIST (link)'],
+      ['DZ203','Komatsu D155AX-6','Sí','250','500','1,000','2,000','4,000','8,000','Sí','https://docs.google.com/spreadsheets/d/checklist/edit#gid=101'],
+    ];
+    if (spec.key === 'dozers') return [
+      ['EQUIPO','TIPO','🔴','🟠','⚪ sin dato'], ['DZ203','Tractor','2','0','1'],
+    ];
+    throw new Error('no disponible');
+  } });
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body.sections.maintenance, [{
+    unit: 'DZ203', model: 'Komatsu D155AX-6', status: 'VENCIDO · PROVISIONAL', next: 'PM 500',
+    due: '2,225', hours: '2,280', remaining: '-55', last: 'PM 250 a 1,975.0 h', reading: 'AL DÍA', plan: 'Propuesto',
+  }]);
+  assert.equal(result.body.sections.maintenancePlan[0].cycle, '250');
+  assert.equal(result.body.sections.dozers[0].critical, '2');
+  assert.equal(result.body.sections.excavators, null);
+  assert.equal((await dispatchPanama({ ...query, path: 'api/panama/maintenance', session: { ...teamMember, role: 'operador' } })).status, 403);
+});

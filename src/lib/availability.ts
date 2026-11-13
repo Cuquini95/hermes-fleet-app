@@ -1,4 +1,5 @@
 import type { Equipment } from '../types/equipment';
+import { normalizeUnitId, type UnitDispatchReadiness } from './dispatch-readiness';
 import { isOpenAveria, parseAveriaRow, type AveriaEntry } from './averias';
 
 export interface AvailabilityPoint {
@@ -34,6 +35,26 @@ export function calculateAvailability(
     unavailable.add(unitId.toUpperCase());
   }
   return pctFromUnavailable(equipment.length, unavailable.size);
+}
+
+/** Current unconditional dispatch readiness. Restricted units require a separate decision. */
+export function dispatchAvailability(
+  equipment: Equipment[],
+  readiness: ReadonlyMap<string, Pick<UnitDispatchReadiness, 'level'>>,
+  verified: boolean,
+) {
+  const exceptions = equipment.filter((unit) =>
+    (unit.status !== 'operativo' && unit.status !== 'alerta') ||
+    (readiness.get(normalizeUnitId(unit.unit_id))?.level ?? 'ok') !== 'ok',
+  ).map((unit) => unit.unit_id);
+  const total = equipment.length;
+  const available = verified && total > 0 ? total - exceptions.length : null;
+  return {
+    total,
+    available,
+    pct: available === null ? null : Math.round(available / total * 100),
+    exceptions,
+  };
 }
 
 function parseSheetDate(value: string): Date | null {

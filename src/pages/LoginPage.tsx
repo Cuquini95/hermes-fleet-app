@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
+import PasswordRecovery from '../components/auth/PasswordRecovery';
 import { ROLE_HOME } from '../types/roles';
 import { useAuthStore } from '../stores/auth-store';
 
@@ -13,7 +14,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [pending, setPending] = useState(false);
-  const navigate = useNavigate();
+  const location = useLocation();
   const login = useAuthStore((state) => state.login);
   const loginFailure = useAuthStore((state) => state.loginFailure);
   const role = useAuthStore((state) => state.role);
@@ -23,14 +24,16 @@ export default function LoginPage() {
     event.preventDefault();
     if (pending) return;
     setPending(true);
-    const success = await login(email, password);
+    await login(email, password);
     setPassword('');
     setPending(false);
-    const assignedRole = useAuthStore.getState().role;
-    if (success && assignedRole) navigate(ROLE_HOME[assignedRole], { replace: true });
   }
 
-  if (authenticated && role) return <Navigate to={ROLE_HOME[role]} replace />;
+  if (authenticated && role) {
+    const target: unknown = location.state?.returnTo;
+    const internal = typeof target === 'string' && /^\/(?![/\\])[^\\\x00-\x20]*$/.test(target);
+    return <Navigate to={internal ? target : ROLE_HOME[role]} replace />;
+  }
 
   return (
     <main className="min-h-screen flex flex-col items-center bg-white px-4 py-10 text-navy">
@@ -66,6 +69,7 @@ export default function LoginPage() {
             </p>
           )}
         </form>
+        <PasswordRecovery />
       </div>
     </main>
   );

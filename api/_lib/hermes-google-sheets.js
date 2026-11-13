@@ -4,7 +4,9 @@ import { GoogleAuth } from 'google-auth-library';
 const API_ROOT = 'https://sheets.googleapis.com/v4/spreadsheets';
 const TRANSACTIONS = 'Hermes_Transacciones';
 export const PANAMA_SHIFT_TAB = 'HERMES_PA_TURNOS';
+export const PANAMA_DISPATCH_TAB = 'HERMES_PA_DESPACHO';
 const HEADERS = {
+  'Movimientos Repuestos PA': ['ID', 'FECHA_UTC', 'TIPO', 'SKU', 'CANTIDAD', 'UNIDAD', 'OC', 'PARTIDA', 'OT', 'REFERENCIA', 'ACTOR', 'ACTOR_ID', 'EXISTENCIA', 'MEDIDA'],
   [TRANSACTIONS]: ['CLAVE', 'HUELLA', 'GUARDAS', 'RESULTADO', 'FECHA_UTC'],
   Inspeccion_Stickers: ['#', 'FOLIO', 'TIMESTAMP', 'FECHA', 'HORA', 'UNIDAD', 'MODELO', 'TIPO_EQUIPO', 'INSPECTOR', 'SUPERVISOR', 'ESTADO_APROBACION', 'COLOR_RECOMENDADO', 'COLOR_FINAL', 'PUEDE_DESPACHAR', 'VENCE', 'HALLAZGOS', 'FOTOS', 'DETALLE_JSON', 'INSPECTOR_ID', 'SUPERVISOR_ID', 'FECHA_APROBACION'],
   Inspeccion_Hallazgos: ['#', 'FOLIO', 'TIMESTAMP', 'UNIDAD', 'MODELO', 'TIPO_EQUIPO', 'SECCION', 'ITEM_ID', 'ITEM', 'ESTADO', 'COMENTARIO', 'FECHA_COMPROMISO', 'PUEDE_OPERAR', 'SEVERIDAD', 'ESTADO_APROBACION', 'VENCE', 'ACTOR_ID'],
@@ -16,6 +18,8 @@ const METADATA_TTL_MS = 30_000;
 const READ_TTL_MS = 4_000;
 const NUMERIC_COLUMNS = new Map([
   ['Órdenes de Compra', new Set([6, 7, 8, 9, 10])],
+  ['12 Inventario Rep.', new Set([5])],
+  ['Movimientos Repuestos PA', new Set([4, 12])],
   ['OC_Lineas', new Set([1, 3, 4, 5])],
   ['02 Gastos', new Set([7, 8, 9])],
   ['ORDENES_TRABAJO', new Set([13, 16])],
@@ -110,18 +114,19 @@ export function createHermesSheets({ spreadsheetId, request = googleRequest, sch
     return Array.isArray(data.values) ? data.values : [];
   }
 
-  async function read(tab, { cached = false, requireExisting = false } = {}) {
+  async function read(tab, { cached = false, requireExisting = false, valueRenderOption = 'UNFORMATTED_VALUE' } = {}) {
     const name = canonicalTab(tab);
     const cacheKey = requireExisting ? `${name}:existing` : name;
+    const useCache = cached && valueRenderOption === 'UNFORMATTED_VALUE';
     const cachedEntry = readCache.get(cacheKey);
-    if (cached && cachedEntry?.expiresAt > Date.now()) return cachedEntry.promise;
-    const promise = readRange(sheetRange(name)).then(encodeValues).catch(async error => {
+    if (useCache && cachedEntry?.expiresAt > Date.now()) return cachedEntry.promise;
+    const promise = readRange(sheetRange(name), { valueRenderOption }).then(encodeValues).catch(async error => {
       if (!requireExisting && allowedHeaders[name] && statusOf(error) === 400 && !(await fetchMetadata(true)).has(name)) {
         return [allowedHeaders[name].slice()];
       }
       throw error;
     });
-    if (!cached) return promise;
+    if (!useCache) return promise;
     readCache.set(cacheKey, { promise, expiresAt: Date.now() + READ_TTL_MS });
     try { return await promise; }
     catch (error) {
@@ -267,9 +272,10 @@ export function createPanamaOperationsSheets() {
   return createHermesSheets({
     schemas: { [PANAMA_SHIFT_TAB]: ['FOLIO', 'UNIDAD', 'FECHA', 'TURNO', 'VERSION', 'ESTADO_PARTE', 'HOROMETRO_INICIAL',
       'HOROMETRO_FINAL', 'HORAS', 'ESTADO_EQUIPO', 'REFERENCIA_SOPORTE', 'VIAJES', 'TONELADAS', 'PARADAS', 'CLIENTE',
-      'AUTOR_ID', 'AUTOR', 'ACTOR_ID', 'ACTOR', 'FECHA_UTC', 'ACCION', 'COMENTARIO'] },
+      'AUTOR_ID', 'AUTOR', 'ACTOR_ID', 'ACTOR', 'FECHA_UTC', 'ACCION', 'COMENTARIO'],
+    [PANAMA_DISPATCH_TAB]: ['FOLIO', 'UNIDAD', 'FECHA', 'TURNO', 'SITIO', 'OPERADOR_ID', 'OPERADOR', 'ACTOR_ID', 'ACTOR', 'FECHA_UTC'] },
     request: async options => {
-      const masters = ['TMF', 'WORKSHOP', 'PM', 'DOZERS', 'EXCAVATORS', 'PURCHASES', 'COSTS']
+      const masters = ['TMF', 'EQUIPMENT', 'WORKSHOP', 'PM', 'DOZERS', 'EXCAVATORS', 'PURCHASES', 'COSTS']
         .map(key => process.env['HERMES_PANAMA_' + key + '_SHEET_ID']?.trim());
       if (!id || !/^[A-Za-z0-9_-]{20,}$/.test(id) || masters.includes(id)) {
         throw new HermesSheetError(503, 'Configura el archivo operativo independiente de Hermes Panamá.');

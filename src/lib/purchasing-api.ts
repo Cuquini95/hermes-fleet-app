@@ -1,3 +1,18 @@
+export interface InventoryMovement {
+  id: string;
+  at: string;
+  kind: string;
+  partNumber: string;
+  quantity: string;
+  unit: string;
+  order: string;
+  ot: string;
+  reference: string;
+  by: string;
+  stockAfter: string;
+  measurementUnit: string;
+}
+
 export interface PurchaseIssuer {
   id: string;
   name: string;
@@ -39,6 +54,16 @@ export interface PurchaseLine {
   receipts: PurchaseReceipt[];
 }
 
+export interface PurchaseReconciliation {
+  reference: string;
+  amount: string;
+  currency: string;
+  at: string;
+  by: string;
+  actorId: string;
+  invoiceReference?: string;
+}
+
 export interface PurchaseOrder {
   folio: string;
   date: string;
@@ -60,6 +85,9 @@ export interface PurchaseOrder {
   approvedById: string;
   approvedAt: string;
   requestedBy: string;
+  approvalReason?: string;
+  invoice?: PurchaseReconciliation | null;
+  payment?: PurchaseReconciliation | null;
   version: string;
   lines: PurchaseLine[];
 }
@@ -91,6 +119,8 @@ export interface PurchaseOverview {
   issuers: PurchaseIssuer[];
   orphanFolios: string[];
   canApprove: boolean;
+  canRecordInvoice?: boolean;
+  canRecordPayment?: boolean;
 }
 
 export type PurchaseReceivingLine = Pick<PurchaseLine, 'id' | 'number' | 'description' | 'partNumber' | 'quantity' | 'received'> & {

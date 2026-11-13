@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Equipment } from '../types/equipment';
-import { buildAvailabilityTrend, calculateAvailability } from './availability';
+import { buildAvailabilityTrend, calculateAvailability, dispatchAvailability } from './availability';
 
 function unit(unit_id: string, status: Equipment['status'] = 'operativo'): Equipment {
   return {
@@ -67,5 +67,23 @@ describe('buildAvailabilityTrend', () => {
     expect(trend.map((point) => point.day)).toEqual(['Sab', 'Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie']);
     expect(trend[4]?.pct).toBe(75);
     expect(trend[6]?.pct).toBe(25);
+  });
+});
+
+describe('dispatchAvailability', () => {
+  it('counts restrictions and failures using the shared readiness projection', () => {
+    const equipment = [unit('EX401'), unit('DZ203'), unit('DZ205'), unit('EX410')];
+    const readiness = new Map([
+      ['DZ203', { level: 'blocked' as const }],
+      ['DZ205', { level: 'restricted' as const }],
+    ]);
+    expect(dispatchAvailability(equipment, readiness, true)).toEqual({
+      total: 4, available: 2, pct: 50, exceptions: ['DZ203', 'DZ205'],
+    });
+  });
+  it('represents source failure and an empty fleet as unverified, preserving a genuine zero', () => {
+    expect(dispatchAvailability([unit('EX401')], new Map(), false)).toMatchObject({ pct: null });
+    expect(dispatchAvailability([], new Map(), true)).toMatchObject({ pct: null });
+    expect(dispatchAvailability([unit('EX401', 'taller')], new Map(), true)).toMatchObject({ pct: 0 });
   });
 });

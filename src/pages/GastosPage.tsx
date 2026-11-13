@@ -19,8 +19,8 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
-import { useGastosStore } from '../stores/gastos-store';
-import type { GastoCompra, GastoTipo } from '../stores/gastos-store';
+import { useGastosStore, verifiedExpense } from '../stores/gastos-store';
+import type { GastoCompra, GastoTipo, VerifiedExpense } from '../stores/gastos-store';
 import MonthSelector from '../components/MonthSelector';
 import { generateGastosPDF, type GastoReportData } from '../lib/gastos-pdf';
 import { downloadBlob } from '../lib/download-blob';
@@ -89,21 +89,18 @@ function filterByMonth(gastos: GastoCompra[], year: number, month: number): Gast
 
 // ── Summary helpers ───────────────────────────────────────────────────────────
 
-function byUnit(gastos: GastoCompra[]) {
-  const map: Record<string, number> = {};
-  for (const g of gastos) {
-    map[g.unidad] = (map[g.unidad] || 0) + g.total;
-  }
-  return Object.entries(map)
-    .map(([name, value]) => ({ name, value }))
+function byUnit(gastos: VerifiedExpense[]) {
+  const map = new Map<string, number>();
+  for (const g of gastos) map.set(g.unidad, (map.get(g.unidad) ?? 0) + Math.round(g.total * 100));
+  return Array.from(map, ([name, cents]) => ({ name, value: cents / 100 }))
     .sort((a, b) => b.value - a.value);
 }
 
-function byType(gastos: GastoCompra[]) {
-  const map: Record<string, { total: number; count: number }> = {};
+function byType(gastos: VerifiedExpense[]) {
+  const map: Record<string, { cents: number; count: number }> = {};
   for (const g of gastos) {
-    const bucket = map[g.tipo] ?? { total: 0, count: 0 };
-    bucket.total += g.total;
+    const bucket = map[g.tipo] ?? { cents: 0, count: 0 };
+    bucket.cents += Math.round(g.total * 100);
     bucket.count += 1;
     map[g.tipo] = bucket;
   }
@@ -112,13 +109,17 @@ function byType(gastos: GastoCompra[]) {
 
 // ── Currency formatter ────────────────────────────────────────────────────────
 
-const mxn = (n: number) =>
-  n.toLocaleString('es-MX', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+const money = (n: number, currency: string) =>
+  n.toLocaleString('es-PA', { style: 'currency', currency, currencyDisplay: 'code' });
+
+const sumExpenses = (rows: VerifiedExpense[]) => rows.reduce((sum, row) => sum + Math.round(row.total * 100), 0) / 100;
 
 // ── Report data builder (for PDF export) ─────────────────────────────────────
 
 interface BuildReportArgs {
-  gastos: GastoCompra[];
+  gastos: VerifiedExpense[];
+  currency: string;
+  entity: string;
   selectedUnits: Set<string>;
   year: number;
   month: number;
@@ -126,18 +127,18 @@ interface BuildReportArgs {
 }
 
 function buildReportData(args: BuildReportArgs): GastoReportData {
-  const { gastos, selectedUnits, year, month, userName } = args;
+  const { gastos, selectedUnits, year, month, userName, currency, entity } = args;
 
   // Filter to only the selected units
   const filtered = gastos.filter((g) => selectedUnits.has(g.unidad));
-  const total = filtered.reduce((s, g) => s + g.total, 0);
+  const total = sumExpenses(filtered);
   const count = filtered.length;
 
   // Per-type aggregation
   const typeOrder: GastoTipo[] = ['Combustible', 'Refaccion', 'Servicio', 'Otro'];
   const byTypeData = typeOrder.map((tipo) => {
     const items = filtered.filter((g) => g.tipo === tipo);
-    const typeTotal = items.reduce((s, g) => s + g.total, 0);
+    const typeTotal = sumExpenses(items);
     return {
       tipo,
       total: typeTotal,
@@ -147,7 +148,7 @@ function buildReportData(args: BuildReportArgs): GastoReportData {
   });
 
   // Per-unit aggregation (only units present in the filtered set)
-  const unitMap = new Map<string, GastoCompra[]>();
+  const unitMap = new Map<string, VerifiedExpense[]>();
   for (const g of filtered) {
     const list = unitMap.get(g.unidad) ?? [];
     list.push(g);
@@ -155,13 +156,14 @@ function buildReportData(args: BuildReportArgs): GastoReportData {
   }
   const byUnitData = Array.from(unitMap.entries()).map(([unidad, items]) => ({
     unidad,
-    total: items.reduce((s, g) => s + g.total, 0),
+    total: sumExpenses(items),
     count: items.length,
     gastos: items,
   }));
 
   return {
     period: { year, month, label: monthLabel(year, month) },
+    currency, entity,
     generatedAt: `${mexicoDate()} ${mexicoTime()}`,
     generatedBy: userName || 'Usuario',
     selectedUnits: Array.from(selectedUnits).sort(),
@@ -197,7 +199,12 @@ export default function GastosPage() {
   const navigate = useNavigate();
   const role = useAuthStore((s) => s.role);
   const userName = useAuthStore((s) => s.userName);
-  const { gastos, loading, error, fetchGastos, deleteGasto } = useGastosStore();
+  const userId = useAuthStore((s) => s.userId);
+  const { gastos, loading, error, fetched, canReview, closedThrough, fetchGastos, deleteGasto, reviewGasto } = useGastosStore();
+  const [reportGroup, setReportGroup] = useState('');
+  const [review, setReview] = useState<{ gasto: GastoCompra; status: 'Aprobado' | 'Rechazado' } | null>(null);
+  const [reason, setReason] = useState('');
+  const [reviewing, setReviewing] = useState(false);
 
   const [tab, setTab] = useState<Tab>('resumen');
 
@@ -223,10 +230,21 @@ export default function GastosPage() {
     () => filterByMonth(gastos, selectedYear, selectedMonth),
     [gastos, selectedYear, selectedMonth]
   );
-  const totalMes  = monthly.reduce((s, g) => s + g.total, 0);
-  const unitData = useMemo(() => byUnit(monthly), [monthly]);
-  const typeMap   = byType(monthly);
-  const unitMax   = unitData[0]?.value ?? 0;
+  const verified = useMemo(() => monthly.filter(verifiedExpense), [monthly]);
+  const verifiedApproved = useMemo(() => verified.filter((entry) => entry.status === 'Aprobado'), [verified]);
+  const pendingCount = monthly.filter((entry) => entry.status === 'Pendiente' || entry.status === 'Borrador').length;
+  const unverifiedCount = monthly.length - verified.length;
+  const groups = useMemo(() => [...new Set(verifiedApproved.map((entry) => entry.entity + '|' + entry.currency))], [verifiedApproved]);
+  const activeGroup = groups.includes(reportGroup) ? reportGroup : (groups.length === 1 ? groups[0] ?? '' : '');
+  const [entity = '', currency = ''] = activeGroup.split('|');
+  const reported = useMemo(() => verifiedApproved.filter((entry) => entry.entity + '|' + entry.currency === activeGroup), [verifiedApproved, activeGroup]);
+  const totalMes = !fetched || error || unverifiedCount || (groups.length > 0 && !activeGroup) ? null : sumExpenses(reported);
+  const unitData = useMemo(() => byUnit(reported), [reported]);
+  const typeMap = byType(reported);
+  const unitMax = unitData[0]?.value ?? 0;
+  const viewedPeriod = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+  const currentPeriod = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+  const periodClosed = closedThrough ? viewedPeriod <= closedThrough : viewedPeriod < currentPeriod;
 
   // When the month or data changes, reset selected units to ALL visible
   useEffect(() => {
@@ -258,11 +276,11 @@ export default function GastosPage() {
   }
 
   async function handleDownloadPDF(): Promise<void> {
-    if (selectedUnits.size === 0 || monthly.length === 0) return;
+    if (selectedUnits.size === 0 || reported.length === 0 || totalMes === null) return;
     setGenerating(true);
     try {
       const reportData = buildReportData({
-        gastos: monthly,
+        gastos: reported, currency, entity,
         selectedUnits,
         year: selectedYear,
         month: selectedMonth,
@@ -291,7 +309,23 @@ export default function GastosPage() {
     }
   }
 
-  const canDownload = canCreate && monthly.length > 0 && selectedUnits.size > 0 && !generating;
+  const canDownload = canCreate && totalMes !== null && reported.length > 0 && selectedUnits.size > 0 && !generating;
+
+  async function handleReview(event: React.FormEvent) {
+    event.preventDefault();
+    if (!review || reviewing || !reason.trim()) return;
+    setReviewing(true);
+    try {
+      await reviewGasto(review.gasto.gasto_id, review.status, reason.trim());
+      setToast({ kind: 'success', message: 'Revisión registrada para el recibo y sus repartos.' });
+      setReview(null);
+      setReason('');
+    } catch (cause) {
+      setToast({ kind: 'error', message: cause instanceof Error ? cause.message : 'No se confirmó la revisión.' });
+    } finally {
+      setReviewing(false);
+    }
+  }
 
   return (
     <div className="flex flex-col py-4 gap-4 animate-fade-up">
@@ -348,9 +382,31 @@ export default function GastosPage() {
       </div>
 
       {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
+      {periodClosed && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Período cerrado o pendiente de confirmar. Tramita correcciones con Contabilidad.</p>}
+      {unverifiedCount > 0 && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{unverifiedCount} registro(s) requieren conciliar importe, entidad o moneda. Total y PDF pendientes de verificar.</p>}
+      {groups.length > 1 && (
+        <label className="text-sm font-medium text-text">Entidad y moneda del reporte
+          <select className="mt-1 block w-full rounded-lg border border-border p-2" value={activeGroup} onChange={(event) => setReportGroup(event.target.value)}>
+            <option value="">Selecciona una entidad y moneda</option>
+            {groups.map((key) => <option key={key} value={key}>{key.replace('|', ' · ')}</option>)}
+          </select>
+        </label>
+      )}
+      {review && (
+        <form aria-label="Revisar gasto" onSubmit={(event) => { void handleReview(event); }} className="rounded-lg border border-border bg-card p-4">
+          <p className="font-semibold">{review.status === 'Aprobado' ? 'Validar' : 'Rechazar'} recibo {review.gasto.receipt_group || review.gasto.gasto_id}</p>
+          <label className="mt-2 block text-sm">Motivo de la revisión
+            <textarea required maxLength={350} value={reason} onChange={(event) => setReason(event.target.value)} className="mt-1 block w-full rounded border border-border p-2" />
+          </label>
+          <div className="mt-2 flex gap-2">
+            <button type="submit" disabled={reviewing} className="rounded bg-navy px-3 py-2 text-sm text-white">Registrar revisión</button>
+            <button type="button" disabled={reviewing} onClick={() => { setReview(null); setReason(''); }} className="rounded border border-border px-3 py-2 text-sm">Cancelar</button>
+          </div>
+        </form>
+      )}
 
       {/* Download PDF CTA */}
-      {canCreate && monthly.length > 0 && (
+      {canCreate && reported.length > 0 && (
         <button
           type="button"
           onClick={handleDownloadPDF}
@@ -379,9 +435,9 @@ export default function GastosPage() {
         </div>
         <div>
           <p className="text-2xl font-bold text-text">
-            {loading ? '…' : mxn(totalMes)}
+            {loading ? '…' : totalMes === null ? 'Sin verificar' : currency ? money(totalMes, currency) : totalMes}
           </p>
-          <p className="text-sm text-text-secondary">Total del mes · {monthly.length} registros</p>
+          <p className="text-sm text-text-secondary">Gasto validado · {reported.length} repartos · {pendingCount} pendientes</p>
         </div>
       </div>
 
@@ -406,10 +462,10 @@ export default function GastosPage() {
       {tab === 'resumen' && (
         <>
           {/* Type cards 2×2 */}
-          {monthly.length > 0 && (
+          {reported.length > 0 && totalMes !== null && (
             <div className="grid grid-cols-2 gap-3">
               {TYPE_ORDER.map((tipo) => {
-                const val   = typeMap[tipo]?.total ?? 0;
+                const val   = (typeMap[tipo]?.cents ?? 0) / 100;
                 const count = typeMap[tipo]?.count ?? 0;
                 const pct   = totalMes > 0 ? Math.round((val / totalMes) * 100) : 0;
                 const color = TYPE_COLORS[tipo];
@@ -426,7 +482,7 @@ export default function GastosPage() {
                         {pct}%
                       </span>
                     </div>
-                    <p className="text-base font-bold text-text leading-tight">{mxn(val)}</p>
+                    <p className="text-base font-bold text-text leading-tight">{money(val, currency)}</p>
                     <p className="text-xs text-text-secondary mt-0.5">{tipo} · {count} reg.</p>
                     <div className="mt-2 h-1 bg-gray-100 rounded-full overflow-hidden">
                       <div
@@ -441,7 +497,7 @@ export default function GastosPage() {
           )}
 
           {/* Heat map by unit — tap to select/deselect for PDF export */}
-          {unitData.length > 0 && (
+          {unitData.length > 0 && totalMes !== null && (
             <div className="bg-white rounded-xl border border-border p-4 shadow-sm">
               <div className="flex items-center justify-between mb-3">
                 <p className="text-sm font-semibold text-text">Mapa de calor por Unidad</p>
@@ -486,7 +542,7 @@ export default function GastosPage() {
                         {u.name}
                       </span>
                       <span className="text-xs" style={{ color: text, opacity: 0.8 }}>
-                        {mxn(u.value)}
+                        {money(u.value, currency)}
                       </span>
                     </button>
                   );
@@ -526,7 +582,9 @@ export default function GastosPage() {
             <GastoRow
               key={g.gasto_id}
               gasto={g}
-              canDelete={canCreate}
+              canDelete={canCreate && !periodClosed && g.status === 'Pendiente' && g.authorId === userId}
+              canReview={canReview && !periodClosed && g.status === 'Pendiente' && !!g.authorId && g.authorId !== userId}
+              onReview={(status) => { setReason(''); setReview({ gasto: g, status }); }}
               onDelete={() => { void handleDelete(g); }}
             />
           ))}
@@ -541,10 +599,14 @@ export default function GastosPage() {
 function GastoRow({
   gasto,
   canDelete,
+  canReview,
+  onReview,
   onDelete,
 }: {
   gasto: GastoCompra;
   canDelete: boolean;
+  canReview: boolean;
+  onReview: (status: 'Aprobado' | 'Rechazado') => void;
   onDelete: () => void;
 }) {
   const color = TYPE_COLORS[gasto.tipo] ?? '#6B7280';
@@ -562,19 +624,24 @@ function GastoRow({
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-text truncate">{gasto.proveedor || '—'}</p>
         <p className="text-xs text-text-secondary">
-          {gasto.unidad} · {gasto.fecha}
+          {gasto.unidad} · {gasto.fecha}{gasto.entity ? ' · ' + gasto.entity : ''}
         </p>
         <p className="text-xs text-text-secondary flex items-center gap-1">
           <span style={{ color }}>{TYPE_ICONS_SM[gasto.tipo]}</span>
           {gasto.tipo}
         </p>
+        {gasto.reviewReason && <p className="text-xs text-text-secondary">{gasto.reviewReason}</p>}
+        {canReview && <div className="mt-2 flex flex-wrap gap-2">
+          <button type="button" onClick={() => onReview('Aprobado')} className="rounded border border-border px-2 py-1 text-xs">Validar gasto</button>
+          <button type="button" onClick={() => onReview('Rechazado')} className="rounded border border-border px-2 py-1 text-xs">Rechazar gasto</button>
+        </div>}
         {/^https:\/\//i.test(gasto.imagen_url) && (
           <a className="mt-1 inline-block text-xs font-semibold text-blue-800" href={gasto.imagen_url} target="_blank" rel="noreferrer">Abrir recibo</a>
         )}
       </div>
       <div className="text-right flex items-center gap-3">
         <div>
-          <p className="text-sm font-semibold text-text">{mxn(gasto.total)}</p>
+          <p className="text-sm font-semibold text-text">{gasto.total === null ? 'Sin importe' : gasto.currency ? money(gasto.total, gasto.currency) : `${gasto.total.toFixed(2)} · moneda sin verificar`}</p>
           <p className={`text-xs font-medium ${statusColor}`}>{gasto.status}</p>
         </div>
         {canDelete && (

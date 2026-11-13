@@ -81,6 +81,7 @@ export interface WorkOrder {
   execution?: WorkshopExecutionInput & WorkshopActor & { submittedAt: string };
   technical?: WorkshopActor & { acceptedAt: string };
   operations?: OperationalReceipt;
+  previousOtId?: string;
 }
 
 export const PRIORITY_CONFIG: Record<OTPriority, { color: string; bg: string; label: string; time: string }> = {

@@ -5,7 +5,7 @@ import type { OcrLineItem } from '../lib/sheets-api';
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type GastoTipo = 'Refaccion' | 'Combustible' | 'Servicio' | 'Otro';
-export type GastoStatus = 'Borrador' | 'Aprobado' | 'Rechazado' | 'Eliminado';
+export type GastoStatus = 'Pendiente' | 'Borrador' | 'Aprobado' | 'Rechazado' | 'Eliminado';
 export type MetodoPago = 'Efectivo' | 'Transferencia' | 'Tarjeta';
 
 // Single flat row per receipt — stored in the "Gastos" tab
@@ -20,9 +20,9 @@ export interface GastoCompra {
   proveedor: string;
   rfc_proveedor: string;
   folio_factura: string;
-  subtotal: number;
-  iva: number;
-  total: number;
+  subtotal: number | null | null;
+  iva: number | null;
+  total: number | null;
   unidad: string;
   ot_id: string;
   solicitante: string;
@@ -31,9 +31,31 @@ export interface GastoCompra {
   imagen_url: string;
   receipt_group: string;
   status: GastoStatus;
+  entity: string;
+  currency: string;
+  taxLabel: string;
+  authorId: string;
+  reviewedAt: string;
+  reviewReason: string;
+}
+
+export interface ExpenseEntity {
+  id: string;
+  name: string;
+  currency: string;
+  taxLabel: string;
+}
+
+export interface ExpenseOptions {
+  entities: ExpenseEntity[];
+  canReview: boolean;
+  closedThrough: string;
 }
 
 export interface NuevoGastoPayload {
+  entity: string;
+  currency: string;
+  document_date: string;
   tipo: GastoTipo;
   proveedor: string;
   rfc_proveedor: string;
@@ -55,21 +77,35 @@ interface GastosState {
   saving: boolean;
   error: string | null;
   fetched: boolean;
+  canReview: boolean;
+  closedThrough: string;
   fetchGastos: () => Promise<void>;
   saveGasto: (payload: NuevoGastoPayload, allocations: { unit: string; amount: string }[]) => Promise<string[]>;
   deleteGasto: (gastoId: string) => Promise<void>;
+  reviewGasto: (gastoId: string, status: 'Aprobado' | 'Rechazado', reason: string) => Promise<void>;
 }
 
 // ── Row parser ────────────────────────────────────────────────────────────────
 
 /** Strip currency symbols, commas, and whitespace before parsing — gspread
  *  returns FORMATTED_VALUE by default (e.g. "$3,356.00"). */
-function parseNum(v: string | undefined): number {
-  return Number(String(v ?? '').replace(/[$,\s]/g, '')) || 0;
+function parseNum(v: string | undefined): number | null {
+  const value = String(v ?? '').replace(/[$,\s]/g, '');
+  if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value)) return null;
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount : null;
 }
 
-function parseGastoRow(row: string[]): GastoCompra | null {
-  if (!row[0] || row[0] === 'Gasto_ID') return null;
+export type VerifiedExpense = GastoCompra & { subtotal: number; iva: number; total: number };
+
+export function verifiedExpense(expense: GastoCompra): expense is VerifiedExpense {
+  return !!expense.entity && ['USD', 'PAB'].includes(expense.currency) &&
+    expense.subtotal !== null && expense.iva !== null && expense.total !== null &&
+    Math.round(expense.subtotal * 100) + Math.round(expense.iva * 100) === Math.round(expense.total * 100);
+}
+
+export function parseGastoRow(row: string[]): GastoCompra | null {
+  if (!row[0] || /^(?:ID|Gasto_ID)$/i.test(row[0])) return null;
   return {
     gasto_id:      row[0] ?? '',
     fecha:         row[1] ?? '',
@@ -88,7 +124,13 @@ function parseGastoRow(row: string[]): GastoCompra | null {
     items:         row[14] ?? '',
     imagen_url:    row[15] ?? '',
     receipt_group: row[17] ?? '',
-    status:        (row[16] ?? 'Aprobado') as GastoStatus,
+    status:        (row[16] ?? 'Borrador') as GastoStatus,
+    entity:        row[21] ?? '',
+    currency:      row[22] ?? '',
+    taxLabel:      row[23] ?? '',
+    authorId:      row[18] ?? '',
+    reviewedAt:    row[26] ?? '',
+    reviewReason:  row[27] ?? '',
   };
 }
 
@@ -99,7 +141,7 @@ export function setGastosSession(owner: string) {
   if (sessionOwner === owner) return;
   sessionOwner = owner;
   generation++;
-  useGastosStore.setState({ gastos: [], loading: false, saving: false, error: null, fetched: false });
+  useGastosStore.setState({ gastos: [], loading: false, saving: false, error: null, fetched: false, canReview: false, closedThrough: '' });
 }
 
 export const useGastosStore = create<GastosState>((set, get) => ({
@@ -108,24 +150,26 @@ export const useGastosStore = create<GastosState>((set, get) => ({
   saving: false,
   error: null,
   fetched: false,
+  canReview: false,
+  closedThrough: '',
 
   fetchGastos: async () => {
     if (get().loading) return;
     const startedIn = generation;
     set({ loading: true, error: null });
     try {
-      const { rows } = await purchaseRead<{ rows: string[][] }>('expenses');
+      const { rows, canReview, closedThrough } = await purchaseRead<{ rows: string[][] } & ExpenseOptions>('expenses');
       if (startedIn !== generation) return;
       const gastos: GastoCompra[] = [];
       for (const row of rows) {
         const g = parseGastoRow(row);
         if (g) gastos.push(g);
       }
-      set({ gastos, loading: false, fetched: true });
+      set({ gastos, loading: false, fetched: true, canReview: canReview === true, closedThrough: closedThrough || '' });
     } catch (err: unknown) {
       if (startedIn !== generation) return;
       const message = err instanceof Error ? err.message : 'Error al cargar gastos';
-      set({ gastos: [], error: message, loading: false, fetched: true });
+      set({ gastos: [], error: message, loading: false, fetched: true, canReview: false, closedThrough: '' });
     }
   },
 
@@ -148,6 +192,12 @@ export const useGastosStore = create<GastosState>((set, get) => ({
     } finally {
       if (startedIn === generation) set({ saving: false });
     }
+  },
+
+  reviewGasto: async (id, status, reason) => {
+    const startedIn = generation;
+    await purchaseWrite('expense-review', { id, status, reason });
+    if (startedIn === generation) await get().fetchGastos();
   },
 
   deleteGasto: async (id) => {

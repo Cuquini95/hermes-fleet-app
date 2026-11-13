@@ -176,10 +176,11 @@ export async function checkWorkshop(fixture, record) {
     assert(view.history.some(entry => entry[1] === folio && entry[7] === techAccount.user.id));
     assert.equal(sheet.read(tabs.failure).find(recordRow => recordRow[13] === folio)?.[9], 'Completado');
     assert(good(await supervisor('readiness'), 'Pendiente tras cierre técnico').returns.some(entry => entry.otId === folio));
-    const returned = good(await supervisor('returns', { mutationId: randomUUID(), otId: folio, decision: 'accepted', notes: 'Recepción sintética de Operaciones' }), 'Confirmar retorno por Operaciones');
-    assert.equal(returned.receipt.decision, 'accepted');
-    assert.equal(good(await supervisor('readiness'), 'Retorno confirmado').returns.some(entry => entry.otId === folio), false);
-    return { folio, state: row[9], closeDate: row[14], returnAt: returned.receipt.returnedAt, history: view.history.filter(entry => entry[1] === folio).length };
+    const returned = await supervisor('returns', { mutationId: randomUUID(), otId: folio, decision: 'accepted', notes: 'Recepción sintética de Operaciones' });
+    assert.equal(returned.status, 409, 'La avería independiente OT-0004 de esta unidad sigue abierta');
+    assert.match(returned.data.error, /Retorno bloqueado/);
+    assert(good(await supervisor('readiness'), 'Retorno pendiente').returns.some(entry => entry.otId === folio));
+    return { folio, state: row[9], closeDate: row[14], independentReturnBlocked: returned.status, history: view.history.filter(entry => entry[1] === folio).length };
   });
 
   await record('API-TALLER-REPLICA-OT-0004', async () => {
@@ -398,7 +399,7 @@ export async function checkPurchasing(fixture, record) {
     assert.equal(afterEdit.lines.some(item => item.id === deletedLine.id), false);
     assert.equal(onlyFolio(sheet.read(tabs.lines), first.folio).length, 3);
     const rejected = good(await api(`order?folio=${encodeURIComponent(simultaneousFolios[0])}`), 'Cargar otra OC de prueba').order;
-    good(await api('order-status', { operationId: randomUUID(), folio: rejected.folio, version: rejected.version, status: 'Rechazada' }), 'Rechazar un borrador');
+    good(await api('order-status', { operationId: randomUUID(), folio: rejected.folio, version: rejected.version, status: 'Rechazada', reason: 'Motivo documentado en QA' }), 'Rechazar un borrador');
     const reloadedRejected = good(await api(`order?folio=${encodeURIComponent(rejected.folio)}`), 'Recargar OC rechazada').order;
     assert.equal(reloadedRejected.status, 'Rechazada');
     return { folio: first.folio, originalTotal: '497.95', rows: 4, simultaneousFolios, orphanPreserved: true, editPersisted: true, rejected: rejected.folio };
@@ -406,6 +407,10 @@ export async function checkPurchasing(fixture, record) {
 
   await record('API-COMPRAS-RECIBIR-PARCIAL', async () => {
     const manager = firstAccount('gerencia');
+    const receiver = loadAccounts.find(account => account.membership.can_receive_purchases === true);
+    const warehouse = purchasing(request, await loginAs(request, receiver));
+    const accounting = purchasing(request, await loginAs(request, loadAccounts[11]));
+    const treasury = purchasing(request, await loginAs(request, loadAccounts[17]));
     const api = purchasing(request, await loginAs(request, manager));
     const created = good(await api('order-save', orderPayload('Recepción de prueba')), 'Alta para recepción');
     const getOrder = async () => {
@@ -414,7 +419,7 @@ export async function checkPurchasing(fixture, record) {
     };
     const draft = await getOrder();
     const base = { folio: created.folio };
-    const approve = { ...base, operationId: randomUUID(), version: draft.version, status: 'Aprobada' };
+    const approve = { ...base, operationId: randomUUID(), version: draft.version, status: 'Aprobada', reason: 'Requisición revisada en QA' };
     const reviewer = purchasing(request, await loginAs(request, nonApprovingManager));
     assert.equal((await reviewer('order-status', approve)).status, 403);
     const approved = good(await api('order-status', approve), 'Aprobar OC');
@@ -426,31 +431,40 @@ export async function checkPurchasing(fixture, record) {
     const line = order.lines[0];
     const lineId = line.id ?? line.lineId;
     assert(lineId, 'La partida no tiene identificador para recepción');
-    good(await api('order-receive', { ...base, operationId: randomUUID(), version: order.version, lineId, quantity: 1, reference: 'Entrega sintética 1' }), 'Primera recepción parcial');
+    const firstReceipt = { ...base, operationId: randomUUID(), version: order.version, lineId, quantity: 1, reference: 'Entrega sintética 1' };
+    assert.equal((await api('order-receive', firstReceipt)).status, 403);
+    good(await warehouse('order-receive', firstReceipt), 'Primera recepción parcial');
     const midway = await getOrder();
     assert.equal(midway.status, 'Recibida parcial');
     assert.equal(Number(midway.lines[0].received), 1);
     const second = { ...base, operationId: randomUUID(), version: midway.version, lineId, quantity: 1, reference: 'Entrega sintética 2' };
-    good(await api('order-receive', second), 'Segunda recepción parcial');
-    good(await api('order-receive', second), 'Reintentar segunda recepción');
+    good(await warehouse('order-receive', second), 'Segunda recepción parcial');
+    good(await warehouse('order-receive', second), 'Reintentar segunda recepción');
     const final = await getOrder();
     const balance = final.lines.find(value => (value.id ?? value.lineId) === lineId);
     assert.equal(Number(balance.receivedQuantity ?? balance.received ?? balance.quantityReceived), 2);
     assert.equal(Number(balance.quantity) - Number(balance.receivedQuantity ?? balance.received ?? balance.quantityReceived), 0);
     assert.equal(balance.receipts.length, 2);
-    assert(balance.receipts.every(receipt => receipt.actorId === manager.user.id));
+    assert(balance.receipts.every(receipt => receipt.actorId === receiver.user.id));
     assert.equal(final.status, 'Recibida parcial', 'Quedan otras dos partidas por recibir');
-    assert.equal((await api('order-receive', { ...base, operationId: randomUUID(), version: final.version, lineId, quantity: 1 })).status, 409);
+    assert.equal((await warehouse('order-receive', { ...base, operationId: randomUUID(), version: final.version, lineId, quantity: 1, reference: 'Exceso QA' })).status, 409);
+    assert.equal((await accounting('order-invoice', { ...base, operationId: randomUUID(), version: final.version, reference: 'FAC-QA-OC', amount: final.total })).status, 409);
     for (const pending of final.lines.slice(1)) {
       const fresh = await getOrder();
-      good(await api('order-receive', { ...base, operationId: randomUUID(), version: fresh.version, lineId: pending.id, quantity: pending.quantity }), 'Recibir el resto de una partida');
+      good(await warehouse('order-receive', { ...base, operationId: randomUUID(), version: fresh.version, lineId: pending.id, quantity: pending.quantity, reference: 'Entrega sintética partida ' + pending.number }), 'Recibir el resto de una partida');
     }
     const received = await getOrder();
     assert.equal(received.status, 'Recibida');
-    good(await api('order-status', { ...base, operationId: randomUUID(), version: received.version, status: 'Pagada' }), 'Registrar pago');
+    assert.equal((await api('order-status', { ...base, operationId: randomUUID(), version: received.version, status: 'Pagada' })).status, 403);
+    assert.equal((await treasury('order-payment', { ...base, operationId: randomUUID(), version: received.version, reference: 'BANCO-QA-OC', amount: received.total })).status, 409);
+    good(await accounting('order-invoice', { ...base, operationId: randomUUID(), version: received.version, reference: 'FAC-QA-OC', amount: received.total }), 'Conciliar factura');
+    const invoiced = await getOrder();
+    good(await treasury('order-payment', { ...base, operationId: randomUUID(), version: invoiced.version, reference: 'BANCO-QA-OC', amount: invoiced.total }), 'Registrar pago externo conciliado');
     const paid = await getOrder();
     assert.equal(paid.status, 'Pagada');
-    return { folio: created.folio, approvedById: manager.user.id, received: 2, remaining: 0, receipts: 2, partialStatus: final.status, finalStatus: paid.status };
+    assert.equal(paid.payment.invoiceReference, paid.invoice.reference);
+    assert.equal(new Set([paid.approvedById, receiver.user.id, paid.invoice.actorId, paid.payment.actorId]).size, 4);
+    return { folio: created.folio, approvedById: manager.user.id, received: 2, remaining: 0, receipts: 2, partialStatus: final.status, finalStatus: paid.status, invoice: paid.invoice.reference, payment: paid.payment.reference };
   });
 
   await record('API-GASTOS-REPARTO-RECIBO', async () => {
@@ -460,17 +474,19 @@ export async function checkPurchasing(fixture, record) {
     const { receiptUrl: receipt } = await uploaded.json();
     const expense = {
       tipo: 'Refaccion', proveedor: 'Proveedor QA', rfc_proveedor: 'QAT000000000', folio_factura: 'FAC-QA-REPARTO',
-      subtotal: 100, iva: 16, total: 116, ot_id: 'OT-0004', metodo_pago: 'Transferencia', imagen_url: receipt,
+      entity: 'TP_PA_QA', currency: 'USD',
+      document_date: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Panama' }).format(new Date()),
+      subtotal: 100, iva: 7, total: 107, ot_id: 'OT-0004', metodo_pago: 'Transferencia', imagen_url: receipt,
       line_items: [{ part_number: 'QA-002', description: 'Sello de prueba', qty: 1, unit_price: 100 }],
     };
-    const payload = { operationId: randomUUID(), expense, allocations: [{ unit: 'DZ203', amount: 69.60 }, { unit: 'EX401', amount: 46.40 }] };
+    const payload = { operationId: randomUUID(), expense, allocations: [{ unit: 'DZ203', amount: 64.20 }, { unit: 'EX401', amount: 42.80 }] };
     const saved = good(await api('expense-save', payload), 'Guardar gasto repartido');
     good(await api('expense-save', payload), 'Reintentar el mismo gasto');
     const rows = sheet.read(tabs.expenses).filter(row => row[17] === saved.folio);
     assert.equal(rows.length, 2);
     assert.deepEqual(rows.map(row => [row[10], row[7], row[8], row[9], row[15]]), [
-      ['DZ203', '60.00', '9.60', '69.60', receipt], ['EX401', '40.00', '6.40', '46.40', receipt],
+      ['DZ203', '60.00', '4.20', '64.20', receipt], ['EX401', '40.00', '2.80', '42.80', receipt],
     ]);
-    return { folio: saved.folio, units: ['DZ203', 'EX401'], subtotal: 100, tax: 16, total: 116, receiptLinked: true };
+    return { folio: saved.folio, units: ['DZ203', 'EX401'], subtotal: 100, tax: 7, total: 107, receiptLinked: true, pendingReview: rows.every(row => row[16] === 'Pendiente') };
   });
 }

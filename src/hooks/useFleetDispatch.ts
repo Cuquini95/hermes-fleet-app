@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { openAveriaUnitSet } from '../lib/averias';
 import { mexicoDateInput } from '../lib/date-utils';
 import { applyDispatchReadiness, buildDispatchReadinessMap, normalizeUnitId, type PendingOperationalReturn, type UnitDispatchReadiness } from '../lib/dispatch-readiness';
 import { requestWorkshop } from '../lib/workshop-api';
@@ -79,18 +78,8 @@ export function useFleetDispatch(equipment: Equipment[], enabled = true): FleetD
     };
   }, [enabled, refresh]);
 
-  const readiness = useMemo(() => {
-    const map = buildDispatchReadinessMap(sources?.stickers ?? [], sources?.inspections ?? [],
-      new Date(`${mexicoDateInput()}T12:00:00`), sources?.returns ?? []);
-    for (const unitId of openAveriaUnitSet(sources?.failures ?? [])) {
-      if (map.get(unitId)?.level === 'blocked') continue;
-      map.set(unitId, {
-        unitId, source: 'averia', level: 'blocked', label: 'No despachar',
-        reason: 'Avería sin cierre', effectiveStatus: 'taller',
-      });
-    }
-    return map;
-  }, [sources]);
+  const readiness = useMemo(() => buildDispatchReadinessMap(sources?.stickers ?? [], sources?.inspections ?? [],
+    new Date(`${mexicoDateInput()}T12:00:00`), sources?.returns ?? [], sources?.failures ?? []), [sources]);
 
   const verified = !!sources && sources.unavailable.length === 0;
   const effectiveEquipment = equipment.map((unit) => applyDispatchReadiness(unit, readiness.get(normalizeUnitId(unit.unit_id))));

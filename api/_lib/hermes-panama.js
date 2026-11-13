@@ -3,6 +3,14 @@ import { createHermesSheets } from './hermes-google-sheets.js';
 
 export const PANAMA_PROJECT = 'tmf-panama';
 const management = new Set(['jefe_taller', 'coordinador', 'supervisor', 'gerencia']);
+const maintenanceColumns = { unit: 'EQUIPO', status: '¿CÓMO ESTÁ?', next: 'PRÓXIMO PM', remaining: 'HORAS QUE LE QUEDAN', reading: 'LECTURA', plan: 'PLAN' };
+const maintenanceDetails = { model: 'MODELO', due: 'TOCA A LAS (h)', hours: 'HORÓMETRO HOY', last: 'ÚLTIMO PM ANOTADO' };
+const maintenancePlan = { key: 'maintenancePlan', env: 'HERMES_PANAMA_PM_SHEET_ID', range: "'AJUSTES'!A4:M", unit: 'EQUIPO',
+  columns: { unit: 'EQUIPO', model: 'MODELO', active: '¿ACTIVO?', cycle: 'PM CADA (h)', level2: 'NIVEL 2 (h)',
+    level3: 'NIVEL 3 (h)', level4: 'NIVEL 4 (h)', level5: 'NIVEL 5 (h)', level6: 'NIVEL 6 (h)',
+    approved: '¿PLAN APROBADO?', checklist: 'PAQUETE / CHECKLIST (link)' } };
+const maintenanceAnchor = { key: 'maintenanceAnchor', env: 'HERMES_PANAMA_PM_SHEET_ID', range: "'CALC'!A1:AH", unit: 'Equipo',
+  columns: { unit: 'Equipo', anchor: 'Ancla ciclo (h)' } };
 const sourceSpecs = [
   { key: 'fleet', env: 'HERMES_PANAMA_TMF_SHEET_ID', range: "'EQUIPOS'!A3:F", unit: 'Código',
     columns: { unit: 'Código', equipment: 'Equipo', model: 'Modelo', group: 'Clase contractual', active: 'Activo' } },
@@ -13,7 +21,7 @@ const sourceSpecs = [
   { key: 'orders', env: 'HERMES_PANAMA_WORKSHOP_SHEET_ID', range: "'OTS'!A4:V", unit: 'EQUIPO', managementOnly: true,
     columns: { id: 'Nº OT', unit: 'EQUIPO', description: 'FALLA / TRABAJO A REALIZAR', status: 'ESTADO', check: 'CONTROL INTEGRIDAD OT' } },
   { key: 'maintenance', env: 'HERMES_PANAMA_PM_SHEET_ID', range: "'PM FLOTA'!A7:N", unit: 'EQUIPO', managementOnly: true,
-    columns: { unit: 'EQUIPO', status: '¿CÓMO ESTÁ?', next: 'PRÓXIMO PM', remaining: 'HORAS QUE LE QUEDAN', reading: 'LECTURA', plan: 'PLAN' } },
+    columns: maintenanceColumns, optionalColumns: maintenanceDetails },
   { key: 'dozers', env: 'HERMES_PANAMA_DOZERS_SHEET_ID', range: "'RESUMEN JEFE'!A4:J", unit: 'EQUIPO', managementOnly: true,
     columns: { unit: 'EQUIPO', group: 'TIPO', critical: '🔴', upcoming: '🟠', noData: '⚪ sin dato' } },
   { key: 'excavators', env: 'HERMES_PANAMA_EXCAVATORS_SHEET_ID', range: "'RESUMEN JEFE'!A4:J", unit: 'EQUIPO', managementOnly: true,
@@ -53,12 +61,35 @@ function readSource(spec) {
   return entry.promise;
 }
 
-export async function readPanamaInventory() {
-  const rows = visibleRecords(await readSource(sourceSpecs[0]), sourceSpecs[0], { allUnits: true });
+const equipmentDetails = {
+  key: 'equipmentDetails', env: 'HERMES_PANAMA_EQUIPMENT_SHEET_ID', range: "'EQUIPOS'!A3:M",
+  unit: 'CÓDIGO', country: 'PAÍS',
+  columns: { unit: 'CÓDIGO', project: 'PROYECTO', kind: 'TIPO', brand: 'MARCA', model: 'MODELO', serial: 'SERIE' },
+};
+
+export async function readPanamaInventory(read = readSource) {
+  const [fleet, details] = await Promise.all([
+    read(sourceSpecs[0]),
+    Promise.resolve().then(() => read(equipmentDetails)).then(rows => visibleRecords(rows, equipmentDetails, { allUnits: true })).catch(() => []),
+  ]);
+  const rows = visibleRecords(fleet, sourceSpecs[0], { allUnits: true });
+  const byUnit = new Map();
+  const ambiguous = new Set();
+  for (const detail of details) {
+    if (!['TMF', 'TMF MINERA PANAMA'].includes(keyOf(detail.project))) continue;
+    const unit = keyOf(detail.unit);
+    if (byUnit.has(unit)) ambiguous.add(unit);
+    else byUnit.set(unit, detail);
+  }
+  for (const unit of ambiguous) byUnit.delete(unit);
   return [
-    ['Inventario TMF Panamá'], ['Disponibilidad TMF Maestro'],
+    ['Inventario TMF Panamá'], ['Disponibilidad TMF Maestro / Maestro de Equipos'],
     ['#','COD1','Descripción','Marca','Modelo','Año','Serie','Ubicación','Estado','Lectura Hr/Km'],
-    ...rows.map((row, index) => [String(index + 1), row.unit, row.group || row.equipment, '', row.model, '', '', 'TMF Minera Panamá', '', '']),
+    ...rows.map((row, index) => {
+      const detail = byUnit.get(keyOf(row.unit));
+      return [String(index + 1), row.unit, detail?.kind || row.group || row.equipment, detail?.brand || '',
+        detail?.model || row.model, '', detail?.serial || '', 'TMF Minera Panamá', '', ''];
+    }),
   ];
 }
 
@@ -67,6 +98,10 @@ function visibleRecords(rows, spec, session) {
   const names = header.map(keyOf);
   const columns = Object.entries(spec.columns).map(([key, name]) => [key, names.indexOf(keyOf(name))]);
   if (columns.some(([, col]) => col < 0)) throw new Error('Unexpected Panama source columns');
+  for (const [key, name] of Object.entries(spec.optionalColumns ?? {})) {
+    const index = names.indexOf(keyOf(name));
+    if (index >= 0) columns.push([key, index]);
+  }
   const unitIndex = names.indexOf(keyOf(spec.unit));
   const countryIndex = spec.country ? names.indexOf(keyOf(spec.country)) : -1;
   if (spec.country && countryIndex < 0) throw new Error('Missing country column');
@@ -83,12 +118,58 @@ function visibleRecords(rows, spec, session) {
   return spec.limit ? records.slice(-spec.limit).reverse() : records;
 }
 
-export async function dispatchPanama({ path, method, session, read = readSource }) {
-  if (session.project !== PANAMA_PROJECT) return { status: 403, body: { error: 'Consulta reservada a TMF Panamá.' } };
-  if (path !== 'api/panama/summary') return { status: 404, body: { error: 'Ruta no disponible para Panamá.' } };
-  if (method !== 'GET') return { status: 405, body: { error: 'Hermes Panamá está en modo consulta.' } };
+const componentSources = [
+  ...['dozer','excavator'].flatMap(family => {
+    const env = family === 'dozer' ? 'HERMES_PANAMA_DOZERS_SHEET_ID' : 'HERMES_PANAMA_EXCAVATORS_SHEET_ID';
+    return [{
+      key: family + 'Changes', env, range: "'ANOTAR CAMBIO'!A5:Q", unit: 'EQUIPO',
+      columns: { unit: 'EQUIPO', date: 'FECHA', part: 'PIEZA', position: 'LADO / POSICIÓN',
+        meter: 'HORÓMETRO AL CAMBIO (h)', reason: '¿POR QUÉ SE CAMBIÓ?', status: '¿BIEN ANOTADO?',
+        elapsed: 'HORAS QUE DURÓ LA PIEZA' },
+    }, {
+      key: family + 'Life', env, range: "'CALC'!A1:Q", unit: 'Equipo',
+      columns: { unit: 'Equipo', part: 'Pieza', position: 'Lado', target: 'Vida', installedMeter: 'UltHor',
+        currentMeter: 'HorAct', elapsed: 'Usadas', remaining: 'Restantes', status: 'Estado' },
+    }];
+  }),
+];
 
-  const visible = sourceSpecs.filter(spec => spec.managementRole ? session.role === spec.managementRole
+async function componentDetails({ method, query, session, read }) {
+  if (method !== 'GET') return { status: 405, body: { error: 'Consulta de componentes de solo lectura.' } };
+  if (!management.has(session.role) && session.role !== 'mecanico') {
+    return { status: 403, body: { error: 'Consulta reservada a Taller y Supervisión.' } };
+  }
+  const unit = keyOf(query?.unit);
+  const pattern = session.previewDemo ? /^QA-[A-Z]{1,7}\d{1,7}$/ : /^[A-Z]{1,7}[- ]?\d{1,7}$/;
+  if (!pattern.test(unit)) return { status: 400, body: { error: 'Selecciona una unidad válida.' } };
+  if (!session.allUnits && !(session.assignedUnits ?? []).some(value => keyOf(value) === unit)) {
+    return { status: 403, body: { error: 'Unidad fuera del alcance de la sesión.' } };
+  }
+  const results = await Promise.allSettled(componentSources.map(async spec =>
+    visibleRecords(await read(spec), spec, { ...session, allUnits: false, assignedUnits: [unit] })
+      .filter(row => row.part && (!row.date || /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(row.date))),
+  ));
+  const changes = [], life = [], unavailable = [];
+  results.forEach((result, index) => {
+    const spec = componentSources[index];
+    if (result.status === 'rejected') unavailable.push(spec.key);
+    else (spec.key.endsWith('Changes') ? changes : life).push(...result.value.map(record => ({ ...record, source: spec.range })));
+  });
+  return { status: 200, body: { unit, changes, life, unavailable, checkedAt: new Date().toISOString() } };
+}
+
+export async function dispatchPanama({ path, method, query, session, read = readSource }) {
+  if (session.project !== PANAMA_PROJECT) return { status: 403, body: { error: 'Consulta reservada a TMF Panamá.' } };
+  if (path === 'api/panama/componentes') return componentDetails({ method, query, session, read });
+  if (path !== 'api/panama/summary' && path !== 'api/panama/maintenance') return { status: 404, body: { error: 'Ruta no disponible para Panamá.' } };
+  if (method !== 'GET') return { status: 405, body: { error: 'Hermes Panamá está en modo consulta.' } };
+  if (path === 'api/panama/maintenance' && !management.has(session.role)) {
+    return { status: 403, body: { error: 'Consulta reservada a Taller y Operaciones.' } };
+  }
+
+  const visible = path === 'api/panama/maintenance'
+    ? [...sourceSpecs.filter(spec => ['maintenance', 'dozers', 'excavators'].includes(spec.key)), maintenancePlan, maintenanceAnchor]
+    : sourceSpecs.filter(spec => spec.managementRole ? session.role === spec.managementRole
     : !spec.managementOnly || management.has(session.role));
   const sections = await Promise.all(visible.map(async spec => {
     try {

@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
 import { hasIdentityUnit } from './hermes-identity.js';
 import { PANAMA_PROJECT } from './hermes-panama.js';
-import { HermesSheetError, PANAMA_SHIFT_TAB } from './hermes-google-sheets.js';
+import { HermesSheetError, PANAMA_DISPATCH_TAB, PANAMA_SHIFT_TAB } from './hermes-google-sheets.js';
+import { verifyUnitReadiness, verifyUnitsReadiness } from './hermes-workshop.js';
 
 const READ = new Set(['operador', 'supervisor', 'coordinador', 'gerencia']);
 const DELIVER = new Set(['operador', 'supervisor']);
+const ASSIGN = new Set(['supervisor', 'coordinador']);
 const PENDING = 'Pendiente de revisión';
 const ACCEPTED = 'Aceptado por Supervisión';
 const RETURNED = 'Devuelto';
@@ -32,17 +34,53 @@ function quantity(value, label, decimalPlaces) {
   return number;
 }
 
-function parseFields(body) {
+function meterSample(row) {
+  const date = String(row[0] ?? '').trim().split('/');
+  const day = date.length === 3 ? `${date[2]}-${date[1].padStart(2, '0')}-${date[0].padStart(2, '0')}` : String(row[0] ?? '').trim();
+  const time = String(row[1] ?? '').trim();
+  const hours = String(row[6] ?? '').trim();
+  const timestamp = Date.parse(`${day}T${time}-05:00`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !/^\d{2}:\d{2}(?::\d{2})?$/.test(time)
+    || !/^\d{1,8}(?:\.\d{1,3})?$/.test(hours) || !Number.isFinite(timestamp)) return null;
+  const local = new Date(timestamp - 5 * 3600000).toISOString();
+  if (local.slice(0, 16) !== `${day}T${time.slice(0, 5)}`) return null;
+  return { timestamp, hours: Number(hours) };
+}
+
+export async function validatePanamaMeterAppend(sheets, tab, row) {
+  const sample = meterSample(row);
+  requireValue(sample && ['inicio', 'final'].includes(row[5]), 400, 'Registra una lectura, turno, fecha y hora válidos.');
+  const unit = canonical(String(row[2]));
+  const samples = (await sheets.read(tab)).filter(previous => canonical(String(previous[2] ?? '')) === unit)
+    .map(meterSample).filter(Boolean);
+  const chronological = samples.every(previous => {
+    if (previous.timestamp === sample.timestamp) return previous.hours === sample.hours;
+    const seconds = (sample.timestamp - previous.timestamp) / 1000;
+    const difference = sample.hours - previous.hours;
+    return seconds * difference >= 0 && Math.abs(difference) <= Math.abs(seconds) / 3600 + 0.1;
+  });
+  requireValue(chronological, 409, 'El horómetro no concuerda con las lecturas de la unidad. Verifica el medidor o concilia el cambio con Supervisión.');
+  return samples.length;
+}
+
+function shiftFields(body) {
   const date = text(body.date, 'Fecha', 10);
   const asDate = new Date(`${date}T00:00:00Z`);
   requireValue(/^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(asDate.valueOf()) && asDate.toISOString().slice(0, 10) === date,
     400, 'Fecha del turno inválida.');
   const unit = text(body.unit, 'Unidad', 40).toUpperCase();
   const shift = text(body.shift, 'Turno', 32).replace(/\s+/g, ' ');
+  return { unit, date, shift };
+}
+
+function parseFields(body) {
+  const fields = shiftFields(body);
   const initialHours = quantity(body.initialHours, 'Horómetro inicial', 3);
   const finalHours = quantity(body.finalHours, 'Horómetro final', 3);
   requireValue(finalHours >= initialHours, 400, 'El horómetro final es inferior al inicial. Verifica la lectura en su origen.');
-  return { date, unit, shift, initialHours, finalHours, hours: Number((finalHours - initialHours).toFixed(3)),
+  const hours = Number((finalHours - initialHours).toFixed(3));
+  requireValue(hours <= 24, 400, 'La diferencia del horómetro supera 24 horas. Verifica la lectura en su origen.');
+  return { ...fields, initialHours, finalHours, hours,
     equipmentStatus: text(body.equipmentStatus, 'Estado del equipo', 100), support: text(body.support, 'Referencia del soporte', 250),
     trips: quantity(body.trips, 'Viajes', 0), tonnes: quantity(body.tonnes, 'Toneladas', 3),
     stops: text(body.stops, 'Paradas o episodio de avería', 500), client: text(body.client, 'Cliente', 120) };
@@ -82,8 +120,84 @@ function currentRecord(records, session, body) {
   return previous;
 }
 
-export async function dispatchShifts({ path, method, body, session, sheets }) {
+async function inventoryFor(sheets, unit) {
+  const inventory = await sheets.read('01 Inventario', { requireExisting: true });
+  const row = inventory.slice(3).find(row => String(row[1] ?? '').trim().toUpperCase() === unit);
+  requireValue(row, 400, 'La unidad no figura en el inventario TMF.');
+  return row;
+}
+
+function dispatchRecords(rows) {
+  return rows.filter(row => /^DPA-[\dA-F]{20}$/.test(row[0] ?? '')).map(([id, unit, date, shift, site,
+    operatorId, operatorName, actorId, actorName, at]) => ({ id, unit, date, shift, site, operator: { id: operatorId, name: operatorName },
+    assignedBy: { id: actorId, name: actorName }, assignedAt: at }));
+}
+
+async function assignmentsWithReadiness(sheets, assignments) {
+  const units = new Set(assignments.map(item => item.unit));
+  if (!units.size) return assignments;
+  const [readiness, inventory] = await Promise.all([verifyUnitsReadiness(sheets, units), sheets.read('01 Inventario', { requireExisting: true })]);
+  const assets = new Map(inventory.slice(3).map(row => [String(row[1] ?? '').trim().toUpperCase(), row]));
+  return assignments.map(item => ({ ...item, readiness: assignmentReadiness(assets.get(item.unit), readiness.get(item.unit)) }));
+}
+
+function assignmentReadiness(inventory, readiness) {
+  const status = canonical(String(inventory?.[8] ?? ''));
+  if (!inventory || ['INACTIVO', 'INACTIVA', 'FUERA DE SERVICIO', 'EN TALLER', 'TALLER', 'BAJA', 'NO OPERATIVO', 'NO OPERATIVA'].includes(status)) {
+    return { level: 'blocked', reason: 'La unidad no está disponible en el inventario.' };
+  }
+  return { level: readiness?.level ?? 'ok', reason: readiness?.reason ?? 'Sin restricción activa registrada.' };
+}
+
+async function dispatchAssignment({ method, body, session, sheets, listShiftOperators }) {
+  const operatorsFor = async unit => listShiftOperators(session, unit);
+  if (method === 'GET') {
+    const [rows, operators] = await Promise.all([
+      sheets.read(PANAMA_DISPATCH_TAB, { cached: true }), ASSIGN.has(session.role) ? operatorsFor() : [],
+    ]);
+    const assignments = dispatchRecords(rows).filter(item => hasIdentityUnit(session, item.unit)
+      && (session.role !== 'operador' || item.operator.id === session.userId));
+    return { status: 200, body: { assignments: await assignmentsWithReadiness(sheets, assignments.reverse()), operators } };
+  }
+  requireValue(method === 'POST', 405, 'Método no permitido.');
+  requireValue(ASSIGN.has(session.role), 403, 'La asignación corresponde a Coordinación o Supervisión.');
+  requireValue(typeof body.mutationId === 'string' && UUID.test(body.mutationId), 400, 'Identificador de operación inválido.');
+  requireValue(!body.expectedUserId || body.expectedUserId === session.userId, 403, 'El registro pertenece a otra sesión.');
+  const data = shiftFields(body);
+  requireValue(hasIdentityUnit(session, data.unit), 403, 'Unidad fuera de tu alcance.');
+  const site = text(body.site, 'Sitio o frente', 160);
+  const operatorId = text(body.operatorId, 'Operador', 90);
+  const key = `panama:dispatch:${session.userId}:${body.mutationId.toLowerCase()}`;
+  const fingerprint = sha([data, site, operatorId]);
+  const previous = await sheets.replay({ key, fingerprint });
+  if (previous) {
+    const [assignment] = await assignmentsWithReadiness(sheets, [previous.assignment]);
+    return { status: 200, body: { assignment } };
+  }
+  const period = [data.date, canonical(data.shift)];
+  const id = `DPA-${sha([data.unit, ...period]).slice(0, 20).toUpperCase()}`;
+  const operatorGuard = `panama:dispatch:operator:${sha([operatorId, ...period])}`;
+  const [operators, inventory, readiness, priorRows] = await Promise.all([
+    operatorsFor(data.unit), inventoryFor(sheets, data.unit), verifyUnitReadiness(sheets, data.unit), sheets.read(PANAMA_DISPATCH_TAB),
+  ]);
+  const operator = operators.find(person => person.userId === operatorId);
+  requireValue(operator, 403, 'El operador no está activo o no tiene alcance para esta unidad.');
+  const eligibility = assignmentReadiness(inventory, readiness);
+  requireValue(eligibility.level === 'ok', 409, `Despacho bloqueado. ${eligibility.reason}`);
+  const prior = dispatchRecords(priorRows);
+  requireValue(!prior.some(item => item.id === id || (item.operator.id === operatorId
+    && item.date === data.date && canonical(item.shift) === period[1])), 409, 'La unidad o el operador ya tienen asignación en ese turno.');
+  const row = [id, data.unit, data.date, data.shift, site, operator.userId, operator.userName, session.userId,
+    session.userName, new Date().toISOString()];
+  const [assignment] = dispatchRecords([row]);
+  const saved = await sheets.commit({ key, fingerprint, guards: [`panama:dispatch:unit:${id}`, operatorGuard],
+    writes: [{ tab: PANAMA_DISPATCH_TAB, append: [row] }], result: { assignment: { ...assignment, readiness: eligibility } } });
+  return { status: saved.replayed ? 200 : 201, body: saved.result };
+}
+
+export async function dispatchShifts({ path, method, body, session, sheets, listShiftOperators = async () => [] }) {
   requireValue(session.project === PANAMA_PROJECT && READ.has(session.role), 403, 'Relevo reservado a los roles autorizados de TMF Panamá.');
+  if (path === 'api/panama/turnos/despacho') return dispatchAssignment({ method, body, session, sheets, listShiftOperators });
   if (path === 'api/panama/turnos') {
     requireValue(method === 'GET', 405, 'Método no permitido.');
     const records = rowsToRecords(await sheets.read(PANAMA_SHIFT_TAB, { cached: true }));
@@ -117,8 +231,7 @@ export async function dispatchShifts({ path, method, body, session, sheets }) {
 
   if (!previous) {
     requireValue(!records.has(id), 409, 'Ya existe un parte para esta unidad, fecha y turno.');
-    const inventory = await sheets.read('01 Inventario', { cached: true });
-    requireValue(inventory.slice(3).some(row => String(row[1] ?? '').trim().toUpperCase() === data.unit), 400, 'La unidad no figura en el inventario TMF.');
+    await inventoryFor(sheets, data.unit);
   } else {
     requireValue(Number.isSafeInteger(body.version) && body.version === previous.version, 409, 'El parte cambió. Actualiza para revisar la última versión.');
     if (deliver) {
@@ -128,6 +241,14 @@ export async function dispatchShifts({ path, method, body, session, sheets }) {
       requireValue(previous.createdBy.id !== session.userId, 403, 'La revisión corresponde a otro supervisor.');
       requireValue(previous.status === PENDING, 409, 'El parte ya tiene una decisión para esta versión.');
     }
+  }
+
+  if (deliver) {
+    const other = [...records.values()].filter(record => record.unit === data.unit && record.id !== id && record.status !== RETURNED);
+    const overlaps = other.some(record => (record.date < data.date && record.finalHours > data.initialHours)
+      || (record.date > data.date && record.initialHours < data.finalHours)
+      || (record.date === data.date && data.initialHours < record.finalHours && record.initialHours < data.finalHours));
+    requireValue(!overlaps, 409, 'Las lecturas se cruzan con otro parte de la unidad. Concilia los partes antes de continuar.');
   }
 
   const version = (previous?.version ?? 0) + 1;

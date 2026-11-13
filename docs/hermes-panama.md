@@ -22,6 +22,7 @@ Rama de la aplicación independiente para TMF Minera Panamá. La navegación de 
 | HERMES_READ_ONLY | `true` para el candidato de consulta. |
 | HERMES_PANAMA_WRITES_ENABLED | Mantener sin habilitar hasta verificar en un entorno aislado la integración de escrituras con los maestros. |
 | HERMES_PANAMA_PM_CHECKLISTS_JSON | Catálogo validado de checklists por modelo y nivel, con referencia, identificadores y etiquetas de cada tarea. Taller comprueba el checklist al entregar y aceptar el PM. |
+| VITE_HERMES_PA_PM_MASTER_LINK, VITE_HERMES_PA_PM_REGISTER_LINK, VITE_HERMES_PA_VALUATION_LINK, VITE_HERMES_PA_FINANCE_LINK | Enlaces opcionales a maestros compartidos con el equipo. Los enlaces solo sirven para abrir Drive y conservan sus permisos. Cualquier URL del frontend es visible en el paquete compilado. |
 
 Usa el padrón de 28 personas, los correos confirmados en la identidad propia y los alcances aprobados para cada puesto. `scripts/import-hermes-roster.mjs` valida y vincula cuentas existentes. El importador no crea credenciales. Mantén pendientes las asignaciones locales que el responsable TMF todavía deba confirmar. Usa el proyecto de identidad exclusivo de Panamá.
 
@@ -41,3 +42,13 @@ La suite de Hermes conserva el modelo transaccional original en un almacén de p
 Para uso productivo, vincula las nuevas operaciones a los campos de captura de los maestros oficiales. Taller calcula parte del estado en OTS. PM separa captura, fórmulas, evidencia y aceptación en ANOTAR PM. PARTIDAS_RECEPCION acumula el recibido y las devoluciones por partida y necesita el enlace comprobado a una cabecera panameña. Las escrituras sobre esos maestros requieren adaptadores y una prueba aislada de conciliación antes de habilitarlas. Una OT de prueba en el modelo de Hermes no acredita cierre en OTS. Conserva la operación vigente durante el corte.
 
 Verifica los procedimientos y fuentes de llantas, inventario, compras, costos, combustible, avisos y documentos oficiales de acceso antes de su activación. Las rutas de integración del Hermes anterior y el enlace CMMS quedan fuera del candidato de Panamá hasta tener endpoints propios.
+
+### Recuperación de acceso y diagnóstico de fuentes
+
+El acceso muestra «Recuperar contraseña». Para habilitar el envío, TI configura el proveedor Supabase de Panamá y su plantilla de recuperación para incluir el código de un solo uso `{{ .Token }}`. Comprobar entrega y caducidad con un buzón de prueba autorizado antes de activar `HERMES_RECOVERY_ENABLED=true`. El formulario recibe el código y solicita una contraseña nueva. La API confirma la membresía activa de Panamá y el código con Supabase y revoca las sesiones Hermes de esa cuenta. Usar el control de frecuencia de infraestructura del proyecto además del límite por instancia.
+
+La salud autenticada del gateway distingue sesión, maestro de flota y libro operativo. La lectura del maestro no basta para mostrar el libro como disponible. Una fuente caída se informa como degradación. El resultado de una lectura del libro no certifica sus permisos de escritura.
+
+La sección de Manuales y Diagramas en Panamá usa `HERMES_PANAMA_TECHNICAL_CATALOG_JSON`. Cada entrada contiene `title`, `model`, `kind` (manual o diagram), `source` y `url` de archivo de Google Drive. Taller debe verificar edición, aplicación por equipo y permiso de lectura en Drive antes de publicar una entrada. El vínculo conserva los permisos existentes de Drive. El entorno sin catálogo indica biblioteca no disponible.
+
+La flota puede complementar marca, modelo y serie mediante `HERMES_PANAMA_EQUIPMENT_SHEET_ID`, con lectura de `EQUIPOS!A3:M` del Maestro de Equipos. Solo se unen filas de Panamá y TMF por código inequívoco. Los campos sin fuente, como horómetro actual y disponibilidad de despacho, requieren sus registros propios.

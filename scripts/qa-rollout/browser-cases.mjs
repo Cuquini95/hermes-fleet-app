@@ -66,7 +66,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       page.setDefaultTimeout(7000);
       await page.goto(`${origin}/login`, { waitUntil: 'domcontentloaded' });
       await page.getByLabel('Correo de trabajo').fill(account.user.email);
-      await page.getByLabel('Contraseña').fill(fixturePassword);
+      await page.getByLabel('Contraseña', { exact: true }).fill(fixturePassword);
       const login = page.waitForResponse(response => response.url() === `${origin}/api/auth/login` && response.request().method() === 'POST');
       await clickByName(page, 'Ingresar');
       assert.equal((await login).status(), 200, `El inicio de sesión de ${role} devolvió un error`);
@@ -413,7 +413,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
 
     await record('MÓVIL-FLOTA-BLOQUEOS', () => inRole('supervisor', 390, async page => {
       await page.goto(`${origin}/fleet`, { waitUntil: 'domcontentloaded' });
-      await visible(page.getByText(/\d\/4 operativos/));
+      await visible(page.getByText(/\d\/4 aptos para despacho/));
       const tile = unit => page.getByRole('button', { name: `Ver detalle de ${unit}`, exact: true });
       await visible(tile('DZ203').getByText('Bloq.', { exact: true }));
       await visible(tile('DZ205').getByText('Bloq.', { exact: true }));
@@ -487,6 +487,8 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     });
 
     if (!withPurchasing) return [...external];
+    const browserBuyer = loadAccounts.find(account => account.membership.can_approve_purchases === true);
+    const browserWarehouse = loadAccounts.find(account => account.membership.can_receive_purchases === true);
 
     await record('MÓVIL-GERENCIA-DASHBOARD-FUENTE', () => inRole('gerencia', 390, async page => {
       const average = page.getByText('125.00 L/carga', { exact: true });
@@ -500,7 +502,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await clickByName(page, 'Actualizar datos');
         await visible(page.getByRole('alert').getByText('Algunos indicadores no se pudieron cargar.', { exact: true }).or(page.getByText('Algunos indicadores no se pudieron cargar.', { exact: true })));
         await visible(ordersCard.getByText('—', { exact: true }));
-        await visible(page.getByText('Disponibilidad', { exact: true }).first().locator('xpath=..').getByText('—', { exact: true }));
+        await visible(page.getByText('Aptos para despacho', { exact: true }).locator('xpath=..').getByText('Sin verificar', { exact: true }));
       } finally { sheet.setUnavailable(sources, false); }
       await clickByName(page, 'Actualizar datos');
       await visible(average);
@@ -594,6 +596,8 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await visible(card.getByText(/· Borrador ·/));
       await page.reload({ waitUntil: 'domcontentloaded' });
       await card.getByRole('button', { name: 'Aprobar', exact: true }).tap();
+      await card.getByLabel('Soporte de la aprobación Q25').fill('Requisición validada en QA');
+      await card.getByRole('button', { name: 'Confirmar aprobación', exact: true }).tap();
       await visible(card.getByText(/· Aprobada ·/));
       const header = sheet.read(tabs.purchases).find(row => row[0] === folio);
       assert.deepEqual(header.slice(6, 12), ['433.36', '30.34', '25.50', '8.75', '497.95', 'Aprobada']);
@@ -613,35 +617,33 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       assert(printed.includes(folio) && printed.includes(parts[2][0]));
       assert.match(execFileSync('pdfinfo', [pdfPath], { encoding: 'utf8' }), /^Pages:\s+1$/m);
       return { folio, unit: 'DZ203', amount: 497.95, artifact, pages: 1 };
-    }));
+    }, browserBuyer));
 
-    await record('MÓVIL-COMPRAS-RECEPCIONES-PARCIALES', () => inRole('gerencia', 390, async page => {
+    await record('MÓVIL-COMPRAS-RECEPCIONES-PARCIALES', () => inRole('jefe_taller', 390, async page => {
       assert(purchaseFolio, 'Falta la OC sintética creada en móvil');
-      await page.goto(`${origin}/admin/ordenes-compra`, { waitUntil: 'domcontentloaded' });
+      await page.goto(`${origin}/panama/recepciones`, { waitUntil: 'domcontentloaded' });
       const card = page.locator('article').filter({ hasText: purchaseFolio });
-      const open = () => card.getByRole('button', { name: 'Recepciones', exact: true }).tap();
-      await open();
+      const line = card.locator('li').filter({ has: page.getByRole('heading', { name: /Filtro OC móvil QA/ }) });
       const lineId = sheet.read(tabs.lines).find(row => row[0] === purchaseFolio && row[1] === '1')[6];
-      const receive = async (quantity, reference, summary) => {
-        await card.getByLabel('Partida a recibir').selectOption(lineId);
-        await card.getByLabel('Cantidad recibida').fill(quantity);
-        await card.getByLabel('Referencia').fill(reference);
-        await card.getByRole('button', { name: 'Registrar recepción', exact: true }).tap();
-        await visible(card.getByText(summary, { exact: true }));
+      const receive = async (quantity, reference, balance) => {
+        await line.getByRole('button', { name: 'Recibir partida' }).tap();
+        await line.getByLabel('Cantidad recibida').fill(quantity);
+        await line.getByLabel('Referencia o remisión').fill(reference);
+        await line.getByRole('button', { name: 'Registrar recepción', exact: true }).tap();
+        await visible(line.getByText('Pendientes ' + balance, { exact: true }));
       };
-      await receive('0.75', 'Entrega QA A', 'Filtro OC móvil QA · Recibidas 0.75 de 2 · Pendientes 1.25');
-      await receive('1.25', 'Entrega QA B', 'Filtro OC móvil QA · Recibidas 2 de 2 · Pendientes 0');
+      await receive('0.75', 'Entrega QA A', '1.25');
+      await receive('1.25', 'Entrega QA B', '0');
       await page.reload({ waitUntil: 'domcontentloaded' });
-      await open();
       await visible(card.getByText(/Entrega QA A/));
       await visible(card.getByText(/Entrega QA B/));
-      await visible(card.getByText(/· Recibida parcial ·/));
+      await visible(card.getByText('Recibida parcial', { exact: true }));
       const item = sheet.read(tabs.lines).find(row => row[6] === lineId);
       assert.equal(JSON.parse(item[11]).length, 2);
       await noHorizontalOverflow(page, 390);
       await shot(page, 'oc-recepcion-parcial-390.png');
       return { folio: purchaseFolio, received: 2, remainingOnLine: 0, receipts: 2, orderStatus: 'Recibida parcial' };
-    }));
+    }, browserWarehouse));
 
     await record('MÓVIL-GASTOS-RECIBO-REPARTO', () => inRole('jefe_taller', 390, async page => {
       await page.goto(`${origin}/gastos`, { waitUntil: 'domcontentloaded' });
@@ -650,6 +652,8 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await page.locator('input[type=file][accept="image/*,application/pdf"]').setInputFiles({ name: 'recibo-sintetico.png', mimeType: 'image/png', buffer: photoPng });
       await visible(page.getByText(/Datos extraídos/));
       assert.equal(await page.getByPlaceholder('A-04821').inputValue(), 'FAC-QA-MOVIL');
+      const entity = page.getByRole('combobox', { name: 'Entidad y moneda', exact: true });
+      await entity.selectOption('TP_PA_QA');
       await clickByName(page, 'Múltiples · Flota');
       const unitPicker = page.locator('select').filter({ has: page.locator('option').filter({ hasText: 'Agregar unidad' }) });
       await unitPicker.selectOption('DZ203');
@@ -658,14 +662,13 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await allocations.nth(0).fill('83.52');
       await allocations.nth(1).fill('55.68');
       await clickByName(page, 'Registrar 2 gastos');
-      await visible(page.getByText('2 gastos registrados', { exact: true }));
+      await visible(page.getByText('2 repartos registrados para revisión', { exact: true }));
       const saved = sheet.read(tabs.expenses).filter(row => row[6] === 'FAC-QA-MOVIL');
       assert.deepEqual(saved.map(row => [row[10], row[9]]), [['DZ203', '83.52'], ['EX401', '55.68']]);
       assert(saved.every(row => row[15].startsWith(`${origin}/storage/v1/object/public/receipt-photos/`)));
-      await visible(page.getByText(/Cambio de precios detectado/));
-      assert(fixture.alerts.some(batch => batch.some(change => change.part_number === 'QA-001' && change.old_price === 100 && change.new_price === 120)));
+      assert(saved.every(row => row[16] === 'Pendiente'));
       await noHorizontalOverflow(page, 390);
-      return { folio: saved[0][17], total: 139.2, units: saved.map(row => row[10]), ocr: 'simulado', alert: 'capturada en el fixture' };
+      return { folio: saved[0][17], total: 139.2, units: saved.map(row => row[10]), ocr: 'simulado', review: 'pendiente' };
     }));
 
     await record('MÓVIL-GASTOS-MES-PDF', () => inRole('gerencia', 390, async page => {
@@ -677,11 +680,13 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await visible(page.getByText('Proveedor QA mes anterior', { exact: true }));
       assert.equal(await page.getByRole('link', { name: 'Abrir recibo' }).count(), 0);
       await clickByName(page, 'Resumen');
-      const download = page.waitForEvent('download');
-      await clickByName(page, /^Descargar PDF/);
+      const [download] = await Promise.all([
+        page.waitForEvent('download', { timeout: 7000 }),
+        clickByName(page, /^Descargar PDF/),
+      ]);
       const artifact = 'Hermes_Gastos_QA.pdf';
       const target = resolve(out, artifact);
-      await (await download).saveAs(target);
+      await download.saveAs(target);
       const printed = execFileSync('pdftotext', [target, '-'], { encoding: 'utf8' });
       assert.match(printed, /116[.,]29/);
       assert.doesNotMatch(printed, /139[.,]20|83[.,]52|55[.,]68/);

@@ -3,11 +3,13 @@
  * Alerts inbox: fetch, group, acknowledge in one surface.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Bell, RefreshCw, AlertTriangle, ClipboardX, Package, Wrench, CheckCircle } from 'lucide-react';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
 import { parseInventoryRows } from '../lib/inventory-rows';
 import { SkeletonList } from '../components/ui/Skeleton';
+import { useAuthStore } from '../stores/auth-store';
+import { fetchPanamaMaintenance, isPmAlert, maintenanceFullyVerified, type PanamaMaintenance } from '../lib/panama-maintenance';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -45,6 +47,8 @@ interface PmVencidoAlert {
   horasActuales: number;
   horasProximo: number;
   horasVencido: number;
+  status?: string;
+  reconciliationPending?: boolean;
 }
 
 type Alert = FallaCriticaAlert | DvirReprobadoAlert | StockCriticoAlert | PmVencidoAlert;
@@ -54,6 +58,7 @@ interface AlertsData {
   dvir: DvirReprobadoAlert[];
   stock: StockCriticoAlert[];
   pm: PmVencidoAlert[];
+  maintenance?: PanamaMaintenance;
 }
 
 // ── Data computation ──────────────────────────────────────────────────────────
@@ -246,7 +251,7 @@ function StockCard({ alert }: { alert: StockCriticoAlert }) {
 }
 
 function PmCard({ alert }: { alert: PmVencidoAlert }) {
-  const isOverdue = alert.horasVencido > 0;
+  const isOverdue = alert.horasVencido >= 0 || alert.status?.includes('VENCIDO') === true;
   return (
     <div className={`bg-white rounded-xl shadow-sm border border-border border-l-4 ${isOverdue ? 'border-l-critical' : 'border-l-amber'} p-4`}>
       <div className="flex items-start justify-between gap-2 mb-1">
@@ -255,7 +260,9 @@ function PmCard({ alert }: { alert: PmVencidoAlert }) {
           {isOverdue ? 'VENCIDO' : 'PRÓXIMO'}
         </span>
       </div>
-      <p className="text-sm text-text-secondary">{alert.tipoPm}</p>
+      <p className="text-sm text-text-secondary">{alert.tipoPm} · {alert.horasProximo.toLocaleString()} h</p>
+      {alert.status && <p className="text-xs text-text-secondary">PM FLOTA: {alert.status}</p>}
+      {alert.reconciliationPending && <p className="text-xs text-text-secondary">Cierre aceptado en Hermes, pendiente de conciliar con PM FLOTA.</p>}
       <div className="flex items-center justify-between mt-2 text-sm">
         <span className="text-text-secondary font-mono">Actual: {alert.horasActuales.toLocaleString()} hrs</span>
         <span className={`font-bold ${isOverdue ? 'text-critical' : 'text-amber'}`}>
@@ -272,6 +279,9 @@ function PmCard({ alert }: { alert: PmVencidoAlert }) {
 
 export default function AlertsPage() {
   const navigate = useNavigate();
+  const project = useAuthStore(state => state.project);
+  const userId = useAuthStore(state => state.userId);
+  const isPanama = project === 'tmf-panama';
   const [data, setData] = useState<AlertsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -282,22 +292,32 @@ export default function AlertsPage() {
     setError(null);
 
     try {
-      const [averias, inspecciones, inventario, historialPm, horometros] = await Promise.all([
+      const [averias, inspecciones, inventario] = await Promise.all([
         readRange(SHEET_TABS.AVERIAS, signal),
         readRange(SHEET_TABS.INSPECCIONES, signal),
         readRange(SHEET_TABS.INVENTARIO, signal),
-        readRange(SHEET_TABS.HISTORIAL_PM, signal),
-        readRange(SHEET_TABS.HOROMETROS, signal),
       ]);
 
+      const maintenance = isPanama ? await fetchPanamaMaintenance(signal) : undefined;
+      let pm: PmVencidoAlert[];
+      if (maintenance) {
+        pm = (maintenance.entries ?? []).filter(isPmAlert).flatMap((entry): PmVencidoAlert[] => {
+          if (entry.currentHours === null || entry.dueAt === null || entry.remaining === null) return [];
+          return [{
+            kind: 'pm', id: `pm-${entry.unit}`, unidad: entry.unit, tipoPm: entry.level,
+            horasActuales: entry.currentHours, horasProximo: entry.dueAt, horasVencido: -entry.remaining,
+            status: entry.sourceStatus, reconciliationPending: entry.reconciliationPending,
+          }];
+        }).sort((a, b) => b.horasVencido - a.horasVencido);
+      } else {
+        const [historialPm, horometros] = await Promise.all([
+          readRange(SHEET_TABS.HISTORIAL_PM, signal),
+          readRange(SHEET_TABS.HOROMETROS, signal),
+        ]);
+        pm = computePm(historialPm, horometros);
+      }
       if (signal.aborted) return;
-
-      setData({
-        fallas: computeFallas(averias),
-        dvir: computeDvir(inspecciones),
-        stock: computeStock(inventario),
-        pm: computePm(historialPm, horometros),
-      });
+      setData({ fallas: computeFallas(averias), dvir: computeDvir(inspecciones), stock: computeStock(inventario), pm, maintenance });
       setLastRefresh(new Date());
     } catch (err: unknown) {
       if (signal.aborted) return;
@@ -305,28 +325,30 @@ export default function AlertsPage() {
     } finally {
       if (!signal.aborted) setLoading(false);
     }
-  }, []);
+  }, [isPanama]);
 
   useEffect(() => {
     const ctrl = new AbortController();
     load(ctrl.signal);
     return () => ctrl.abort();
-  }, [load]);
+  }, [load, userId]);
 
   function handleRetry() {
     const ctrl = new AbortController();
     load(ctrl.signal);
   }
 
+  const componentAlerts = data?.maintenance?.components?.filter(row => (row.critical ?? 0) > 0 || (row.upcoming ?? 0) > 0) ?? [];
+  const unverified = data?.maintenance !== undefined && !maintenanceFullyVerified(data.maintenance);
   const totalAlerts = data
-    ? data.fallas.length + data.dvir.length + data.stock.length + data.pm.length
+    ? data.fallas.length + data.dvir.length + data.stock.length + data.pm.length + componentAlerts.length
     : 0;
 
   const allAlerts: Alert[] = data
     ? [...data.fallas, ...data.dvir, ...data.stock, ...data.pm]
     : [];
 
-  const noAlerts = !loading && !error && data !== null && allAlerts.length === 0;
+  const noAlerts = !loading && !error && !unverified && data !== null && allAlerts.length === 0 && componentAlerts.length === 0;
 
   return (
     <div className="flex flex-col pb-4 animate-fade-up">
@@ -381,6 +403,14 @@ export default function AlertsPage() {
           >
             Reintentar
           </button>
+        </div>
+      )}
+
+      {!loading && !error && unverified && (
+        <div role="alert" className="mb-4 rounded-xl border border-amber bg-amber-50 p-4 text-sm text-text">
+          <p className="font-semibold">Estado de mantenimiento sin verificar</p>
+          <p className="mt-1">PM FLOTA o Componentes tienen fuentes sin datos, lecturas o cierres pendientes de conciliar. Revisa las alertas disponibles.</p>
+          <Link to="/pm" className="mt-2 inline-flex min-h-11 items-center font-semibold underline">Abrir Programa de Mantenimiento</Link>
         </div>
       )}
 
@@ -461,7 +491,7 @@ export default function AlertsPage() {
               colorClass="text-amber"
             />
             {data.pm.length === 0 ? (
-              <p className="text-xs text-text-secondary pl-1">Sin alertas</p>
+              <p className="text-xs text-text-secondary pl-1">{unverified ? 'Sin PM verificables con las fuentes disponibles' : 'Sin alertas'}</p>
             ) : (
               <div className="flex flex-col gap-3">
                 {data.pm.map((a) => <PmCard key={a.id} alert={a} />)}
@@ -469,6 +499,17 @@ export default function AlertsPage() {
             )}
           </section>
 
+          {componentAlerts.length > 0 && (
+            <section>
+              <SectionHeader icon={<Wrench size={16} />} title="Componentes por revisar" count={componentAlerts.length} colorClass="text-amber" />
+              <ul className="divide-y divide-border rounded-xl border border-border bg-white px-4">
+                {componentAlerts.map(item => <li key={item.unit} className="py-3 text-sm text-text">
+                  <strong>{item.unit}</strong> · Críticos: {item.critical ?? 'sin dato'} · Próximos: {item.upcoming ?? 'sin dato'} · Sin dato: {item.noData ?? 'sin dato'}
+                </li>)}
+              </ul>
+              <Link to="/panama" className="mt-2 inline-flex min-h-11 items-center text-sm font-semibold underline">Consultar maestros de componentes</Link>
+            </section>
+          )}
         </div>
       )}
 

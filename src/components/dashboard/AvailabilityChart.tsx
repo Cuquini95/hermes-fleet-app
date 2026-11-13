@@ -26,8 +26,9 @@ export default function AvailabilityChart({ data, loading = false }: Availabilit
   return (
     <div className="bg-card rounded-xl shadow-sm p-4 border border-border">
       <h3 className="font-semibold text-text mb-4">
-        Tendencia de Disponibilidad - 7 dias
+        Referencia mecánica · últimos 7 días
       </h3>
+      <p className="mb-3 text-xs text-text-secondary">Estimación según averías abiertas y estado actual. Las restricciones de despacho se consultan por separado.</p>
       {!hasData ? (
         <div className="flex h-[200px] items-center justify-center rounded-lg border border-dashed border-border text-sm text-text-secondary">
           {loading ? 'Cargando disponibilidad…' : 'Disponibilidad sin datos'}
@@ -56,7 +57,7 @@ export default function AvailabilityChart({ data, loading = false }: Availabilit
                 const available = Math.max(0, total - unavailable);
                 return [
                   `${value}%${total ? ` (${available}/${total} disponibles)` : ''}`,
-                  'Disponibilidad',
+                  'Disponibilidad mecánica estimada',
                 ];
               }}
               contentStyle={{

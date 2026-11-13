@@ -3,6 +3,9 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Activity, AlertTriangle, Fuel, Bell, RefreshCw, Package, ShoppingCart, Building2 } from 'lucide-react';
 import { useEquipmentList } from '../../hooks/useEquipmentList';
 import { useDashboardData } from '../../hooks/useDashboardData';
+import { useFleetDispatch } from '../../hooks/useFleetDispatch';
+import { dispatchAvailability } from '../../lib/availability';
+import { useEquipmentStore } from '../../stores/equipment-store';
 import { useAuthStore } from '../../stores/auth-store';
 import KPICard from '../ui/KPICard';
 import { SkeletonKPI } from '../ui/Skeleton';
@@ -10,6 +13,7 @@ import FleetGrid from './FleetGrid';
 import AvailabilityChart from './AvailabilityChart';
 import AccionesDelDia from './AccionesDelDia';
 import BriefingCard from './BriefingCard';
+import PanamaFinanceHandoff from './PanamaFinanceHandoff';
 import { usePullToRefresh } from '../../hooks/usePullToRefresh';
 import PullIndicator from '../ui/PullIndicator';
 
@@ -26,12 +30,20 @@ export default function ExecutiveDashboard() {
   const [activeTab, setActiveTab] = useState<Tab>('general');
   const navigate = useNavigate();
   const equipment = useEquipmentList();
-  const data = useDashboardData();
+  const data = useDashboardData(equipment);
+  const equipmentError = useEquipmentStore((state) => state.error);
+  const dispatch = useFleetDispatch(equipment);
+  const snapshot = dispatchAvailability(equipment, dispatch.readiness, dispatch.verified && !dispatch.loading && !equipmentError);
+  const refreshAll = useCallback(() => {
+    data.refresh();
+    return dispatch.refresh();
+  }, [data.refresh, dispatch.refresh]);
   const role = useAuthStore((s) => s.role);
+  const project = useAuthStore((s) => s.project);
 
   const handleRefresh = useCallback(async () => {
-    data.refresh();
-  }, [data]);
+    await refreshAll();
+  }, [refreshAll]);
 
   const { scrollRef, onTouchStart, onTouchMove, onTouchEnd, pullDistance, refreshing, pullIndicatorStyle, isReady } =
     usePullToRefresh({ onRefresh: handleRefresh });
@@ -70,7 +82,7 @@ export default function ExecutiveDashboard() {
           </button>
         ))}
         <button
-          onClick={data.refresh}
+          onClick={refreshAll}
           disabled={data.loading}
           className="ml-auto p-1.5 rounded-full text-text-secondary hover:text-text hover:bg-card border border-transparent hover:border-border transition-colors disabled:opacity-40"
           aria-label="Actualizar datos"
@@ -96,8 +108,8 @@ export default function ExecutiveDashboard() {
             <div className="grid grid-cols-2 gap-3">
               <KPICard
                 icon={<Activity size={20} />}
-                value={data.availability === null ? '—' : `${data.availability}%`}
-                label="Disponibilidad"
+                value={snapshot.pct === null ? 'Sin verificar' : `${snapshot.pct}%`}
+                label={snapshot.available === null ? "Aptos para despacho" : `Aptos para despacho · ${snapshot.available}/${snapshot.total}`}
                 color="#16A34A"
               />
               <KPICard
@@ -122,13 +134,15 @@ export default function ExecutiveDashboard() {
           )}
 
           {/* Fleet grid */}
-          <FleetGrid equipment={equipment} />
+          <FleetGrid equipment={equipment} dispatch={dispatch} />
 
           {/* Availability chart */}
           <AvailabilityChart data={data.availabilityTrend} loading={data.loading} />
 
           {/* Daily actions */}
-          <AccionesDelDia />
+          <AccionesDelDia exceptions={snapshot.exceptions} readiness={dispatch.readiness} verified={snapshot.pct !== null} />
+
+          {role === 'gerencia' && project === 'tmf-panama' && <PanamaFinanceHandoff />}
 
           {/* Admin shortcuts (Gerencia only) */}
           {role === 'gerencia' && (
@@ -181,7 +195,7 @@ export default function ExecutiveDashboard() {
       )}
 
       {/* Briefing tab */}
-      {activeTab === 'briefing' && <BriefingCard />}
+      {activeTab === 'briefing' && <BriefingCard dispatch={dispatch} />}
 
     </div>
   );

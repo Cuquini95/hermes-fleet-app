@@ -7,7 +7,7 @@ interface PrintPMOrderData {
   model: string;
   pmLevel: string;
   levelsIncluded: string[];
-  horometro: number;
+  horometro: number | null;
   estimatedHours: number;
   mecanico: string;
   autorizadoPor: string;
@@ -80,7 +80,7 @@ export function printPMOrder(data: PrintPMOrderData): void {
     <dt>Nivel PM</dt><dd><span class="badge">${data.pmLevel} (${data.levelsIncluded.join(' + ')})</span></dd>
     <dt>Unidad</dt><dd>${data.unidad}</dd>
     <dt>Modelo</dt><dd>${data.model}</dd>
-    <dt>Horómetro Actual</dt><dd>${data.horometro.toLocaleString()} hrs</dd>
+    <dt>Horómetro Actual</dt><dd>${data.horometro === null ? 'Sin dato verificado' : `${data.horometro.toLocaleString()} hrs`}</dd>
     <dt>Horas Estimadas</dt><dd>${data.estimatedHours} hrs</dd>
     <dt>Mecánico Asignado</dt><dd>${data.mecanico || 'Por asignar'}</dd>
     <dt>Autorizado Por</dt><dd>${data.autorizadoPor}</dd>

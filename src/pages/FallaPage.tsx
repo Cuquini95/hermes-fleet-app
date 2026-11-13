@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { z } from 'zod';
@@ -6,6 +6,8 @@ import { useEquipmentList } from '../hooks/useEquipmentList';
 import { calculatePriority } from '../lib/priority-calculator';
 import { saveWorkshopCapture } from '../lib/offline-queue';
 import { WorkshopApiError } from '../lib/workshop-api';
+import { checkpointFallaClear, checkpointFallaDraft, clearFallaDraft, loadFallaDraft, saveFallaDraft, type FallaDraft } from '../lib/falla-draft';
+import { useAuthStore } from '../stores/auth-store';
 import AutoPriorityIndicator from '../components/falla/AutoPriorityIndicator';
 import PhotoCapture from '../components/ui/PhotoCapture';
 import ConfirmModal from '../components/ui/ConfirmModal';
@@ -36,22 +38,64 @@ interface PhotoItem {
   preview: string;
 }
 
+const emptyDraft: FallaDraft = {
+  unidad: '', tipoFalla: '', descripcion: '', puedeMoverse: null, clienteAfectado: '',
+  ubicacion: '', downtime: '', previousOtId: '', photos: [], mutationId: '', pending: '',
+};
+
 export default function FallaPage() {
+  const userId = useAuthStore((s) => s.userId);
+  const project = useAuthStore((s) => s.project);
+  const scope = JSON.stringify([project, userId]);
+  return <FallaForm key={scope} scope={scope} isPanama={project === 'tmf-panama'} />;
+}
+
+function FallaForm({ scope, isPanama }: { scope: string; isPanama: boolean }) {
   const navigate = useNavigate();
   const equipment = useEquipmentList();
-  const mutationId = useRef('');
   const sending = useRef(false);
+  const writes = useRef<Promise<unknown>>(Promise.resolve());
   const [saving, setSaving] = useState(false);
-  const [pending, setPending] = useState('');
   const [saved, setSaved] = useState(false);
-  const [unidad, setUnidad] = useState('');
-  const [tipoFalla, setTipoFalla] = useState('');
-  const [descripcion, setDescripcion] = useState('');
-  const [puedeMoverse, setPuedeMoverse] = useState<boolean | null>(null);
-  const [clienteAfectado, setClienteAfectado] = useState('');
-  const [ubicacion, setUbicacion] = useState('');
-  const [downtime, setDowntime] = useState('');
+  const [ready, setReady] = useState(false);
+  const [draftError, setDraftError] = useState(false);
+  const [draft, setDraft] = useState<FallaDraft>(emptyDraft);
+  const currentDraft = useRef(draft);
   const [photos, setPhotos] = useState<PhotoItem[]>([]);
+  const { unidad, tipoFalla, descripcion, puedeMoverse, clienteAfectado, ubicacion, downtime, previousOtId, pending } = draft;
+
+  useEffect(() => {
+    let active = true;
+    void loadFallaDraft(scope).then((stored) => {
+      if (active && stored) {
+        const restored = { ...emptyDraft, ...stored };
+        currentDraft.current = restored;
+        setDraft(restored);
+      }
+    }).catch(() => {
+      if (active) setDraftError(true);
+    }).finally(() => {
+      if (active) setReady(true);
+    });
+    return () => { active = false; };
+  }, [scope]);
+
+  useEffect(() => {
+    const previews = draft.photos.map(file => ({ file, preview: URL.createObjectURL(file) }));
+    setPhotos(previews);
+    return () => previews.forEach(photo => URL.revokeObjectURL(photo.preview));
+  }, [draft.photos]);
+
+  function updateDraft(fields: Partial<FallaDraft>) {
+    const next = { ...currentDraft.current, ...fields };
+    currentDraft.current = next;
+    setDraft(next);
+    const checkpoint = checkpointFallaDraft(scope, next);
+    const write = writes.current.then(() => saveFallaDraft(scope, next, checkpoint));
+    writes.current = write.then(() => setDraftError(false), () => setDraftError(true));
+    return writes.current;
+  }
+
   const [showConfirm, setShowConfirm] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [toastType, setToastType] = useState<ToastType>('success');
@@ -75,19 +119,13 @@ export default function FallaPage() {
   });
   const canSubmit = validation.success;
 
-  const handlePhotoCapture = useCallback((file: File) => {
-    const preview = URL.createObjectURL(file);
-    setPhotos((prev) => [...prev, { file, preview }]);
-  }, []);
+  function handlePhotoCapture(file: File) {
+    void updateDraft({ photos: [...currentDraft.current.photos, file] });
+  }
 
-  const handlePhotoRemove = useCallback((index: number) => {
-    setPhotos((prev) => {
-      const updated = [...prev];
-      const removed = updated.splice(index, 1);
-      if (removed[0]) URL.revokeObjectURL(removed[0].preview);
-      return updated;
-    });
-  }, []);
+  function handlePhotoRemove(index: number) {
+    void updateDraft({ photos: draft.photos.filter((_, photoIndex) => photoIndex !== index) });
+  }
 
   function handleSubmitIntent() {
     if (!canSubmit || saving || saved) return;
@@ -105,34 +143,45 @@ export default function FallaPage() {
     sending.current = true;
     setSaving(true);
     setShowConfirm(false);
-    mutationId.current ||= crypto.randomUUID();
+    const mutationId = draft.mutationId || crypto.randomUUID();
     try {
+      await updateDraft({ mutationId, pending: draft.pending || 'Aún falta confirmación del servidor.' });
       const response = await saveWorkshopCapture<{ otId: string }>({
         endpoint: 'report',
-        mutationId: mutationId.current,
+        mutationId,
         input: {
           unit: unidad, type: tipoFalla, description: descripcion.trim(), canMove: puedeMoverse,
           customer: clienteAfectado, location: ubicacion, downtime,
+          ...(isPanama && previousOtId.trim() ? { previousOtId: previousOtId.trim().toUpperCase() } : {}),
         },
-        photos: photos.map(({ file }) => ({ file })),
+        photos: draft.photos.map(file => ({ file })),
       });
       if (response.kind === 'pending') {
-        setPending(response.reason);
+        await updateDraft({ pending: response.reason });
         return;
       }
-      setPending('');
       setSaved(true);
+      checkpointFallaClear(scope);
+      const write = writes.current.then(() => clearFallaDraft(scope));
+      writes.current = write.catch(() => setDraftError(true));
       showToast(`OT creada. ${response.result.otId} disponible en Órdenes`);
     } catch (error) {
       if (error instanceof WorkshopApiError && error.status === 400) {
-        mutationId.current = '';
-        setPending('');
+        await updateDraft({ mutationId: '', pending: '' });
       }
       showToast(error instanceof Error ? error.message : 'No se pudo preparar el reporte', 'error');
     } finally {
       sending.current = false;
       setSaving(false);
     }
+  }
+
+  function discardDraft() {
+    currentDraft.current = emptyDraft;
+    setDraft(emptyDraft);
+    checkpointFallaClear(scope);
+    const write = writes.current.then(() => clearFallaDraft(scope));
+    writes.current = write.then(() => setDraftError(false), () => setDraftError(true));
   }
 
   function handleToastDismiss() {
@@ -161,23 +210,24 @@ export default function FallaPage() {
       <div className="flex items-center gap-3 mb-4">
         <button
           type="button"
+          aria-label="Volver"
           onClick={() => navigate(-1)}
-          className="p-2 rounded-xl bg-white border border-border shadow-sm"
+          className="min-h-12 min-w-12 p-2 rounded-xl bg-white border border-border shadow-sm"
         >
           <ArrowLeft size={20} className="text-text" />
         </button>
         <h1 className="text-xl font-bold text-text">Reportar Falla</h1>
       </div>
 
-      <fieldset disabled={saving || !!pending || saved} className="min-w-0">
+      <fieldset disabled={!ready || saving || !!pending || saved} className="min-w-0">
       {/* Form card */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-border flex flex-col gap-4">
         {/* Unidad */}
         <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-text-secondary">Unidad</label>
-          <select
+          <label htmlFor="falla-unidad" className="text-sm font-medium text-text-secondary">Unidad</label>
+          <select id="falla-unidad"
             value={unidad}
-            onChange={(e) => setUnidad(e.target.value)}
+            onChange={(e) => void updateDraft({ unidad: e.target.value })}
             className="w-full rounded-xl border border-border p-3 bg-white text-text"
           >
             <option value="">Seleccionar unidad...</option>
@@ -191,10 +241,10 @@ export default function FallaPage() {
 
         {/* Tipo de falla */}
         <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-text-secondary">Tipo de Falla</label>
-          <select
+          <label htmlFor="falla-tipo" className="text-sm font-medium text-text-secondary">Tipo de Falla</label>
+          <select id="falla-tipo"
             value={tipoFalla}
-            onChange={(e) => setTipoFalla(e.target.value)}
+            onChange={(e) => void updateDraft({ tipoFalla: e.target.value })}
             className="w-full rounded-xl border border-border p-3 bg-white text-text"
           >
             <option value="">Seleccionar tipo...</option>
@@ -208,26 +258,42 @@ export default function FallaPage() {
 
         {/* Descripción */}
         <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-text-secondary">Descripción</label>
-          <textarea
+          <label htmlFor="falla-descripcion" className="text-sm font-medium text-text-secondary">Descripción</label>
+          <textarea id="falla-descripcion"
             value={descripcion}
-            onChange={(e) => setDescripcion(e.target.value)}
+            onChange={(e) => void updateDraft({ descripcion: e.target.value })}
             placeholder="Describe los síntomas observados..."
             rows={4}
             className="w-full rounded-xl border border-border p-3 text-sm text-text resize-none bg-white"
           />
         </div>
 
+        {isPanama && (
+          <div className="flex flex-col gap-1">
+            <label htmlFor="falla-ot-anterior" className="text-sm font-medium text-text-secondary">OT anterior si la falla se repitió</label>
+            <input
+              id="falla-ot-anterior"
+              type="text"
+              maxLength={90}
+              value={previousOtId}
+              onChange={(event) => void updateDraft({ previousOtId: event.target.value })}
+              placeholder="Folio de la OT cerrada (opcional)"
+              className="w-full rounded-xl border border-border bg-white p-3 text-sm text-text"
+            />
+          </div>
+        )}
+
         {/* Puede moverse */}
         <div className="flex flex-col gap-2">
-          <label className="text-sm font-medium text-text-secondary">¿Puede moverse?</label>
-          <div className="flex gap-2">
+          <span id="falla-movilidad" className="text-sm font-medium text-text-secondary">¿Puede moverse?</span>
+          <div className="flex gap-2" role="group" aria-labelledby="falla-movilidad">
             <button
               type="button"
-              onClick={() => setPuedeMoverse(true)}
-              className={`flex-1 rounded-xl py-2 text-sm font-medium transition-colors ${
+              aria-pressed={puedeMoverse === true}
+              onClick={() => void updateDraft({ puedeMoverse: true })}
+              className={`min-h-12 flex-1 rounded-xl py-2 text-sm font-medium transition-colors ${
                 puedeMoverse === true
-                  ? 'bg-amber text-white'
+                  ? 'bg-[#9A5706] text-white'
                   : 'bg-gray-100 text-text-secondary'
               }`}
             >
@@ -235,10 +301,11 @@ export default function FallaPage() {
             </button>
             <button
               type="button"
-              onClick={() => setPuedeMoverse(false)}
-              className={`flex-1 rounded-xl py-2 text-sm font-medium transition-colors ${
+              aria-pressed={puedeMoverse === false}
+              onClick={() => void updateDraft({ puedeMoverse: false })}
+              className={`min-h-12 flex-1 rounded-xl py-2 text-sm font-medium transition-colors ${
                 puedeMoverse === false
-                  ? 'bg-amber text-white'
+                  ? 'bg-[#9A5706] text-white'
                   : 'bg-gray-100 text-text-secondary'
               }`}
             >
@@ -253,11 +320,11 @@ export default function FallaPage() {
 
         {/* Cliente afectado */}
         <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-text-secondary">Cliente afectado</label>
-          <input
+          <label htmlFor="falla-cliente" className="text-sm font-medium text-text-secondary">Cliente afectado</label>
+          <input id="falla-cliente"
             type="text"
             value={clienteAfectado}
-            onChange={(e) => setClienteAfectado(e.target.value)}
+            onChange={(e) => void updateDraft({ clienteAfectado: e.target.value })}
             placeholder="Nombre del cliente afectado"
             className="w-full rounded-xl border border-border p-3 text-sm text-text bg-white"
           />
@@ -265,11 +332,11 @@ export default function FallaPage() {
 
         {/* Ubicación */}
         <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-text-secondary">Ubicación</label>
-          <input
+          <label htmlFor="falla-ubicacion" className="text-sm font-medium text-text-secondary">Ubicación</label>
+          <input id="falla-ubicacion"
             type="text"
             value={ubicacion}
-            onChange={(e) => setUbicacion(e.target.value)}
+            onChange={(e) => void updateDraft({ ubicacion: e.target.value })}
             placeholder="Frente 3, km 4.5"
             className="w-full rounded-xl border border-border p-3 text-sm text-text bg-white"
           />
@@ -277,10 +344,10 @@ export default function FallaPage() {
 
         {/* Downtime estimado */}
         <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-text-secondary">Downtime estimado</label>
-          <select
+          <label htmlFor="falla-downtime" className="text-sm font-medium text-text-secondary">Downtime estimado</label>
+          <select id="falla-downtime"
             value={downtime}
-            onChange={(e) => setDowntime(e.target.value)}
+            onChange={(e) => void updateDraft({ downtime: e.target.value })}
             className="w-full rounded-xl border border-border p-3 bg-white text-text"
           >
             <option value="">Seleccionar...</option>
@@ -294,7 +361,7 @@ export default function FallaPage() {
 
         {/* Fotos */}
         <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-text-secondary">Fotos</label>
+          <span className="text-sm font-medium text-text-secondary">Fotos</span>
           <PhotoCapture
             photos={photos}
             onCapture={handlePhotoCapture}
@@ -305,7 +372,17 @@ export default function FallaPage() {
       </div>
 
       </fieldset>
-      {pending && (
+      {!pending && !saved && ready && (unidad || tipoFalla || descripcion || puedeMoverse !== null || clienteAfectado || ubicacion || downtime || previousOtId || photos.length > 0) && (
+        <button type="button" onClick={discardDraft} disabled={saving} className="mt-2 min-h-12 self-end px-2 text-sm font-semibold text-text-secondary underline">
+          Descartar borrador
+        </button>
+      )}
+      {draftError && (
+        <p role="alert" className="mt-3 text-sm text-critical">
+          No se pudo conservar el borrador en este dispositivo. Mantén la pantalla abierta hasta confirmar el reporte.
+        </p>
+      )}
+      {pending && !saved && (
         <p role="status" className="mt-3 rounded-xl bg-amber/10 p-3 text-sm text-text">
           Guardado pendiente. {pending}
         </p>
@@ -315,8 +392,8 @@ export default function FallaPage() {
       <button
         type="button"
         onClick={pending ? handleConfirm : handleSubmitIntent}
-        disabled={!canSubmit || saving || saved}
-        className="mt-4 w-full bg-amber text-white rounded-xl py-4 font-semibold text-lg disabled:opacity-40 disabled:cursor-not-allowed transition-opacity btn-press"
+        disabled={!ready || !canSubmit || saving || saved}
+        className="mt-4 w-full bg-[#9A5706] text-white rounded-xl py-4 font-semibold text-lg disabled:opacity-40 disabled:cursor-not-allowed transition-opacity btn-press"
         style={{ minHeight: 52 }}
       >
         {saving ? 'Guardando…' : pending ? 'Reintentar' : 'Enviar Reporte'}

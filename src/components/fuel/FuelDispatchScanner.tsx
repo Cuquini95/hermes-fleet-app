@@ -198,7 +198,7 @@ export default function FuelDispatchScanner({ onClose }: FuelDispatchScannerProp
 
   async function handleConfirmAll() {
     setPhase('submitting');
-    const userName = useAuthStore.getState().userName;
+    const { userName, project } = useAuthStore.getState();
     const validRows = rows.filter(isRowReady);
     setProgress({ sent: 0, total: validRows.length });
 
@@ -226,7 +226,7 @@ export default function FuelDispatchScanner({ onClose }: FuelDispatchScannerProp
       const model = matchedEquipment?.model ?? '';
       const horometroNum = parseFloat(row.horometro) || 0;
       const pmInfo =
-        matchedEquipment && horometroNum > 0
+        project !== 'tmf-panama' && matchedEquipment && horometroNum > 0
           ? getNextPM(model, horometroNum)
           : null;
 

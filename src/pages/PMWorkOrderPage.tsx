@@ -12,6 +12,7 @@ import { mexicoDateInput } from '../lib/date-utils';
 import { requestWorkshop, WorkshopApiError, mechanicCoversUnit, PANAMA_PM_CHECKLIST_SOURCE, type WorkshopMechanic } from '../lib/workshop-api';
 import type { PMChecklist } from '../types/workorder';
 import { useAuthStore } from '../stores/auth-store';
+import { PANAMA_PM_MASTER_URL, fetchPanamaMaintenance, type PanamaMaintenance } from '../lib/panama-maintenance';
 import { printPMOrder } from '../lib/print-pm-order';
 import ConfirmModal from '../components/ui/ConfirmModal';
 import SuccessToast from '../components/ui/SuccessToast';
@@ -40,6 +41,8 @@ function groupByCategory(parts: PMPart[]): Record<string, PMPart[]> {
 export default function PMWorkOrderPage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
+  const userId = useAuthStore((s) => s.userId);
+  const isPanama = useAuthStore((s) => s.project === 'tmf-panama');
   const equipment = useEquipmentList();
   const [params] = useSearchParams();
 
@@ -61,18 +64,50 @@ export default function PMWorkOrderPage() {
   const [toastVisible, setToastVisible] = useState(false);
   const [printData, setPrintData] = useState<Parameters<typeof printPMOrder>[0] | null>(null);
   const [checklistMissing, setChecklistMissing] = useState(false);
+  const [official, setOfficial] = useState<PanamaMaintenance | null>(null);
+  const [preflight, setPreflight] = useState<{ key: string; model?: string; checklist?: PMChecklist | null }>({ key: '' });
 
   const selectedEquipment = equipment.find((eq) => eq.unit_id === unidad);
   const model = selectedEquipment?.model ?? '';
+  const officialEntry = official?.entries?.find(entry => entry.unit === unidad.toUpperCase());
+  const templateKey = `${unidad}:${pmLevel}`;
+  const selectedTemplate = preflight.key === templateKey ? preflight : null;
+  const officialModel = officialEntry?.model || model;
+
+  useEffect(() => {
+    if (!isPanama) return;
+    const controller = new AbortController();
+    void fetchPanamaMaintenance(controller.signal)
+      .then(result => { if (!controller.signal.aborted) setOfficial(result); })
+      .catch(() => { if (!controller.signal.aborted) setOfficial(null); });
+    return () => controller.abort();
+  }, [isPanama, userId]);
+
+  useEffect(() => {
+    if (!isPanama || !unidad || !pmLevel) return;
+    let active = true;
+    void requestWorkshop<{ model: string; checklist: PMChecklist | null }>(`pmtemplate?${new URLSearchParams({ unit: unidad, level: pmLevel })}`)
+      .then(result => { if (active) setPreflight({ key: templateKey, ...result }); })
+      .catch(() => { if (active) setPreflight({ key: templateKey }); });
+    return () => { active = false; };
+  }, [isPanama, unidad, pmLevel, templateKey, userId]);
 
   // Get PM proximity info for selected unit
   const pmInfo = useMemo(() => {
-    if (!selectedEquipment) return null;
-    return getNextPM(selectedEquipment.model, selectedEquipment.current_horometro);
-  }, [selectedEquipment]);
+    if (isPanama) {
+      if (!officialEntry?.level || officialEntry.dueAt === null || officialEntry.remaining === null || officialEntry.state === 'unknown' || officialEntry.reconciliationPending) return null;
+      return { level: officialEntry.level, due_at: officialEntry.dueAt, hours_remaining: officialEntry.remaining };
+    }
+    return selectedEquipment ? getNextPM(selectedEquipment.model, selectedEquipment.current_horometro) : null;
+  }, [selectedEquipment, officialEntry, isPanama]);
 
   // Available PM levels for selected model
-  const availableLevels = useMemo(() => getAvailablePMLevels(model), [model]);
+  const legacyLevels = useMemo(() => getAvailablePMLevels(model), [model]);
+  const availableLevels = isPanama
+    ? [...new Set([...(officialEntry?.allowedLevels ?? []), ...(officialEntry?.level ? [officialEntry.level] : [])])]
+    : legacyLevels;
+  const referenceFallback = isPanama && availableLevels.length === 0;
+  const selectableLevels = referenceFallback ? legacyLevels : availableLevels;
 
   // Auto-suggest the recommended PM level when unit changes
   const suggestedLevel = pmInfo?.level ?? '';
@@ -89,7 +124,8 @@ export default function PMWorkOrderPage() {
   }, [partsKit]);
 
   const estimatedHours = hoursOverride || String(partsKit?.totalEstimatedHours ?? '');
-  const canSubmit = !!selectedEquipment && availableLevels.includes(pmLevel) && !!scheduledDate && Number(estimatedHours) >= 0.25 && Number(estimatedHours) <= 240;
+  const canSubmit = !!selectedEquipment && (selectableLevels.includes(pmLevel) || referenceFallback && /^PM-\d{2,5}$/.test(pmLevel))
+    && !!scheduledDate && Number(estimatedHours) >= 0.25 && Number(estimatedHours) <= 240;
 
   useEffect(() => {
     let active = true;
@@ -128,7 +164,7 @@ export default function PMWorkOrderPage() {
     setError('');
     mutationId.current ||= crypto.randomUUID();
 
-    const levelsIncluded = partsKit?.levelsIncluded ?? [pmLevel];
+    const levelsIncluded = partsKit?.levelsIncluded.length ? partsKit.levelsIncluded : [pmLevel];
     try {
       const { otId, schedule, checklist } = await requestWorkshop<{ otId: string; schedule: string[]; checklist?: PMChecklist | null }>('pm', {
         mutationId: mutationId.current, unit: unidad, level: pmLevel, includedLevels: levelsIncluded.join('+'),
@@ -138,8 +174,8 @@ export default function PMWorkOrderPage() {
       setPending(false);
       setChecklistMissing(checklist === null);
       setPrintData({
-        otId, date: schedule[1] ?? scheduledDate, unidad, model, pmLevel, levelsIncluded,
-        horometro: selectedEquipment?.current_horometro ?? 0, estimatedHours: Number(estimatedHours),
+        otId, date: schedule[1] ?? scheduledDate, unidad, model: officialModel, pmLevel, levelsIncluded,
+        horometro: isPanama ? officialEntry?.currentHours ?? null : selectedEquipment?.current_horometro ?? null, estimatedHours: Number(estimatedHours),
         mecanico: schedule[4] ?? '', autorizadoPor: userName, observaciones, parts: partsKit?.parts ?? [],
       });
       setToastMessage(`${otId} programada en Calendario para ${scheduledDate}`);
@@ -201,10 +237,17 @@ export default function PMWorkOrderPage() {
           <option value="">Seleccionar unidad...</option>
           {equipment.map((eq) => (
             <option key={eq.unit_id} value={eq.unit_id}>
-              {eq.unit_id} — {eq.model} ({eq.current_horometro.toLocaleString()} hrs)
+              {eq.unit_id} — {eq.model}{!isPanama ? ` (${eq.current_horometro.toLocaleString()} hrs)` : ''}
             </option>
           ))}
         </select>
+
+        {isPanama && unidad && !pmInfo && <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-text">
+          El vencimiento no está verificado.{' '}
+          {PANAMA_PM_MASTER_URL
+            ? <a href={PANAMA_PM_MASTER_URL} target="_blank" rel="noreferrer" className="font-semibold underline">Revisar PM FLOTA</a>
+            : <strong>Revisar PM FLOTA</strong>}
+        </p>}
 
         {/* PM proximity card */}
         {pmInfo && selectedEquipment && (
@@ -222,6 +265,7 @@ export default function PMWorkOrderPage() {
             <div className="flex-1">
               <p className="text-sm font-medium text-text">
                 Próximo: {pmInfo.level} a {pmInfo.due_at.toLocaleString()} hrs
+                {isPanama && <span className="block text-xs text-text-secondary">PM FLOTA · {officialEntry?.sourceStatus}</span>}
               </p>
               <p className="text-xs text-text-secondary">
                 {pmInfo.hours_remaining <= 0
@@ -248,7 +292,7 @@ export default function PMWorkOrderPage() {
             <span className="font-semibold text-text">Nivel de PM</span>
           </div>
           <div className="flex gap-2 flex-wrap">
-            {availableLevels.map((level) => {
+            {selectableLevels.map((level) => {
               const isSelected = pmLevel === level;
               const isSuggested = level === suggestedLevel;
               return (
@@ -270,7 +314,28 @@ export default function PMWorkOrderPage() {
               );
             })}
           </div>
-          {pmLevel && (
+          {referenceFallback && <label className="mt-3 flex flex-col gap-1 text-sm font-medium text-text-secondary">
+            Nivel del plan validado por Taller (horas)
+            <input type="text" inputMode="numeric" value={/^PM-\d{1,5}$/.test(pmLevel) ? pmLevel.slice(3) : ''}
+              onChange={(event) => handleLevelSelect(event.target.value.replace(/\D/g, '').slice(0, 5) ? `PM-${event.target.value.replace(/\D/g, '').slice(0, 5)}` : '')}
+              className="w-full rounded-xl border border-border p-3 text-text" />
+            <span className="text-xs">Plan oficial no disponible en esta consulta. Verifica el nivel y estima las horas antes de programar.</span>
+          </label>}
+          {isPanama && pmLevel && (
+            <div className="mt-3 rounded-xl border border-border p-3 text-sm text-text">
+              <p>{selectedTemplate?.checklist
+                ? `Checklist configurado para ${selectedTemplate.model}: ${selectedTemplate.checklist.reference} (${selectedTemplate.checklist.tasks.length} tareas).`
+                : selectedTemplate === null
+                  ? 'Consultando checklist por modelo y nivel…'
+                  : selectedTemplate.checklist === null
+                    ? 'Checklist pendiente de validar para este modelo y nivel. La ejecución no se puede entregar hasta su validación.'
+                    : 'No se pudo verificar el checklist en Hermes.'}</p>
+              <a href={officialEntry?.checklistUrl ?? PANAMA_PM_CHECKLIST_SOURCE} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center font-medium underline">
+                Consultar Flota Checklists PM
+              </a>
+            </div>
+          )}
+          {pmLevel && partsKit && partsKit.levelsIncluded.length > 0 && (
             <p className="text-xs text-text-secondary mt-2">
               Incluye: {partsKit?.levelsIncluded.join(' + ')} — ~{partsKit?.totalEstimatedHours ?? 0} hrs estimadas
             </p>
@@ -379,7 +444,7 @@ export default function PMWorkOrderPage() {
         <div className="bg-red-50 border border-critical rounded-xl p-3 flex items-center gap-2 mb-4">
           <AlertTriangle size={18} className="text-critical shrink-0" />
           <span className="text-sm font-medium text-critical">
-            PM VENCIDO — Prioridad máxima. Equipo no debe operar sin este mantenimiento.
+            {isPanama ? 'PM vencido según PM FLOTA. Confirma la prioridad y el plan con Taller.' : 'PM VENCIDO — Prioridad máxima. Equipo no debe operar sin este mantenimiento.'}
           </span>
         </div>
       )}

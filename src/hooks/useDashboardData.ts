@@ -1,13 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
-import { useEquipmentList } from './useEquipmentList';
+import type { Equipment } from '../types/equipment';
 import { mexicoDate } from '../lib/date-utils';
-import { buildAvailabilityTrend, calculateAvailability, type AvailabilityPoint } from '../lib/availability';
-import { openAveriaUnitSet, parseAveriaRow } from '../lib/averias';
+import { buildAvailabilityTrend, type AvailabilityPoint } from '../lib/availability';
+import { parseAveriaRow } from '../lib/averias';
 import { useEquipmentStore } from '../stores/equipment-store';
 
 export interface DashboardData {
-  availability: number | null;
   criticalOTs: number | null;
   avgConsumption: string;
   alertsToday: number | null;
@@ -53,7 +52,7 @@ function countAlertsToday(rows: string[][]): number {
   return rows.filter((row) => parseAveriaRow(row)?.fecha === today).length;
 }
 
-export function useDashboardData(): DashboardData {
+export function useDashboardData(equipmentList: Equipment[]): DashboardData {
   const [criticalOTs, setCriticalOTs] = useState<number | null>(null);
   const [avgConsumption, setAvgConsumption] = useState('—');
   const [averiaRows, setAveriaRows] = useState<string[][] | null>(null);
@@ -61,12 +60,10 @@ export function useDashboardData(): DashboardData {
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  const equipmentList = useEquipmentList();
   const equipmentError = useEquipmentStore((state) => state.error);
   const hasAvailability = averiaRows !== null && equipmentList.length > 0 && !equipmentError;
   const scope = new Set(equipmentList.map((equipment) => equipment.unit_id.toUpperCase()));
   const scopedRows = (averiaRows ?? []).filter((row) => scope.has((row[2] ?? '').trim().toUpperCase()));
-  const availability = hasAvailability ? calculateAvailability(equipmentList, openAveriaUnitSet(scopedRows)) : null;
   const availabilityTrend = hasAvailability ? buildAvailabilityTrend(equipmentList, scopedRows) : [];
   const alertsToday = averiaRows === null ? null : countAlertsToday(averiaRows);
 
@@ -108,7 +105,6 @@ export function useDashboardData(): DashboardData {
   }, [fetchAll]);
 
   return {
-    availability,
     criticalOTs,
     avgConsumption,
     alertsToday,

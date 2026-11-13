@@ -18,6 +18,7 @@ import { useAuthStore } from '../stores/auth-store';
 import { useWorkOrderStore } from '../stores/workorder-store';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { getNextPM } from '../data/pm-rules';
+import { fetchPanamaMaintenance, isPmAlert, type PanamaMaintenance } from '../lib/panama-maintenance';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
 import { countCriticalInventory } from '../lib/inventory-rows';
 import KPICard from '../components/ui/KPICard';
@@ -42,6 +43,19 @@ const ACTION_CARDS: ActionCard[] = [
 export default function CoordinatorHomePage() {
   const navigate  = useNavigate();
   const userName  = useAuthStore((s) => s.userName);
+  const userId = useAuthStore(s => s.userId);
+  const isPanama = useAuthStore(s => s.project === 'tmf-panama');
+  const [maintenance, setMaintenance] = useState<PanamaMaintenance | null>(null);
+  const [maintenanceRefresh, setMaintenanceRefresh] = useState(0);
+
+  useEffect(() => {
+    if (!isPanama) return;
+    const controller = new AbortController();
+    void fetchPanamaMaintenance(controller.signal)
+      .then(result => { if (!controller.signal.aborted) setMaintenance(result); })
+      .catch(() => { if (!controller.signal.aborted) setMaintenance(null); });
+    return () => controller.abort();
+  }, [isPanama, userId, maintenanceRefresh]);
   const equipment = useEquipmentList();
   const { workorders, fetched, fetchWorkOrders, loading, error } = useWorkOrderStore();
 
@@ -52,10 +66,9 @@ export default function CoordinatorHomePage() {
   const openOTs     = workorders.filter((ot) => ot.estado !== 'Completado');
   const criticalOTs = workorders.filter((ot) => ot.prioridad === 'CRITICA' && ot.estado !== 'Completado');
 
-  const pmProximos = equipment.filter((e) => {
-    const pm = getNextPM(e.model, e.current_horometro);
-    return pm.hours_remaining <= 50;
-  }).length;
+  const pmProximos = isPanama
+    ? maintenance?.entries?.length ? maintenance.entries.filter(isPmAlert).length : '—'
+    : equipment.filter(e => getNextPM(e.model, e.current_horometro).hours_remaining <= 50).length;
 
   // ── Stock Crítico: count inventory rows where stock <= minimum ──────────
   const [stockCritico, setStockCritico] = useState<number | null>(null);
@@ -80,7 +93,7 @@ export default function CoordinatorHomePage() {
           <p className="text-text-secondary text-sm mt-0.5">Coordinador de Mantenimiento</p>
         </div>
         <button
-          onClick={() => void fetchWorkOrders()}
+          onClick={() => { void fetchWorkOrders(); setMaintenanceRefresh(value => value + 1); }}
           className="p-2 rounded-full"
           style={{ color: '#162252' }}
           aria-label="Actualizar"
@@ -106,7 +119,7 @@ export default function CoordinatorHomePage() {
         <KPICard
           icon={<Timer size={20} />}
           value={pmProximos}
-          label="PM Próximos"
+          label={isPanama ? 'PM Próximos · Maestro' : 'PM Próximos'}
           color="#F59E0B"
         />
         <KPICard

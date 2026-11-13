@@ -16,13 +16,23 @@ function store() {
     [TAB.vendors]: [['NOMBRE'], ['Proveedor de prueba', 'RFC-QA', 'Dirección QA']],
     [TAB.expenses]: [['Gasto_ID']],
     [TAB.audit]: [['Registro']],
+    '12 Inventario Rep.': [['SKU','Descripción','OEM','Serie','Unidad','Stock','Mínimo','Precio','Ubicación','','Equipo'], ['SKU-QA','Filtro QA','','','pza','4','2','5','','','QA-DZ203']],
+    'Movimientos Repuestos PA': [['ID']],
+    '01 Inventario': [['#','COD1','Descripción','Marca','Modelo'], ['1','QA-DZ203','Equipo QA','Komatsu','D65EX-16'], ['2','QA-EX401','Equipo QA','Doosan','DX360']],
+    ORDENES_TRABAJO: [['ROW_ID','OT_ID','FECHA','UNIDAD'], ['1','OT-QA-01','','QA-DZ203','','','','','','En reparación']],
   };
   const used = new Set();
   const replies = new Map();
   let failure;
+  let catalogStockFormula;
   return {
     inspect: (tab) => structuredClone(rows[tab]),
-    async read(tab) { return structuredClone(rows[tab]); },
+    async read(tab, { valueRenderOption } = {}) {
+      const result = structuredClone(rows[tab]);
+      if (tab === TAB.catalog && valueRenderOption === 'FORMULA' && catalogStockFormula) result[1][5] = catalogStockFormula;
+      return result;
+    },
+    setCatalogStockFormula(formula) { catalogStockFormula = formula; },
     failNext(mode) { failure = mode; },
     async replay({ key, fingerprint }) {
       const prior = replies.get(key);
@@ -248,7 +258,7 @@ test('Almacén de Panamá consulta y recibe por partida dentro de su asignación
     const order = await readOrder(created.body.folio, buyer);
     if (!approve) return order;
     assert.equal((await call('order-status', {
-      operationId: randomUUID(), folio: order.folio, version: order.version, status: 'Aprobada',
+      operationId: randomUUID(), folio: order.folio, version: order.version, status: 'Aprobada', reason: 'Soporte Q25 sintético',
     }, buyer)).status, 200);
     return readOrder(order.folio, buyer);
   }
@@ -343,4 +353,113 @@ test('guarda todo el reparto del recibo de forma atómica y cuadra los centavos'
   assert.equal((await call('expense-delete', deletion, oneUnit)).status, 403);
   assert.deepEqual((await call('expense-delete', deletion)).body.removed, saved.body.ids);
   assert.ok(sheets.inspect(TAB.expenses).slice(1).every((row) => row[16] === 'Eliminado'));
+});
+
+test('Panamá separa aprobación Q25, recepción con remisión, factura y pago conciliado', async () => {
+  const { call, readOrder, sheets } = setup();
+  const buyer = { ...manager, project: 'tmf-panama', projects: ['tmf-panama'], previewDemo: true };
+  const receiver = { ...buyer, userId: 'almacen-qa', role: 'jefe_taller', canApprovePurchases: false, canReceivePurchases: true };
+  const accounting = { ...buyer, userId: 'contabilidad-qa', canApprovePurchases: false, canRecordPurchaseInvoices: true };
+  const treasury = { ...buyer, userId: 'tesoreria-qa', canApprovePurchases: false, canRecordPurchasePayments: true };
+  const created = await call('order-save', newOrder({ entity: 'TP_PA_DEMO', unit: 'QA-DZ203', lines: [
+    { description: 'Parte de prueba', quantity: '2', unitPrice: '10' },
+  ] }), buyer);
+  assert.equal(created.status, 200);
+  const { folio } = created.body;
+  let order = await readOrder(folio, buyer);
+  const input = (fields) => ({ operationId: randomUUID(), folio, version: order.version, ...fields });
+  assert.equal((await call('order-status', input({ status: 'Aprobada' }), buyer)).status, 400);
+  assert.equal((await call('order-status', input({ status: 'Aprobada', reason: 'Justificación Q25 de prueba' }), buyer)).status, 200);
+  order = await readOrder(folio, buyer);
+  assert.equal(order.approvalReason, 'Justificación Q25 de prueba');
+  const receipt = (reference) => input({ lineId: order.lines[0].id, quantity: '1', reference });
+  assert.equal((await call('order-receive', receipt('R-01'), buyer)).status, 403);
+  assert.equal((await call('order-receive', receipt('R-01'), { ...buyer, canReceivePurchases: true })).status, 403);
+  assert.equal((await call('order-receive', receipt(''), receiver)).status, 400);
+  assert.equal((await call('order-status', input({ status: 'Pagada' }), buyer)).status, 403);
+  assert.equal((await call('order-payment', input({ reference: 'P-01', amount: order.total }), treasury)).status, 409);
+  const first = receipt('R-01');
+  assert.equal((await call('order-receive', first, receiver)).status, 200);
+  order = await readOrder(folio, buyer);
+  assert.equal(order.receiptStatus, 'Recibida parcial');
+  assert.equal((await call('order-invoice', input({ reference: 'F-01', amount: order.total }), accounting)).status, 409);
+  assert.equal((await call('order-receive', receipt('R-02'), receiver)).status, 200);
+  assert.equal((await call('order-receive', first, receiver)).status, 200);
+  order = await readOrder(folio, buyer);
+  assert.equal(order.receiptStatus, 'Recibida');
+  assert.equal((await call('order-payment', input({ reference: 'P-01', amount: order.total }), treasury)).status, 409);
+  assert.equal((await call('order-invoice', input({ reference: 'F-01', amount: '1' }), accounting)).status, 409);
+  assert.equal((await call('order-invoice', input({ reference: 'F-01', amount: order.total }), accounting)).status, 200);
+  order = await readOrder(folio, buyer);
+  assert.equal(order.invoice.reference, 'F-01');
+  assert.equal(order.invoice.actorId, accounting.userId);
+  assert.equal(order.status, 'Recibida');
+  assert.equal((await call('order-payment', input({ reference: 'P-01', amount: order.total }), { ...accounting, canRecordPurchasePayments: true })).status, 403);
+  assert.equal((await call('order-payment', input({ reference: 'P-01', amount: order.total }), buyer)).status, 403);
+  assert.equal((await call('order-payment', input({ reference: 'P-01', amount: order.total }), treasury)).status, 200);
+  order = await readOrder(folio, buyer);
+  assert.equal(order.status, 'Pagada');
+  assert.equal(order.payment.actorId, treasury.userId);
+  assert.equal(order.payment.invoiceReference, 'F-01');
+  assert.deepEqual(order.lines[0].receipts.map((receipt) => receipt.reference), ['R-01', 'R-02']);
+  assert.equal(sheets.inspect(TAB.audit).filter((row) => row[4] === 'Pago de OC conciliado').length, 1);
+});
+
+test('Panamá valida la compatibilidad y registra movimientos de stock conciliables con la OT', async () => {
+  const { call, readOrder, sheets } = setup();
+  const buyer = { ...manager, project: 'tmf-panama', projects: ['tmf-panama'], previewDemo: true };
+  const warehouse = { ...buyer, userId: 'almacen-qa', role: 'jefe_taller', canApprovePurchases: false, canReceivePurchases: true };
+  const stock = () => sheets.inspect('12 Inventario Rep.')[1][5];
+  const orderPart = (equipment) => ({
+    operationId: randomUUID(), items: [
+      { part_number: 'SKU-QA', description: 'Filtro catálogo', quantity: '2', equipment },
+    ],
+  });
+  assert.equal((await call('request-submit', orderPart('QA-EX401'), warehouse)).status, 409);
+  const request = await call('request-submit', orderPart('QA-DZ203'), warehouse);
+  assert.equal(request.status, 200);
+  const line = (await call('requests', null, warehouse)).body.items[0];
+  const created = await call('order-save', newOrder({ entity: 'TP_PA_DEMO', unit: 'QA-DZ203', lines: [
+    { requestLineId: line.id, quantity: '2', unitPrice: '5.00' },
+  ] }), buyer);
+  assert.equal(created.status, 200);
+  const { folio } = created.body;
+  let order = await readOrder(folio, buyer);
+  assert.equal((await call('order-status', {
+    operationId: randomUUID(), folio, version: order.version, status: 'Aprobada', reason: 'Soporte Q25 QA',
+  }, buyer)).status, 200);
+  order = await readOrder(folio, buyer);
+  sheets.setCatalogStockFormula('=SUM(F10:F20)');
+  const blockedReceipt = await call('order-receive', {
+    operationId: randomUUID(), folio, version: order.version, lineId: order.lines[0].id, quantity: '1', reference: 'R-FORMULA',
+  }, warehouse);
+  assert.equal(blockedReceipt.status, 409);
+  assert.match(blockedReceipt.body.error, /fórmula/i);
+  assert.equal((await readOrder(folio, buyer)).lines[0].received, '0');
+  assert.equal(stock(), '4');
+  sheets.setCatalogStockFormula('');
+  for (const ref of ['R-11','R-12']) {
+    const receipt = { operationId: randomUUID(), folio, version: order.version, lineId: order.lines[0].id, quantity: '1', reference: ref };
+    assert.equal((await call('order-receive', receipt, warehouse)).status, 200);
+    assert.equal((await call('order-receive', receipt, warehouse)).status, 200);
+    order = await readOrder(folio, buyer);
+  }
+  assert.equal(stock(), '6');
+  const move = (kind, quantity, reference) => ({ operationId: randomUUID(), kind, partNumber: 'SKU-QA', ot: 'OT-QA-01', quantity, reference });
+  sheets.setCatalogStockFormula('=SUM(F10:F20)');
+  assert.equal((await call('inventory-move', move('Salida','2','S-FORMULA'), warehouse)).status, 409);
+  assert.equal(stock(), '6');
+  sheets.setCatalogStockFormula('');
+  assert.equal((await call('inventory-move', move('Salida','7','S-01'), warehouse)).status, 409);
+  assert.equal((await call('inventory-move', move('Salida','2','S-01'), buyer)).status, 403);
+  const issue = move('Salida','2','S-01');
+  assert.equal((await call('inventory-move', issue, warehouse)).status, 200);
+  assert.equal((await call('inventory-move', issue, warehouse)).status, 200);
+  assert.equal(stock(), '4');
+  assert.equal((await call('inventory-move', move('Devolución','3','D-01'), warehouse)).status, 409);
+  assert.equal((await call('inventory-move', move('Devolución','1','D-01'), warehouse)).status, 200);
+  assert.equal(stock(), '5');
+  const history = (await call('inventory-movements', null, warehouse, { ot: 'OT-QA-01' })).body.items;
+  assert.deepEqual(history.map(item => [item.kind,item.quantity]), [['Devolución','1'],['Salida','2']]);
+  assert.equal(sheets.inspect('Movimientos Repuestos PA').length, 5);
 });

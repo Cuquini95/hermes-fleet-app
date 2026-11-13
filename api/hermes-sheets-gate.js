@@ -5,6 +5,9 @@ import { rejectIfRateLimited } from './_lib/rate-limit.js';
 import meterHandler from './_lib/cmms-meter.js';
 import { dispatchPanama, PANAMA_PROJECT, readPanamaInventory } from './_lib/hermes-panama.js';
 import { createPanamaDemoSheets } from './_lib/hermes-panama-demo.js';
+import { technicalDocuments } from './_lib/hermes-technical-library.js';
+import { validatePanamaMeterAppend } from './_lib/hermes-shifts.js';
+import { readPersonalHistory } from './_lib/hermes-profile.js';
 
 const ADMIN = ['jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
 const WORKSHOP = ['mecanico', ...ADMIN];
@@ -43,9 +46,9 @@ const READ = new Map([
 // These original intake forms append individual records. Multi-record actions,
 // statuses and procurement mutations are accepted only by their domain handler.
 const APPEND = new Map([
-  ['Combustible', { roles: FIELD, unit: 3, actor: 4 }],
-  ['04B Registro Horómetros', { roles: FIELD, unit: 2, actor: 4 }],
-  ['Reporte_Fletes_Transporte', { roles: [...FIELD, 'coordinador'], unit: 2, actor: 3 }],
+  ['Combustible', { roles: FIELD, unit: 3, actor: 4, actorId: 13 }],
+  ['04B Registro Horómetros', { roles: FIELD, unit: 2, actor: 4, actorId: 9 }],
+  ['Reporte_Fletes_Transporte', { roles: [...FIELD, 'coordinador'], unit: 2, actor: 3, actorId: 15 }],
   ['13 Neumáticos', { roles: ADMIN, unit: 1 }],
   ['Proveedores', { roles: GERENCIA }],
   ['Activos', { roles: GERENCIA, unit: 0 }],
@@ -70,6 +73,7 @@ const workshop = context => import('./_lib/hermes-workshop.js').then(module => m
 const purchasing = context => import('./_lib/hermes-purchasing.js').then(module => module.dispatchPurchasing(context));
 const shifts = context => import('./_lib/hermes-shifts.js').then(module => module.dispatchShifts(context));
 const mechanics = (session, unit) => import('./_lib/hermes-identity.js').then(module => module.listWorkshopMechanics(session, unit));
+const operators = (session, unit) => import('./_lib/hermes-identity.js').then(module => module.listShiftOperators(session, unit));
 
 async function visibleRows(sheets, tab, rule, session) {
   const rows = await sheets.read(tab, { cached: true });
@@ -111,8 +115,20 @@ async function sheetAppend(req, res, sheets, session) {
   if (rule.unit !== undefined && (!unitCode(values[rule.unit]) || !supportsUnit(session, values[rule.unit]))) return invalid(res, 403, 'Unidad fuera de tu alcance.');
   const row = values.slice();
   if (rule.actor !== undefined) row[rule.actor] = session.userName;
+  if (session.project === PANAMA_PROJECT && rule.actorId !== undefined) {
+    while (row.length < rule.actorId) row.push('');
+    row[rule.actorId] = session.userId;
+  }
   const fingerprint = createHash('sha256').update(JSON.stringify([tab, row])).digest('hex');
-  await sheets.commit({ key: `append:${session.userId}:${fingerprint}`, fingerprint, writes: [{ tab, append: [row] }], result: { success: true } });
+  const key = `append:${session.userId}:${fingerprint}`;
+  let guard;
+  if (session.project === PANAMA_PROJECT && tab === '04B Registro Horómetros') {
+    const previous = await sheets.replay({ key, fingerprint });
+    if (previous) return res.status(200).json(previous);
+    const version = await validatePanamaMeterAppend(sheets, tab, row);
+    guard = `panama:meter:${String(row[2]).trim().toUpperCase()}:${version}`;
+  }
+  await sheets.commit({ key, fingerprint, guard, writes: [{ tab, append: [row] }], result: { success: true } });
   return res.status(200).json({ success: true });
 }
 
@@ -144,9 +160,11 @@ export function createHermesGateway({
   demoSheets,
   sessionReader = requireSession,
   listMechanics = mechanics,
+  listShiftOperators = operators,
   dispatchWorkshop = workshop,
   dispatchPurchasing = purchasing,
   readPanama,
+  panamaTechnicalCatalog = () => process.env.HERMES_PANAMA_TECHNICAL_CATALOG_JSON,
   panamaOnly = false,
   enablePanamaOperations = false,
   enablePanamaFuelCapture = false,
@@ -172,15 +190,46 @@ export function createHermesGateway({
         if (req.method !== 'GET') return invalid(res, 405, 'Método no permitido.');
         return res.status(200).json({ fuelCapture: enablePanamaOperations && writeEnabled && (demo || enablePanamaFuelCapture) });
       }
+      if (path === 'api/panama/documentos-tecnicos') {
+        if (session.project !== PANAMA_PROJECT || !WORKSHOP.includes(session.role)) return invalid(res, 403, 'Consulta no autorizada.');
+        if (req.method !== 'GET') return invalid(res, 405, 'Método no permitido.');
+        const result = technicalDocuments(panamaTechnicalCatalog(), req.query);
+        return res.status(result.status).json(result.body);
+      }
       const shiftRoute = path === 'api/panama/turnos' || path.startsWith('api/panama/turnos/');
       if ((path.startsWith('api/panama/') && !shiftRoute) || (session.project === PANAMA_PROJECT && !enablePanamaOperations)) {
-        const result = await dispatchPanama({ path, method: req.method, session, read: demo ? demoSheets.readSummary : readPanama });
+        const result = await dispatchPanama({ path, method: req.method, query: req.query, session, read: demo ? demoSheets.readSummary : readPanama });
         return res.status(result.status).json(result.body);
       }
 
       if (path === 'health' && req.method === 'GET') {
-        await sheets.read('01 Inventario', { cached: true });
-        return res.status(200).json({ status: 'ok', writeEnabled, ...(demo ? { dataMode: 'demo' } : {}) });
+        if (session.project !== PANAMA_PROJECT) {
+          await sheets.read('01 Inventario', { cached: true });
+          return res.status(200).json({ status: 'ok', writeEnabled });
+        }
+        const [fleet, operations] = await Promise.allSettled([
+          sheets.read('01 Inventario', { cached: true }),
+          sheets.read('Hermes_Transacciones', { cached: true }),
+        ]);
+        const checks = {
+          identity: 'up',
+          fleet: fleet.status === 'fulfilled' ? 'up' : 'down',
+          operations: operations.status === 'fulfilled' ? 'up' : 'down',
+        };
+        return res.status(200).json({
+          status: checks.fleet === 'up' && checks.operations === 'up' ? 'ok' : 'degraded',
+          checks,
+          writeEnabled: writeEnabled && checks.operations === 'up',
+          dataMode: demo ? 'demo' : 'operational',
+        });
+      }
+      if (path === 'api/profile/history') {
+        if (req.method !== 'GET') return invalid(res, 405, 'Método no permitido.');
+        const history = await readPersonalHistory(sheets, session, {
+          mayRead: tab => READ.get(tab)?.roles.includes(session.role),
+          supportsUnit: unit => supportsUnit(session, unit),
+        });
+        return res.status(200).json(history);
       }
       if (path === 'api/sheets/read') return await sheetRead(req, res, sheets, session);
       if (req.method !== 'GET' && pausedOperations.has(path)) return invalid(res, 503, 'Operación en pausa. Usa el procedimiento vigente de tu área.');
@@ -196,7 +245,7 @@ export function createHermesGateway({
 
       if (req.method !== 'GET' && !writeEnabled) return invalid(res, 503, 'Este despliegue permite consulta.');
       if (shiftRoute) {
-        const result = await shifts({ path, method: req.method, body: req.body ?? {}, session, sheets });
+        const result = await shifts({ path, method: req.method, body: req.body ?? {}, session, sheets, listShiftOperators });
         return res.status(result.status).json(result.body);
       }
       if (path === 'api/sheets/append') {

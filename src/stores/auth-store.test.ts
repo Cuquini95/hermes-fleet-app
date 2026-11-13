@@ -18,6 +18,7 @@ function resetStore() {
     assignedUnits: [],
     isAuthenticated: false,
     sessionChecked: false,
+    sessionUnavailable: false,
   });
 }
 
@@ -85,6 +86,20 @@ describe('auth-store — server-backed session', () => {
     await useAuthStore.getState().validateSession();
     expect(useAuthStore.getState()).toMatchObject({
       role: 'supervisor', assignedUnits: ['CA22'], isAuthenticated: true, sessionChecked: true,
+    });
+  });
+
+  it('keeps protected routes closed after a network error and revalidates on retry', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockRejectedValueOnce(new TypeError('Network unavailable'))
+      .mockResolvedValueOnce(response(200, operatorProfile)));
+    await useAuthStore.getState().validateSession();
+    expect(useAuthStore.getState()).toMatchObject({
+      isAuthenticated: false, sessionChecked: true, sessionUnavailable: true,
+    });
+    await useAuthStore.getState().validateSession();
+    expect(useAuthStore.getState()).toMatchObject({
+      isAuthenticated: true, sessionChecked: true, sessionUnavailable: false,
     });
   });
 

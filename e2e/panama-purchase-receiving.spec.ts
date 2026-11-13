@@ -81,8 +81,10 @@ test('Finanzas consulta la remisión, el responsable y la hora de recepción en 
 
   await page.goto('/admin/ordenes-compra');
   await page.getByRole('button', { name: 'Aceptar y continuar' }).click();
-  await page.getByRole('button', { name: 'Recepciones' }).click();
+  await page.getByRole('button', { name: 'Ver recepciones' }).click();
   const record = page.getByText('Remisión QA 01', { exact: false });
+  await expect(page.getByRole('button', { name: 'Registrar recepción' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Marcar pagada' })).toHaveCount(0);
   await expect(record).toContainText('Almacén QA');
   await expect(record.locator('time')).toHaveAttribute('datetime', '2026-11-12T15:30:00Z');
   await expect(record.locator('time')).toHaveText(/12 nov 2026.*10:30/);

@@ -14,42 +14,27 @@ import {
   Shield,
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
-import { readRange, SHEET_TABS } from '../lib/sheets-api';
 import { ROLE_LABELS } from '../types/roles';
 
 interface ActivityEntry {
   type: string;
+  unit: string;
   date: string;
+  time: string;
+  folio: string;
   detail: string;
+  row: string[];
 }
 
-const EXPORT_TABS = [
-  { key: SHEET_TABS.INSPECCIONES, label: 'Inspecciones DVIR' },
-  { key: SHEET_TABS.AVERIAS, label: 'Fallas reportadas' },
-  { key: SHEET_TABS.COMBUSTIBLE, label: 'Diesel' },
-  { key: SHEET_TABS.HOROMETROS, label: 'Horómetros' },
-  { key: SHEET_TABS.FLETES, label: 'Viajes' },
-  { key: SHEET_TABS.GASTOS, label: 'Gastos' },
-] as const;
+interface PersonalHistory {
+  records: ActivityEntry[];
+  unavailable: string[];
+}
 
-async function fetchUserData(userName: string): Promise<Record<string, string[][]>> {
-  const results: Record<string, string[][]> = {};
-  const nameLower = userName.trim().toLowerCase();
-
-  await Promise.allSettled(
-    EXPORT_TABS.map(async ({ key, label }) => {
-      try {
-        const rows = await readRange(key);
-        results[label] = rows.filter(
-          (row) => (row[2] ?? '').trim().toLowerCase() === nameLower,
-        );
-      } catch {
-        results[label] = [];
-      }
-    }),
-  );
-
-  return results;
+async function readPersonalHistory(): Promise<PersonalHistory> {
+  const response = await fetch('/hermes-api/api/profile/history', { credentials: 'same-origin', cache: 'no-store' });
+  if (!response.ok) throw new Error('No se pudo consultar tu historial. Intenta de nuevo.');
+  return response.json();
 }
 
 function downloadJson(data: unknown, filename: string): void {
@@ -64,38 +49,13 @@ function downloadJson(data: unknown, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
-async function fetchRecentActivity(userName: string): Promise<ActivityEntry[]> {
-  const entries: ActivityEntry[] = [];
-  const nameLower = userName.trim().toLowerCase();
-
-  const sources = [
-    { tab: SHEET_TABS.INSPECCIONES, type: 'DVIR' },
-    { tab: SHEET_TABS.AVERIAS, type: 'Falla' },
-    { tab: SHEET_TABS.COMBUSTIBLE, type: 'Diesel' },
-    { tab: SHEET_TABS.HOROMETROS, type: 'Horómetro' },
-    { tab: SHEET_TABS.FLETES, type: 'Viaje' },
-  ] as const;
-
-  await Promise.allSettled(
-    sources.map(async ({ tab, type }) => {
-      try {
-        const rows = await readRange(tab);
-        for (const row of rows) {
-          if ((row[2] ?? '').trim().toLowerCase() === nameLower) {
-            entries.push({ type, date: row[0] ?? '', detail: row[3] ?? '' });
-          }
-        }
-      } catch {
-        // Tab unavailable — skip silently
-      }
-    }),
-  );
-
-  entries.sort((a, b) => b.date.localeCompare(a.date));
-  return entries.slice(0, 30);
+export default function PerfilPage() {
+  const userId = useAuthStore((s) => s.userId);
+  const project = useAuthStore((s) => s.project);
+  return <Profile key={project + ':' + userId} userId={userId} />;
 }
 
-export default function PerfilPage() {
+function Profile({ userId }: { userId: string }) {
   const navigate = useNavigate();
 
   const userName = useAuthStore((s) => s.userName);
@@ -118,19 +78,20 @@ export default function PerfilPage() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
-  const [activity, setActivity] = useState<ActivityEntry[] | null>(null);
+  const [activity, setActivity] = useState<PersonalHistory | null>(null);
 
   const handleExport = useCallback(async () => {
     if (!userName) return;
     setExportLoading(true);
     setExportError(null);
     try {
-      const data = await fetchUserData(userName);
+      const data = await readPersonalHistory();
+      if (useAuthStore.getState().userId !== userId) return;
       const payload = {
         exportado_por: userName,
         fecha_exportacion: new Date().toISOString(),
-        nota: 'Datos exportados en ejercicio del derecho de Acceso (ARCO) — LFPDPPP',
-        registros: data,
+        registros: data.records,
+        fuentes_no_disponibles: data.unavailable,
       };
       const date = new Date().toISOString().slice(0, 10);
       downloadJson(payload, `hermes-mis-datos-${date}.json`);
@@ -139,7 +100,7 @@ export default function PerfilPage() {
     } finally {
       setExportLoading(false);
     }
-  }, [userName]);
+  }, [userName, userId]);
 
   const handleToggleHistory = useCallback(async () => {
     if (historyOpen) {
@@ -147,27 +108,27 @@ export default function PerfilPage() {
       return;
     }
     setHistoryOpen(true);
-    if (activity !== null) return;
     if (!userName) return;
     setHistoryLoading(true);
     setHistoryError(null);
     try {
-      const entries = await fetchRecentActivity(userName);
-      setActivity(entries);
+      const history = await readPersonalHistory();
+      if (useAuthStore.getState().userId === userId) setActivity(history);
     } catch (err: unknown) {
       setHistoryError(err instanceof Error ? err.message : 'Error al cargar historial');
     } finally {
       setHistoryLoading(false);
     }
-  }, [historyOpen, activity, userName]);
+  }, [historyOpen, userName, userId]);
 
   return (
     <div className="flex flex-col pb-4 gap-4 animate-fade-up">
       <div className="flex items-center gap-3">
         <button
           type="button"
+          aria-label="Volver"
           onClick={() => navigate(-1)}
-          className="p-2 rounded-xl bg-white border border-border shadow-sm"
+          className="min-h-12 min-w-12 p-2 rounded-xl bg-white border border-border shadow-sm"
         >
           <ArrowLeft size={20} className="text-text" />
         </button>
@@ -205,8 +166,7 @@ export default function PerfilPage() {
           </div>
         </div>
         <p className="text-xs text-text-secondary mb-3 leading-relaxed">
-          Descarga todos tus registros en formato JSON. Incluye DVIRs, fallas, diesel,
-          horómetros, viajes y gastos asociados a tu usuario.
+          Descarga en JSON los registros que tienen tu identidad confirmada. El archivo señala las fuentes que no respondieron.
         </p>
         {exportError && <p className="text-xs text-red-600 mb-2">{exportError}</p>}
         <button
@@ -238,6 +198,8 @@ export default function PerfilPage() {
         <button
           type="button"
           onClick={handleToggleHistory}
+          aria-expanded={historyOpen}
+          aria-controls="profile-history"
           className="flex items-center gap-3 w-full p-4 text-left hover:bg-gray-50 transition-colors"
         >
           <div className="bg-gray-100 rounded-full p-2.5 shrink-0">
@@ -254,7 +216,7 @@ export default function PerfilPage() {
           )}
         </button>
         {historyOpen && (
-          <div className="border-t border-gray-100 px-4 pb-4">
+          <div id="profile-history" className="border-t border-gray-100 px-4 pb-4">
             {historyLoading && (
               <div className="flex items-center gap-2 py-4 text-text-secondary text-sm">
                 <Loader2 size={16} className="animate-spin" /> Cargando historial...
@@ -265,13 +227,18 @@ export default function PerfilPage() {
             )}
             {!historyLoading && !historyError && activity !== null && (
               <>
-                {activity.length === 0 ? (
+                {activity.unavailable.length > 0 && (
+                  <p role="status" className="text-xs text-text-secondary py-3">
+                    Fuentes sin verificar: {activity.unavailable.join(', ')}.
+                  </p>
+                )}
+                {activity.records.length === 0 ? (
                   <p className="text-xs text-text-secondary py-3">
-                    No se encontraron registros para tu usuario.
+                    No se encontraron registros con tu identidad en las fuentes que respondieron.
                   </p>
                 ) : (
                   <div className="flex flex-col gap-2 mt-3">
-                    {activity.map((entry, i) => (
+                    {activity.records.slice(0, 30).map((entry, i) => (
                       <div
                         key={i}
                         className="flex items-start gap-2 p-2.5 bg-gray-50 rounded-xl"
@@ -284,9 +251,9 @@ export default function PerfilPage() {
                         </span>
                         <div className="flex-1 min-w-0">
                           <p className="text-xs text-text truncate">
-                            {entry.detail || '—'}
+                            {[entry.unit, entry.folio, entry.detail].filter(Boolean).join(' · ')}
                           </p>
-                          <p className="text-xs text-text-secondary mt-0.5">{entry.date}</p>
+                          <p className="text-xs text-text-secondary mt-0.5">{entry.date} {entry.time}</p>
                         </div>
                       </div>
                     ))}

@@ -2,6 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { countCriticalInventory, parseInventoryRows } from './inventory-rows';
 
 describe('inventory row parsing', () => {
+  it('reads stock, minimum, and measurement unit from the Panama catalog header', () => {
+    const rows = [
+      ['Título'], ['SKU', 'Descripción', 'OEM', 'Serie', 'Unidad', 'Stock', 'Mínimo', 'Precio', 'Ubicación'],
+      ['QA-001', 'Filtro', 'OEM-QA', '', 'pza', '2', '3', '5.5', 'Bodega QA'],
+    ];
+    expect(parseInventoryRows(rows)).toEqual([{
+      partNumber: 'QA-001', description: 'Filtro', oemRef: 'OEM-QA', stock: 2, minimum: 3, unit: 'pza', category: 'Bodega QA',
+    }]);
+    expect(countCriticalInventory(rows)).toBe(1);
+  });
+
   it('filters sheet title, instruction, and formula summary rows', () => {
     const rows = [
       ['GRUPO TRANS PLUS · INVENTARIO DE REPUESTOS — CONTROL DE BODEGA'],

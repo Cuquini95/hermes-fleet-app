@@ -17,16 +17,21 @@ interface SessionProfile {
   allUnits: boolean;
   canApprovePurchases: boolean;
   canReceivePurchases?: boolean;
+  canRecordPurchaseInvoices?: boolean;
+  canRecordPurchasePayments?: boolean;
   canReviewPanamaHse?: boolean;
   previewDemo?: boolean;
 }
 
-interface AuthState extends Omit<SessionProfile, 'role' | 'unitScope' | 'canReceivePurchases' | 'canReviewPanamaHse'> {
+interface AuthState extends Omit<SessionProfile, 'role' | 'unitScope' | 'canReceivePurchases' | 'canReviewPanamaHse' | 'canRecordPurchaseInvoices' | 'canRecordPurchasePayments'> {
   role: AppRole | null;
   unitScope: SessionProfile['unitScope'] | null;
   isAuthenticated: boolean;
   sessionChecked: boolean;
+  sessionUnavailable: boolean;
   canReceivePurchases: boolean;
+  canRecordPurchaseInvoices: boolean;
+  canRecordPurchasePayments: boolean;
   canReviewPanamaHse: boolean;
   loginFailure: 'credentials' | 'unavailable' | 'rate-limited' | null;
   login: (email: string, password: string) => Promise<boolean>;
@@ -37,7 +42,8 @@ interface AuthState extends Omit<SessionProfile, 'role' | 'unitScope' | 'canRece
 const cleared = {
   userId: '', userName: '', role: null, project: '', projects: [], assignedUnits: [], unitScope: null,
   allUnits: false, canApprovePurchases: false, canReceivePurchases: false, canReviewPanamaHse: false,
-  isAuthenticated: false, loginFailure: null,
+  canRecordPurchaseInvoices: false, canRecordPurchasePayments: false,
+  isAuthenticated: false, sessionUnavailable: false, loginFailure: null,
   previewDemo: false,
 };
 
@@ -54,6 +60,8 @@ function validProfile(value: unknown): value is SessionProfile {
     && (profile.unitScope === 'all' || profile.unitScope === 'assigned')
     && profile.allUnits === (profile.unitScope === 'all') && typeof profile.canApprovePurchases === 'boolean'
     && (profile.canReceivePurchases === undefined || typeof profile.canReceivePurchases === 'boolean')
+    && (profile.canRecordPurchaseInvoices === undefined || typeof profile.canRecordPurchaseInvoices === 'boolean')
+    && (profile.canRecordPurchasePayments === undefined || typeof profile.canRecordPurchasePayments === 'boolean')
     && (profile.canReviewPanamaHse === undefined || typeof profile.canReviewPanamaHse === 'boolean');
 }
 
@@ -62,9 +70,12 @@ function authenticatedProfile(profile: SessionProfile) {
     ...profile,
     previewDemo: profile.previewDemo === true,
     canReceivePurchases: profile.canReceivePurchases === true,
+    canRecordPurchaseInvoices: profile.canRecordPurchaseInvoices === true,
+    canRecordPurchasePayments: profile.canRecordPurchasePayments === true,
     canReviewPanamaHse: profile.canReviewPanamaHse === true,
     isAuthenticated: true,
     sessionChecked: true,
+    sessionUnavailable: false,
     loginFailure: null,
   };
 }
@@ -117,15 +128,18 @@ export const useAuthStore = create<AuthState>()((set) => ({
     removeLegacyProfile();
     const requestGeneration = ++generation;
     let profile: unknown;
+    let sessionUnavailable = false;
+    set({ sessionChecked: false });
     try {
       const response = await fetch('/api/auth/session', {
         credentials: 'same-origin', headers: { Accept: 'application/json' },
       });
       if (response.ok) profile = await response.json();
-    } catch { /* an unverifiable session never opens protected routes */ }
+      sessionUnavailable = response.status >= 500 || (response.ok && !validProfile(profile));
+    } catch { sessionUnavailable = true; }
     if (requestGeneration !== generation) return;
     bindDataSession(validProfile(profile) ? profile.userId : '');
-    set(validProfile(profile) ? authenticatedProfile(profile) : { ...cleared, sessionChecked: true });
+    set(validProfile(profile) ? authenticatedProfile(profile) : { ...cleared, sessionChecked: true, sessionUnavailable });
   },
 
   logout: async () => {

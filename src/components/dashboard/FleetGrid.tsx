@@ -8,6 +8,8 @@ import { normalizeUnitId, type UnitDispatchReadiness } from '../../lib/dispatch-
 interface FleetGridProps {
   equipment: Equipment[]
   dispatch?: FleetDispatch
+  selectedUnit?: string
+  onClearSelectedUnit?: () => void
 }
 
 const STATUS_ORDER: Equipment['status'][] = ['taller', 'alerta', 'operativo', 'inactivo']
@@ -17,7 +19,7 @@ interface SelectedUnit {
   readiness?: UnitDispatchReadiness
 }
 
-export default function FleetGrid({ equipment, dispatch }: FleetGridProps) {
+export default function FleetGrid({ equipment, dispatch, selectedUnit, onClearSelectedUnit }: FleetGridProps) {
   const [selected, setSelected] = useState<SelectedUnit | null>(null)
   const fallback = useFleetDispatch(equipment, !dispatch)
   const { effectiveEquipment, readiness: dispatchReadiness, verified, loading, message } = dispatch ?? fallback
@@ -25,6 +27,9 @@ export default function FleetGrid({ equipment, dispatch }: FleetGridProps) {
   const sorted = [...effectiveEquipment].sort(
     (a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status),
   )
+
+  const linkedUnit = selectedUnit ? sorted.find((unit) => normalizeUnitId(unit.unit_id) === normalizeUnitId(selectedUnit)) : null;
+  const active = selected ?? (linkedUnit ? { unit: linkedUnit, readiness: dispatchReadiness.get(normalizeUnitId(linkedUnit.unit_id)) } : null);
 
   return (
     <>
@@ -60,12 +65,12 @@ export default function FleetGrid({ equipment, dispatch }: FleetGridProps) {
         })}
       </div>
 
-      {selected && (
+      {active && (
         <UnitDetailModal
-          unit={selected.unit}
-          dispatchReadiness={selected.readiness}
+          unit={active.unit}
+          dispatchReadiness={active.readiness}
           verified={verified}
-          onClose={() => setSelected(null)}
+          onClose={() => { setSelected(null); onClearSelectedUnit?.(); }}
         />
       )}
     </>

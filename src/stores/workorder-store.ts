@@ -58,6 +58,7 @@ function parseWorkOrderRow(row: string[]): WorkOrder | null {
     execution:         readOrderDetail(row[20]),
     technical:         readOrderDetail(row[21]),
     operations:        readOrderDetail(row[22]),
+    previousOtId:      row[24] || undefined,
   };
 }
 

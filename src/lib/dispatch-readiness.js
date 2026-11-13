@@ -6,6 +6,19 @@ const OK_READINESS = {
   reason: 'Sin bloqueo operativo registrado',
 };
 
+const CLOSED_FAILURES = new Set(['completado', 'completada', 'cerrado', 'cerrada', 'cancelado', 'cancelada']);
+
+export function activeFailureUnits(rows) {
+  const units = new Set();
+  for (const row of rows) {
+    const unit = normalizeUnitId(String(row[2] ?? ''));
+    if (!unit || !parseSheetDate(String(row[0] ?? ''))) continue;
+    const state = String(row[9] ?? '').trim().toLowerCase();
+    if (!CLOSED_FAILURES.has(state)) units.add(unit);
+  }
+  return units;
+}
+
 export function normalizeUnitId(value) {
   return value.trim().toUpperCase();
 }
@@ -227,6 +240,7 @@ export function buildDispatchReadinessMap(
   dvirRows,
   today = new Date(),
   pendingReturns = [],
+  failureRows = [],
 ) {
   const stickers = parseStickerRows(stickerRows);
   const dvirs = parseDvirRows(dvirRows);
@@ -250,6 +264,12 @@ export function buildDispatchReadinessMap(
       unitId, source: 'retorno', level: 'blocked', label: 'Retorno pendiente',
       reason: `${otId} pendiente de recepción por Operaciones`, effectiveStatus: 'taller', folio: otId,
     });
+  }
+
+  for (const unitId of activeFailureUnits(failureRows)) {
+    if (map.get(unitId)?.level === 'blocked') continue;
+    map.set(unitId, { unitId, source: 'averia', level: 'blocked', label: 'No despachar',
+      reason: 'Avería sin cierre', effectiveStatus: 'taller' });
   }
   return map;
 }

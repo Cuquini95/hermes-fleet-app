@@ -45,7 +45,7 @@ export default function HorometroPage() {
   const horasActual = horometro ? parseFloat(horometro) : null;
 
   const pmInfo =
-    selectedEquipment && horasActual !== null
+    !isPanama && selectedEquipment && horasActual !== null
       ? getNextPM(selectedEquipment.model, horasActual)
       : null;
 

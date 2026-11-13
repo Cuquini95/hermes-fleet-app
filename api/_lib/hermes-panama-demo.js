@@ -17,7 +17,7 @@ function initialData() {
   const tables = Object.fromEntries([
     'OT_STATUS_LOG', '14 Inspecciones', 'Inspeccion_Stickers', 'Inspeccion_Hallazgos', '04B Registro Horómetros',
     '05 Historial PM', 'Ordenes Mantenimiento', 'WORKSHOP_SCHEDULE', 'Reporte_Fletes_Transporte', 'Reporte_Viajes_Peña',
-    'Incidentes', 'Turnos', '13 Neumáticos', '02 Gastos', '10 Control Cambios', 'Activos', 'HERMES_PA_TURNOS',
+    'Incidentes', 'Turnos', '13 Neumáticos', '02 Gastos', '10 Control Cambios', 'Activos', 'HERMES_PA_TURNOS', 'HERMES_PA_DESPACHO',
   ].map(tab => [tab, []]));
   Object.assign(tables, {
     '01 Inventario': [['Inventario de prueba'], ['TMF Panamá · Datos simulados'],
@@ -65,6 +65,10 @@ export function createPanamaDemoSheets(request = options => identityRequest(iden
 
   function write(tables, change) {
     const tab = canonicalTab(change.tab);
+    if (!Object.hasOwn(tables, tab) && tab === 'Movimientos Repuestos PA') {
+      tables[tab] = [['ID', 'FECHA_UTC', 'TIPO', 'SKU', 'CANTIDAD', 'UNIDAD', 'OC', 'PARTIDA', 'OT', 'REFERENCIA', 'ACTOR', 'ACTOR_ID', 'EXISTENCIA', 'MEDIDA']];
+    }
+    if (tab === 'HERMES_PA_DESPACHO' && !Object.hasOwn(tables, tab)) tables[tab] = [];
     if (!Object.hasOwn(tables, tab)) throw fail(503, 'La tabla de prueba no está disponible.');
     if (change.append) {
       tables[tab].push(...change.append);

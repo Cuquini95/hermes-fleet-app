@@ -2,7 +2,7 @@
  * @fileoverview Monolithic by design (> 400 LOC).
  * Expense entry form with OCR, multi-unit allocation, and photo capture. Shared form state across steps — splitting creates prop-drill burden without reuse upside.
  */
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Camera,
@@ -17,10 +17,11 @@ import {
 } from 'lucide-react';
 import { useGastosStore } from '../stores/gastos-store';
 import { ocrReceipt, comparePartsQuote } from '../lib/sheets-api';
-import type { GastoTipo, MetodoPago } from '../stores/gastos-store';
+import type { ExpenseOptions, GastoTipo, MetodoPago } from '../stores/gastos-store';
 import type { OcrLineItem, PriceChange } from '../lib/sheets-api';
-import { canAttachExpenseReceipt, uploadExpenseReceipt } from '../lib/purchasing-api';
+import { canAttachExpenseReceipt, purchaseRead, uploadExpenseReceipt } from '../lib/purchasing-api';
 import { useEquipmentList } from '../hooks/useEquipmentList';
+import { mexicoDateInput } from '../lib/date-utils';
 import PhotoCapture from '../components/ui/PhotoCapture';
 
 interface PhotoItem {
@@ -46,6 +47,22 @@ export default function NuevoGastoPage() {
   const [proveedor, setProveedor] = useState('');
   const [rfcProveedor, setRfcProveedor] = useState('');
   const [folioFactura, setFolioFactura] = useState('');
+  const [documentDate, setDocumentDate] = useState(mexicoDateInput);
+  const [entityId, setEntityId] = useState('');
+  const [options, setOptions] = useState<ExpenseOptions>();
+  const [optionsError, setOptionsError] = useState('');
+  const entity = options?.entities.find((entry) => entry.id === entityId);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    void purchaseRead<ExpenseOptions>('expense-options', undefined, ctrl.signal).then((data) => {
+      if (ctrl.signal.aborted) return;
+      setOptions(data);
+      if (data.entities.length === 1) setEntityId(data.entities[0]!.id);
+    }).catch(() => {
+      if (!ctrl.signal.aborted) setOptionsError('No se pudieron verificar las entidades de captura. Actualiza e inténtalo de nuevo.');
+    });
+    return () => ctrl.abort();
+  }, []);
   const [subtotal, setSubtotal] = useState(0);
   const [iva, setIva] = useState(0);
   const [total, setTotal] = useState(0);
@@ -106,9 +123,7 @@ export default function NuevoGastoPage() {
 
   function handleSubtotalChange(val: number) {
     setSubtotal(val);
-    const calculatedIva = parseFloat((val * 0.16).toFixed(2));
-    setIva(calculatedIva);
-    setTotal(parseFloat((val + calculatedIva).toFixed(2)));
+    setTotal(parseFloat((val + iva).toFixed(2)));
   }
 
   // ── OCR ───────────────────────────────────────────────────────────────────
@@ -207,6 +222,7 @@ export default function NuevoGastoPage() {
     setPriceMessage('');
 
     try {
+      if (!entity || !documentDate) throw new Error('Indica la entidad y la fecha del documento.');
       const selectedReceipt = receipt.current;
       if (selectedReceipt && !selectedReceipt.uploadedUrl) {
         try {
@@ -218,6 +234,9 @@ export default function NuevoGastoPage() {
 
       const commonFields = {
         tipo,
+        entity: entity.id,
+        currency: entity.currency,
+        document_date: documentDate,
         proveedor,
         rfc_proveedor: rfcProveedor,
         folio_factura: folioFactura,
@@ -267,7 +286,7 @@ export default function NuevoGastoPage() {
       <div className="flex flex-col items-center justify-center py-10 gap-4 animate-fade-up">
         <CheckCircle size={56} className="text-success" />
         <p className="text-xl font-semibold text-text">
-          {count === 1 ? 'Gasto registrado' : `${count} gastos registrados`}
+          {count === 1 ? 'Gasto registrado para revisión' : `${count} repartos registrados para revisión`}
         </p>
 
         {/* ── Price change alert ──────────────────────────────────────── */}
@@ -448,11 +467,11 @@ export default function NuevoGastoPage() {
 
         {/* RFC */}
         <div>
-          <label className="text-xs text-text-secondary mb-1 block">RFC Proveedor (opcional)</label>
+          <label className="text-xs text-text-secondary mb-1 block">RUC o identificación fiscal del proveedor (opcional)</label>
           <input
             value={rfcProveedor}
             onChange={(e) => setRfcProveedor(e.target.value.toUpperCase())}
-            placeholder="RFC-XXXXXX-XXX"
+            placeholder="Identificación del documento"
             className="w-full border border-border rounded-lg px-3 py-2 text-sm font-mono"
           />
         </div>
@@ -591,7 +610,22 @@ export default function NuevoGastoPage() {
 
       {/* ── Totales ──────────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-border p-4 shadow-sm flex flex-col gap-3">
-        <p className="text-sm font-semibold text-text">Totales</p>
+        <p className="text-sm font-semibold text-text">Totales del documento</p>
+        {optionsError && <p role="alert" className="text-sm text-red-700">{optionsError}</p>}
+        {options && options.entities.length === 0 && <p role="alert" className="text-sm text-amber-900">Contabilidad debe confirmar la entidad de Panamá antes de capturar.</p>}
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <label className="text-xs text-text-secondary">
+            Entidad y moneda
+            <select required value={entityId} onChange={(event) => setEntityId(event.target.value)} className="block w-full border border-border rounded-lg px-3 py-2 text-sm">
+              <option value="">Selecciona la entidad</option>
+              {options?.entities.map((entry) => <option key={entry.id} value={entry.id}>{entry.name} · {entry.currency}</option>)}
+            </select>
+          </label>
+          <label className="text-xs text-text-secondary">
+            Fecha del documento
+            <input required type="date" max={mexicoDateInput()} value={documentDate} onChange={(event) => setDocumentDate(event.target.value)} className="block w-full border border-border rounded-lg px-3 py-2 text-sm" />
+          </label>
+        </div>
         <div className="grid grid-cols-3 gap-2 [&>div]:min-w-0">
           <div>
             <label className="text-xs text-text-secondary mb-1 block">Subtotal</label>
@@ -607,7 +641,7 @@ export default function NuevoGastoPage() {
             />
           </div>
           <div>
-            <label className="text-xs text-text-secondary mb-1 block">IVA 16%</label>
+            <label className="text-xs text-text-secondary mb-1 block">{entity?.taxLabel || 'Impuesto'} según documento</label>
             <input
               type="number"
               step="0.01"
@@ -625,7 +659,7 @@ export default function NuevoGastoPage() {
           <div>
             <label className="text-xs text-text-secondary mb-1 block">Total</label>
             <div className="w-full border border-border rounded-lg px-3 py-2 text-sm font-semibold bg-gray-50">
-              ${total.toFixed(2)}
+              {entity?.currency ?? ''} {total.toFixed(2)}
             </div>
           </div>
         </div>
@@ -715,7 +749,7 @@ export default function NuevoGastoPage() {
       {/* ── Submit ───────────────────────────────────────────────────────── */}
       <button
         type="submit"
-        disabled={saving || submitting || ocrLoading || (unitMode === 'multi' && !splitOk)}
+        disabled={!entity || saving || submitting || ocrLoading || (unitMode === 'multi' && !splitOk)}
         className="w-full bg-amber text-white font-semibold rounded-xl py-3.5 flex items-center justify-center gap-2 disabled:opacity-60"
       >
         {saving || submitting ? (

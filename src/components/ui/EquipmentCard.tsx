@@ -1,3 +1,5 @@
+import { Link } from 'react-router-dom';
+import { useAuthStore } from '../../stores/auth-store';
 import type { Equipment } from '../../types/equipment';
 import { getNextPM } from '../../data/pm-rules';
 import StatusDot from './StatusDot';
@@ -20,7 +22,8 @@ function getPMBadgeClass(hoursRemaining: number): string {
 }
 
 export default function EquipmentCard({ equipment }: EquipmentCardProps) {
-  const pm = getNextPM(equipment.model, equipment.current_horometro);
+  const isPanama = useAuthStore(state => state.project === 'tmf-panama');
+  const pm = isPanama ? null : getNextPM(equipment.model, equipment.current_horometro);
   const borderColor = STATUS_BORDER_COLOR[equipment.status];
 
   return (
@@ -38,19 +41,17 @@ export default function EquipmentCard({ equipment }: EquipmentCardProps) {
 
         {/* Row 2: horometro info */}
         <div className="flex flex-col gap-0.5 text-sm text-text-secondary">
-          <span>Horómetro: <span className="text-text font-medium">{equipment.current_horometro} hrs</span></span>
-          <span>Próximo: <span className="text-text font-medium">{equipment.next_pm_level}</span> a <span className="text-text font-medium">{equipment.next_pm_horometro} hrs</span></span>
+          <span>Horómetro: <span className="text-text font-medium">
+            {isPanama && !equipment.current_horometro ? 'Sin dato verificado' : `${equipment.current_horometro} hrs`}
+          </span></span>
+          {pm && <span>Próximo: <span className="text-text font-medium">{equipment.next_pm_level}</span> a <span className="text-text font-medium">{equipment.next_pm_horometro} hrs</span></span>}
         </div>
 
         {/* PM countdown badge */}
         <div className="flex items-center gap-2 mt-1">
-          <span
-            className={`text-xs font-semibold px-2 py-0.5 rounded-full ${getPMBadgeClass(pm.hours_remaining)}`}
-          >
-            {pm.hours_remaining <= 0
-              ? `${pm.level} vencido`
-              : `${pm.hours_remaining} hrs para ${pm.level}`}
-          </span>
+          {pm ? <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${getPMBadgeClass(pm.hours_remaining)}`}>
+            {pm.hours_remaining <= 0 ? `${pm.level} vencido` : `${pm.hours_remaining} hrs para ${pm.level}`}
+          </span> : <Link to="/pm" className="text-xs font-semibold text-text underline">Ver PM en el maestro</Link>}
         </div>
       </div>
     </div>

@@ -3,7 +3,7 @@
  * jsPDF report generator for expense PDFs. Procedural layout code that reads top-to-bottom; breaking into small helpers would obscure page flow.
  */
 import type { jsPDF as JsPDFType } from 'jspdf';
-import type { GastoCompra, GastoTipo } from '../stores/gastos-store';
+import type { VerifiedExpense, GastoTipo } from '../stores/gastos-store';
 
 // ── Logo loader ───────────────────────────────────────────────────────────────
 // Load /logo-transplus.svg once, rasterise to PNG data URL, cache for reuse.
@@ -56,8 +56,10 @@ export interface GastoReportData {
   period: { year: number; month: number; label: string };
   generatedAt: string;
   generatedBy: string;
+  currency: string;
+  entity: string;
   selectedUnits: string[];
-  gastos: GastoCompra[];
+  gastos: VerifiedExpense[];
   totals: {
     total: number;
     count: number;
@@ -73,7 +75,7 @@ export interface GastoReportData {
     unidad: string;
     total: number;
     count: number;
-    gastos: GastoCompra[];
+    gastos: VerifiedExpense[];
   }>;
 }
 
@@ -106,11 +108,8 @@ const TYPE_LABELS: Record<string, string> = {
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 
-const mxn = (n: number) =>
-  n.toLocaleString('es-MX', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
-
-const mxnCompact = (n: number) =>
-  n.toLocaleString('es-MX', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+const money = (n: number, currency: string) =>
+  n.toLocaleString('es-PA', { style: 'currency', currency, currencyDisplay: 'code' });
 
 // ── Page dimensions (A4 portrait at 72 DPI) ───────────────────────────────────
 
@@ -212,7 +211,7 @@ function drawHeader(doc: JsPDFType, data: GastoReportData, logoDataUrl: string |
       ? `· ${data.selectedUnits[0]}`
       : `· ${data.selectedUnits.length} unidades`;
   doc.text(
-    `${data.period.label.toUpperCase()} ${unitsLabel}`,
+    `${data.period.label.toUpperCase()} · ${data.entity} · ${data.currency} ${unitsLabel}`,
     rightX,
     m + 40,
     { align: 'right' }
@@ -244,7 +243,7 @@ function drawHeroKpi(doc: JsPDFType, data: GastoReportData, y: number): number {
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(28);
-  doc.text(mxn(data.totals.total), m + 18, y + 48);
+  doc.text(money(data.totals.total, data.currency), m + 18, y + 48);
 
   doc.setTextColor(180, 200, 230);
   doc.setFont('helvetica', 'normal');
@@ -264,7 +263,7 @@ function drawHeroKpi(doc: JsPDFType, data: GastoReportData, y: number): number {
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(16);
-  doc.text(mxn(data.totals.averagePerRecord), rightX, y + 42, { align: 'right' });
+  doc.text(money(data.totals.averagePerRecord, data.currency), rightX, y + 42, { align: 'right' });
 
   return y + h;
 }
@@ -313,7 +312,7 @@ function drawTypeBreakdown(doc: JsPDFType, data: GastoReportData, y: number): nu
     doc.setTextColor(...COLORS.textPrimary);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(14);
-    doc.text(mxnCompact(total), x + 10, y + 32);
+    doc.text(money(total, data.currency), x + 10, y + 32);
 
     // Count + pct
     doc.setTextColor(...COLORS.textMuted);
@@ -375,7 +374,7 @@ function drawUnitDetails(
     doc.setTextColor(...COLORS.green);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(12);
-    doc.text(mxn(unit.total), m + w - 10, y + 17, { align: 'right' });
+    doc.text(money(unit.total, data.currency), m + w - 10, y + 17, { align: 'right' });
 
     y += stripH + 4;
 
@@ -388,7 +387,7 @@ function drawUnitDetails(
         g.proveedor || '—',
         TYPE_LABELS[g.tipo] || g.tipo,
         g.folio_factura || '—',
-        mxn(g.total),
+        money(g.total, data.currency),
       ]);
 
     autoTable(doc, {
