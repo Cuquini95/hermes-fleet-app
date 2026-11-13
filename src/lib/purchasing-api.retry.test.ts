@@ -18,7 +18,8 @@ it('reuses the same expense body and operation after an incomplete success respo
   const confirm = (data: { ids?: string[] }) => data.ids?.length === 1;
   await expect(purchaseWrite('expense-save', input, operationId, confirm)).rejects.toMatchObject({ status: 200, confirmationPending: true });
   await expect(purchaseWrite('expense-save', input, operationId, confirm)).resolves.toEqual({ ids: ['GST-QA-1'] });
-  expect(reported).toEqual([{ ...input, operationId }, { ...input, operationId }]);
+  const attempt = { ...input, operationId, expectedUserId: 'test-employee' };
+  expect(reported).toEqual([attempt, attempt]);
 });
 
 it('distinguishes clear expense validation errors from transport, timeout and idempotency uncertainty', () => {

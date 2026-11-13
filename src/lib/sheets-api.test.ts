@@ -80,14 +80,14 @@ describe('appendRow', () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response('Unauthorized', { status: 401 }),
     );
-    await expect(appendRow('SomeTab', ['a', 'b'])).rejects.toThrow('401');
+    await expect(appendRow('SomeTab', ['a', 'b'])).rejects.toMatchObject({ status: 401, message: 'El servidor rechazó el registro.' });
   });
 
   it('throws on 5xx responses', async () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response('Internal Server Error', { status: 500 }),
     );
-    await expect(appendRow('SomeTab', ['a', 'b'])).rejects.toThrow('500');
+    await expect(appendRow('SomeTab', ['a', 'b'])).rejects.toMatchObject({ status: 500, message: 'El servidor rechazó el registro.' });
   });
 
   it('throws when response.ok but json.success is false', async () => {
