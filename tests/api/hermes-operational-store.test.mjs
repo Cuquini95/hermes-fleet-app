@@ -87,9 +87,9 @@ test('the print response includes a private signature for the matching current a
   const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg==';
   const issuer = JSON.stringify({ id: 'TP_PA_QA', name: 'Trans Plus QA', currency: 'USD', template: 'transplus' });
   const order = [folio, '14/11/2026', 'Proveedor QA', '', '', 'DZ203', '30.00', '2.10', '0.00', '0.00', '32.10',
-    'Aprobada', '', 'Gerencia QA', '', 'version-qa', issuer, approver, approvedAt];
+    'Aprobada', '', 'Gerencia QA', '', 'version-qa', issuer, approver, approvedAt, '', '', '', '', '', '', '0.00', 'catalog', '3001'];
   const tables = [
-    { name: 'Órdenes de Compra', rows: [['OC_ID'], order, ['OC-OTHER-QA', ...order.slice(1)]] },
+    { name: 'Órdenes de Compra', rows: [['OC_ID'], order, ['OC-OTHER-QA', ...order.slice(1, 27), '3002']] },
     { name: 'OC_Lineas', rows: [['OC_ID'], [folio, '1', 'Filtro QA', '1', '30.00', '30.00']] },
   ];
   let signatureReads = 0;
@@ -118,11 +118,16 @@ test('the print response includes a private signature for the matching current a
 
   const approved = await read();
   assert.equal(approved.code, 200);
+  assert.equal(approved.body.order.number, '3001');
+  const numberLookup = await read('order', '3001');
+  assert.equal(numberLookup.code, 200);
+  assert.equal(numberLookup.body.order.folio, folio);
+  assert.equal(numberLookup.body.approvalSignature, png);
   assert.equal(approved.headers['Cache-Control'], 'no-store');
   assert.equal(approved.body.approvalSignature, png);
   assert.equal((await read('orders')).body.orders[0].approvalSignature, undefined);
   assert.equal((await read('order', 'OC-OTHER-QA')).body.approvalSignature, undefined);
-  assert.equal(signatureReads, 2);
+  assert.equal(signatureReads, 3);
 
   order[17] = randomUUID();
   assert.equal((await read()).body.approvalSignature, undefined);
@@ -135,7 +140,7 @@ test('the print response includes a private signature for the matching current a
   order[11] = 'Aprobada';
   assert.equal((await read('order', folio, { ...reader, role: 'supervisor' })).code, 403);
   assert.equal((await read('order', folio, { ...reader, allUnits: false, assignedUnits: ['DZ205'] })).code, 403);
-  assert.equal(signatureReads, 4);
+  assert.equal(signatureReads, 5);
 
   for (const unavailable of ['bm90IGEgcG5n', null]) {
     signatureValue = unavailable;
@@ -144,4 +149,23 @@ test('the print response includes a private signature for the matching current a
     assert.equal(existing.body.order.approvedBy, 'Gerencia QA');
     assert.equal(existing.body.approvalSignature, undefined);
   }
+});
+
+test('a purchase creation response and its retry report the number assigned by the database', async () => {
+  const folio = 'OC-SIGNATURE-QA';
+  const stored = { folio, total: '32.10', version: 'version-qa' };
+  const header = [folio, ...Array(26).fill(''), '3002'];
+  const keys = { key: 'qa-created', fingerprint: 'fingerprint-qa' };
+  const store = createPanamaOperationalStore({ request: async (path, { query }) => {
+    if (path === '/rest/v1/rpc/hermes_panama_commit') return Response.json({ result: stored, replayed: false });
+    if (path === '/rest/v1/hermes_panama_commit_receipts') return Response.json([{ fingerprint: keys.fingerprint, result: stored }]);
+    if (path === '/rest/v1/hermes_panama_operational_tables' && query.name === 'eq.Órdenes de Compra') {
+      return Response.json([{ rows: [['OC_ID'], header] }]);
+    }
+    throw new Error('Unexpected request');
+  } });
+  const expected = { ...stored, number: '3002' };
+  assert.deepEqual((await store.commit({ ...keys, writes: [], result: stored, includePurchaseNumber: true })).result, expected);
+  assert.deepEqual(await store.replay({ ...keys, includePurchaseNumber: true }), expected);
+  assert.deepEqual(await store.replay(keys), stored);
 });

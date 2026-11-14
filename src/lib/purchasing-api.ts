@@ -8,6 +8,7 @@ export interface InventoryMovement {
   quantity: string;
   unit: string;
   order: string;
+  orderNumber?: string;
   ot: string;
   reference: string;
   by: string;
@@ -69,6 +70,7 @@ export interface PurchaseReconciliation {
 
 export interface PurchaseOrder {
   folio: string;
+  number?: string;
   date: string;
   deliveryDate: string;
   vendorName: string;
@@ -121,6 +123,7 @@ export interface PurchaseRequestLine {
   notas: string;
   estado: string;
   ocFolio: string;
+  ocNumber?: string;
 }
 
 export interface PurchaseOverview {
@@ -137,7 +140,7 @@ export type PurchaseReceivingLine = Pick<PurchaseLine, 'id' | 'number' | 'descri
   receipts: Omit<PurchaseReceipt, 'actorId'>[];
 };
 
-export type PurchaseReceivingOrder = Pick<PurchaseOrder, 'folio' | 'unit' | 'vendorName' | 'deliveryDate' | 'receiptStatus' | 'version'> & {
+export type PurchaseReceivingOrder = Pick<PurchaseOrder, 'folio' | 'number' | 'unit' | 'vendorName' | 'deliveryDate' | 'receiptStatus' | 'version'> & {
   lines: PurchaseReceivingLine[];
 };
 

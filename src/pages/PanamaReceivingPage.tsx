@@ -57,7 +57,7 @@ function ReceivingQueue() {
     setMessage('');
     try {
       await purchaseWrite('order-receive', { folio: order.folio, version: order.version, lineId, quantity, reference });
-      setMessage(`${order.folio} · recepción registrada`);
+      setMessage(`${order.number || order.folio} · recepción registrada`);
       setActive(undefined);
       refresh();
     } catch (cause) {
@@ -70,7 +70,8 @@ function ReceivingQueue() {
   }
 
   const search = filter.trim().toLocaleLowerCase('es-PA');
-  const visible = orders.filter((order) => [order.folio, order.unit, order.vendorName].some((value) => value.toLocaleLowerCase('es-PA').includes(search)));
+  const visible = orders.filter((order) => [order.number ?? '', order.folio, order.unit, order.vendorName]
+    .some((value) => value.toLocaleLowerCase('es-PA').includes(search)));
 
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-6 text-slate-900">
@@ -95,7 +96,7 @@ function ReceivingQueue() {
           <article className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4" key={order.folio}>
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="min-w-0">
-                <h2 className="break-words font-bold text-[#162252]">{order.folio}</h2>
+                <h2 className="break-words font-bold text-[#162252]">{order.number || order.folio}</h2>
                 <p className="break-words text-sm text-slate-700">{order.unit} · {order.vendorName}</p>
                 {order.deliveryDate && <p className="text-sm text-slate-700">Entrega prevista {order.deliveryDate}</p>}
               </div>

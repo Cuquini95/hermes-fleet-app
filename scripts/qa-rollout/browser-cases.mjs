@@ -716,7 +716,9 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         assert.equal(sheet.read(tabs.lines).filter(row => row[0] === folio && row[7] === lines.manual[9]).length, 2);
         await page.goto(`${origin}/pedidos`, { waitUntil: 'domcontentloaded' });
         await clickByName(page, 'Historial');
-        await visible(page.getByRole('link', { name: `Ver OC ${folio}`, exact: true }));
+        const orderNumber = sheet.read(tabs.purchases).find(row => row[0] === folio)[27];
+        assert.match(orderNumber, /^3\d{3}$/);
+        await visible(page.getByRole('link', { name: `Ver OC ${orderNumber}`, exact: true }));
         await shot(page, 'pedido-vinculado-390.png');
         return { request: lines.manual[9], purchaseOrder: folio, lines: 2, historyLink: true };
       });
@@ -749,11 +751,13 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       const firstLine = await waitUntil(() => sheet.read(tabs.lines).find(row => row[2] === parts[0][0]), 'No se guardó la OC desde el formulario');
       const folio = firstLine[0];
       purchaseFolio = folio;
-      const card = page.locator('article').filter({ hasText: folio });
+      const number = sheet.read(tabs.purchases).find(row => row[0] === folio)[27];
+      assert.match(number, /^3\d{3}$/);
+      const card = page.locator('article').filter({ has: page.getByRole('heading', { name: number, exact: true }) });
       await visible(card.getByText(/· Borrador ·/));
       await card.getByRole('link', { name: 'Ver / Imprimir', exact: true }).tap();
       await visible(page.locator('.po-document'));
-      assert.equal(await page.getByText('Firma autorizada', { exact: true }).count(), 0);
+      assert.equal(await page.getByRole('img', { name: /Firma de QA gerencia/i }).count(), 0);
       await page.locator('.po-toolbar').getByRole('link', { name: 'Volver', exact: true }).tap();
       await page.reload({ waitUntil: 'domcontentloaded' });
       await card.getByRole('button', { name: 'Aprobar', exact: true }).tap();
@@ -768,7 +772,8 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         const document = page.locator('.po-document');
         await visible(document);
         const rendered = await document.innerText();
-        assert(rendered.includes('Proveedor QA') && rendered.includes('DZ203') && rendered.includes(folio));
+        await page.waitForURL(`${origin}/admin/ordenes-compra/${number}`);
+        assert(rendered.includes('Proveedor QA') && rendered.includes('DZ203') && rendered.includes(number));
         assert.match(rendered, /Trans Plus Panamá/i);
         assert.match(rendered, /497[.,]95/);
         assert.match(rendered, /14[/-]11[/-]2026|2026-11-14/);
@@ -782,9 +787,12 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         const printed = execFileSync('pdftotext', [pdfPath, '-'], { encoding: 'utf8' });
         assert.match(printed, /497[.,]95/);
         assert.match(printed, /FIRMA AUTORIZADA/i);
-        assert(printed.includes(folio) && printed.includes(parts[2][0]));
+        assert(printed.includes(number) && printed.includes(parts[2][0]));
+        assert(!printed.includes(folio));
         assert.match(execFileSync('pdfinfo', [pdfPath], { encoding: 'utf8' }), /^Pages:\s+1$/m);
-        return { folio, unit: 'DZ203', amount: 497.95, artifact, pages: 1, signaturePrinted: true };
+        await page.goto(`${origin}/admin/ordenes-compra/${folio}`, { waitUntil: 'domcontentloaded' });
+        await visible(page.getByRole('heading', { name: new RegExp(number) }));
+        return { folio, number, unit: 'DZ203', amount: 497.95, artifact, pages: 1, signaturePrinted: true };
       } finally {
         delete sheet.readPurchaseSignature;
       }
@@ -793,7 +801,9 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     await record('MÓVIL-COMPRAS-RECEPCIONES-PARCIALES', () => inRole('jefe_taller', 390, async page => {
       assert(purchaseFolio, 'Falta la OC sintética creada en móvil');
       await page.goto(`${origin}/panama/recepciones`, { waitUntil: 'domcontentloaded' });
-      const card = page.locator('article').filter({ hasText: purchaseFolio });
+      const number = sheet.read(tabs.purchases).find(row => row[0] === purchaseFolio)[27];
+      await page.getByRole('searchbox').fill(number);
+      const card = page.locator('article').filter({ has: page.getByRole('heading', { name: number, exact: true }) });
       const line = card.locator('li').filter({ has: page.getByRole('heading', { name: /Filtro OC móvil QA/ }) });
       const lineId = sheet.read(tabs.lines).find(row => row[0] === purchaseFolio && row[1] === '1')[6];
       const receive = async (quantity, reference, balance) => {

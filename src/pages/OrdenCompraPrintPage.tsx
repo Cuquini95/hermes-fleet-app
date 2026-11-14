@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, Printer } from 'lucide-react';
 import { displayMoney, isApprovalRecorded, purchaseOrder, type PurchaseDocument } from '../lib/purchasing-api';
+import { useAuthStore } from '../stores/auth-store';
+import PanamaPurchaseDocument from '../components/purchasing/PanamaPurchaseDocument';
+import './orden-compra-print.css';
 
 function dateLabel(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value.split('-').reverse().join('/') : value || '—';
@@ -9,6 +12,7 @@ function dateLabel(value: string) {
 
 export default function OrdenCompraPrintPage() {
   const { ocId = '' } = useParams();
+  const isPanama = useAuthStore(state => state.project === 'tmf-panama');
   const [purchase, setPurchase] = useState<PurchaseDocument | null>(null);
   const [failure, setFailure] = useState('');
   const [attempt, setAttempt] = useState(0);
@@ -16,7 +20,10 @@ export default function OrdenCompraPrintPage() {
   useEffect(() => {
     const controller = new AbortController();
     purchaseOrder(ocId, controller.signal).then((record) => {
-      if (!controller.signal.aborted) setPurchase(record);
+      if (!controller.signal.aborted) {
+        setPurchase(record);
+        setFailure('');
+      }
     }).catch((cause) => {
       if (!controller.signal.aborted) {
         setFailure(cause instanceof Error ? cause.message : 'No se pudo leer la orden.');
@@ -38,7 +45,7 @@ export default function OrdenCompraPrintPage() {
     );
   }
 
-  if (!purchase || purchase.order.folio.toUpperCase() !== ocId.toUpperCase()) {
+  if (!purchase || (purchase.order.folio.toUpperCase() !== ocId.toUpperCase() && purchase.order.number !== ocId)) {
     return <p className="p-4 text-sm text-slate-600">Cargando la orden…</p>;
   }
 
@@ -62,27 +69,6 @@ export default function OrdenCompraPrintPage() {
 
   return (
     <>
-      <style>{`
-        .po-document { font-family: Arial, Helvetica, sans-serif; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
-        .po-document th, .po-document td { padding: 5px 6px; }
-        @media print {
-          @page { size: letter; margin: 12mm; }
-          html, body { background: white !important; margin: 0 !important; overflow: visible !important; }
-          body * { visibility: hidden; }
-          .po-document, .po-document * { visibility: visible; }
-          .po-toolbar { display: none !important; }
-          .po-document {
-            position: absolute; top: 0; left: 0; width: 100%; max-width: none !important;
-            margin: 0 !important; padding: 0 !important; box-shadow: none !important;
-          }
-          .po-document .po-table { overflow: visible; }
-          .po-document .po-table table { min-width: 0; }
-          .po-document .po-heading { grid-template-columns: 1fr 1fr; }
-          .po-document .po-approval-signed { grid-template-columns: minmax(0, 1fr) auto; }
-          .po-document .po-section, .po-document tr { break-inside: avoid; }
-          .po-document thead { display: table-header-group; }
-        }
-      `}</style>
       <div className="po-toolbar flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 py-3">
         <Link to="/admin/ordenes-compra" className="inline-flex items-center gap-1 text-sm font-semibold text-slate-700">
           <ArrowLeft size={16} aria-hidden /> Volver
@@ -92,7 +78,11 @@ export default function OrdenCompraPrintPage() {
         </button>
       </div>
 
-      <article className="po-document mx-auto my-4 max-w-[8.5in] bg-white p-4 text-xs text-slate-900 shadow sm:p-8">
+      {isPanama && issuer?.template === 'transplus' ? (
+        <PanamaPurchaseDocument order={order} authorized={authorized} approvedAt={approvedAt}
+          approvalSignature={approvalSignature} dateLabel={dateLabel} />
+      ) : (
+      <article className="po-document po-legacy mx-auto my-4 max-w-[8.5in] bg-white p-4 text-xs text-slate-900 shadow sm:p-8">
         <header className="po-heading po-section grid gap-3 border-b-2 pb-3 sm:grid-cols-2" style={{ borderColor: accent }}>
           <div className="min-w-0">
             {ultratk && <p className="mb-2 inline-block rounded px-3 py-1 text-xl font-black tracking-tight text-white" style={{ backgroundColor: accent }}>ULTRATK</p>}
@@ -169,25 +159,14 @@ export default function OrdenCompraPrintPage() {
 
         <footer className="po-section mt-5 border-t border-slate-300 pt-2">
           {authorized ? (
-            <div className={approvalSignature ? 'po-approval-signed grid items-end gap-4 sm:grid-cols-[minmax(0,1fr)_auto]' : undefined}>
-              <div className="min-w-0 break-words" data-testid="purchase-approval-provenance">
-                <p className="font-bold">Autorización digital registrada</p>
-                <p>{order.approvedBy} · {approvedAt} · {order.folio}</p>
-              </div>
-              {approvalSignature && (
-                <div className="w-44 max-w-full text-center">
-                  <div className="relative mx-auto h-[78px] w-32 overflow-hidden">
-                    {/* Frame the handwriting in the supplied reference, which also contains a rule and a caption. */}
-                    <img alt={`Firma de ${order.approvedBy}`} src={`data:image/png;base64,${approvalSignature}`}
-                      className="absolute -left-[65px] -top-[29px] w-[230px] max-w-none" />
-                  </div>
-                  <p className="border-t border-slate-900 pt-1 font-bold uppercase" style={{ color: accent }}>Firma autorizada</p>
-                </div>
-              )}
+            <div data-testid="purchase-approval-provenance">
+              <p className="font-bold">Autorización digital registrada</p>
+              <p>{order.approvedBy} · {approvedAt} · {order.folio}</p>
             </div>
           ) : <p className="font-semibold">Aprobación digital pendiente de comprobar</p>}
         </footer>
       </article>
+      )}
     </>
   );
 }

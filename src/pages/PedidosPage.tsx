@@ -905,10 +905,10 @@ function PedidoRowCard({
 
         {updateError && <p role="alert" className="mb-2 text-xs text-red-700">{updateError}</p>}
         {row.ocFolio && (isGerencia ? (
-          <Link className="block py-2 text-sm font-semibold text-blue-800" to={`/admin/ordenes-compra/${encodeURIComponent(row.ocFolio)}`}>
-            Ver OC {row.ocFolio}
+          <Link className="block py-2 text-sm font-semibold text-blue-800" to={`/admin/ordenes-compra/${encodeURIComponent(row.ocNumber || row.ocFolio)}`}>
+            Ver OC {row.ocNumber || row.ocFolio}
           </Link>
-        ) : <p className="py-2 text-sm text-text-secondary">OC {row.ocFolio}</p>)}
+        ) : <p className="py-2 text-sm text-text-secondary">OC {row.ocNumber || row.ocFolio}</p>)}
         {isGerencia && nextStatus && !row.ocFolio && (
           <Link className="block rounded-lg bg-slate-900 px-3 py-2 mb-2 text-center text-sm font-semibold text-white" to={`/admin/ordenes-compra?partida=${encodeURIComponent(row.id)}`}>
             Convertir a OC

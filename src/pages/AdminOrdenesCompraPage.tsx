@@ -19,6 +19,7 @@ interface DraftLine {
 
 interface Draft {
   folio: string;
+  number?: string;
   version: string;
   date: string;
   deliveryDate: string;
@@ -156,7 +157,7 @@ export default function AdminOrdenesCompraPage() {
     const catalogVendor = vendorKey(order.vendorName, order.vendorRfc);
     const keepVendorSnapshot = isPanama && (order.vendorSource === 'manual' || !data?.vendors.some((entry) => vendorKey(entry.name, entry.rfc) === catalogVendor));
     setDraft({
-      folio: order.folio, version: order.version, date: isoDate(order.date), deliveryDate: isoDate(order.deliveryDate),
+      folio: order.folio, number: order.number, version: order.version, date: isoDate(order.date), deliveryDate: isoDate(order.deliveryDate),
       vendor: keepVendorSnapshot ? manualVendor : catalogVendor, vendorName: order.vendorName, vendorRfc: order.vendorRfc,
       vendorAddress: order.vendorAddress, unit: order.unit || 'FLOTA',
       entity: order.issuer?.id || data?.issuers[0]?.id || '',
@@ -170,14 +171,14 @@ export default function AdminOrdenesCompraPage() {
     form.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  async function run(action: string, payload: object, onSaved: (reply: { folio: string; total?: string; status?: string }) => void) {
+  async function run(action: string, payload: object, onSaved: (reply: { folio: string; number?: string; total?: string; status?: string }) => void) {
     if (locked.current) return;
     locked.current = true;
     setSaving(true);
     setError('');
     setMessage('');
     try {
-      const reply = await purchaseWrite<{ folio: string; total?: string; status?: string }>(action, payload);
+      const reply = await purchaseWrite<{ folio: string; number?: string; total?: string; status?: string }>(action, payload);
       onSaved(reply);
       await load();
     } catch (reason) {
@@ -202,7 +203,7 @@ export default function AdminOrdenesCompraPage() {
       ...(isPanama ? { discount: draft.discount || '0', tax: draft.tax || undefined } : {}),
       entity: draft.entity, shipping: draft.shipping || '0', other: draft.other || '0', comments: draft.comments, lines,
     }, (reply) => {
-      setMessage(reply.folio + ' guardada · ' + displayMoney(reply.total || '0', currency));
+      setMessage((reply.number || reply.folio) + ' guardada · ' + displayMoney(reply.total || '0', currency));
       resetDraft();
     });
   }
@@ -210,7 +211,7 @@ export default function AdminOrdenesCompraPage() {
   function changeStatus(order: PurchaseOrder, status: string, reason?: string) {
     return run('order-status', { folio: order.folio, version: order.version, status, reason }, (reply) => {
       setDecision(undefined);
-      setMessage(reply.folio + ' · ' + status);
+      setMessage((reply.number || reply.folio) + ' · ' + status);
     });
   }
 
@@ -228,7 +229,7 @@ export default function AdminOrdenesCompraPage() {
   function reconcileOrder(order: PurchaseOrder, action: 'order-invoice' | 'order-payment') {
     return run(action, { folio: order.folio, version: order.version, ...document }, (reply) => {
       setReconciliation(undefined);
-      setMessage(reply.folio + (action === 'order-invoice' ? ' · factura conciliada' : ' · pago conciliado'));
+      setMessage((reply.number || reply.folio) + (action === 'order-invoice' ? ' · factura conciliada' : ' · pago conciliado'));
     });
   }
 
@@ -236,7 +237,7 @@ export default function AdminOrdenesCompraPage() {
     return run('order-delete', { folio: order.folio, version: order.version }, (reply) => {
       setConfirmDelete('');
       if (draft.folio === order.folio) resetDraft();
-      setMessage(reply.folio + ' eliminada del listado. El historial se conserva.');
+      setMessage((reply.number || reply.folio) + ' eliminada del listado. El historial se conserva.');
     });
   }
 
@@ -257,7 +258,7 @@ export default function AdminOrdenesCompraPage() {
       {!data && !loading && <button type="button" onClick={() => void load()} className={button}>Reintentar</button>}
       {data && (
         <form ref={form} onSubmit={save} className="mb-6 space-y-4 rounded-xl border border-gray-200 bg-white p-3 sm:p-4">
-          <h2 className="text-lg font-semibold">{draft.folio ? 'Editar ' + draft.folio : 'Nueva orden de compra'}</h2>
+          <h2 className="text-lg font-semibold">{draft.folio ? 'Editar ' + (draft.number || draft.folio) : 'Nueva orden de compra'}</h2>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-sm">Entidad emisora
               <select aria-label="Entidad emisora" required className={input} value={draft.entity} onChange={(event) => setField('entity', event.target.value)}>
@@ -373,13 +374,13 @@ export default function AdminOrdenesCompraPage() {
         {data?.orders.map((order) => (
           <article key={order.folio} className="space-y-2 rounded-xl border border-gray-200 bg-white p-3">
             <div className="flex flex-wrap justify-between gap-2">
-              <h3 className="break-all font-semibold">{order.folio}</h3>
+              <h3 className="break-words font-semibold">{order.number || order.folio}</h3>
               <span className="font-semibold">{displayMoney(order.total, order.issuer?.currency)}</span>
             </div>
             <p className="text-sm text-gray-600">{order.vendorName} · {order.unit} · {order.status} · Recepción {order.receiptStatus.toLowerCase()}</p>
             {order.lines.some((line) => line.requestId) && <p className="break-all text-xs text-blue-700">Pedidos vinculados · {[...new Set(order.lines.map((line) => line.requestId).filter(Boolean))].join(', ')}</p>}
             <div className="flex flex-wrap gap-2">
-              <Link className={button} to={'/admin/ordenes-compra/' + encodeURIComponent(order.folio)}><Printer size={15} className="inline" /> Ver / Imprimir</Link>
+              <Link className={button} to={'/admin/ordenes-compra/' + encodeURIComponent(order.number || order.folio)}><Printer size={15} className="inline" /> Ver / Imprimir</Link>
               {order.status === 'Borrador' && <button type="button" className={button} disabled={saving} onClick={() => edit(order)}>Editar</button>}
               {data.canApprove && order.status === 'Borrador' && (
                 <>
@@ -431,7 +432,7 @@ export default function AdminOrdenesCompraPage() {
             )}
             {confirmDelete === order.folio && (
               <div className="flex flex-wrap gap-2 rounded-lg bg-red-50 p-2 text-sm">
-                <span className="w-full">Eliminar {order.folio} del listado</span>
+                <span className="w-full">Eliminar {order.number || order.folio} del listado</span>
                 <button type="button" className={button} disabled={saving} onClick={() => void removeOrder(order)}>Confirmar eliminación</button>
                 <button type="button" className={button} onClick={() => setConfirmDelete('')}>Cancelar</button>
               </div>
@@ -439,7 +440,7 @@ export default function AdminOrdenesCompraPage() {
             {openOrder?.folio === order.folio && (
               <ReceptionForm key={openOrder.folio} order={openOrder} saving={saving} readOnly={isPanama} onReceive={(lineId, quantity, reference) =>
                 run('order-receive', { folio: openOrder.folio, version: openOrder.version, lineId, quantity, reference }, (reply) => {
-                  setMessage(reply.folio + ' · recepción registrada');
+                  setMessage((reply.number || reply.folio) + ' · recepción registrada');
                 })} />
             )}
           </article>

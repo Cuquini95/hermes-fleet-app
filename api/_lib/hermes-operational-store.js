@@ -13,6 +13,11 @@ function database(path, options) {
   return identityRequest(config, path, options);
 }
 
+export function readPurchaseNumber(row) {
+  const number = String(row?.[27] ?? '');
+  return /^[1-9][0-9]{3,14}$/.test(number) ? number : undefined;
+}
+
 export function createPanamaOperationalStore({ request = database, readInventory = readPanamaConsultationInventory } = {}) {
   async function read(tab) {
     const name = canonicalTab(tab);
@@ -53,7 +58,14 @@ export function createPanamaOperationalStore({ request = database, readInventory
     return undefined;
   }
 
-  async function replay({ key, fingerprint }) {
+  async function withPurchaseNumber(result, includePurchaseNumber) {
+    if (!includePurchaseNumber || !result?.folio) return result;
+    const orders = await read('Órdenes de Compra').catch(() => []);
+    const number = readPurchaseNumber(orders.find(row => row[0] === result.folio));
+    return number ? { ...result, number } : result;
+  }
+
+  async function replay({ key, fingerprint, includePurchaseNumber }) {
     const response = await request(receipts, {
       query: { operation_key: 'eq.' + key, select: 'fingerprint,result', limit: '1' },
     });
@@ -61,10 +73,10 @@ export function createPanamaOperationalStore({ request = database, readInventory
     const [receipt] = await response.json();
     if (!receipt) return null;
     if (receipt.fingerprint !== fingerprint) throw new HermesSheetError(409, 'La operación ya existe con otros datos.');
-    return receipt.result;
+    return withPurchaseNumber(receipt.result, includePurchaseNumber);
   }
 
-  async function commit({ key, fingerprint, guard, guards = [], writes, result }) {
+  async function commit({ key, fingerprint, guard, guards = [], writes, result, includePurchaseNumber }) {
     try {
       const response = await request(transaction, {
         method: 'POST',
@@ -76,7 +88,9 @@ export function createPanamaOperationalStore({ request = database, readInventory
       });
       if (response.ok) {
         const saved = await response.json();
-        if (typeof saved?.replayed === 'boolean' && saved.result != null) return saved;
+        if (typeof saved?.replayed === 'boolean' && saved.result != null) {
+          return { ...saved, result: await withPurchaseNumber(saved.result, includePurchaseNumber) };
+        }
         throw unavailable();
       }
       if (response.status === 400 || response.status === 409) {
@@ -88,7 +102,7 @@ export function createPanamaOperationalStore({ request = database, readInventory
       throw unavailable();
     } catch (error) {
       if (error instanceof HermesSheetError && error.status < 500) throw error;
-      const prior = await replay({ key, fingerprint });
+      const prior = await replay({ key, fingerprint, includePurchaseNumber });
       if (prior !== null) return { result: prior, replayed: true };
       throw unavailable();
     }

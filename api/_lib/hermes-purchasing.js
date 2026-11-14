@@ -3,6 +3,7 @@ import { PANAMA_DEMO_ISSUER } from './hermes-panama-demo.js';
 import { isEvidenceError, verifyEvidence } from './hermes-evidence.js';
 import { orderWriteGuard } from './hermes-workshop.js';
 import { HermesSheetError } from './hermes-google-sheets.js';
+import { readPurchaseNumber } from './hermes-operational-store.js';
 
 export const PURCHASE_TABS = Object.freeze({
   orders: 'Órdenes de Compra',
@@ -209,7 +210,7 @@ function orderRecord(row, items) {
   const anyReceived = lines.some((line) => Number(line.received) > 0);
   const allReceived = lines.length > 0 && lines.every((line) => Number(line.received) >= Number(line.quantity));
   return {
-    folio: trim(row[0]), date: trim(row[1]), vendorName: trim(row[2]), vendorRfc: trim(row[3]), vendorAddress: trim(row[4]),
+    folio: trim(row[0]), number: readPurchaseNumber(row), date: trim(row[1]), vendorName: trim(row[2]), vendorRfc: trim(row[3]), vendorAddress: trim(row[4]),
     unit: trim(row[5]), subtotal: trim(row[6]), tax: trim(row[7]), shipping: trim(row[8]), other: trim(row[9]), total: trim(row[10]),
     discount: trim(row[25]) || '0.00', vendorSource: row[26] === 'manual' ? 'manual' : 'catalog',
     status: trim(row[11]) || 'Borrador', comments: trim(row[12]), approvedBy: trim(row[13]), deliveryDate: trim(row[14]),
@@ -225,8 +226,8 @@ function hasRecordedApproval({ status, approvedBy, approvedById, approvedAt }) {
   return RECEIPT_ORDER_STATUS.has(status) && Boolean(approvedBy && approvedById) && Number.isFinite(Date.parse(approvedAt));
 }
 
-function receivingRecord({ folio, unit, vendorName, deliveryDate, receiptStatus, version, lines }) {
-  return { folio, unit, vendorName, deliveryDate, receiptStatus, version, lines: lines.map((line) => ({
+function receivingRecord({ folio, number, unit, vendorName, deliveryDate, receiptStatus, version, lines }) {
+  return { folio, number, unit, vendorName, deliveryDate, receiptStatus, version, lines: lines.map((line) => ({
     id: line.id, number: line.number, description: line.description, partNumber: line.partNumber,
     quantity: line.quantity, received: line.received,
     receipts: line.receipts.map(({ id, at, by, quantity, reference, stockDisposition }) => ({ id, at, by, quantity, reference, stockDisposition })),
@@ -254,17 +255,24 @@ function parseRequests(rows) {
 }
 
 function orderLookup(folio, data, lines, session) {
-  const matching = entries(data).filter((item) => upper(item.row[0]) === upper(folio));
+  const matching = entries(data).filter(({ row }) => upper(row[0]) === upper(folio) || readPurchaseNumber(row) === folio);
   if (matching.length > 1) error(409, 'Este folio requiere conciliación de cabeceras duplicadas.');
   const header = matching[0];
   if (!header || header.row[11] === 'Eliminada') error(404, 'Orden de compra no encontrada.');
   requireUnit(session, header.row[5]);
-  const items = entries(lines).filter((item) => upper(item.row[0]) === upper(folio));
+  const items = entries(lines).filter((item) => upper(item.row[0]) === upper(header.row[0]));
   const record = orderRecord(header.row, items);
   if (new Set(record.lines.map((line) => line.id)).size !== record.lines.length) {
     error(409, 'Este folio requiere conciliación de partidas duplicadas.');
   }
   return { header, items, record };
+}
+
+async function purchaseNumbers(sheets, session, linkedFolios) {
+  if (session.project !== 'tmf-panama' || !linkedFolios.some(Boolean)) return new Map();
+  const rows = await Promise.resolve().then(() => sheets.read(PURCHASE_TABS.orders)).catch(() => []);
+  return new Map(entries(rows).filter(({ row }) => canUseUnit(session, row[5]))
+    .map(({ row }) => [trim(row[0]), readPurchaseNumber(row)]));
 }
 
 function auditRow(session, operationId, action, folio, detail = '') {
@@ -280,13 +288,14 @@ function mutate(action, body, session, sheets) {
   const operation = { ...body };
   delete operation.expectedUserId;
   const fingerprint = hash([session.userId, action, operation]);
+  const includePurchaseNumber = session.project === 'tmf-panama' && action.startsWith('order-');
   return {
     operationId, key, fingerprint, version: sheets.nativeOperations ? hash(key) : operationId,
     async replay() {
-      return sheets.replay({ key, fingerprint });
+      return sheets.replay({ key, fingerprint, includePurchaseNumber });
     },
     async commit(writes, result, guards = []) {
-      const committed = await sheets.commit({ key, fingerprint, guards: [...new Set(guards)], writes, result });
+      const committed = await sheets.commit({ key, fingerprint, guards: [...new Set(guards)], writes, result, includePurchaseNumber });
       return ok(committed.result);
     },
   };
@@ -508,8 +517,9 @@ async function saveOrder(body, session, sheets, tx) {
   const [orderRows, lineRows, vendorRows, requestRows] = await readTables(
     sheets, PURCHASE_TABS.orders, PURCHASE_TABS.lines, PURCHASE_TABS.vendors, PURCHASE_TABS.requests,
   );
-  const folio = upper(field(body.folio, 90, 'folio')) || 'OC-' + hash(tx.key).slice(0, 18).toUpperCase();
-  const current = body.folio ? orderLookup(folio, orderRows, lineRows, session) : null;
+  const lookup = upper(field(body.folio, 90, 'folio'));
+  const current = body.folio ? orderLookup(lookup, orderRows, lineRows, session) : null;
+  const folio = current?.record.folio ?? 'OC-' + hash(tx.key).slice(0, 18).toUpperCase();
   if (current) {
     requireDraft(current.record);
     checkVersion(body, current.record);
@@ -581,11 +591,12 @@ async function saveOrder(body, session, sheets, tx) {
 }
 
 async function changeOrder(action, body, session, sheets, tx) {
-  const folio = field(body.folio, 90, 'folio', true);
+  const lookup = field(body.folio, 90, 'folio', true);
   const [orderRows, lineRows, requestRows] = await readTables(
     sheets, PURCHASE_TABS.orders, PURCHASE_TABS.lines, PURCHASE_TABS.requests,
   );
-  const { record, header, items } = orderLookup(folio, orderRows, lineRows, session);
+  const { record, header, items } = orderLookup(lookup, orderRows, lineRows, session);
+  const { folio } = record;
   if (action === 'order-receive' && session.project === 'tmf-panama') {
     const previous = await tx.replay();
     if (previous !== null) return ok(previous);
@@ -927,11 +938,14 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
       const rows = entries(await sheets.read(PURCHASE_TABS.inventoryMovements));
       const items = rows.map(({ row }) => movementRecord(row))
         .filter(item => item.id && canUseUnit(session, item.unit) && (!ot || upper(item.ot) === ot));
-      return ok({ items: items.reverse() });
+      const numbers = await purchaseNumbers(sheets, session, items.map(item => item.order));
+      return ok({ items: items.reverse().map(item => ({ ...item, orderNumber: numbers.get(item.order) })) });
     }
     if (action === 'requests') {
       const data = parseRequests(await sheets.read(PURCHASE_TABS.requests));
-      return ok({ items: data.filter(({ record }) => canUseUnit(session, record.equipo)).map(({ record }) => record).reverse() });
+      const items = data.filter(({ record }) => canUseUnit(session, record.equipo)).map(({ record }) => record).reverse();
+      const numbers = await purchaseNumbers(sheets, session, items.map(item => item.ocFolio));
+      return ok({ items: items.map(item => ({ ...item, ocNumber: numbers.get(item.ocFolio) })) });
     }
     if (action === 'expense-options') return ok(expenseOptions(session));
     if (action === 'expenses') {

@@ -147,12 +147,20 @@ export function makeSheetsFixture() {
       }
       draft.set(tab, target);
     }
+    const purchaseRows = draft.get(tabs.purchases);
+    if (purchaseRows) {
+      const firstNew = tables.get(tabs.purchases).length;
+      let lastNumber = Math.max(3000, ...purchaseRows.slice(1, firstNew).map(row => Number(row[27]) || 0));
+      for (const row of purchaseRows.slice(firstNew)) row[27] = String(++lastNumber);
+    }
     for (const [tab, rows] of draft) tables.set(tab, rows);
-    mutations.set(key, { fingerprint, result: clone(result) });
+    const number = purchaseRows?.find(row => row[0] === result.folio)?.[27];
+    const reply = number ? { ...result, number } : result;
+    mutations.set(key, { fingerprint, result: clone(reply) });
     for (const value of keys) versions.add(value);
     commits.push({ key, replayed: false, rows: count });
     if (fault?.when === 'after') throw stateError(503, 'Respuesta de prueba perdida después del guardado');
-    return { replayed: false, result: clone(result) };
+    return { replayed: false, result: clone(reply) };
   }
 
   return {

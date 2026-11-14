@@ -78,7 +78,7 @@ function Movements({ ot, canReceive, onMoved }: { ot: string; canReceive: boolea
         {items.slice(0, 30).map((item) => (
           <li key={item.id} className="break-words rounded-lg bg-slate-50 p-2">
             <p>{item.kind} · {item.partNumber} · {item.quantity} {item.measurementUnit} · existencia {item.stockAfter}</p>
-            <p className="text-slate-700">{item.ot || item.order} · {item.unit} · {item.reference} · {item.by} · {formatPanamaReceiptDate(item.at)}</p>
+            <p className="text-slate-700">{item.ot || item.orderNumber || item.order} · {item.unit} · {item.reference} · {item.by} · {formatPanamaReceiptDate(item.at)}</p>
           </li>
         ))}
       </ul>}
