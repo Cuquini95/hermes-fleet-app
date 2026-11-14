@@ -2,7 +2,7 @@
  * @fileoverview Monolithic by design (> 400 LOC).
  * Parts-orders workflow page — one cohesive list+detail flow with shared inventory lookup state.
  */
-import { useState, useEffect, useRef } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   ShoppingCart,
@@ -26,7 +26,7 @@ import { useCartStore, type CartItem } from '../stores/cart-store';
 import { PurchaseApiError, purchaseRequests, purchaseWrite, type PurchaseRequestLine } from '../lib/purchasing-api';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { useCatalogoStore } from '../stores/catalogo-store';
-import PanamaSourceRecords from '../components/workshop/PanamaSourceRecords';
+import { masterPurchaseState, readPanamaPurchaseMaster, type MasterPurchase, type PurchaseMaster } from '../lib/panama-purchase-master';
 
 const URGENCIA_CONFIG = {
   Normal:  { color: '#16A34A', bg: '#F0FDF4' },
@@ -57,11 +57,32 @@ const emptyManual = (): ManualForm => ({
 
 type Tab = 'carrito' | 'pendientes' | 'historial';
 
+type PurchaseReadResult<T> = { value: T; error?: never } | { value?: never; error: 'access' | 'source' };
+
+interface OrderHistory {
+  identity: string;
+  hermes?: PurchaseReadResult<PurchaseRequestLine[]>;
+  master?: PurchaseReadResult<PurchaseMaster>;
+}
+
+async function readOrderSource<T>(promise: Promise<T>): Promise<PurchaseReadResult<T>> {
+  try {
+    return { value: await promise };
+  } catch (error) {
+    return { error: error instanceof PurchaseApiError && [401, 403].includes(error.status) ? 'access' : 'source' };
+  }
+}
+
+const cutFormatter = new Intl.DateTimeFormat('es-PA', {
+  timeZone: 'America/Panama', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit',
+});
+
 // ════════════════════════════════════════════════════════════════════════════
 export default function PedidosPage() {
   const navigate = useNavigate();
   const role = useAuthStore((s) => s.role);
   const isPanama = useAuthStore((s) => s.project === 'tmf-panama');
+  const identity = useAuthStore((s) => `${s.userId}|${s.project}|${s.role}`);
   const canReceive = useAuthStore((s) => s.project === 'tmf-panama' && s.canReceivePurchases);
   const equipment = useEquipmentList();
   const { items, removeItem, updateItem, clearCart } = useCartStore();
@@ -79,44 +100,54 @@ export default function PedidosPage() {
   const [submitted, setSubmitted] = useState('');
   const submitLock = useRef(false);
   const historialQuery = useRef<AbortController | null>(null);
-  const [historial, setHistorial] = useState<PurchaseRequestLine[]>([]);
-  const [loadingHistorial, setLoadingHistorial] = useState(true);
-  const [historialError, setHistorialError] = useState<'source' | 'access' | null>(null);
+  const [history, setHistory] = useState<OrderHistory>();
   const [submitError, setSubmitError] = useState('');
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
 
-  const visibleRows = tab === 'pendientes' ? historial.filter((row) => row.estado !== 'Completado') : historial;
+  const scoped = history?.identity === identity ? history : undefined;
+  const historial = scoped?.hermes?.value ?? [];
+  const master = scoped?.master?.value;
+  const historialError = scoped?.hermes?.error;
+  const masterError = scoped?.master?.error;
+  const loadingHistorial = !scoped?.hermes;
+  const loadingMaster = isPanama && !scoped?.master;
+  const pending = tab === 'pendientes';
+  const visibleRows = pending ? historial.filter(row => row.estado !== 'Completado') : historial;
+  const visibleMaster = master?.rows.filter(row => !pending || masterPurchaseState(row.status) === 'open') ?? [];
+  const unknownMaster = pending && master?.rows.some(row => masterPurchaseState(row.status) === 'unknown');
+  const hasRows = visibleRows.length > 0 || visibleMaster.length > 0;
+  const verifiedEmpty = !hasRows && !loadingHistorial && !loadingMaster && !historialError && !masterError && !unknownMaster;
 
   const totalItems = items.reduce((s, i) => s + i.quantity, 0);
   const totalPrice = items.reduce((s, i) => s + i.quantity * i.unit_price, 0);
 
   // ── Load historial ────────────────────────────────────────────────────────
-  async function loadHistorial() {
+  const loadHistorial = useCallback(async () => {
     historialQuery.current?.abort();
     const controller = new AbortController();
     historialQuery.current = controller;
-    setLoadingHistorial(true);
-    setHistorialError(null);
-    try {
-      const { items: rows } = await purchaseRequests(controller.signal);
-      if (controller.signal.aborted) return;
-      setHistorial(rows);
-    } catch (error) {
-      if (controller.signal.aborted) return;
-      setHistorialError(error instanceof PurchaseApiError && [401, 403].includes(error.status) ? 'access' : 'source');
-      setHistorial([]);
-    } finally {
-      if (!controller.signal.aborted) setLoadingHistorial(false);
-    }
-  }
+    setHistory({ identity });
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]);
+    const hermes = readOrderSource(purchaseRequests(signal).then(({ items }) => {
+      if (!Array.isArray(items)) throw new Error('Pedidos de Hermes no disponibles');
+      return items;
+    })).then(result => {
+      if (!controller.signal.aborted) setHistory(previous => ({ ...previous, identity, hermes: result }));
+    });
+    const masterRead = isPanama ? readOrderSource(readPanamaPurchaseMaster(signal)).then(result => {
+      if (!controller.signal.aborted) setHistory(previous => ({ ...previous, identity, master: result }));
+    }) : undefined;
+    await Promise.all([hermes, masterRead]);
+  }, [identity, isPanama]);
 
-  // Auto-load historial on mount (Gerencia starts on historial tab directly)
   useEffect(() => {
     void loadHistorial();
-    if (isJT && !catalogFetched) void fetchCatalogo();
     return () => historialQuery.current?.abort();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadHistorial]);
+
+  useEffect(() => {
+    if (isJT && !catalogFetched) void fetchCatalogo();
+  }, [isJT, catalogFetched, fetchCatalogo]);
 
   function handleTabChange(t: Tab) {
     setTab(t);
@@ -397,31 +428,39 @@ export default function PedidosPage() {
       {/* ════════════════════ HISTORIAL TAB ════════════════════ */}
       {tab !== 'carrito' && (
         <div className="flex flex-col gap-3">
-          {loadingHistorial && (
+          {loadingHistorial && !hasRows && (
             <div className="flex justify-center py-10">
-              <Loader2 size={28} className="animate-spin" style={{ color: '#162252' }} />
+              <Loader2 size={28} aria-label="Consultando pedidos de Hermes" className="animate-spin" style={{ color: '#162252' }} />
             </div>
           )}
 
-          {!loadingHistorial && historialError && (
-            <>
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
-                <p role="alert" className="text-sm text-amber-900">
+          {(historialError || masterError) && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+              <div role="alert" className="space-y-1 text-sm text-amber-900">
+                {historialError && <p>
                   {historialError === 'access' ? 'Tu cuenta no pudo abrir esta consulta.' : 'No se pudieron consultar los pedidos de Hermes.'}
-                </p>
-                <button type="button" onClick={() => void loadHistorial()} className="flex min-h-10 shrink-0 items-center gap-2 rounded-lg bg-[#162252] px-3 text-sm font-semibold text-white">
-                  <RefreshCw size={15} /> Reintentar
-                </button>
+                </p>}
+                {masterError && <p>No se pudo consultar el Maestro de Compras.</p>}
               </div>
-            </>
+              <button type="button" onClick={() => void loadHistorial()} className="flex min-h-10 shrink-0 items-center gap-2 rounded-lg bg-[#162252] px-3 text-sm font-semibold text-white">
+                <RefreshCw size={15} /> Reintentar
+              </button>
+            </div>
+          )}
+          {loadingMaster && <p role="status" className="text-sm text-text-secondary">Consultando el Maestro de Compras…</p>}
+          {loadingHistorial && hasRows && <p role="status" className="text-sm text-text-secondary">Consultando pedidos de Hermes…</p>}
+          {master?.capturedAt && (
+            <p className="text-xs text-text-secondary">Corte del Maestro de Compras: {cutFormatter.format(new Date(master.capturedAt))} · hora de Panamá</p>
+          )}
+          {unknownMaster && (
+            <p role="status" className="text-sm text-amber-900">Hay compras con estado sin verificar. Consúltalas en Historial.</p>
           )}
 
-          {/* Empty (loaded successfully but zero rows) */}
-          {!loadingHistorial && !historialError && visibleRows.length === 0 && (
+          {verifiedEmpty && (
             <div className="flex flex-col items-center gap-4 py-10">
               <ClipboardList size={48} color="#9CA3AF" />
-              <p className="text-text-secondary text-center text-sm">
-                {isPanama ? 'Sin pedidos de Hermes en esta vista.' : 'No hay pedidos registrados aún.'}
+              <p className="text-center text-sm text-text-secondary">
+                {isPanama && pending ? 'No hay pedidos pendientes.' : 'No hay pedidos registrados aún.'}
               </p>
               <button
                 onClick={() => loadHistorial()}
@@ -434,18 +473,21 @@ export default function PedidosPage() {
             </div>
           )}
 
-          {visibleRows.map((row) => (
-            <PedidoRowCard
-              key={row.id}
-              row={row}
-              isGerencia={isGerencia}
-              onStatusChange={() => loadHistorial()}
-            />
-          ))}
-          {isPanama && !loadingHistorial && historialError !== 'access' && <PanamaSourceRecords source="purchases" />}
+          {hasRows && <ul role="list" aria-label="Pedidos" className="flex min-w-0 flex-col gap-3">
+            {visibleRows.map(row => (
+              <li key={`hermes:${row.id}`} className="min-w-0">
+                <PedidoRowCard row={row} showOrigin={isPanama} isGerencia={isGerencia} onStatusChange={loadHistorial} />
+              </li>
+            ))}
+            {visibleMaster.map((row, index) => (
+              <li key={`master:${row.unit}:${row.id}:${index}`} className="min-w-0">
+                <MasterPurchaseCard row={row} />
+              </li>
+            ))}
+          </ul>}
 
           {/* Refresh at bottom when results are showing */}
-          {!loadingHistorial && !historialError && visibleRows.length > 0 && (
+          {!loadingHistorial && !loadingMaster && !historialError && !masterError && hasRows && (
             <button
               onClick={() => loadHistorial()}
               className="flex items-center justify-center gap-1.5 text-center text-sm py-2"
@@ -791,10 +833,12 @@ const STATUS_LABEL: Record<string, string> = {
 // ── PedidoRowCard (Historial / Gerencia view) ────────────────────────────────
 function PedidoRowCard({
   row,
+  showOrigin,
   isGerencia,
   onStatusChange,
 }: {
   row: PurchaseRequestLine;
+  showOrigin: boolean;
   isGerencia: boolean;
   onStatusChange: () => Promise<void>;
 }) {
@@ -834,9 +878,12 @@ function PedidoRowCard({
         <span className="text-xs font-bold" style={{ color: sCfg.color }}>
           {row.estado}
         </span>
-        <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ color: urgCfg.color, backgroundColor: urgCfg.bg }}>
-          {row.urgencia}
-        </span>
+        <div className="flex flex-wrap justify-end gap-2">
+          {showOrigin && <span className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-slate-700">Hermes</span>}
+          <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ color: urgCfg.color, backgroundColor: urgCfg.bg }}>
+            {row.urgencia}
+          </span>
+        </div>
       </div>
 
       {/* Body */}
@@ -899,5 +946,23 @@ function PedidoRowCard({
         )}
       </div>
     </div>
+  );
+}
+
+function MasterPurchaseCard({ row }: { row: MasterPurchase }) {
+  return (
+    <article className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-card shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-100 px-3 py-2 text-xs">
+        <span className="font-semibold text-slate-800">{row.status || 'Estado sin verificar'}</span>
+        <span className="rounded-full bg-white px-2 py-0.5 font-semibold text-slate-700">Maestro de Compras</span>
+      </div>
+      <div className="space-y-1 break-words p-4 text-sm text-text">
+        {row.description && <p className="font-medium">{row.description}</p>}
+        <p className="text-xs text-text-secondary">{row.unit} · Folio {row.id}</p>
+        {row.amount && <p className="text-xs">Monto: {row.amount}{row.currency && ` ${row.currency}`}</p>}
+        {row.order && <p className="text-xs">OC vinculada: {row.order}</p>}
+        {row.check && <p className="text-xs text-text-secondary">{row.check}</p>}
+      </div>
+    </article>
   );
 }

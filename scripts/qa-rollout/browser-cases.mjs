@@ -205,6 +205,8 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await noHorizontalOverflow(page, 390);
 
         await page.goto(`${origin}/pedidos`);
+        await visible(page.getByText('No se pudieron consultar los pedidos de Hermes.', { exact: true }));
+        await clickByName(page, 'Historial');
         await visible(page.getByText('Cotización del maestro QA', { exact: true }));
         await visible(page.getByText(/Corte del/));
         assert.equal(await page.getByText('No hay pedidos registrados aún.').count(), 0);
@@ -596,6 +598,51 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     if (!withPurchasing) return [...external];
     const browserBuyer = loadAccounts.find(account => account.membership.can_approve_purchases === true);
     const browserWarehouse = loadAccounts.find(account => account.membership.can_receive_purchases === true);
+
+    await record('MÓVIL-PEDIDOS-AMBAS-FUENTES', () => inRole('gerencia', 390, async page => {
+      const oldRows = sheet.read(tabs.requests);
+      const prefix = 'PED-QA-FUENTES';
+      sheet.seed(tabs.requests, [oldRows[0], [
+        '14/11/2026', 'SELLO-QA', 'Sello solicitado en Hermes', 'DZ203', '2', 'Manual',
+        'Pendiente', '', '', prefix, '08:10', 'Taller QA', 'Normal', '', '20', `${prefix}-L1`,
+      ]]);
+      let available = true;
+      let slow = false;
+      const sources = [{ id: '88', unit: 'EX401', description: 'Filtro pendiente en el Maestro', status: 'Recepción parcial', order: 'OC-QA-88', amount: '85', currency: 'USD' },
+        { id: '89', unit: 'DZ203', description: 'Compra entregada en el Maestro', status: 'Entregada' },
+        { id: '90', unit: 'DZ203', description: 'Compra cancelada en el Maestro', status: 'Cancelada' }];
+      const summary = /\/hermes-api\/api\/panama\/summary\?sections=purchases$/;
+      await page.route(summary, async route => {
+        if (slow) await sleep(300);
+        await route.fulfill({ json: { project: 'tmf-panama', sections: { purchases: available ? sources : null },
+          snapshots: available ? { purchases: '2026-11-14T13:21:18Z' } : {} } });
+      });
+      try {
+        await page.goto(`${origin}/pedidos`, { waitUntil: 'domcontentloaded' });
+        const list = page.getByRole('list', { name: 'Pedidos', exact: true });
+        const fromHermes = list.getByRole('listitem').filter({ hasText: 'Sello solicitado en Hermes' });
+        const fromMaster = list.getByRole('listitem').filter({ hasText: 'Filtro pendiente en el Maestro' });
+        await visible(fromHermes.getByText('Hermes', { exact: true }));
+        await visible(fromMaster.getByText('Maestro de Compras', { exact: true }));
+        await visible(fromMaster.getByText('OC-QA-88', { exact: false }));
+        assert.equal(await fromMaster.getByRole('link', { name: /Convertir a OC|Ver OC/ }).count(), 0);
+        assert.equal(await fromMaster.getByRole('button', { name: /Marcar/ }).count(), 0);
+        assert.equal(await list.getByText(/Compra entregada|Compra cancelada/).count(), 0);
+        await clickByName(page, 'Historial');
+        await visible(list.getByText('Compra entregada en el Maestro', { exact: true }));
+        await visible(list.getByText('Compra cancelada en el Maestro', { exact: true }));
+        available = false;
+        slow = true;
+        await clickByName(page, 'Pedidos Pendientes');
+        await visible(fromHermes);
+        await visible(page.getByText('No se pudo consultar el Maestro de Compras.', { exact: true }));
+        assert.equal(await page.getByText('No hay pedidos pendientes.', { exact: true }).count(), 0);
+        await noHorizontalOverflow(page, 390);
+        return { unifiedList: true, originLabels: true, closedOnlyInHistory: true, hermesSurvivesMasterFailure: true };
+      } finally {
+        sheet.seed(tabs.requests, oldRows);
+      }
+    }, firstAccount('gerencia')));
 
     await record('MÓVIL-GERENCIA-DASHBOARD-FUENTE', () => inRole('gerencia', 390, async page => {
       const average = page.getByText('125.00 L/carga', { exact: true });
