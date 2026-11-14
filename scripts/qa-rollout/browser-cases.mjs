@@ -773,7 +773,8 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await visible(document);
         const rendered = await document.innerText();
         await page.waitForURL(`${origin}/admin/ordenes-compra/${number}`);
-        assert(rendered.includes('Proveedor QA') && rendered.includes('DZ203') && rendered.includes(number));
+        assert.match(rendered, /proveedor qa/i);
+        assert(rendered.includes('DZ203') && rendered.includes(number));
         assert.match(rendered, /Trans Plus Panamá/i);
         assert.match(rendered, /497[.,]95/);
         assert.match(rendered, /14[/-]11[/-]2026|2026-11-14/);
