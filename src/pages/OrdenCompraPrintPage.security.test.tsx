@@ -12,7 +12,7 @@ describe('OrdenCompraPrintPage approval integrity', () => {
     expect(existsSync(resolve(process.cwd(), 'public/signature-tomas.png'))).toBe(false)
   })
 
-  it('prints auditable approval provenance instead', () => {
+  it('prints auditable approval provenance', () => {
     expect(source).toContain('purchase-approval-provenance')
     expect(source).toContain('Autorización digital registrada')
     expect(source).toContain('order.approvedBy')

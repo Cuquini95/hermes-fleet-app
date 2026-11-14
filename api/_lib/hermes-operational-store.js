@@ -36,6 +36,23 @@ export function createPanamaOperationalStore({ request = database, readInventory
     return result;
   }
 
+  async function readPurchaseSignature({ folio, approvedById, approvedAt }) {
+    try {
+      const response = await request('/rest/v1/hermes_panama_purchase_signatures', {
+        query: { folio: 'eq.' + folio, approved_by_id: 'eq.' + approvedById, approved_at: 'eq.' + approvedAt,
+          select: 'png_base64', limit: '1' },
+      });
+      if (!response.ok) return undefined;
+      const [attachment] = await response.json();
+      const png = attachment?.png_base64;
+      if (typeof png !== 'string' || png.length < 44 || png.length > 44_000) return undefined;
+      const bytes = Buffer.from(png, 'base64');
+      if (bytes.toString('base64') === png && bytes.subarray(0, 8).toString('hex') === '89504e470d0a1a0a'
+          && bytes.subarray(-8, -4).toString('ascii') === 'IEND') return png;
+    } catch { /* The recorded approval can still be printed. */ }
+    return undefined;
+  }
+
   async function replay({ key, fingerprint }) {
     const response = await request(receipts, {
       query: { operation_key: 'eq.' + key, select: 'fingerprint,result', limit: '1' },
@@ -77,7 +94,7 @@ export function createPanamaOperationalStore({ request = database, readInventory
     }
   }
 
-  return { read, readMany, replay, commit, readWorkshopMasters: readPanamaWorkshopMasters, nativeOperations: true };
+  return { read, readMany, replay, commit, readPurchaseSignature, readWorkshopMasters: readPanamaWorkshopMasters, nativeOperations: true };
 }
 
 export const panamaOperationalStore = createPanamaOperationalStore();

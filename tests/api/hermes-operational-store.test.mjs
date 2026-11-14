@@ -79,3 +79,69 @@ test('the operational read treats missing tables as unavailable and catalog rows
   await assert.rejects(store.read('Averías'), { status: 503 });
   assert.deepEqual((await store.read('12 Inventario Rep.')).slice(5), [['F-1', 'Filtro']]);
 });
+
+test('the print response includes a private signature for the matching current approval only', async () => {
+  const folio = 'OC-SIGNATURE-QA';
+  const approver = '00000000-0000-4000-8000-000000000031';
+  const approvedAt = '2026-11-14T17:38:21.711Z';
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg==';
+  const issuer = JSON.stringify({ id: 'TP_PA_QA', name: 'Trans Plus QA', currency: 'USD', template: 'transplus' });
+  const order = [folio, '14/11/2026', 'Proveedor QA', '', '', 'DZ203', '30.00', '2.10', '0.00', '0.00', '32.10',
+    'Aprobada', '', 'Gerencia QA', '', 'version-qa', issuer, approver, approvedAt];
+  const tables = [
+    { name: 'Órdenes de Compra', rows: [['OC_ID'], order, ['OC-OTHER-QA', ...order.slice(1)]] },
+    { name: 'OC_Lineas', rows: [['OC_ID'], [folio, '1', 'Filtro QA', '1', '30.00', '30.00']] },
+  ];
+  let signatureReads = 0;
+  let signatureValue = png;
+  const sheets = createPanamaOperationalStore({ request: async (path, { query }) => {
+    if (path === '/rest/v1/hermes_panama_purchase_signatures') {
+      signatureReads++;
+      if (signatureValue === null) return new Response(null, { status: 503 });
+      if (query.folio === 'eq.' + folio && query.approved_by_id === 'eq.' + approver && query.approved_at === 'eq.' + approvedAt) {
+        return Response.json([{ png_base64: signatureValue }]);
+      }
+      return Response.json([]);
+    }
+    if (path === '/rest/v1/hermes_panama_operational_tables') {
+      return Response.json(query.name === 'eq.Proveedores' ? [{ rows: [['Nombre']] }] : tables);
+    }
+    throw new Error('Unexpected request');
+  } });
+  const reader = { project: 'tmf-panama', userId: randomUUID(), userName: 'Gerencia QA', role: 'gerencia', allUnits: true };
+  async function read(action = 'order', target = folio, session = reader) {
+    const handler = createHermesGateway({ sheets, sessionReader: async () => session, panamaOnly: true, enablePanamaOperations: true });
+    const response = { headers: {}, setHeader(k, v) { this.headers[k] = v; }, status(code) { this.code = code; return this; }, json(data) { this.body = data; } };
+    await handler({ method: 'GET', query: { path: 'api/purchasing/' + action, folio: target } }, response);
+    return response;
+  }
+
+  const approved = await read();
+  assert.equal(approved.code, 200);
+  assert.equal(approved.headers['Cache-Control'], 'no-store');
+  assert.equal(approved.body.approvalSignature, png);
+  assert.equal((await read('orders')).body.orders[0].approvalSignature, undefined);
+  assert.equal((await read('order', 'OC-OTHER-QA')).body.approvalSignature, undefined);
+  assert.equal(signatureReads, 2);
+
+  order[17] = randomUUID();
+  assert.equal((await read()).body.approvalSignature, undefined);
+  order[17] = approver;
+  order[18] = '2026-11-14T17:40:00.000Z';
+  assert.equal((await read()).body.approvalSignature, undefined);
+  order[18] = approvedAt;
+  order[11] = 'Rechazada';
+  assert.equal((await read()).body.approvalSignature, undefined);
+  order[11] = 'Aprobada';
+  assert.equal((await read('order', folio, { ...reader, role: 'supervisor' })).code, 403);
+  assert.equal((await read('order', folio, { ...reader, allUnits: false, assignedUnits: ['DZ205'] })).code, 403);
+  assert.equal(signatureReads, 4);
+
+  for (const unavailable of ['bm90IGEgcG5n', null]) {
+    signatureValue = unavailable;
+    const existing = await read();
+    assert.equal(existing.code, 200);
+    assert.equal(existing.body.order.approvedBy, 'Gerencia QA');
+    assert.equal(existing.body.approvalSignature, undefined);
+  }
+});

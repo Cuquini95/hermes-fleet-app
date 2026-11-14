@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, Printer } from 'lucide-react';
-import { displayMoney, isApprovalRecorded, purchaseOrder, type PurchaseOrder } from '../lib/purchasing-api';
+import { displayMoney, isApprovalRecorded, purchaseOrder, type PurchaseDocument } from '../lib/purchasing-api';
 
 function dateLabel(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value.split('-').reverse().join('/') : value || '—';
@@ -9,13 +9,15 @@ function dateLabel(value: string) {
 
 export default function OrdenCompraPrintPage() {
   const { ocId = '' } = useParams();
-  const [order, setOrder] = useState<PurchaseOrder | null>(null);
+  const [purchase, setPurchase] = useState<PurchaseDocument | null>(null);
   const [failure, setFailure] = useState('');
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
-    purchaseOrder(ocId, controller.signal).then(({ order: record }) => setOrder(record)).catch((cause) => {
+    purchaseOrder(ocId, controller.signal).then((record) => {
+      if (!controller.signal.aborted) setPurchase(record);
+    }).catch((cause) => {
       if (!controller.signal.aborted) {
         setFailure(cause instanceof Error ? cause.message : 'No se pudo leer la orden.');
       }
@@ -36,8 +38,11 @@ export default function OrdenCompraPrintPage() {
     );
   }
 
-  if (!order || order.folio.toUpperCase() !== ocId.toUpperCase()) return <p className="p-4 text-sm text-slate-600">Cargando la orden…</p>;
+  if (!purchase || purchase.order.folio.toUpperCase() !== ocId.toUpperCase()) {
+    return <p className="p-4 text-sm text-slate-600">Cargando la orden…</p>;
+  }
 
+  const { order, approvalSignature } = purchase;
   const issuer = order.issuer;
   const authorized = isApprovalRecorded(order);
   const ultratk = issuer?.template === 'ultratk';
@@ -73,6 +78,7 @@ export default function OrdenCompraPrintPage() {
           .po-document .po-table { overflow: visible; }
           .po-document .po-table table { min-width: 0; }
           .po-document .po-heading { grid-template-columns: 1fr 1fr; }
+          .po-document .po-approval-signed { grid-template-columns: minmax(0, 1fr) auto; }
           .po-document .po-section, .po-document tr { break-inside: avoid; }
           .po-document thead { display: table-header-group; }
         }
@@ -163,9 +169,21 @@ export default function OrdenCompraPrintPage() {
 
         <footer className="po-section mt-5 border-t border-slate-300 pt-2">
           {authorized ? (
-            <div data-testid="purchase-approval-provenance">
-              <p className="font-bold">Autorización digital registrada</p>
-              <p>{order.approvedBy} · {approvedAt} · {order.folio}</p>
+            <div className={approvalSignature ? 'po-approval-signed grid items-end gap-4 sm:grid-cols-[minmax(0,1fr)_auto]' : undefined}>
+              <div className="min-w-0 break-words" data-testid="purchase-approval-provenance">
+                <p className="font-bold">Autorización digital registrada</p>
+                <p>{order.approvedBy} · {approvedAt} · {order.folio}</p>
+              </div>
+              {approvalSignature && (
+                <div className="w-44 max-w-full text-center">
+                  <div className="relative mx-auto h-[78px] w-32 overflow-hidden">
+                    {/* Frame the handwriting in the supplied reference, which also contains a rule and a caption. */}
+                    <img alt={`Firma de ${order.approvedBy}`} src={`data:image/png;base64,${approvalSignature}`}
+                      className="absolute -left-[65px] -top-[29px] w-[230px] max-w-none" />
+                  </div>
+                  <p className="border-t border-slate-900 pt-1 font-bold uppercase" style={{ color: accent }}>Firma autorizada</p>
+                </div>
+              )}
             </div>
           ) : <p className="font-semibold">Aprobación digital pendiente de comprobar</p>}
         </footer>

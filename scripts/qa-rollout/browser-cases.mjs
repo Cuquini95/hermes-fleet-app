@@ -751,6 +751,10 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       purchaseFolio = folio;
       const card = page.locator('article').filter({ hasText: folio });
       await visible(card.getByText(/· Borrador ·/));
+      await card.getByRole('link', { name: 'Ver / Imprimir', exact: true }).tap();
+      await visible(page.locator('.po-document'));
+      assert.equal(await page.getByText('Firma autorizada', { exact: true }).count(), 0);
+      await page.locator('.po-toolbar').getByRole('link', { name: 'Volver', exact: true }).tap();
       await page.reload({ waitUntil: 'domcontentloaded' });
       await card.getByRole('button', { name: 'Aprobar', exact: true }).tap();
       await card.getByLabel('Soporte de la aprobación Q25').fill('Requisición validada en QA');
@@ -758,22 +762,32 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await visible(card.getByText(/· Aprobada ·/));
       const header = sheet.read(tabs.purchases).find(row => row[0] === folio);
       assert.deepEqual(header.slice(6, 12), ['433.36', '30.34', '25.50', '8.75', '497.95', 'Aprobada']);
-      await card.getByRole('link', { name: 'Ver / Imprimir', exact: true }).tap();
-      await visible(page.locator('.po-document'));
-      const rendered = await page.locator('.po-document').innerText();
-      assert(rendered.includes('Proveedor QA') && rendered.includes('DZ203') && rendered.includes(folio));
-      assert.match(rendered, /Trans Plus Panamá/i);
-      assert.match(rendered, /497[.,]95/);
-      assert.match(rendered, /14[/-]11[/-]2026|2026-11-14/);
-      assert.match(rendered, /QA gerencia/);
-      const artifact = 'Hermes_OC_QA.pdf';
-      const pdfPath = resolve(out, artifact);
-      await page.pdf({ path: pdfPath, preferCSSPageSize: true, printBackground: true });
-      const printed = execFileSync('pdftotext', [pdfPath, '-'], { encoding: 'utf8' });
-      assert.match(printed, /497[.,]95/);
-      assert(printed.includes(folio) && printed.includes(parts[2][0]));
-      assert.match(execFileSync('pdfinfo', [pdfPath], { encoding: 'utf8' }), /^Pages:\s+1$/m);
-      return { folio, unit: 'DZ203', amount: 497.95, artifact, pages: 1 };
+      sheet.readPurchaseSignature = async order => order.folio === folio ? photoPng.toString('base64') : undefined;
+      try {
+        await card.getByRole('link', { name: 'Ver / Imprimir', exact: true }).tap();
+        const document = page.locator('.po-document');
+        await visible(document);
+        const rendered = await document.innerText();
+        assert(rendered.includes('Proveedor QA') && rendered.includes('DZ203') && rendered.includes(folio));
+        assert.match(rendered, /Trans Plus Panamá/i);
+        assert.match(rendered, /497[.,]95/);
+        assert.match(rendered, /14[/-]11[/-]2026|2026-11-14/);
+        assert.match(rendered, /QA gerencia/);
+        await visible(document.getByText('Firma autorizada', { exact: true }));
+        await document.getByRole('img', { name: /Firma de QA gerencia/i }).evaluate(img => img.decode());
+        await noHorizontalOverflow(page, 390);
+        const artifact = 'Hermes_OC_QA.pdf';
+        const pdfPath = resolve(out, artifact);
+        await page.pdf({ path: pdfPath, preferCSSPageSize: true, printBackground: true });
+        const printed = execFileSync('pdftotext', [pdfPath, '-'], { encoding: 'utf8' });
+        assert.match(printed, /497[.,]95/);
+        assert.match(printed, /FIRMA AUTORIZADA/i);
+        assert(printed.includes(folio) && printed.includes(parts[2][0]));
+        assert.match(execFileSync('pdfinfo', [pdfPath], { encoding: 'utf8' }), /^Pages:\s+1$/m);
+        return { folio, unit: 'DZ203', amount: 497.95, artifact, pages: 1, signaturePrinted: true };
+      } finally {
+        delete sheet.readPurchaseSignature;
+      }
     }, browserBuyer));
 
     await record('MÓVIL-COMPRAS-RECEPCIONES-PARCIALES', () => inRole('jefe_taller', 390, async page => {

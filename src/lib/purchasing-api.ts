@@ -97,6 +97,11 @@ export interface PurchaseOrder {
   lines: PurchaseLine[];
 }
 
+export interface PurchaseDocument {
+  order: PurchaseOrder;
+  approvalSignature?: string;
+}
+
 export interface PurchaseRequestLine {
   id: string;
   version: string;
@@ -214,7 +219,7 @@ export async function purchaseWrite<T>(
 }
 
 export function purchaseOrder(folio: string, signal?: AbortSignal) {
-  return purchaseRead<{ order: PurchaseOrder }>('order', { folio }, signal);
+  return purchaseRead<PurchaseDocument>('order', { folio }, signal);
 }
 
 export function purchaseRequests(signal?: AbortSignal) {

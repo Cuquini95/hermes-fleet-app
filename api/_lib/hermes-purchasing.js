@@ -942,7 +942,9 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
       const [orders, lines] = await readTables(sheets, PURCHASE_TABS.orders, PURCHASE_TABS.lines);
       if (action === 'order') {
         const { record } = orderLookup(field(query.folio, 90, 'folio', true), orders, lines, session);
-        return ok({ order: record });
+        const approvalSignature = panama && session.previewDemo !== true && record.issuer?.template === 'transplus'
+          && hasRecordedApproval(record) ? await sheets.readPurchaseSignature?.(record) : undefined;
+        return ok({ order: record, ...(approvalSignature && { approvalSignature }) });
       }
       const rows = entries(orders).filter(({ row }) => trim(row[0]) && trim(row[11]) !== 'Eliminada');
       const linked = new Map();
