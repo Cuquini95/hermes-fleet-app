@@ -92,7 +92,7 @@ function TimelineEntry({ entry }: { entry: StatusLogEntry }) {
 }
 
 export default function WorkOrderDetailPage() {
-  const { otId } = useParams<{ otId: string }>();
+  const { otId: requestedFolio } = useParams<{ otId: string }>();
   const navigate = useNavigate();
   const { statusLog, loading, error, fetched, fetchWorkOrders, updateOTField, getWorkOrderById } = useWorkOrderStore();
   const role = useAuthStore((s) => s.role);
@@ -124,7 +124,8 @@ export default function WorkOrderDetailPage() {
     }
   }, [fetched, fetchWorkOrders]);
 
-  const wo = otId ? getWorkOrderById(otId) : undefined;
+  const wo = requestedFolio ? getWorkOrderById(requestedFolio) : undefined;
+  const otId = wo?.ot_id ?? requestedFolio;
   const equipment = useEquipmentById(wo?.unidad ?? '');
   const panamaWorkflow = project === 'tmf-panama';
   const isPM = wo?.tipo_averia === 'PM';
@@ -265,7 +266,7 @@ export default function WorkOrderDetailPage() {
           <ArrowLeft size={20} className="text-text" />
         </button>
         <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-bold text-text truncate">{wo.ot_id}</h1>
+          <h1 className="text-lg font-bold text-text truncate">{wo.folio ?? wo.ot_id}</h1>
           <p className="text-xs text-text-secondary">{wo.fecha}</p>
           {wo.fecha_cierre && <p className="text-xs text-text-secondary">Cierre {wo.fecha_cierre}</p>}
         </div>

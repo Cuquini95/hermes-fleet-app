@@ -94,6 +94,19 @@ describe('useWorkOrderStore — fetchWorkOrders', () => {
     expect(useWorkOrderStore.getState().workorders).toHaveLength(0);
   });
 
+  it('finds the numbered Panama order without losing its original reference or history', async () => {
+    const id = 'OT-ABCDEF0123456789';
+    mockOrders([buildOTRow({ 1: id, 25: 'OT-0100' })], [buildLogRow(id, 'estado', 'Abierta', 'En Reparación')]);
+
+    await useWorkOrderStore.getState().fetchWorkOrders();
+
+    const { getWorkOrderById, statusLog } = useWorkOrderStore.getState();
+    const order = getWorkOrderById('OT-0100');
+    expect(order).toMatchObject({ ot_id: id, folio: 'OT-0100', estado: 'En Reparación' });
+    expect(getWorkOrderById(id)).toBe(order);
+    expect(statusLog[0]?.ot_id).toBe(id);
+  });
+
   it('sets fetched=true and loading=false after successful fetch', async () => {
     mockOrders();
     await useWorkOrderStore.getState().fetchWorkOrders();

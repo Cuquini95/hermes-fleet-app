@@ -65,7 +65,7 @@ export default function OTCard({ workorder, onClick }: OTCardProps) {
       <div className="p-4">
         {/* Row 1: OT ID + priority pill + estado pill */}
         <div className="flex items-center gap-2 flex-wrap mb-1.5">
-          <span className="font-mono font-semibold text-amber text-sm">{workorder.ot_id}</span>
+          <span className="font-mono font-semibold text-amber text-sm">{workorder.folio ?? workorder.ot_id}</span>
           <span
             className="text-xs font-semibold px-2 py-0.5 rounded-full"
             style={{ color: priorityConfig.color, backgroundColor: priorityConfig.bg }}

@@ -40,6 +40,7 @@ function parseWorkOrderRow(row: string[]): WorkOrder | null {
   if (!otId || !otId.startsWith('OT-')) return null;
   return {
     ot_id:             row[OT_COL.OT_ID]          ?? '',
+    folio:             /^OT-\d{4,15}$/.test(row[25] ?? '') ? row[25] : undefined,
     fecha:             row[OT_COL.FECHA]           ?? '',
     unidad:            row[OT_COL.UNIDAD]          ?? '',
     tipo_averia:       row[OT_COL.TIPO_AVERIA]     ?? '',
@@ -163,7 +164,7 @@ export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
     }
   },
 
-  getWorkOrderById: (otId) => get().workorders.find((wo) => wo.ot_id === otId),
+  getWorkOrderById: (otId) => get().workorders.find((wo) => wo.ot_id === otId || wo.folio === otId),
 
   initRealtime: () => {
     let actor = workshopActorId();

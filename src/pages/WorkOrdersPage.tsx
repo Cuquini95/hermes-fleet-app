@@ -121,7 +121,7 @@ export default function WorkOrdersPage() {
           <OTCard
             key={ot.ot_id}
             workorder={ot}
-            onClick={() => navigate(`/workorders/${ot.ot_id}`)}
+            onClick={() => navigate(`/workorders/${ot.folio ?? ot.ot_id}`)}
           />
         ))
       )}

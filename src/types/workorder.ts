@@ -63,6 +63,7 @@ export function getNextStatuses(current: OTEstado): OTEstado[] {
 
 export interface WorkOrder {
   ot_id: string;
+  folio?: string;
   fecha: string;
   unidad: string;
   tipo_averia: string;
