@@ -42,6 +42,34 @@ function readiness(sheets, session = manager) {
   return dispatchWorkshop({ path: 'api/workshop/readiness', method: 'GET', session, sheets, now });
 }
 
+test('shows confirmed operating units separately from dispatch restrictions and keeps documented stops', async () => {
+  const store = sheetsWith({
+    masters: {
+      failures: section([{ id: 'CASE-1', unit: 'QA02', status: 'Detenido reportado', last: date }]),
+      orders: section([]),
+    },
+  });
+  const read = store.read;
+  store.nativeOperations = true;
+  store.read = async tab => {
+    if (tab === 'HERMES_PA_CONFIRMACION_OPERATIVA') return [['UNIDAD'], ['QA01', 'operativo'], ['QA02', 'operativo']];
+    if (tab === 'Inspeccion_Stickers') {
+      const red = Array(18).fill('');
+      red[5] = 'QA01';
+      red[12] = 'Rojo';
+      return [red];
+    }
+    return read(tab);
+  };
+
+  const { body } = await readiness(store);
+  assert.deepEqual(body.operatingStatuses, [['QA01', 'operativo'], ['QA02', 'inoperativo']]);
+  assert.equal(body.stickers[0][12], 'Rojo');
+  assert.deepEqual(body.inspections, []);
+  const limited = { ...manager, allUnits: false, assignedUnits: ['QA02'] };
+  assert.deepEqual((await readiness(store, limited)).body.operatingStatuses, [['QA02', 'inoperativo']]);
+});
+
 test('el Dashboard recibe un solo caso y una sola OT por folio y el estado oficial prevalece', async () => {
   const saved = sheetsWith({
     masters: {

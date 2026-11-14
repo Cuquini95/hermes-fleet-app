@@ -42,6 +42,8 @@ export default function ExecutiveDashboard() {
   const { refresh: refreshData } = data;
   const { refresh: refreshDispatch } = dispatch;
   const snapshot = dispatchAvailability(equipment, dispatch.readiness, dispatch.verified && !dispatch.loading && !equipmentError);
+  const operatingCount = dispatch.operatingStatuses
+    ? equipment.filter(unit => dispatch.operatingStatuses?.get(unit.unit_id) === 'operativo').length : null;
   const refreshAll = useCallback(() => {
     refreshData();
     return refreshDispatch();
@@ -128,8 +130,10 @@ export default function ExecutiveDashboard() {
             <div className="grid grid-cols-2 gap-3">
               <KPICard
                 icon={<Activity size={20} />}
-                value={snapshot.pct === null ? 'Sin verificar' : `${snapshot.pct}%`}
-                label={snapshot.available === null ? "Aptos para despacho" : `Aptos para despacho · ${snapshot.available}/${snapshot.total}`}
+                value={useWorkshopMaster ? (operatingCount === null ? '—' : `${operatingCount}/${equipment.length}`)
+                  : snapshot.pct === null ? 'Sin verificar' : `${snapshot.pct}%`}
+                label={useWorkshopMaster ? 'Equipos operativos'
+                  : snapshot.available === null ? 'Aptos para despacho' : `Aptos para despacho · ${snapshot.available}/${snapshot.total}`}
                 color="#16A34A"
               />
               <KPICard
@@ -157,13 +161,13 @@ export default function ExecutiveDashboard() {
           {project === 'tmf-panama' && !useWorkshopMaster && data.error && <PanamaSourceRecords source="orders" limit={3} />}
 
           {/* Fleet grid */}
-          <FleetGrid equipment={equipment} dispatch={dispatch} />
+          <FleetGrid equipment={equipment} dispatch={dispatch} operatingOnly={useWorkshopMaster} />
 
           {/* Availability chart */}
           <AvailabilityChart data={data.availabilityTrend} loading={data.loading} />
 
           {/* Daily actions */}
-          <AccionesDelDia exceptions={snapshot.exceptions} readiness={dispatch.readiness} verified={snapshot.pct !== null} />
+          {!useWorkshopMaster && <AccionesDelDia exceptions={snapshot.exceptions} readiness={dispatch.readiness} verified={snapshot.pct !== null} />}
 
           {role === 'gerencia' && project === 'tmf-panama' && <PanamaFinanceHandoff />}
 

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { STICKER_INSPECTION_TEMPLATES, stickerTemplateForEquipment } from '../../src/data/sticker-inspection-templates.js';
-import { buildDispatchReadinessMap } from '../../src/lib/dispatch-readiness.js';
+import { activeFailureUnits, buildDispatchReadinessMap } from '../../src/lib/dispatch-readiness.js';
 import { PANAMA_PROJECT } from './hermes-panama.js';
 import { reconcilePanamaWorkshop } from './hermes-panama-workshop.js';
 import { HermesSheetError, PANAMA_READINESS_TAB } from './hermes-google-sheets.js';
@@ -776,10 +776,12 @@ export async function verifyUnitReadiness(sheets, unit, options) {
 async function readinessSources(context) {
   const { session, sheets } = context;
   const readMasters = isPanama(context) && sheets.readWorkshopMasters;
-  const [failures, stickers, inspections, orders, masters] = await Promise.allSettled([
+  const readOperating = readMasters && sheets.nativeOperations && MANAGEMENT.has(session.role);
+  const [failures, stickers, inspections, orders, masters, confirmed] = await Promise.allSettled([
     ...READINESS_SOURCES.map(async ([, tab]) => sheets.read(tab, { cached: true, requireExisting: true })),
     Promise.resolve().then(() => isPanama(context) ? sheets.read(TAB.orders, { cached: true, requireExisting: true }) : []),
     Promise.resolve().then(() => readMasters ? sheets.readWorkshopMasters() : null),
+    Promise.resolve().then(() => readOperating ? sheets.read('HERMES_PA_CONFIRMACION_OPERATIVA') : null),
   ]);
   const response = { unavailable: [] };
   const results = [failures, stickers, inspections];
@@ -799,6 +801,20 @@ async function readinessSources(context) {
     if (!workshop.failures.masterAvailable || !workshop.orders.masterAvailable) response.unavailable.push('workshopMaster');
     response.masterRestrictions = masterRestrictions;
     if (MANAGEMENT.has(session.role)) response.workshop = workshop;
+    if (confirmed.status === 'fulfilled' && confirmed.value?.[0]?.[0] === 'UNIDAD'
+        && official?.failures && failures.status === 'fulfilled' && orders.status === 'fulfilled') {
+      const running = new Set(confirmed.value.slice(1).filter(row => row[1] === 'operativo').map(row => row[0]));
+      for (const row of orders.value) {
+        if (row[9] === 'Completado' && storedObject(row[WORKFLOW.operations])?.decision === 'accepted') running.add(row[3]);
+      }
+      const stopped = activeFailureUnits(failures.value.filter(row => /Puede moverse: No$/.test(row[11] ?? '')));
+      for (const record of official.failures.records) {
+        if (/^(detenido reportado|en reparaci[oó]n|esperando pieza)$/i.test(record.status.trim())) stopped.add(record.unit.toUpperCase());
+      }
+      response.operatingStatuses = [...new Set([...running, ...stopped])]
+        .filter(unit => unit && scopeAllows(session, unit))
+        .map(unit => [unit, stopped.has(unit) ? 'inoperativo' : 'operativo']);
+    }
   }
   return response;
 }

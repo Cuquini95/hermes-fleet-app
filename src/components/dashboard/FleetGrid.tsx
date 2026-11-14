@@ -8,6 +8,7 @@ import { normalizeUnitId, type UnitDispatchReadiness } from '../../lib/dispatch-
 interface FleetGridProps {
   equipment: Equipment[]
   dispatch?: FleetDispatch
+  operatingOnly?: boolean
   selectedUnit?: string
   onClearSelectedUnit?: () => void
 }
@@ -19,12 +20,12 @@ interface SelectedUnit {
   readiness?: UnitDispatchReadiness
 }
 
-export default function FleetGrid({ equipment, dispatch, selectedUnit, onClearSelectedUnit }: FleetGridProps) {
+export default function FleetGrid({ equipment, dispatch, operatingOnly = false, selectedUnit, onClearSelectedUnit }: FleetGridProps) {
   const [selected, setSelected] = useState<SelectedUnit | null>(null)
   const fallback = useFleetDispatch(equipment, !dispatch)
-  const { effectiveEquipment, readiness: dispatchReadiness, verified, loading, message } = dispatch ?? fallback
+  const { effectiveEquipment, readiness: dispatchReadiness, verified, loading, message, operatingStatuses } = dispatch ?? fallback
 
-  const sorted = [...effectiveEquipment].sort(
+  const sorted = operatingOnly ? equipment : [...effectiveEquipment].sort(
     (a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status),
   )
 
@@ -33,11 +34,12 @@ export default function FleetGrid({ equipment, dispatch, selectedUnit, onClearSe
 
   return (
     <>
-      {message && <p role="status" className="mb-2 text-sm text-text-secondary">{message}</p>}
-      {loading && !verified && !message && <p className="mb-2 text-sm text-text-secondary">Verificando bloqueos…</p>}
+      {!operatingOnly && message && <p role="status" className="mb-2 text-sm text-text-secondary">{message}</p>}
+      {!operatingOnly && loading && !verified && !message && <p className="mb-2 text-sm text-text-secondary">Verificando bloqueos…</p>}
       <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
         {sorted.map((unit) => {
           const readiness = dispatchReadiness.get(normalizeUnitId(unit.unit_id))
+          const operating = operatingStatuses?.get(normalizeUnitId(unit.unit_id))
           return (
           <button
             key={unit.unit_id}
@@ -46,7 +48,7 @@ export default function FleetGrid({ equipment, dispatch, selectedUnit, onClearSe
             className="relative bg-card rounded-lg p-3 border border-border text-center hover:shadow-md hover:border-blue-300 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/40"
             aria-label={`Ver detalle de ${unit.unit_id}`}
           >
-            {readiness && readiness.level !== 'ok' && (
+            {!operatingOnly && readiness && readiness.level !== 'ok' && (
               <span className={`absolute right-1.5 top-1.5 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase ${
                 readiness.level === 'blocked'
                   ? 'bg-red-100 text-red-700 border border-red-200'
@@ -56,10 +58,14 @@ export default function FleetGrid({ equipment, dispatch, selectedUnit, onClearSe
               </span>
             )}
             <div className="flex justify-center mb-1">
-              <StatusDot status={!verified && unit.status === 'operativo' ? 'no_verificado' : unit.status} />
+              {operatingOnly ? operating && <StatusDot status={operating === 'operativo' ? 'operativo' : 'taller'} />
+                : <StatusDot status={!verified && unit.status === 'operativo' ? 'no_verificado' : unit.status} />}
             </div>
             <p className="font-mono text-sm font-semibold text-text leading-tight">{unit.unit_id}</p>
             <p className="text-xs text-text-secondary truncate mt-0.5">{unit.model}</p>
+            {operatingOnly && operating && <p className={`mt-1 text-xs font-semibold ${operating === 'operativo' ? 'text-green-700' : 'text-red-700'}`}>
+              {operating === 'operativo' ? 'Operativo' : 'Inoperativo'}
+            </p>}
           </button>
           )
         })}
@@ -68,7 +74,9 @@ export default function FleetGrid({ equipment, dispatch, selectedUnit, onClearSe
       {active && (
         <UnitDetailModal
           unit={active.unit}
-          dispatchReadiness={active.readiness}
+          dispatchReadiness={operatingOnly ? undefined : active.readiness}
+          operatingOnly={operatingOnly}
+          operatingStatus={operatingStatuses?.get(normalizeUnitId(active.unit.unit_id))}
           verified={verified}
           onClose={() => { setSelected(null); onClearSelectedUnit?.(); }}
         />

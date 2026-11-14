@@ -10,6 +10,7 @@ import { X, AlertCircle, FileText, Clock, User as UserIcon, Wrench } from 'lucid
 import { readRange, SHEET_TABS } from '../../lib/sheets-api'
 import StatusDot from '../ui/StatusDot'
 import type { Equipment } from '../../types/equipment'
+import type { OperatingStatus } from '../../hooks/useFleetDispatch'
 import { firstPhotoUrl, isOpenAveria, parseAveriaRow, type AveriaEntry } from '../../lib/averias'
 import { applyDispatchReadiness, type UnitDispatchReadiness } from '../../lib/dispatch-readiness'
 
@@ -17,6 +18,8 @@ interface UnitDetailModalProps {
   unit: Equipment
   dispatchReadiness?: UnitDispatchReadiness
   verified?: boolean
+  operatingOnly?: boolean
+  operatingStatus?: OperatingStatus
   onClose: () => void
 }
 
@@ -35,7 +38,7 @@ const SEV_BADGE: Record<string, string> = {
   BAJA: 'bg-yellow-100 text-yellow-700 border-yellow-200',
 }
 
-export default function UnitDetailModal({ unit, dispatchReadiness, verified = true, onClose }: UnitDetailModalProps) {
+export default function UnitDetailModal({ unit, dispatchReadiness, verified = true, operatingOnly = false, operatingStatus, onClose }: UnitDetailModalProps) {
   const [averias, setAverias] = useState<AveriaEntry[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -80,7 +83,8 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
         {/* Header */}
         <div className="flex items-start justify-between p-5 border-b border-gray-100">
           <div className="flex items-center gap-3">
-            <StatusDot status={effectiveStatus} />
+            {operatingOnly ? operatingStatus && <StatusDot status={operatingStatus === 'operativo' ? 'operativo' : 'taller'} />
+              : <StatusDot status={effectiveStatus} />}
             <div>
               <h2 className="text-lg font-bold text-gray-900 font-mono">{unit.unit_id}</h2>
               <p className="text-sm text-gray-500">{unit.model}</p>
@@ -97,10 +101,10 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
         </div>
 
         {/* Status */}
-        <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-2 text-sm">
+        {(!operatingOnly || operatingStatus) && <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-2 text-sm">
           <Wrench size={16} className="text-gray-500" />
           <span className="font-semibold text-gray-700">Estado:</span>
-          <span className="text-gray-900">{STATUS_LABEL[effectiveStatus]}</span>
+          <span className="text-gray-900">{operatingOnly ? operatingStatus === 'operativo' ? 'Operativo' : 'Inoperativo' : STATUS_LABEL[effectiveStatus]}</span>
           {dispatchReadiness && dispatchReadiness.level !== 'ok' && (
             <span className={`ml-auto rounded-full px-2 py-0.5 text-xs font-semibold border ${
               dispatchReadiness.level === 'blocked'
@@ -115,7 +119,7 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
               Averia abierta
             </span>
           )}
-        </div>
+        </div>}
 
         {/* Body */}
         <div className="p-5">
@@ -152,7 +156,7 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
                 <p className="font-medium">{dispatchReadiness?.source === 'averia'
                   ? 'El detalle de la avería pendiente requiere conciliación'
                   : 'Sin reporte de avería registrado'}</p>
-                {unit.status !== 'operativo' && dispatchReadiness?.source !== 'averia' && (
+                {!operatingOnly && unit.status !== 'operativo' && dispatchReadiness?.source !== 'averia' && (
                   <p className="text-xs text-gray-500 mt-1">
                     El estado en "01 Inventario" indica{' '}
                     <strong>{(STATUS_LABEL[unit.status] ?? unit.status).toLowerCase()}</strong> pero

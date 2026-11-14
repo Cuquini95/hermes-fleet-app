@@ -6,6 +6,7 @@ import { useAuthStore } from '../stores/auth-store';
 import type { Equipment } from '../types/equipment';
 
 type DispatchSource = 'failures' | 'stickers' | 'inspections' | 'returns' | 'workshopMaster';
+export type OperatingStatus = 'operativo' | 'inoperativo';
 export interface WorkshopRecord {
   id: string;
   unit: string;
@@ -37,6 +38,7 @@ interface ReadinessSources {
   unavailable: DispatchSource[];
   workshop?: WorkshopSummary;
   masterRestrictions?: UnitDispatchReadiness[];
+  operatingStatuses?: [string, OperatingStatus][];
 }
 
 export interface FleetDispatch {
@@ -44,6 +46,7 @@ export interface FleetDispatch {
   readiness: Map<string, UnitDispatchReadiness>;
   pendingReturns: PendingOperationalReturn[];
   workshop?: WorkshopSummary;
+  operatingStatuses?: ReadonlyMap<string, OperatingStatus>;
   verified: boolean;
   loading: boolean;
   message: string;
@@ -78,7 +81,7 @@ export function useFleetDispatch(equipment: Equipment[], enabled = true): FleetD
         setLoaded(previous => {
           if (previous?.identity !== identity) return { identity, sources: result };
           // Keep known restrictions from a source until it responds again.
-          const merged = { ...result };
+          const merged = { ...result, operatingStatuses: result.operatingStatuses ?? previous.sources.operatingStatuses };
           for (const name of result.unavailable) {
             if (name === 'workshopMaster') {
               const restrictions = new Map(previous.sources.masterRestrictions?.map(row => [row.unitId, row]));
@@ -97,6 +100,7 @@ export function useFleetDispatch(equipment: Equipment[], enabled = true): FleetD
           return { identity, sources: {
             failures: last?.failures ?? [], stickers: last?.stickers ?? [], inspections: last?.inspections ?? [],
             returns: last?.returns ?? [], masterRestrictions: last?.masterRestrictions,
+            operatingStatuses: last?.operatingStatuses,
             unavailable: ['failures', 'stickers', 'inspections', 'returns'],
           } };
         });
@@ -136,5 +140,6 @@ export function useFleetDispatch(equipment: Equipment[], enabled = true): FleetD
     ? `Disponibilidad sin verificar. Fuentes no disponibles: ${sources.unavailable.map((source) => LABELS[source]).join(', ')}.`
     : '';
   return { effectiveEquipment, readiness, pendingReturns: sources?.returns ?? [], workshop: sources?.workshop,
+    operatingStatuses: sources?.operatingStatuses ? new Map(sources.operatingStatuses) : undefined,
     verified, loading, message, refresh };
 }
