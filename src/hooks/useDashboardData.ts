@@ -5,6 +5,7 @@ import { mexicoDate } from '../lib/date-utils';
 import { buildAvailabilityTrend, type AvailabilityPoint } from '../lib/availability';
 import { parseAveriaRow } from '../lib/averias';
 import { useEquipmentStore } from '../stores/equipment-store';
+import type { WorkshopSummary } from './useFleetDispatch';
 
 export interface DashboardData {
   criticalOTs: number | null;
@@ -52,7 +53,7 @@ function countAlertsToday(rows: string[][]): number {
   return rows.filter((row) => parseAveriaRow(row)?.fecha === today).length;
 }
 
-export function useDashboardData(equipmentList: Equipment[]): DashboardData {
+export function useDashboardData(equipmentList: Equipment[], useWorkshopMaster = false, workshop?: WorkshopSummary): DashboardData {
   const [criticalOTs, setCriticalOTs] = useState<number | null>(null);
   const [avgConsumption, setAvgConsumption] = useState('—');
   const [averiaRows, setAveriaRows] = useState<string[][] | null>(null);
@@ -61,19 +62,30 @@ export function useDashboardData(equipmentList: Equipment[]): DashboardData {
   const abortRef = useRef<AbortController | null>(null);
 
   const equipmentError = useEquipmentStore((state) => state.error);
-  const hasAvailability = averiaRows !== null && equipmentList.length > 0 && !equipmentError
+  const workshopFailures = workshop?.failures;
+  const masterRows = workshopFailures?.masterAvailable && workshopFailures.records.every(row => row.date && !row.needsReview
+    && row.status.toUpperCase() !== 'POR VERIFICAR') ? workshopFailures.records.map(row => {
+    const cells = Array<string>(10).fill('');
+    cells[0] = row.date!.split('-').reverse().join('/');
+    cells[2] = row.unit;
+    cells[9] = row.status.toUpperCase() === 'DETENIDO REPORTADO' ? 'Pendiente' : row.status;
+    return cells;
+  }) : null;
+  const availabilityRows = useWorkshopMaster ? masterRows : averiaRows;
+  const hasAvailability = availabilityRows !== null && equipmentList.length > 0 && !equipmentError
     && equipmentList.every(unit => unit.status !== 'no_verificado');
   const scope = new Set(equipmentList.map((equipment) => equipment.unit_id.toUpperCase()));
-  const scopedRows = (averiaRows ?? []).filter((row) => scope.has((row[2] ?? '').trim().toUpperCase()));
+  const scopedRows = (availabilityRows ?? []).filter((row) => scope.has((row[2] ?? '').trim().toUpperCase()));
   const availabilityTrend = hasAvailability ? buildAvailabilityTrend(equipmentList, scopedRows) : [];
-  const alertsToday = averiaRows === null ? null : countAlertsToday(averiaRows);
+  const alertsToday = useWorkshopMaster ? workshop?.alertsToday ?? null
+    : averiaRows === null ? null : countAlertsToday(averiaRows);
 
   const fetchAll = useCallback(async (signal: AbortSignal, refresh = false) => {
     const offset = refresh ? 0 : undefined;
     const results = await Promise.allSettled([
-      fetchCriticalOTs(signal, offset),
+      useWorkshopMaster ? Promise.resolve(null) : fetchCriticalOTs(signal, offset),
       fetchAvgConsumption(signal, offset),
-      readRange(SHEET_TABS.AVERIAS, signal, undefined, offset),
+      useWorkshopMaster ? Promise.resolve(null) : readRange(SHEET_TABS.AVERIAS, signal, undefined, offset),
     ]);
     if (signal.aborted) return;
 
@@ -83,7 +95,7 @@ export function useDashboardData(equipmentList: Equipment[]): DashboardData {
     setAveriaRows(breakdowns.status === 'fulfilled' ? breakdowns.value : null);
     setError(results.some((result) => result.status === 'rejected') ? 'Algunos indicadores no se pudieron cargar.' : null);
     setLoading(false);
-  }, []);
+  }, [useWorkshopMaster]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -108,7 +120,7 @@ export function useDashboardData(equipmentList: Equipment[]): DashboardData {
   }, [fetchAll]);
 
   return {
-    criticalOTs,
+    criticalOTs: useWorkshopMaster ? workshop?.criticalOTs ?? null : criticalOTs,
     avgConsumption,
     alertsToday,
     availabilityTrend,

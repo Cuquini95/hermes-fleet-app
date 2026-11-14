@@ -135,6 +135,48 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
   }
 
   try {
+    if (withGateway) await record('MÓVIL-GERENCIA-MAESTRO-DE-TALLER', () => inRole('gerencia', 390, async page => {
+      const cut = new Date().toISOString();
+      const today = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Panama', year: 'numeric', month: '2-digit', day: '2-digit',
+      }).format(new Date());
+      const previousFailures = sheet.read(tabs.failure);
+      const previousOrders = sheet.read(tabs.orders);
+      sheet.seed(tabs.failure, [previousFailures[0],
+        [today, '07:30', 'DZ203', 'Llanta', 'Avería sintética', 'ALTA', '', '', '', 'Abierta', '', '', '', 'OT-0004']]);
+      sheet.seed(tabs.orders, [previousOrders[0],
+        ['qa', 'OT-0004', today, 'DZ203', 'Llanta', 'OT sintética', 'ALTA', 'ALTA', '', 'Abierta']]);
+      sheet.setWorkshopMasters({
+        failures: { records: [
+          { id: 'TMF-QA-42', order: 'OT-0004', unit: 'DZ203', status: 'Cerrada', last: today },
+          { id: 'tmf-qa-42', order: 'OT-0004', unit: 'DZ203', status: 'Cerrada', last: today },
+        ], capturedAt: cut },
+        orders: { records: [{ id: 'OT-0004', unit: 'DZ203', status: 'Cerrada' }], capturedAt: cut },
+      });
+      try {
+        await clickByName(page, 'Actualizar datos');
+        const alertsCard = page.getByText('Averías hoy', { exact: true }).locator('..');
+        await visible(alertsCard.getByText('1', { exact: true }));
+        const summary = page.getByRole('region', { name: 'Maestro de Taller' });
+        await visible(summary.getByText('Maestro: Cerrada', { exact: true }).first());
+        await visible(summary.getByText('Hermes: Abierta', { exact: true }).first());
+        await visible(summary.getByText('Por conciliar', { exact: true }).first());
+        await visible(summary.getByText('TMF-QA-42 · DZ203', { exact: true }));
+        assert.equal(await summary.getByText('TMF-QA-42 · DZ203', { exact: true }).count(), 1);
+        await visible(summary.getByText(/Corte del Maestro de Taller/));
+        await clickByName(page, 'Briefing');
+        await visible(summary.getByText('Averías hoy: 1', { exact: true }));
+        await visible(summary.getByText('OTs abiertas: 0', { exact: true }));
+        await visible(summary.getByText('TMF-QA-42 · DZ203', { exact: true }));
+        await noHorizontalOverflow(page, 390);
+        return { masterPrimary: true, caseCount: 1, duplicateSuppressed: true, discrepancyVisible: true, sameInBriefing: true };
+      } finally {
+        sheet.setWorkshopMasters(undefined);
+        sheet.seed(tabs.failure, previousFailures);
+        sheet.seed(tabs.orders, previousOrders);
+      }
+    }, firstAccount('gerencia')));
+
     if (withGateway) await record('MÓVIL-GERENCIA-CONSULTA-SIN-LIBRO', () => inRole('gerencia', 390, async page => {
       const unavailable = [tabs.orders, tabs.failure, tabs.dvir, tabs.pmHistory, tabs.requests, tabs.parts, 'Combustible', 'Reporte_Fletes_Transporte'];
       const capturedAt = '2026-11-13T19:23:49Z';
@@ -566,7 +608,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         sheet.setUnavailable(sources, true);
         await clickByName(page, 'Actualizar datos');
         await visible(page.getByRole('alert').getByText('Algunos indicadores no se pudieron cargar.', { exact: true }).or(page.getByText('Algunos indicadores no se pudieron cargar.', { exact: true })));
-        await visible(ordersCard.getByText('—', { exact: true }));
+        await visible(ordersCard.getByText('Sin verificar', { exact: true }));
         await visible(page.getByText('Aptos para despacho', { exact: true }).locator('xpath=..').getByText('Sin verificar', { exact: true }));
       } finally { sheet.setUnavailable(sources, false); }
       await clickByName(page, 'Actualizar datos');

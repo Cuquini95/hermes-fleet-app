@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { STICKER_INSPECTION_TEMPLATES, stickerTemplateForEquipment } from '../../src/data/sticker-inspection-templates.js';
 import { buildDispatchReadinessMap } from '../../src/lib/dispatch-readiness.js';
 import { PANAMA_PROJECT } from './hermes-panama.js';
+import { reconcilePanamaWorkshop } from './hermes-panama-workshop.js';
 import { HermesSheetError, PANAMA_READINESS_TAB } from './hermes-google-sheets.js';
 import { isEvidenceError, verifyEvidence } from './hermes-evidence.js';
 
@@ -531,8 +532,7 @@ function pendingOperationalReturn(row) {
   return row[4] !== 'PM' && row[9] === 'Completado' && storedObject(row[WORKFLOW.operations])?.decision !== 'accepted';
 }
 
-async function returnQueue({ session, sheets }, details = false) {
-  const rows = await sheets.read(TAB.orders, { cached: true, requireExisting: true });
+function pendingReturnsFor(rows, session, details = false) {
   return rows.filter(row => /^OT-/.test(row[1] || '') && row[3] && scopeAllows(session, row[3].trim().toUpperCase())
     && pendingOperationalReturn(row)).map(row => {
     const entry = { otId: row[1], unit: row[3] };
@@ -540,6 +540,10 @@ async function returnQueue({ session, sheets }, details = false) {
     const technical = storedObject(row[WORKFLOW.technical]);
     return { ...entry, technicalAt: technical?.acceptedAt || row[14] || '', technicalBy: technical?.userName || '' };
   });
+}
+
+async function returnQueue({ session, sheets }, details = false) {
+  return pendingReturnsFor(await sheets.read(TAB.orders, { cached: true, requireExisting: true }), session, details);
 }
 
 async function operationalReturn(context) {
@@ -732,11 +736,15 @@ function readinessRows(rows, name, unitColumn, selected, allows) {
 
 export async function verifyUnitsReadiness(sheets, units, { acceptReturnFor } = {}) {
   if (!units.size) return new Map();
-  const [failures, stickers, inspections, orders] = await Promise.all([
-    ...READINESS_SOURCES.map(async ([name, tab, unitColumn, selected]) => readinessRows(
-      await sheets.read(tab, { requireExisting: true }), name, unitColumn, selected, candidate => units.has(candidate))),
-    sheets.read(TAB.orders, { requireExisting: true }),
+  const [failureRows, stickerRows, inspectionRows, orders, masters] = await Promise.all([
+    ...READINESS_SOURCES.map(async ([, tab]) => sheets.read(tab, { requireExisting: true })),
+    Promise.resolve().then(() => sheets.read(TAB.orders, { requireExisting: true })),
+    Promise.resolve().then(() => sheets.readWorkshopMasters?.()).catch(() => null),
   ]);
+  const [failures, stickers, inspections] = [failureRows, stickerRows, inspectionRows].map((rows, index) => {
+    const [name, , unitColumn, selected] = READINESS_SOURCES[index];
+    return readinessRows(rows, name, unitColumn, selected, unit => units.has(unit));
+  });
   const scoped = orders.filter(row => /^OT-/.test(row[1] || '') && units.has(row[3]?.trim().toUpperCase()));
   // Independently acknowledge technically closed orders. Dispatch still checks all pending returns.
   const pendingReturns = acceptReturnFor ? [] : scoped.filter(pendingOperationalReturn).map(row => ({ unit: row[3], otId: row[1] }));
@@ -748,6 +756,16 @@ export async function verifyUnitsReadiness(sheets, units, { acceptReturnFor } = 
     if (row[4] === 'PM' && !['En Reparación', 'Resuelta', 'Esperando Pieza'].includes(row[9])) continue;
     map.set(unit, { level: 'blocked', reason: `OT ${row[1]} sin cierre` });
   }
+  if (sheets.readWorkshopMasters) {
+    const { masterRestrictions } = reconcilePanamaWorkshop(masters, failureRows, orders, unit => units.has(unit));
+    for (const restriction of masterRestrictions) map.set(restriction.unitId, restriction);
+    if (!masters?.failures || !masters?.orders) {
+      for (const unit of units) {
+        if (map.get(unit)?.level === 'blocked') continue;
+        map.set(unit, { level: 'blocked', reason: 'Maestro de Taller sin verificar.' });
+      }
+    }
+  }
   return map;
 }
 
@@ -757,9 +775,11 @@ export async function verifyUnitReadiness(sheets, unit, options) {
 
 async function readinessSources(context) {
   const { session, sheets } = context;
-  const [failures, stickers, inspections, returns] = await Promise.allSettled([
-    ...READINESS_SOURCES.map(([, tab]) => sheets.read(tab, { cached: true, requireExisting: true })),
-    isPanama(context) ? returnQueue(context) : [],
+  const readMasters = isPanama(context) && sheets.readWorkshopMasters;
+  const [failures, stickers, inspections, orders, masters] = await Promise.allSettled([
+    ...READINESS_SOURCES.map(async ([, tab]) => sheets.read(tab, { cached: true, requireExisting: true })),
+    Promise.resolve().then(() => isPanama(context) ? sheets.read(TAB.orders, { cached: true, requireExisting: true }) : []),
+    Promise.resolve().then(() => readMasters ? sheets.readWorkshopMasters() : null),
   ]);
   const response = { unavailable: [] };
   const results = [failures, stickers, inspections];
@@ -768,8 +788,18 @@ async function readinessSources(context) {
     if (result.status !== 'fulfilled') response.unavailable.push(name);
     response[name] = readinessRows(result.status === 'fulfilled' ? result.value : [], name, unitColumn, selected, unit => scopeAllows(session, unit));
   }
-  if (returns.status !== 'fulfilled') response.unavailable.push('returns');
-  response.returns = returns.status === 'fulfilled' ? returns.value : [];
+  if (orders.status !== 'fulfilled') response.unavailable.push('returns');
+  response.returns = orders.status === 'fulfilled' ? pendingReturnsFor(orders.value, session) : [];
+  if (readMasters) {
+    const official = masters.status === 'fulfilled' ? masters.value : null;
+    const { workshop, masterRestrictions } = reconcilePanamaWorkshop(official,
+      failures.status === 'fulfilled' ? failures.value : null,
+      orders.status === 'fulfilled' ? orders.value : null,
+      unit => scopeAllows(session, unit), context.now ?? new Date());
+    if (!workshop.failures.masterAvailable || !workshop.orders.masterAvailable) response.unavailable.push('workshopMaster');
+    response.masterRestrictions = masterRestrictions;
+    if (MANAGEMENT.has(session.role)) response.workshop = workshop;
+  }
   return response;
 }
 

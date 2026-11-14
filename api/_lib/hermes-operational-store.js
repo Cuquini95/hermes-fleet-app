@@ -1,6 +1,6 @@
 import { identityConfig, identityRequest } from './hermes-identity.js';
 import { canonicalTab, HermesSheetError } from './hermes-google-sheets.js';
-import { PANAMA_PROJECT, readPanamaConsultationInventory } from './hermes-panama.js';
+import { PANAMA_PROJECT, readPanamaConsultationInventory, readPanamaWorkshopMasters } from './hermes-panama.js';
 
 const tables = '/rest/v1/hermes_panama_operational_tables';
 const receipts = '/rest/v1/hermes_panama_commit_receipts';
@@ -77,7 +77,7 @@ export function createPanamaOperationalStore({ request = database, readInventory
     }
   }
 
-  return { read, readMany, replay, commit, nativeOperations: true };
+  return { read, readMany, replay, commit, readWorkshopMasters: readPanamaWorkshopMasters, nativeOperations: true };
 }
 
 export const panamaOperationalStore = createPanamaOperationalStore();

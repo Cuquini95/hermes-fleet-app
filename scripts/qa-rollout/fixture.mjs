@@ -101,6 +101,7 @@ export function makeSheetsFixture() {
   const unavailable = new Set();
   const faults = [];
   const commits = [];
+  let workshopMasters;
 
   function read(tab) {
     if (unavailable.has(nameOf(tab))) throw stateError(503, 'Lectura de prueba no disponible');
@@ -156,6 +157,10 @@ export function makeSheetsFixture() {
 
   return {
     read, commit, replay, commits,
+    async readWorkshopMasters() {
+      return clone(workshopMasters ?? { failures: { records: [] }, orders: { records: [] } });
+    },
+    setWorkshopMasters(masters) { workshopMasters = masters; },
     readRange(range) {
       const [tab, ...rest] = range.split('!');
       const source = read(tab.replace(/^'|'$/g, '').replace(/''/g, "'"));

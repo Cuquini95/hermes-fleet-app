@@ -20,7 +20,8 @@ const sourceSpecs = [
   { key: 'shifts', env: 'HERMES_PANAMA_TMF_SHEET_ID', range: "'REGISTRO'!A3:M", unit: 'Código', limit: 50,
     columns: { id: 'Clave', unit: 'Código', date: 'Fecha', shift: 'Turno', status: 'Estado', start: 'H. Inicial', end: 'H. Final' } },
   { key: 'orders', env: 'HERMES_PANAMA_WORKSHOP_SHEET_ID', range: "'OTS'!A4:V", unit: 'EQUIPO', managementOnly: true,
-    columns: { id: 'Nº OT', unit: 'EQUIPO', description: 'FALLA / TRABAJO A REALIZAR', status: 'ESTADO', check: 'CONTROL INTEGRIDAD OT' } },
+    columns: { id: 'Nº OT', unit: 'EQUIPO', description: 'FALLA / TRABAJO A REALIZAR', status: 'ESTADO', check: 'CONTROL INTEGRIDAD OT' },
+    optionalColumns: { priority: 'PRIORIDAD' } },
   { key: 'maintenance', env: 'HERMES_PANAMA_PM_SHEET_ID', range: "'PM FLOTA'!A7:N", unit: 'EQUIPO', managementOnly: true,
     columns: maintenanceColumns, columnAliases: { status: 'Estado' }, optionalColumns: maintenanceDetails },
   { key: 'dozers', env: 'HERMES_PANAMA_DOZERS_SHEET_ID', range: "'RESUMEN JEFE'!A4:J", unit: 'EQUIPO', managementOnly: true,
@@ -106,6 +107,30 @@ async function readSourceForConsultation(spec) {
 }
 
 const rowsOf = source => Array.isArray(source) ? source : source.rows;
+
+export async function readPanamaWorkshopMasters({
+  readLive = readSource,
+  readCut = readSnapshot,
+  allowSnapshot = process.env.VERCEL_ENV === 'production',
+} = {}) {
+  const specs = sourceSpecs.filter(spec => spec.key === 'failures' || spec.key === 'orders');
+  const sections = await Promise.all(specs.map(async spec => {
+    const project = source => ({
+      records: visibleRecords(rowsOf(source), spec, { allUnits: true }),
+      capturedAt: source.captured_at ?? null,
+    });
+    try {
+      return [spec.key, project(await readLive(spec))];
+    } catch {
+      if (allowSnapshot) {
+        try { return [spec.key, project(await readCut(spec))]; }
+        catch { /* A missing or invalid cut leaves this source unavailable. */ }
+      }
+      return [spec.key, null];
+    }
+  }));
+  return Object.fromEntries(sections);
+}
 
 const equipmentDetails = {
   key: 'equipmentDetails', env: 'HERMES_PANAMA_EQUIPMENT_SHEET_ID', range: "'EQUIPOS'!A3:M",

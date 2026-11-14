@@ -10,10 +10,12 @@ import { useFleetDispatch, type FleetDispatch } from '../../hooks/useFleetDispat
 import { dispatchAvailability } from '../../lib/availability';
 import { normalizeUnitId } from '../../lib/dispatch-readiness';
 import { useEquipmentStore } from '../../stores/equipment-store';
+import { useAuthStore } from '../../stores/auth-store';
 import { fetchPanamaMaintenance } from '../../lib/panama-maintenance';
 import { briefingPmAlerts } from './briefing-pm';
 import { parseInventoryRows } from '../../lib/inventory-rows';
 import { mexicoDate, mexicoDateInput, mexicoTimeInput } from '../../lib/date-utils';
+import PanamaWorkshopSummary from './PanamaWorkshopSummary';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -219,6 +221,8 @@ export default function BriefingCard({ dispatch }: { dispatch?: FleetDispatch })
   const equipmentList = useEquipmentList();
   const fallback = useFleetDispatch(equipmentList, !dispatch);
   const fleet = dispatch ?? fallback;
+  const project = useAuthStore(state => state.project);
+  const demo = useAuthStore(state => state.previewDemo);
   const equipmentError = useEquipmentStore((state) => state.error);
   const equipmentFetched = useEquipmentStore((state) => state.fetched);
   const snapshot = dispatchAvailability(equipmentList, fleet.readiness, fleet.verified && !fleet.loading && !equipmentError);
@@ -302,6 +306,8 @@ export default function BriefingCard({ dispatch }: { dispatch?: FleetDispatch })
               <Line color="green">Todos los equipos del alcance están aptos para despacho.</Line>
             )}
           </Section>
+
+          {project === 'tmf-panama' && !demo && <PanamaWorkshopSummary data={fleet.workshop} loading={fleet.loading} />}
 
           <Section label="ALERTAS PM">
             {pm.sourceDate && <Line color="default">Corte de PM FLOTA del {new Date(pm.sourceDate).toLocaleString('es-PA', { timeZone: 'America/Panama', dateStyle: 'short', timeStyle: 'short' })} · hora de Panamá</Line>}

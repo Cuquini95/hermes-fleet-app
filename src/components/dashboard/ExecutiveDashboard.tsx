@@ -17,6 +17,7 @@ import PanamaFinanceHandoff from './PanamaFinanceHandoff';
 import { usePullToRefresh } from '../../hooks/usePullToRefresh';
 import PullIndicator from '../ui/PullIndicator';
 import PanamaSourceRecords from '../workshop/PanamaSourceRecords';
+import PanamaWorkshopSummary from './PanamaWorkshopSummary';
 
 type Tab = 'general' | 'briefing' | 'pedidos' | 'datos';
 
@@ -31,9 +32,13 @@ export default function ExecutiveDashboard() {
   const [activeTab, setActiveTab] = useState<Tab>('general');
   const navigate = useNavigate();
   const equipment = useEquipmentList();
-  const data = useDashboardData(equipment);
-  const equipmentError = useEquipmentStore((state) => state.error);
   const dispatch = useFleetDispatch(equipment);
+  const role = useAuthStore((s) => s.role);
+  const project = useAuthStore((s) => s.project);
+  const demo = useAuthStore((s) => s.previewDemo);
+  const useWorkshopMaster = project === 'tmf-panama' && !demo;
+  const data = useDashboardData(equipment, useWorkshopMaster, dispatch.workshop);
+  const equipmentError = useEquipmentStore((state) => state.error);
   const { refresh: refreshData } = data;
   const { refresh: refreshDispatch } = dispatch;
   const snapshot = dispatchAvailability(equipment, dispatch.readiness, dispatch.verified && !dispatch.loading && !equipmentError);
@@ -41,8 +46,6 @@ export default function ExecutiveDashboard() {
     refreshData();
     return refreshDispatch();
   }, [refreshData, refreshDispatch]);
-  const role = useAuthStore((s) => s.role);
-  const project = useAuthStore((s) => s.project);
 
   const handleRefresh = useCallback(async () => {
     await refreshAll();
@@ -131,7 +134,7 @@ export default function ExecutiveDashboard() {
               />
               <KPICard
                 icon={<AlertTriangle size={20} />}
-                value={data.criticalOTs ?? '—'}
+                value={data.criticalOTs ?? (useWorkshopMaster ? 'Sin verificar' : '—')}
                 label="OTs Críticas"
                 color="#DC2626"
               />
@@ -143,14 +146,15 @@ export default function ExecutiveDashboard() {
               />
               <KPICard
                 icon={<Bell size={20} />}
-                value={data.alertsToday ?? '—'}
+                value={data.alertsToday ?? (useWorkshopMaster ? 'Sin verificar' : '—')}
                 label="Averías hoy"
                 color="#F59E0B"
               />
             </div>
           )}
 
-          {project === 'tmf-panama' && data.error && <PanamaSourceRecords source="orders" limit={3} />}
+          {useWorkshopMaster && <PanamaWorkshopSummary data={dispatch.workshop} loading={dispatch.loading} card />}
+          {project === 'tmf-panama' && !useWorkshopMaster && data.error && <PanamaSourceRecords source="orders" limit={3} />}
 
           {/* Fleet grid */}
           <FleetGrid equipment={equipment} dispatch={dispatch} />

@@ -2,21 +2,48 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { mexicoDateInput } from '../lib/date-utils';
 import { applyDispatchReadiness, buildDispatchReadinessMap, normalizeUnitId, type PendingOperationalReturn, type UnitDispatchReadiness } from '../lib/dispatch-readiness';
 import { requestWorkshop } from '../lib/workshop-api';
+import { useAuthStore } from '../stores/auth-store';
 import type { Equipment } from '../types/equipment';
 
-type DispatchSource = 'failures' | 'stickers' | 'inspections' | 'returns';
+type DispatchSource = 'failures' | 'stickers' | 'inspections' | 'returns' | 'workshopMaster';
+export interface WorkshopRecord {
+  id: string;
+  unit: string;
+  status: string;
+  source: 'master' | 'hermes';
+  date?: string | null;
+  needsReview?: boolean;
+  operationalStatus?: string;
+  excludedFromCount?: boolean;
+}
+interface WorkshopSection {
+  records: WorkshopRecord[];
+  capturedAt: string | null;
+  masterAvailable: boolean;
+  operationalAvailable: boolean;
+}
+export interface WorkshopSummary {
+  failures: WorkshopSection;
+  orders: WorkshopSection;
+  alertsToday: number | null;
+  openOrders: number | null;
+  criticalOTs: number | null;
+}
 interface ReadinessSources {
   failures: string[][];
   stickers: string[][];
   inspections: string[][];
   returns: PendingOperationalReturn[];
   unavailable: DispatchSource[];
+  workshop?: WorkshopSummary;
+  masterRestrictions?: UnitDispatchReadiness[];
 }
 
 export interface FleetDispatch {
   effectiveEquipment: Equipment[];
   readiness: Map<string, UnitDispatchReadiness>;
   pendingReturns: PendingOperationalReturn[];
+  workshop?: WorkshopSummary;
   verified: boolean;
   loading: boolean;
   message: string;
@@ -28,12 +55,18 @@ const LABELS: Record<DispatchSource, string> = {
   stickers: 'Sticker',
   inspections: 'DVIR',
   returns: 'Retorno de Taller',
+  workshopMaster: 'Maestro de Taller',
 };
 
 export function useFleetDispatch(equipment: Equipment[], enabled = true): FleetDispatch {
-  const [sources, setSources] = useState<ReadinessSources>();
+  const user = useAuthStore(state => state.userId);
+  const project = useAuthStore(state => state.project);
+  const identity = user + '|' + project;
+  const [loaded, setLoaded] = useState<{ identity: string; sources: ReadinessSources }>();
+  const sources = loaded?.identity === identity ? loaded.sources : undefined;
   const [loading, setLoading] = useState(enabled);
   const sequence = useRef(0);
+  const invalidate = useCallback(() => { sequence.current++; }, []);
 
   const refresh = useCallback(async () => {
     if (!enabled) return;
@@ -42,28 +75,36 @@ export function useFleetDispatch(equipment: Equipment[], enabled = true): FleetD
     try {
       const result = await requestWorkshop<ReadinessSources>('readiness');
       if (sequence.current === current) {
-        setSources((previous) => {
-          if (!previous) return result;
+        setLoaded(previous => {
+          if (previous?.identity !== identity) return { identity, sources: result };
           // Keep known restrictions from a source until it responds again.
           const merged = { ...result };
           for (const name of result.unavailable) {
-            if (name === 'returns') merged.returns = previous.returns;
-            else merged[name] = previous[name];
+            if (name === 'workshopMaster') {
+              const restrictions = new Map(previous.sources.masterRestrictions?.map(row => [row.unitId, row]));
+              for (const row of result.masterRestrictions ?? []) restrictions.set(row.unitId, row);
+              merged.masterRestrictions = [...restrictions.values()];
+            } else if (name === 'returns') merged.returns = previous.sources.returns;
+            else merged[name] = previous.sources[name];
           }
-          return merged;
+          return { identity, sources: merged };
         });
       }
     } catch {
       if (sequence.current === current) {
-        setSources((previous) => ({
-          failures: previous?.failures ?? [], stickers: previous?.stickers ?? [], inspections: previous?.inspections ?? [],
-          returns: previous?.returns ?? [], unavailable: ['failures', 'stickers', 'inspections', 'returns'],
-        }));
+        setLoaded(previous => {
+          const last = previous?.identity === identity ? previous.sources : undefined;
+          return { identity, sources: {
+            failures: last?.failures ?? [], stickers: last?.stickers ?? [], inspections: last?.inspections ?? [],
+            returns: last?.returns ?? [], masterRestrictions: last?.masterRestrictions,
+            unavailable: ['failures', 'stickers', 'inspections', 'returns'],
+          } };
+        });
       }
     } finally {
       if (sequence.current === current) setLoading(false);
     }
-  }, [enabled]);
+  }, [enabled, identity]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -72,19 +113,28 @@ export function useFleetDispatch(equipment: Equipment[], enabled = true): FleetD
     window.addEventListener('focus', check);
     window.addEventListener('online', check);
     return () => {
-      sequence.current++;
+      invalidate();
       window.removeEventListener('focus', check);
       window.removeEventListener('online', check);
     };
-  }, [enabled, refresh]);
+  }, [enabled, refresh, invalidate]);
 
-  const readiness = useMemo(() => buildDispatchReadinessMap(sources?.stickers ?? [], sources?.inspections ?? [],
-    new Date(`${mexicoDateInput()}T12:00:00`), sources?.returns ?? [], sources?.failures ?? []), [sources]);
+  const readiness = useMemo(() => {
+    const map = buildDispatchReadinessMap(sources?.stickers ?? [], sources?.inspections ?? [],
+      new Date(`${mexicoDateInput()}T12:00:00`), sources?.returns ?? [], sources?.failures ?? []);
+    for (const restriction of sources?.masterRestrictions ?? []) {
+      const previous = map.get(restriction.unitId);
+      map.set(restriction.unitId, previous?.level === 'blocked' && previous.source !== 'averia'
+        ? { ...restriction, reason: `${restriction.reason}. ${previous.reason}` } : restriction);
+    }
+    return map;
+  }, [sources]);
 
   const verified = !!sources && sources.unavailable.length === 0;
   const effectiveEquipment = equipment.map((unit) => applyDispatchReadiness(unit, readiness.get(normalizeUnitId(unit.unit_id))));
   const message = sources?.unavailable.length
     ? `Disponibilidad sin verificar. Fuentes no disponibles: ${sources.unavailable.map((source) => LABELS[source]).join(', ')}.`
     : '';
-  return { effectiveEquipment, readiness, pendingReturns: sources?.returns ?? [], verified, loading, message, refresh };
+  return { effectiveEquipment, readiness, pendingReturns: sources?.returns ?? [], workshop: sources?.workshop,
+    verified, loading, message, refresh };
 }
