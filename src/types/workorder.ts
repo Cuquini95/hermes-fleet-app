@@ -23,6 +23,7 @@ export interface WorkshopExecutionInput {
   performedOn?: string;
   meter?: string;
   completedItems?: string[];
+  taskEvidence?: Record<string, string>;
 }
 
 interface WorkshopActor {
@@ -32,12 +33,13 @@ interface WorkshopActor {
 
 export interface PMChecklist {
   reference: string;
-  tasks: { id: string; label: string }[];
+  tasks: { id: string; label: string; evidence?: 'photo' }[];
 }
 
 export interface PMChecklistDefinition {
   model: string;
   level: string;
+  serial?: string;
   initialMeter: string;
   checklist: PMChecklist | null;
 }

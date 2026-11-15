@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, CalendarDays, AlertTriangle } from 'lucide-r
 import { createPortal } from 'react-dom';
 import { useAuthStore } from '../stores/auth-store';
 import { mexicoDateInput } from '../lib/date-utils';
-import { requestWorkshop, type WorkshopMechanic } from '../lib/workshop-api';
+import { PARTS_STATUS_LABELS, requestWorkshop, type ScheduleResources, type WorkshopMechanic } from '../lib/workshop-api';
 import { useWorkOrderStore } from '../stores/workorder-store';
 import CalendarGrid from '../components/calendar/CalendarGrid';
 import AssignWorkModal from '../components/calendar/AssignWorkModal';
@@ -21,6 +21,7 @@ export interface ScheduleEntry {
   prioridad: OTPriority;
   estado: string;
   notas: string;
+  resources: ScheduleResources;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -78,6 +79,7 @@ function parseScheduleRow(row: string[]): ScheduleEntry | null {
     prioridad: (row[6]?.trim() as OTPriority) || 'MEDIA',
     estado: row[7]?.trim() || 'Programado',
     notas: row[8]?.trim() ?? '',
+    resources: { shift: row[11] || '', partsStatus: row[12] || 'unknown', partsDetail: row[13] || '' },
   };
 }
 
@@ -111,6 +113,7 @@ function buildConflicts(entries: ScheduleEntry[]): ConflictItem[] {
 export default function CalendarPage() {
   const { workorders, fetched, fetchWorkOrders } = useWorkOrderStore();
   const role = useAuthStore((state) => state.role);
+  const panama = useAuthStore((state) => state.project === 'tmf-panama');
   const canSchedule = role === 'jefe_taller' || role === 'coordinador' || role === 'gerencia';
   const today = mexicoDateInput();
   const localToday = new Date(`${today}T12:00:00`);
@@ -323,7 +326,7 @@ export default function CalendarPage() {
                         <li key={entry.ot_id}>
                           <button type="button" onClick={() => setSelectedEntry(entry)} className="w-full rounded-lg bg-slate-100 p-2 text-left text-sm text-[#162252]">
                             <span className="block font-semibold">{entry.ot_id} · {entry.unidad}</span>
-                            <span className="block text-xs">{entry.mecanico} · {entry.horas_estimadas} h</span>
+                            <span className="block text-xs">{entry.mecanico} · {entry.horas_estimadas} h{entry.resources.shift && ` · ${entry.resources.shift}`}</span>
                           </button>
                         </li>
                       ))}
@@ -411,6 +414,19 @@ export default function CalendarPage() {
                 <dt className="text-slate-500">Horas</dt>
                 <dd className="font-medium text-slate-800">{selectedEntry.horas_estimadas}h</dd>
               </div>
+              {panama && <>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-slate-500">Turno</dt>
+                  <dd className="font-medium text-slate-800">{selectedEntry.resources.shift || 'Sin registrar'}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-slate-500">Repuestos</dt>
+                  <dd className="break-words text-right font-medium text-slate-800">
+                    {PARTS_STATUS_LABELS[selectedEntry.resources.partsStatus] || PARTS_STATUS_LABELS.unknown}
+                    {selectedEntry.resources.partsDetail && <span className="block">{selectedEntry.resources.partsDetail}</span>}
+                  </dd>
+                </div>
+              </>}
               <div className="flex justify-between">
                 <dt className="text-slate-500">Prioridad</dt>
                 <dd className="font-medium text-slate-800">{selectedEntry.prioridad}</dd>
@@ -445,6 +461,8 @@ export default function CalendarPage() {
           date={modalDate}
           mechanics={roster}
           workorders={workorders}
+          panama={panama}
+          previousResources={otId => entries.find(entry => entry.ot_id === otId)?.resources}
           onSave={handleModalSave}
           onClose={() => setModalOpen(false)}
         />

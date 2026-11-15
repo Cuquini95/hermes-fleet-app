@@ -9,13 +9,15 @@ import { useEquipmentList } from '../hooks/useEquipmentList';
 import { getNextPM } from '../data/pm-rules';
 import { getCumulativePMParts, getAvailablePMLevels, type PMPart } from '../data/pm-parts-catalog';
 import { mexicoDateInput } from '../lib/date-utils';
-import { requestWorkshop, WorkshopApiError, mechanicCoversUnit, PANAMA_PM_CHECKLIST_SOURCE, type WorkshopMechanic } from '../lib/workshop-api';
+import { requestWorkshop, WorkshopApiError, checkSchedule, mechanicCoversUnit, PANAMA_PM_CHECKLIST_SOURCE,
+  type ScheduleAssessment, type ScheduleResources, type WorkshopMechanic } from '../lib/workshop-api';
 import type { PMChecklist } from '../types/workorder';
 import { useAuthStore } from '../stores/auth-store';
 import { PANAMA_PM_MASTER_URL, fetchPanamaMaintenance, type PanamaMaintenance } from '../lib/panama-maintenance';
 import { printPMOrder } from '../lib/print-pm-order';
 import ConfirmModal from '../components/ui/ConfirmModal';
 import SuccessToast from '../components/ui/SuccessToast';
+import ScheduleResourcesFields from '../components/calendar/ScheduleResourcesFields';
 
 const CATEGORY_ICONS: Record<string, string> = {
   Filtro: '🔧',
@@ -52,6 +54,8 @@ export default function PMWorkOrderPage() {
   const [mechanics, setMechanics] = useState<WorkshopMechanic[]>([]);
   const [mechanicsError, setMechanicsError] = useState('');
   const [scheduledDate, setScheduledDate] = useState(mexicoDateInput);
+  const [resources, setResources] = useState<ScheduleResources>({ shift: '', partsStatus: 'unknown', partsDetail: '' });
+  const [assessment, setAssessment] = useState<ScheduleAssessment | null>(null);
   const [hoursOverride, setHoursOverride] = useState('');
   const [saving, setSaving] = useState(false);
   const [pending, setPending] = useState(false);
@@ -65,7 +69,7 @@ export default function PMWorkOrderPage() {
   const [printData, setPrintData] = useState<Parameters<typeof printPMOrder>[0] | null>(null);
   const [checklistMissing, setChecklistMissing] = useState(false);
   const [official, setOfficial] = useState<PanamaMaintenance | null>(null);
-  const [preflight, setPreflight] = useState<{ key: string; model?: string; checklist?: PMChecklist | null }>({ key: '' });
+  const [preflight, setPreflight] = useState<{ key: string; model?: string; serial?: string; checklist?: PMChecklist | null }>({ key: '' });
 
   const selectedEquipment = equipment.find((eq) => eq.unit_id === unidad);
   const model = selectedEquipment?.model ?? '';
@@ -86,7 +90,7 @@ export default function PMWorkOrderPage() {
   useEffect(() => {
     if (!isPanama || !unidad || !pmLevel) return;
     let active = true;
-    void requestWorkshop<{ model: string; checklist: PMChecklist | null }>(`pmtemplate?${new URLSearchParams({ unit: unidad, level: pmLevel })}`)
+    void requestWorkshop<{ model: string; serial?: string; checklist: PMChecklist | null }>(`pmtemplate?${new URLSearchParams({ unit: unidad, level: pmLevel })}`)
       .then(result => { if (active) setPreflight({ key: templateKey, ...result }); })
       .catch(() => { if (active) setPreflight({ key: templateKey }); });
     return () => { active = false; };
@@ -125,7 +129,8 @@ export default function PMWorkOrderPage() {
 
   const estimatedHours = hoursOverride || String(partsKit?.totalEstimatedHours ?? '');
   const canSubmit = !!selectedEquipment && (selectableLevels.includes(pmLevel) || referenceFallback && /^PM-\d{2,5}$/.test(pmLevel))
-    && !!scheduledDate && Number(estimatedHours) >= 0.25 && Number(estimatedHours) <= 240;
+    && !!scheduledDate && (!isPanama || !!resources.shift) && Number(estimatedHours) >= 0.25 && Number(estimatedHours) <= 240;
+  const scheduleResources = { ...resources, partsDetail: resources.partsStatus === 'not_required' ? '' : resources.partsDetail };
 
   useEffect(() => {
     let active = true;
@@ -151,9 +156,22 @@ export default function PMWorkOrderPage() {
     if (suggestedLevel) handleLevelSelect(suggestedLevel);
   }
 
-  function handleSubmitIntent() {
-    if (!canSubmit || saving || printData) return;
-    setShowConfirm(true);
+  async function handleSubmitIntent() {
+    if (!canSubmit || sending.current || printData) return;
+    sending.current = true;
+    setSaving(true);
+    setError('');
+    try {
+      setAssessment(isPanama ? await checkSchedule({
+        unit: unidad, date: scheduledDate, hours: estimatedHours, mechanicId, ...scheduleResources,
+      }) : null);
+      setShowConfirm(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo comprobar la carga de Taller');
+    } finally {
+      sending.current = false;
+      setSaving(false);
+    }
   }
 
   async function handleConfirm() {
@@ -170,6 +188,7 @@ export default function PMWorkOrderPage() {
         mutationId: mutationId.current, unit: unidad, level: pmLevel, includedLevels: levelsIncluded.join('+'),
         hours: estimatedHours, mechanicId, scheduledDate, notes: observaciones,
         parts: partsKit?.parts.map((part) => `${part.partNumber} x${part.quantity}`).join(', ') ?? '',
+        ...(isPanama && { ...scheduleResources, scheduleConfirmation: assessment?.confirmation }),
       });
       setPending(false);
       setChecklistMissing(checklist === null);
@@ -202,7 +221,8 @@ export default function PMWorkOrderPage() {
       <ConfirmModal
         open={showConfirm}
         title="Activar Orden de Mantenimiento"
-        message={`¿Programar ${pmLevel} para ${unidad} el ${scheduledDate}?`}
+        message={[`¿Programar ${pmLevel} para ${unidad} el ${scheduledDate}${resources.shift ? ` · turno ${resources.shift.toLowerCase()}` : ''}?`,
+          ...(assessment?.warnings.map(item => item.message) ?? [])].join(' ')}
         onConfirm={handleConfirm}
         onCancel={() => setShowConfirm(false)}
       />
@@ -324,7 +344,7 @@ export default function PMWorkOrderPage() {
           {isPanama && pmLevel && (
             <div className="mt-3 rounded-xl border border-border p-3 text-sm text-text">
               <p>{selectedTemplate?.checklist
-                ? `Checklist configurado para ${selectedTemplate.model}: ${selectedTemplate.checklist.reference} (${selectedTemplate.checklist.tasks.length} tareas).`
+                ? `${selectedTemplate.model}${selectedTemplate.serial ? ` · Serie ${selectedTemplate.serial}` : ''} · ${selectedTemplate.checklist.reference} (${selectedTemplate.checklist.tasks.length} tareas).`
                 : selectedTemplate === null
                   ? 'Consultando checklist por modelo y nivel…'
                   : selectedTemplate.checklist === null
@@ -414,7 +434,7 @@ export default function PMWorkOrderPage() {
               Horas estimadas
               <input type="number" min="0.25" max="240" step="0.25" value={estimatedHours} onChange={(e) => setHoursOverride(e.target.value)} className="w-full rounded-xl border border-border p-3 text-text bg-white" />
             </label>
-            {isPanama && <p className="text-xs text-text-secondary">Usa la estimación de Taller y registra las refacciones confirmadas en Observaciones.</p>}
+            {isPanama && <ScheduleResourcesFields value={resources} onChange={setResources} />}
             <label className="flex flex-col gap-1 text-sm font-medium text-text-secondary">
               Mecánico (opcional)
               <select value={mechanicId} onChange={(e) => setMechanicId(e.target.value)} className="w-full rounded-xl border border-border p-3 text-text bg-white">

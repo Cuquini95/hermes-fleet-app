@@ -9,6 +9,26 @@ export interface WorkshopMechanic {
   assignedUnits?: string[];
 }
 
+export const PARTS_STATUS_LABELS: Record<string, string> = {
+  confirmed: 'Confirmados por Taller', pending: 'Pendientes', unknown: 'Por confirmar', not_required: 'No requiere',
+};
+
+export interface ScheduleResources {
+  shift: string;
+  partsStatus: string;
+  partsDetail: string;
+}
+
+export interface ScheduleAssessment {
+  warnings: { code: string; message: string }[];
+  plannedHours: number | null;
+  confirmation: string | null;
+}
+
+export function checkSchedule(values: Record<string, string>): Promise<ScheduleAssessment> {
+  return requestWorkshop<ScheduleAssessment>(`schedulecheck?${new URLSearchParams(values)}`);
+}
+
 export class WorkshopApiError extends Error {
   readonly status: number;
 

@@ -32,6 +32,8 @@ const FIELD_COLUMNS = {
 };
 const WORKFLOW = { execution: 20, technical: 21, operations: 22, pm: 23, recurrence: 24 };
 const PRIORITIES = new Set(['CRITICA', 'ALTA', 'MEDIA', 'BAJA']);
+const SCHEDULABLE = new Set(['Abierta', 'En Espera de Asignación', 'En Reparación', 'Esperando Pieza']);
+const WORKSHOP_DAY_HOURS = 8;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DVIR_LABELS = ['Motor', 'Transmisión', 'Frenos', 'Dirección', 'Hidráulico', 'Eléctrico', 'Neumáticos', 'Estructura', 'Luces', 'Fluidos', 'Cabina', 'Tren de rodaje'];
 const dateFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Panama', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -102,7 +104,7 @@ async function equipmentFor({ sheets, session }, value) {
   const rows = await sheets.read(TAB.inventory);
   const row = rows.find((r) => (r[1] || '').trim().toUpperCase() === code);
   assert(row, 404, 'Unidad no encontrada en el inventario');
-  return { code, model: [row[3], row[4]].filter(Boolean).join(' '), type: row[2] || '', meter: row[9] || '' };
+  return { code, model: [row[3], row[4]].filter(Boolean).join(' '), serial: row[6]?.trim() || '', type: row[2] || '', meter: row[9] || '' };
 }
 
 function orderVisible(session, row) {
@@ -320,33 +322,42 @@ const todayInPanama = context => dateFormatter.format(new Date(context.now));
 const isPanama = context => context.session.project === PANAMA_PROJECT;
 const canReviewHse = session => SUPERVISE.has(session.role) && (session.project !== PANAMA_PROJECT || session.canReviewPanamaHse === true);
 
-function configuredChecklist(context, model, level) {
+function configuredChecklist(context, model, level, serial) {
   if (!model || !level) return null;
   let catalog;
   try { catalog = context.pmChecklists ?? JSON.parse(process.env.HERMES_PANAMA_PM_CHECKLISTS_JSON || '[]'); }
   catch { throw new WorkshopError(503, 'El catálogo de checklists PM requiere revisión'); }
   assert(Array.isArray(catalog), 503, 'El catálogo de checklists PM requiere revisión');
-  const matches = catalog.filter(item => typeof item?.model === 'string' && typeof item.level === 'string'
+  const candidates = catalog.filter(item => typeof item?.model === 'string' && typeof item.level === 'string'
     && normalizeModel(item.model) === normalizeModel(model) && normalizeLevel(item.level) === normalizeLevel(level));
+  assert(candidates.every(item => item.serial == null || (typeof item.serial === 'string' && item.serial.trim())),
+    503, 'El catálogo de checklists PM requiere revisión');
+  if (!serial && candidates.some(item => item.serial)) return null;
+  const exact = serial ? candidates.filter(item => item.serial && normalizeModel(item.serial) === normalizeModel(serial)) : [];
+  const matches = exact.length ? exact : candidates.filter(item => !item.serial);
   if (!matches.length) return null;
   const [{ reference, tasks }] = matches;
   assert(matches.length === 1 && typeof reference === 'string' && reference.trim() && reference.length <= 500
     && Array.isArray(tasks) && tasks.length > 0 && tasks.length <= 80
     && tasks.every(task => typeof task?.id === 'string' && /^[a-z0-9_-]{1,80}$/i.test(task.id)
-      && typeof task.label === 'string' && task.label.trim() && task.label.length <= 250)
+      && typeof task.label === 'string' && task.label.trim() && task.label.length <= 250
+      && (task.evidence === undefined || task.evidence === 'photo'))
+    && tasks.filter(task => task.evidence === 'photo').length <= 40
     && new Set(tasks.map(task => task.id)).size === tasks.length, 503, 'El checklist de este modelo y nivel requiere revisión');
-  return { reference: reference.trim(), tasks: tasks.map(({ id, label }) => ({ id, label: label.trim() })) };
+  return { reference: reference.trim(), tasks: tasks.map(({ id, label, evidence }) => ({ id, label: label.trim(), ...(evidence && { evidence }) })) };
 }
 
 async function pmDefinition(context, order) {
   assert(order.row[4] === 'PM', 409, 'La orden no corresponde a un PM');
   const saved = storedObject(order.row[WORKFLOW.pm]);
   if (saved?.checklist) return saved;
-  if (saved) return { ...saved, checklist: configuredChecklist(context, saved.model, saved.level) };
-  const linked = linkedRows(await context.sheets.read(TAB.pm), 0, 2, order.otId, order.row[3].trim().toUpperCase());
+  const unit = order.row[3].trim().toUpperCase();
+  const serial = saved?.serial ?? (await equipmentFor(context, unit)).serial;
+  if (saved) return { ...saved, checklist: configuredChecklist(context, saved.model, saved.level, serial) };
+  const linked = linkedRows(await context.sheets.read(TAB.pm), 0, 2, order.otId, unit);
   assert(linked, 409, 'La orden no tiene una fila PM vinculada');
   const [, , , model, level, , initialMeter] = linked.row;
-  return { model, level, initialMeter, checklist: configuredChecklist(context, model, level) };
+  return { model, level, initialMeter, ...(serial && { serial }), checklist: configuredChecklist(context, model, level, serial) };
 }
 
 async function executionFor(context, order) {
@@ -370,7 +381,13 @@ async function executionFor(context, order) {
   const completed = body.execution?.completedItems;
   assert(Array.isArray(completed) && completed.length === pm.checklist.tasks.length
     && pm.checklist.tasks.every(task => completed.includes(task.id)), 400, 'Completa todas las tareas del checklist del modelo');
-  return { execution: { ...execution, performedOn, meter: String(meter), completedItems: completed }, pm };
+  const proof = body.execution?.taskEvidence ?? {};
+  const required = pm.checklist.tasks.filter(task => task.evidence === 'photo');
+  assert(proof && typeof proof === 'object' && !Array.isArray(proof) && Object.keys(proof).length === required.length
+    && required.every(task => Object.hasOwn(proof, task.id)), 400, 'Adjunta una foto para cada paso que requiere evidencia');
+  const photos = await attachmentUrls(context, required.map(task => proof[task.id]), 'order', order.row[3].trim().toUpperCase(), 'falla-photos', order.otId);
+  return { execution: { ...execution, performedOn, meter: String(meter), completedItems: completed,
+    ...(photos.length && { taskEvidence: Object.fromEntries(required.map((task, index) => [task.id, photos[index]])) }) }, pm, photos };
 }
 
 async function pmAcceptanceWrites(context, order, execution) {
@@ -423,6 +440,12 @@ async function transition(context) {
         { tab: TAB.history, append: [historyRow(context, otId, 'entrega_tecnica', '', submitted.execution.laborHours == null
           ? submitted.execution.functionalTest : `${submitted.execution.functionalTest} · ${submitted.execution.laborHours} h de trabajo`)] });
       if (submitted.pm) writes.push({ tab: TAB.orders, row: index, col: WORKFLOW.pm, values: [JSON.stringify(submitted.pm)] });
+      if (submitted.photos?.length) {
+        const combined = [...new Set([...(row[10] || '').split(/,\s*/).filter(Boolean), ...submitted.photos])].join(', ');
+        assert(combined.length <= 48000, 409, 'La orden alcanzó el límite de evidencia');
+        writes.push({ tab: TAB.orders, row: index, col: 10, values: [combined] },
+          { tab: TAB.history, append: [historyRow(context, otId, 'foto_url', row[10] || '', combined)] });
+      }
     }
     if (isPanama(context) && before === 'Resuelta' && value === 'En Reparación') {
       writes.push({ tab: TAB.orders, row: index, col: WORKFLOW.execution, values: ['', ''] });
@@ -476,29 +499,92 @@ async function transition(context) {
   return commit(context, writes, { otId }, orderWriteGuard(row), readiness);
 }
 
-function scheduleValue(context, { otId, unit, mechanic, hours, date, priority, notes }) {
+function scheduleValue(context, { otId, unit, mechanic, hours, date, priority, notes, resources }) {
   return [context.mutationId, date, otId, unit, mechanic?.userName || 'Sin asignar', String(hours), priority, 'Programado', notes,
-    mechanic?.userId || '', context.session.userId];
+    mechanic?.userId || '', context.session.userId, ...(resources ? [resources.shift, resources.partsStatus, resources.partsDetail] : [])];
+}
+
+function scheduleRowsForOrder(rows, otId) {
+  const matching = rows.flatMap((row, index) => row[2] === otId ? [index] : []);
+  assert(matching.length <= 1, 409, 'Hay más de una programación para esta OT');
+  return matching[0] ?? -1;
+}
+
+function scheduleResources(input, previous = []) {
+  const shift = text(input.shift ?? previous[11], 'Turno', 20);
+  const partsStatus = text(input.partsStatus ?? previous[12], 'Disponibilidad de repuestos', 24);
+  const partsDetail = text(input.partsDetail ?? previous[13], 'Repuestos', 500);
+  assert(['', 'Día', 'Noche'].includes(shift), 400, 'Turno inválido');
+  assert(['', 'confirmed', 'pending', 'unknown', 'not_required'].includes(partsStatus), 400, 'Disponibilidad de repuestos inválida');
+  return { shift, partsStatus, partsDetail };
+}
+
+async function scheduleAssessment(context, rows, { otId, unit, mechanic, hours, date, resources }) {
+  const warnings = [];
+  let plannedHours = null;
+  if (mechanic?.userId) {
+    const active = rows.filter(row => row[2] !== otId && /^OT-/.test(row[2] || '') && row[1] === date && row[7] !== 'Completado'
+      && (row[9] ? row[9] === mechanic.userId : row[4] === mechanic.userName));
+    const closed = active.length
+      ? new Set((await context.sheets.read(TAB.orders)).filter(row => row[9] === 'Completado').map(row => row[1]))
+      : new Set();
+    plannedHours = active.filter(row => !closed.has(row[2])).reduce((sum, row) => {
+      const hours = Number(row[5]);
+      return sum + (Number.isFinite(hours) && hours > 0 ? hours : 0);
+    }, hours);
+    if (plannedHours > WORKSHOP_DAY_HOURS) warnings.push({ code: 'capacity', message: `Sobrecarga de Taller: ${plannedHours} h para el mecánico el ${date} (referencia: ${WORKSHOP_DAY_HOURS} h por día).` });
+  }
+  if (['pending', 'unknown'].includes(resources.partsStatus)) warnings.push({
+    code: 'parts',
+    message: resources.partsStatus === 'pending' ? 'Hay repuestos pendientes para esta orden.' : 'La disponibilidad de repuestos está por confirmar.',
+  });
+  return { warnings, plannedHours, confirmation: warnings.length ? digest({
+    actor: context.session.userId, otId, unit, mechanicId: mechanic?.userId, hours, date, resources, plannedHours, warnings,
+  }) : null };
+}
+
+function requireScheduleConfirmation(assessment, confirmation) {
+  assert(!assessment.confirmation || assessment.confirmation === confirmation, 409,
+    `${assessment.warnings.map(item => item.message).join(' ')} Revisa la carga y vuelve a confirmar.`);
+}
+
+async function scheduleCheck(context) {
+  const input = context.query ?? {};
+  const order = input.otId ? await getOrder(context, input.otId) : null;
+  if (order) assert(SCHEDULABLE.has(order.effective[9]), 409, 'La OT no está disponible para programar');
+  const unit = order ? order.row[3].trim().toUpperCase() : (await equipmentFor(context, input.unit)).code;
+  const date = isoDate(input.date);
+  const hours = decimal(input.hours, 'Horas estimadas', 0.25, order ? 24 : 240);
+  const mechanic = !Object.hasOwn(input, 'mechanicId') && order?.effective[8]
+    ? { userId: order.effective[17], userName: order.effective[8] } : await mechanicFor(context, input.mechanicId, unit);
+  const rows = await context.sheets.read(TAB.schedule);
+  const previous = order ? rows[scheduleRowsForOrder(rows, order.otId)] : undefined;
+  const resources = scheduleResources(input, previous);
+  return scheduleAssessment(context, rows, { otId: order?.otId, unit, mechanic, date, hours, resources });
 }
 
 async function pm(context) {
   const { body, session } = context;
-  const { code, model, meter } = await equipmentFor(context, body.unit);
+  const { code, model, serial, meter } = await equipmentFor(context, body.unit);
   const level = text(body.level, 'Nivel PM', 25, true);
   assert(/^PM[ -]?\d{1,5}$/i.test(level), 400, 'Nivel PM inválido');
   const included = text(body.includedLevels, 'Niveles incluidos', 180, true);
   const notes = text(body.notes, 'Observaciones', 2000);
-  const parts = text(body.parts, 'Partes', 5000);
   const date = isoDate(body.scheduledDate);
   const hours = decimal(body.hours, 'Horas estimadas', 0.25, 240);
   const mechanic = await mechanicFor(context, body.mechanicId, code);
   const otId = context.otId;
   const priority = 'MEDIA';
   const description = `Mantenimiento Preventivo ${level}. Incluye: ${included}`;
-  const schedule = scheduleValue(context, { otId, unit: code, mechanic, hours, date, priority, notes });
+  const resources = isPanama(context) ? scheduleResources(body) : null;
+  if (resources) requireScheduleConfirmation(await scheduleAssessment(context, await context.sheets.read(TAB.schedule),
+    { unit: code, mechanic, hours, date, resources }), body.scheduleConfirmation);
+  const parts = text(body.parts, 'Partes', 5000) || resources?.partsDetail || '';
+  const schedule = scheduleValue(context, { otId, unit: code, mechanic, hours, date, priority, notes, resources });
   const common = [code, model, level, included, meter];
   const order = orderRow(context, { id: otId, unit: code, type: 'PM', description, priority, parts, notes, mechanic });
-  const definition = isPanama(context) ? { model, level, initialMeter: meter, checklist: configuredChecklist(context, model, level) } : null;
+  const definition = isPanama(context) ? { model, level, initialMeter: meter, ...(serial && { serial }),
+    checklist: configuredChecklist(context, model, level, serial) } : null;
   if (definition) order.push('', '', '', JSON.stringify(definition));
   return commit(context, [
     { tab: TAB.pm, append: [[otId, context.date, ...common, description, String(hours), mechanic?.userName || 'Sin asignar', session.userName, 'Programada', parts, notes]] },
@@ -512,8 +598,8 @@ async function pm(context) {
 async function schedule(context) {
   const { body, sheets } = context;
   const { otId, row, index, effective } = await getOrder(context, body.otId);
-  assert(['Abierta', 'En Espera de Asignación', 'En Reparación', 'Esperando Pieza'].includes(effective[9]), 409, 'La OT no está disponible para programar');
-  const unit = row[3].toUpperCase();
+  assert(SCHEDULABLE.has(effective[9]), 409, 'La OT no está disponible para programar');
+  const unit = row[3].trim().toUpperCase();
   const changeAssignee = Object.hasOwn(body, 'mechanicId');
   const mechanic = changeAssignee
     ? await mechanicFor(context, body.mechanicId, unit)
@@ -521,11 +607,12 @@ async function schedule(context) {
   const date = isoDate(body.date);
   const hours = decimal(body.hours, 'Horas estimadas', 0.25, 24);
   const notes = text(body.notes, 'Notas', 1000);
-  const result = scheduleValue(context, { otId, unit, mechanic, hours, date, priority: effective[7] || 'MEDIA', notes });
   const rows = await sheets.read(TAB.schedule);
-  const matching = rows.flatMap((entry, index) => entry[2] === otId ? [index] : []);
-  assert(matching.length <= 1, 409, 'Hay más de una programación para esta OT');
-  const previous = matching[0] ?? -1;
+  const previous = scheduleRowsForOrder(rows, otId);
+  const resources = isPanama(context) ? scheduleResources(body, rows[previous]) : null;
+  if (resources) requireScheduleConfirmation(await scheduleAssessment(context, rows,
+    { otId, unit, mechanic, hours, date, resources }), body.scheduleConfirmation);
+  const result = scheduleValue(context, { otId, unit, mechanic, hours, date, priority: effective[7] || 'MEDIA', notes, resources });
   const writes = [
     previous >= 0 ? { tab: TAB.schedule, row: previous, values: result } : { tab: TAB.schedule, append: [result] },
     { tab: TAB.orders, row: index, col: 18, values: [nextOrderVersion(context)] },
@@ -852,7 +939,11 @@ export async function dispatchWorkshop(input) {
   const endpoint = path?.match(/^api\/workshop\/([a-z]+)$/)?.[1];
   try {
     assert(session?.userId && session.userName && ROLES.has(session.role), 401, 'Sesión inválida');
-    if (['returns', 'pmchecklist', 'pmtemplate'].includes(endpoint)) assert(isPanama(input), 404, 'Acción de taller no disponible');
+    if (['returns', 'pmchecklist', 'pmtemplate', 'schedulecheck'].includes(endpoint)) assert(isPanama(input), 404, 'Acción de taller no disponible');
+    if (method === 'GET' && endpoint === 'schedulecheck') {
+      assert(ASSIGN.has(session.role), 403, 'Tu rol no puede programar órdenes');
+      return { status: 200, body: await scheduleCheck(input) };
+    }
     if (method === 'GET' && endpoint === 'readiness') {
       return { status: 200, body: await readinessSources(input) };
     }
@@ -868,8 +959,8 @@ export async function dispatchWorkshop(input) {
       assert(ASSIGN.has(session.role), 403, 'Tu rol no puede preparar órdenes PM');
       const level = text(input.query?.level, 'Nivel PM', 25, true);
       assert(/^PM[ -]?\d{1,5}$/i.test(level), 400, 'Nivel PM inválido');
-      const { model } = await equipmentFor(input, input.query?.unit);
-      return { status: 200, body: { model, level, checklist: configuredChecklist(input, model, level) } };
+      const { model, serial } = await equipmentFor(input, input.query?.unit);
+      return { status: 200, body: { model, level, ...(serial && { serial }), checklist: configuredChecklist(input, model, level, serial) } };
     }
     if (method === 'GET' && endpoint === 'stickers') {
       assert(canReviewHse(session), 403, 'La revisión requiere autorización HSE');

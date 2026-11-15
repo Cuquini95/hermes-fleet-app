@@ -97,8 +97,11 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await page.getByLabel('Horas reales de trabajo').fill('2.25');
       if (diagnosis) await page.getByLabel('Causa confirmada (si se identificó)').fill(diagnosis);
       if (isPM) {
-        await page.getByLabel('Comprobación sintética de mantenimiento').check();
+        await page.getByRole('checkbox', { name: 'Comprobación sintética de mantenimiento' }).check();
         await page.getByLabel('Horómetro de ejecución').fill('1975');
+        assert.equal(await option.locator('..').getByRole('button', { name: 'Guardar', exact: true }).isDisabled(), true);
+        await page.getByLabel('Foto de evidencia · Comprobación sintética de mantenimiento')
+          .setInputFiles({ name: 'pm-qa.png', mimeType: 'image/png', buffer: photoPng });
       }
     }
     await option.locator('..').getByRole('button', { name: 'Guardar', exact: true }).click();
@@ -111,6 +114,8 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     await visible(dialog);
     await dialog.getByLabel('Orden de Trabajo').selectOption(order);
     await dialog.getByLabel('Horas estimadas').fill('1.5');
+    await dialog.getByLabel('Turno').selectOption('Día');
+    await dialog.getByLabel('Disponibilidad de repuestos').selectOption('not_required');
     const selectedDate = await dialog.getByLabel('Fecha programada').inputValue();
     const submit = dialog.getByRole('button', { name: 'Programar', exact: true });
     await submit.scrollIntoViewIfNeeded();
@@ -516,9 +521,19 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       assert.equal(await page.getByText('Auto-generado', { exact: true }).count(), 0);
       assert.equal(await page.getByLabel('Horas estimadas').inputValue(), '');
       await page.getByLabel('Horas estimadas').fill('3');
-      await page.getByLabel('Mecánico (opcional)').selectOption(firstAccount('mecanico').user.id);
+      const mechanic = firstAccount('mecanico');
+      await page.getByLabel('Mecánico (opcional)').selectOption(mechanic.user.id);
+      await page.getByLabel('Turno').selectOption('Día');
+      await page.getByLabel('Disponibilidad de repuestos').selectOption('pending');
+      await page.getByLabel('Repuestos de la orden').fill('Filtro QA');
+      const scheduledDate = await page.getByLabel('Fecha programada').inputValue();
+      sheet.seed(tabs.schedule, [...sheet.read(tabs.schedule),
+        ['qa-capacity', scheduledDate, 'OT-CARGA-QA', 'EX401', 'Mecánico QA', '7', 'MEDIA', 'Programado', '', mechanic.user.id]]);
       const knownRows = sheet.read(tabs.pm).length;
       await clickByName(page, 'Activar Orden de PM');
+      await visible(page.getByRole('dialog').getByText(/Sobrecarga de Taller/));
+      await visible(page.getByRole('dialog').getByText(/Hay repuestos pendientes/));
+      assert.equal(sheet.read(tabs.pm).length, knownRows);
       const attempts = [];
       page.on('request', request => {
         if (request.method() === 'POST' && request.url().endsWith('/api/workshop/pm')) attempts.push(request.postDataJSON().mutationId);
@@ -543,8 +558,12 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await visible(page.getByRole('button', { name: new RegExp(folio) }));
       await page.reload({ waitUntil: 'domcontentloaded' });
       await visible(page.getByRole('button', { name: new RegExp(folio) }));
+      await page.getByRole('button', { name: new RegExp(folio) }).first().tap();
+      await visible(page.getByText('Filtro QA', { exact: true }));
+      assert.deepEqual(sheet.read(tabs.schedule).find(row => row[2] === folio).slice(11), ['Día', 'pending', 'Filtro QA']);
+      sheet.seed(tabs.schedule, sheet.read(tabs.schedule).filter(row => row[0] !== 'qa-capacity'));
       await noHorizontalOverflow(page, 360);
-      return { folio, unit: 'EX401', reloaded: true, confirmationRecovered: true, duplicateSuppressed: true };
+      return { folio, unit: 'EX401', reloaded: true, confirmationRecovered: true, duplicateSuppressed: true, overloadBeforeSave: true, retainedShiftAndParts: true };
     }));
 
     await record('MÓVIL-PM-ENTREGA-ACEPTACIÓN', async () => {
@@ -559,14 +578,18 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       }, firstAccount('mecanico'));
       await inRole('jefe_taller', 390, async page => {
         await page.goto(path, { waitUntil: 'domcontentloaded' });
-        await visible(page.getByText('Comprobación sintética de mantenimiento · Realizada', { exact: true }));
+        const photoLink = page.getByRole('link', { name: 'Ver foto' });
+        await visible(photoLink);
+        const evidence = await page.request.get(origin + await photoLink.getAttribute('href'));
+        assert.equal(evidence.status(), 200);
+        assert.deepEqual(await evidence.body(), photoPng);
         await changeOrderStatus(page, 'Completado', pmMobileFolio);
         await visible(page.getByText(/Aceptación técnica de /));
         await shot(page, 'pm-aceptado-390.png');
       });
       const history = sheet.read(tabs.pmHistory).find(row => row[1] === pmMobileFolio);
       assert.deepEqual([history?.[6], history?.[10]], ['1975', 'Completada']);
-      return { folio: pmMobileFolio, meter: history[6], synchronized: true };
+      return { folio: pmMobileFolio, meter: history[6], synchronized: true, requiredTaskPhoto: true };
     });
 
     await record('MÓVIL-TALLER-CIERRE-ENTRE-ROLES', async () => {

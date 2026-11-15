@@ -18,10 +18,10 @@ function fixture(pmChecklists = []) {
   const data = new Map([['01 Inventario', [[], [], [], ['', 'CA20', '', 'Cat', '745', '', '', '', '', '4000']]]]);
   const mutations = new Map();
   const evidence = new Map();
-  const attach = (kind, operationId, session, unit = 'CA20') => {
+  const attach = (kind, operationId, session, unit = 'CA20', recordId = '') => {
     const id = randomUUID().replaceAll('-', '').repeat(2);
     evidence.set(id, { ready: true, actor_id: session.userId, kind, operation_id: operationId,
-      units: [unit], record_id: '', preview_demo: false });
+      units: [unit], record_id: recordId, preview_demo: false });
     return `/hermes-api/api/evidence?id=${id}`;
   };
   const guards = new Set();
@@ -459,6 +459,71 @@ test('Taller puede comprobar el checklist exacto por unidad y nivel antes de pro
   assert.equal((await request('pmtemplate', workshop, undefined, { unit: 'CA20', level: 'PM-500' })).body.checklist, null);
   assert.equal((await request('pmtemplate', { ...workshop, assignedUnits: ['DZ203'] }, undefined, { unit: 'CA20', level: 'PM-250' })).status, 403);
   assert.equal((await request('pmtemplate', operator, undefined, { unit: 'CA20', level: 'PM-250' })).status, 403);
+});
+
+test('el PM conserva la revisión por PIN y exige evidencia privada vinculada al paso', async () => {
+  const general = { model: 'Cat 745', level: 'PM250', reference: 'QA modelo', tasks: [{ id: 'general', label: 'Tarea general QA' }] };
+  const specific = { ...general, serial: 'PIN-123', reference: 'QA revisión específica', tasks: [{ id: 'oil', label: 'Tarea QA', evidence: 'photo' }] };
+  const { request, sheets, attach } = fixture([general, specific]);
+  const [,,, equipment] = await sheets.read('01 Inventario');
+  equipment[6] = 'PIN-123';
+  sheets.seed('01 Inventario', [equipment]);
+  const definition = await request('pmtemplate', workshop, undefined, { unit: 'CA20', level: 'PM-250' });
+  assert.equal(definition.body.checklist?.reference, 'QA revisión específica');
+  const created = await request('pm', workshop, {
+    mutationId: randomUUID(), unit: 'CA20', level: 'PM250', includedLevels: 'PM250', hours: 2,
+    mechanicId: mechanic.userId, scheduledDate: '2026-11-12',
+  });
+  assert.equal(created.status, 201);
+  const { otId } = created.body;
+  equipment[6] = 'PIN-999';
+  sheets.seed('01 Inventario', [equipment]);
+  assert.equal((await request('pmchecklist', mechanic, undefined, { otId })).body.checklist?.reference, 'QA revisión específica');
+  assert.equal((await request('pmtemplate', workshop, undefined, { unit: 'CA20', level: 'PM-250' })).body.checklist?.reference, 'QA modelo');
+  equipment[6] = '';
+  sheets.seed('01 Inventario', [equipment]);
+  assert.equal((await request('pmtemplate', workshop, undefined, { unit: 'CA20', level: 'PM-250' })).body.checklist, null);
+  assert.equal((await transition(request, mechanic, otId, 'En Reparación')).status, 200);
+  const execution = { ...executionProof, performedOn: '2026-11-12', meter: '4100', completedItems: ['oil'] };
+  assert.equal((await transition(request, mechanic, otId, 'Resuelta', execution)).status, 400);
+  const mutationId = randomUUID();
+  const photo = attach('order', mutationId, mechanic, 'CA20', otId);
+  const save = { mutationId, otId, field: 'estado', value: 'Resuelta' };
+  const wrongPhoto = attach('order', mutationId, mechanic, 'CA20', 'OT-OTRA');
+  assert.equal((await request('transition', mechanic, { ...save, execution: { ...execution, taskEvidence: { oil: wrongPhoto } } })).status, 400);
+  assert.equal((await request('transition', mechanic, { ...save, execution: { ...execution, taskEvidence: { oil: photo } } })).status, 200);
+  const [order] = await sheets.read('ORDENES_TRABAJO');
+  assert.deepEqual(JSON.parse(order[20]).taskEvidence, { oil: photo });
+  assert.ok(order[10].includes(photo));
+});
+
+test('la programación advierte sobrecarga y repuestos pendientes antes de guardar', async () => {
+  const { request, sheets } = fixture();
+  sheets.seed('WORKSHOP_SCHEDULE', [
+    ['a','2026-11-12','OT-QA-1','CA20',mechanic.userName,'7','MEDIA','Programado','',mechanic.userId],
+    ['b','2026-11-12','OT-QA-2','CA20',mechanic.userName,'8','MEDIA','Completado','',mechanic.userId],
+  ]);
+  const resourcePlan = { mechanicId: mechanic.userId, hours: '2', shift: 'Día', partsStatus: 'pending', partsDetail: 'Filtro QA' };
+  const check = await request('schedulecheck', workshop, undefined, { unit: 'CA20', date: '2026-11-12', ...resourcePlan });
+  assert.equal(check.status, 200);
+  assert.deepEqual(check.body.warnings.map(item => item.code), ['capacity', 'parts']);
+  assert.equal(check.body.plannedHours, 9);
+  const pm = { mutationId: randomUUID(), unit: 'CA20', level: 'PM250', includedLevels: 'PM250', scheduledDate: '2026-11-12', ...resourcePlan };
+  assert.equal((await request('pm', workshop, pm)).status, 409);
+  assert.deepEqual(await sheets.read('ORDENES_TRABAJO'), []);
+  const scheduled = await request('pm', workshop, { ...pm, scheduleConfirmation: check.body.confirmation });
+  assert.equal(scheduled.status, 201);
+  assert.deepEqual(scheduled.body.schedule.slice(11), ['Día', 'pending', 'Filtro QA']);
+  const recheck = await request('schedulecheck', workshop, undefined, { otId: scheduled.body.otId, date: '2026-11-12', hours: '1' });
+  assert.equal(recheck.body.plannedHours, 8);
+  assert.deepEqual(recheck.body.warnings.map(item => item.code), ['parts']);
+  const scheduledRows = await sheets.read('WORKSHOP_SCHEDULE');
+  sheets.seed('WORKSHOP_SCHEDULE', [...scheduledRows, ['c','2026-11-12','OT-QA-3','CA20',mechanic.userName,'1','MEDIA','Programado','',mechanic.userId]]);
+  const update = { mutationId: randomUUID(), otId: scheduled.body.otId, date: '2026-11-12', hours: '1' };
+  assert.equal((await request('schedule', workshop, { ...update, scheduleConfirmation: recheck.body.confirmation })).status, 409);
+  assert.equal((await sheets.read('WORKSHOP_SCHEDULE')).find(row => row[2] === scheduled.body.otId)[5], '2');
+  const current = await request('schedulecheck', workshop, undefined, { otId: update.otId, date: update.date, hours: update.hours });
+  assert.equal((await request('schedule', workshop, { ...update, scheduleConfirmation: current.body.confirmation })).status, 200);
 });
 
 

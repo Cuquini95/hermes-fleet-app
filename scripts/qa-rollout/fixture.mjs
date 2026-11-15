@@ -422,10 +422,12 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
     HERMES_UPSTREAM_URL: '', HERMES_UPSTREAM_TOKEN: '', HERMES_GOOGLE_SERVICE_ACCOUNT_JSON: '',
     HERMES_GOOGLE_SHEET_ID: '', HERMES_GOOGLE_SHEETS_ID: '', TELEGRAM_BOT_TOKEN: '',
     HERMES_EXPENSE_PRICE_CURRENCY: 'USD',
-    HERMES_PANAMA_PM_CHECKLISTS_JSON: JSON.stringify(['PM-250', 'PM-1'].map(level => ({
-      model: 'Komatsu D65EX-16', level, reference: 'Checklist sintético QA, revisión 1',
-      tasks: [{ id: 'review-qa', label: 'Comprobación sintética de mantenimiento' }],
-    }))),
+    HERMES_PANAMA_PM_CHECKLISTS_JSON: JSON.stringify(['PM-250', 'PM-1'].flatMap(level => [
+      { model: 'Komatsu D65EX-16', level, reference: 'Checklist genérico QA',
+        tasks: [{ id: 'generic', label: 'Tarea genérica' }] },
+      { model: 'Komatsu D65EX-16', level, serial: 'QA-EX401', reference: 'Checklist sintético QA, revisión 1',
+        tasks: [{ id: 'review-qa', label: 'Comprobación sintética de mantenimiento', evidence: 'photo' }] },
+    ])),
     HERMES_PURCHASE_ISSUERS_JSON: JSON.stringify([{ id: 'TP_PA_QA', name: 'Trans Plus Panamá QA', currency: 'USD', taxLabel: 'ITBMS', taxBps: 700, template: 'transplus' }]),
   });
   async function stop() {

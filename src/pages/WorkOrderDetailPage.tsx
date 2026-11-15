@@ -97,6 +97,11 @@ function TimelineEntry({ entry }: { entry: StatusLogEntry }) {
 
 export default function WorkOrderDetailPage() {
   const { otId: requestedFolio } = useParams<{ otId: string }>();
+  const actorId = useAuthStore((state) => state.userId);
+  return <WorkOrderDetail key={JSON.stringify([actorId, requestedFolio])} requestedFolio={requestedFolio} />;
+}
+
+function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
   const navigate = useNavigate();
   const { statusLog, loading, error, fetched, fetchWorkOrders, updateOTField, getWorkOrderById } = useWorkOrderStore();
   const role = useAuthStore((s) => s.role);
@@ -119,8 +124,10 @@ export default function WorkOrderDetailPage() {
   const [performedOn, setPerformedOn] = useState(mexicoDateInput);
   const [meter, setMeter] = useState('');
   const [completedItems, setCompletedItems] = useState<string[]>([]);
+  const [taskPhotos, setTaskPhotos] = useState<Record<string, File>>({});
   const [pmState, setPmState] = useState<{ otId: string; definition?: PMChecklistDefinition; error?: string }>();
   const uploadAttempt = useRef<{ actorId: string; otId: string; operationId: string; urls: Map<File, string> } | null>(null);
+  const pmUpload = useRef<{ key: string; operationId: string; urls: Map<string, string> } | null>(null);
   const submitting = useRef(false);
 
   useEffect(() => {
@@ -196,17 +203,39 @@ export default function WorkOrderDetailPage() {
         uploadAttempt.current = null;
       } else {
         let execution: WorkshopExecutionInput | undefined;
+        let operationId: string | undefined;
         if (panamaWorkflow && field === 'estado' && value === 'Resuelta') {
           execution = { functionalTest, ...(diagnosis.trim() && { diagnosis }),
             ...(laborHours !== '' && { laborHours }), ...(isPM && { performedOn, meter, completedItems }) };
+          const required = pm?.checklist?.tasks.filter(task => task.evidence === 'photo') ?? [];
+          if (isPM && required.length) {
+            const key = JSON.stringify([actorId, otId, wo.version, execution]);
+            const attempt = pmUpload.current?.key === key ? pmUpload.current
+              : { key, operationId: crypto.randomUUID(), urls: new Map<string, string>() };
+            pmUpload.current = attempt;
+            for (const [slot, task] of required.entries()) {
+              const file = Object.hasOwn(taskPhotos, task.id) ? taskPhotos[task.id] : undefined;
+              if (!file) throw new Error(`Adjunta evidencia para ${task.label}.`);
+              if (useAuthStore.getState().userId !== actorId) throw new Error('Cambió la sesión.');
+              const url = attempt.urls.get(task.id) ?? await uploadEvidence(file, {
+                kind: 'order', recordId: otId, units: [wo.unidad], slot, operationId: attempt.operationId, expectedUserId: actorId,
+              });
+              attempt.urls.set(task.id, url);
+            }
+            execution.taskEvidence = Object.fromEntries(attempt.urls);
+            operationId = attempt.operationId;
+            if (useAuthStore.getState().userId !== actorId) throw new Error('Cambió la sesión.');
+          }
         }
-        await updateOTField(otId, field, value, execution);
+        await updateOTField(otId, field, value, execution, operationId);
         if (execution) {
           setFunctionalTest('');
           setDiagnosis('');
           setLaborHours('');
           setMeter('');
           setCompletedItems([]);
+          setTaskPhotos({});
+          pmUpload.current = null;
         }
       }
     } catch (err: unknown) {
@@ -257,7 +286,8 @@ export default function WorkOrderDetailPage() {
   const pmError = pmState?.otId === otId ? pmState?.error : undefined;
   const isSubmittingProof = panamaWorkflow && editEstado === 'Resuelta' && wo.estado !== 'Resuelta';
   const proofReady = !!functionalTest.trim() && (!isPM || (!!pm?.checklist && !!performedOn && meter !== ''
-    && pm.checklist.tasks.every(task => completedItems.includes(task.id))));
+    && pm.checklist.tasks.every(task => completedItems.includes(task.id)
+      && (task.evidence !== 'photo' || Object.hasOwn(taskPhotos, task.id)))));
   const unitMechanics = mechanics.filter((mechanic) => mechanicCoversUnit(mechanic, wo.unidad));
   const photos = photoUrls(wo.foto_url);
 
@@ -384,7 +414,7 @@ export default function WorkOrderDetailPage() {
       {panamaWorkflow && isPM && (
         <section className="flex flex-col gap-2 rounded-xl border border-border bg-white p-4 shadow-sm" aria-label="Checklist del modelo">
           <h2 className="text-sm font-semibold text-text">Checklist del modelo</h2>
-          {pm && <p className="text-sm text-text">{pm.model} · {pm.level}</p>}
+          {pm && <p className="text-sm text-text">{pm.model} · {pm.level}{pm.serial && ` · Serie ${pm.serial}`}</p>}
           {pmError && <p role="alert" className="text-sm text-red-700">{pmError}</p>}
           {!pm && !pmError && <p className="text-sm text-text-secondary">Consultando checklist…</p>}
           {pm && !pm.checklist && <p className="text-sm text-text-secondary">Checklist pendiente de validar para este modelo y nivel. La entrega permanece pendiente.</p>}
@@ -398,6 +428,24 @@ export default function WorkOrderDetailPage() {
                       onChange={(event) => setCompletedItems((items) => event.target.checked ? [...items, task.id] : items.filter((id) => id !== task.id))} />
                     {task.label}
                   </label> : <>{task.label}{wo.execution?.completedItems?.includes(task.id) && ' · Realizada'}</>}
+                  {isSubmittingProof && task.evidence === 'photo' && <label className="mt-1 block text-xs text-text-secondary">
+                    Foto de evidencia · {task.label}
+                    <input type="file" accept="image/jpeg,image/png,image/webp" disabled={!!saving} className="mt-1 block w-full text-xs"
+                      onChange={event => {
+                        const file = event.target.files?.[0];
+                        pmUpload.current = null;
+                        setTaskPhotos(current => {
+                          const next = { ...current };
+                          if (file) return { ...next, [task.id]: file };
+                          delete next[task.id];
+                          return next;
+                        });
+                      }} />
+                  </label>}
+                  {!isSubmittingProof && wo.execution?.taskEvidence?.[task.id] && <a
+                    href={wo.execution.taskEvidence[task.id]} target="_blank" rel="noreferrer" className="ml-2 underline">
+                    Ver foto
+                  </a>}
                 </li>
               ))}
             </ul>

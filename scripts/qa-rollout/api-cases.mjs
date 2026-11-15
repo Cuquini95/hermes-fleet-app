@@ -236,15 +236,26 @@ export async function checkWorkshop(fixture, record) {
     assert(sheet.read(tabs.pmHistory).some(row => row[1] === pm.otId));
     const calendar = good(await sup('schedule'), 'Consultar calendario de Taller');
     assert(calendar.schedule.some(row => row[1] === date && row[2] === pm.otId && row[3] === 'EX401'));
-    const tech = workshop(request, await loginAs(request, firstAccount('mecanico')));
+    const mechanic = firstAccount('mecanico');
+    const techCookie = await loginAs(request, mechanic);
+    const tech = workshop(request, techCookie);
     const execution = { functionalTest: 'Prueba funcional sintética PM', performedOn: date, meter: '1963', completedItems: ['review-qa'] };
     const status = (api, value, submitted) => api('transition', { mutationId: randomUUID(), otId: pm.otId, field: 'estado', value, execution: submitted });
     const checklist = good(await tech(`pmchecklist?otId=${pm.otId}`), 'Consultar checklist por modelo');
     assert.equal(checklist.model, 'Komatsu D65EX-16');
+    assert.equal(checklist.serial, 'QA-EX401');
     assert.deepEqual(checklist.checklist.tasks.map(task => task.id), ['review-qa']);
     good(await status(tech, 'En Reparación'), 'Iniciar PM');
     assert.equal((await status(tech, 'Resuelta', { ...execution, completedItems: [] })).status, 400);
-    good(await status(tech, 'Resuelta', execution), 'Entregar PM');
+    assert.equal((await status(tech, 'Resuelta', execution)).status, 400);
+    const mutationId = randomUUID();
+    const photo = good(await request('/hermes-api/api/evidence', { cookie: techCookie, body: {
+      kind: 'order', expectedUserId: mechanic.user.id, units: ['EX401'], recordId: pm.otId, operationId: mutationId,
+      slot: 0, mimeType: 'image/png', data: photoPng.toString('base64'),
+    } }), 'Adjuntar evidencia al paso PM').url;
+    good(await tech('transition', { mutationId, otId: pm.otId, field: 'estado', value: 'Resuelta',
+      execution: { ...execution, taskEvidence: { 'review-qa': photo } } }), 'Entregar PM');
+    assert.equal(JSON.parse(sheet.read(tabs.orders).find(row => row[1] === pm.otId)[20]).taskEvidence['review-qa'], photo);
     assert.equal(sheet.read(tabs.pm).find(row => row[0] === pm.otId)[11], 'Programada');
     good(await status(sup, 'Completado'), 'Aceptar PM');
     const synchronized = [sheet.read(tabs.pm).find(row => row[0] === pm.otId)[11], sheet.read(tabs.pmHistory).find(row => row[1] === pm.otId)[10], sheet.read(tabs.schedule).find(row => row[2] === pm.otId)[7]];
