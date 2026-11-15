@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { Link } from 'react-router-dom'
 import { X, AlertCircle, FileText, Clock, User as UserIcon, Wrench } from 'lucide-react'
 import { readRange, SHEET_TABS } from '../../lib/sheets-api'
 import StatusDot from '../ui/StatusDot'
@@ -13,6 +14,7 @@ import type { Equipment } from '../../types/equipment'
 import type { OperatingStatus, WorkshopRecord, WorkshopSummary } from '../../hooks/useFleetDispatch'
 import { firstPhotoUrl, isOpenAveria, parseAveriaRow, type AveriaEntry } from '../../lib/averias'
 import { applyDispatchReadiness, normalizeUnitId, type UnitDispatchReadiness } from '../../lib/dispatch-readiness'
+import { useAuthStore } from '../../stores/auth-store'
 
 interface UnitDetailModalProps {
   unit: Equipment
@@ -45,6 +47,7 @@ const panamaCut = new Intl.DateTimeFormat('es-PA', {
 })
 
 export default function UnitDetailModal({ unit, dispatchReadiness, verified = true, operatingOnly = false, operatingStatus, workshop, workshopRestriction, onClose }: UnitDetailModalProps) {
+  const isPanama = useAuthStore(state => state.project === 'tmf-panama')
   const [averias, setAverias] = useState<AveriaEntry[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const refreshedFailures = workshop?.failures
@@ -144,6 +147,10 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
 
         {/* Body */}
         <div className="p-5">
+          {isPanama && <Link to={`/falla?unit=${encodeURIComponent(unit.unit_id)}`}
+            className="mb-4 inline-flex min-h-11 items-center rounded-lg border border-gray-200 px-3 text-sm font-semibold text-gray-900">
+            Reportar falla de este equipo
+          </Link>}
           {error && (
             <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 mb-4">
               No se pudo cargar la información de averías: {error}

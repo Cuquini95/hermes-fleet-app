@@ -135,6 +135,38 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
   }
 
   try {
+    if (withGateway) await record('MÓVIL-DIÉSEL-MISMO-INTERVALO', () => inRole('gerencia', 390, async page => {
+      const tab = 'Combustible';
+      const prior = sheet.read(tab);
+      const fill = (id, day, unit, liters, meter) => [id, `${day}/11/2026`, '08:00', unit, 'QA', 'Diesel', liters, '', meter];
+      sheet.seed(tab, [prior[0], fill('QA-01', 11, 'DZ203', '110', '1000'), fill('QA-02', 12, 'DZ203', '80', '1004'),
+        fill('QA-03', 11, 'EX401', '60', '2000'), fill('QA-04', 12, 'EX401', '50', '')]);
+      try {
+        await clickByName(page, 'Actualizar datos');
+        const detail = page.locator('summary').filter({ hasText: /Conciliación de diésel/ });
+        await visible(detail.filter({ hasText: /20 L\/h/ }));
+        await detail.click();
+        const list = page.getByRole('list', { name: 'Diésel por unidad' });
+        await visible(list.getByText('Horómetro faltante o sin avance cuadrable.', { exact: true }));
+        await visible(page.getByText(/80 L en 4 h conciliadas/));
+        await noHorizontalOverflow(page, 390);
+        return { liters: 80, meterHours: 4, incompleteReadingVisible: true };
+      } finally { sheet.seed(tab, prior); }
+    }, loadAccounts[71]));
+
+    if (withGateway) await record('MÓVIL-QR-PRESELECCIÓN-UNIDAD', () => inRole('operador', 390, async page => {
+      await page.goto(`${origin}/falla?unit=NO-ASIGNADA`, { waitUntil: 'domcontentloaded' });
+      await dismissPrivacy(page);
+      const control = page.getByLabel('Unidad', { exact: true });
+      await visible(control.locator('option[value="DZ203"]').locator('..'));
+      assert.equal(await control.inputValue(), '');
+      await page.goto(`${origin}/falla?unit=DZ203`, { waitUntil: 'domcontentloaded' });
+      await dismissPrivacy(page);
+      await waitUntil(async () => (await control.inputValue()) === 'DZ203', 'No se precargó la unidad autorizada');
+      await noHorizontalOverflow(page, 390);
+      return { allowedUnitPrefilled: true, externalUnitIgnored: true };
+    }, loadAccounts[72]));
+
     if (withGateway) await record('MÓVIL-FLOTA-HISTORIAL-UNIDAD', () => inRole('gerencia', 390, async page => {
       const priorFailures = sheet.read(tabs.failure);
       const priorOrders = sheet.read(tabs.orders);
@@ -560,6 +592,16 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await visible(page.getByText('2.25 h de trabajo registradas', { exact: true }));
         assert.equal(sheet.read(tabs.failure).find(item => item[13] === folio)?.[9], 'Completado');
         await shot(page, 'ot-cerrada-supervisor-390.png');
+        await page.route('**/hermes-api/api/panama/documentos-tecnicos?*', route => {
+          const params = new URL(route.request().url()).searchParams;
+          assert.equal(params.get('unit'), 'EX401');
+          return route.fulfill({ json: { documents: [{
+            title: 'Manual QA asignado', kind: 'manual', model: 'D65EX-16',
+            source: 'Catálogo QA', revision: 'R3', url: 'https://drive.google.com/file/d/fixture/view',
+          }] } });
+        });
+        await page.getByRole('link', { name: 'Manuales de EX401' }).click();
+        await visible(page.getByText('Revisión R3', { exact: true }));
         return { folio, closedAt: row[14], returnedAt: JSON.parse(row[22]).returnedAt, progress: 50, cost: 85.25, laborHours: 2.25, evidenceLinked: true };
       });
     });

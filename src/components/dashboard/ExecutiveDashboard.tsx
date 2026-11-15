@@ -18,6 +18,7 @@ import { usePullToRefresh } from '../../hooks/usePullToRefresh';
 import PullIndicator from '../ui/PullIndicator';
 import PanamaSourceRecords from '../workshop/PanamaSourceRecords';
 import PanamaWorkshopSummary from './PanamaWorkshopSummary';
+import PanamaFuelReconciliation from './PanamaFuelReconciliation';
 
 type Tab = 'general' | 'briefing' | 'pedidos' | 'datos';
 
@@ -51,6 +52,8 @@ export default function ExecutiveDashboard() {
   const snapshot = dispatchAvailability(equipment, dispatch.readiness, dispatch.verified && !dispatch.loading && !equipmentError);
   const operatingCount = dispatch.operatingStatuses
     ? equipment.filter(unit => dispatch.operatingStatuses?.get(unit.unit_id) === 'operativo').length : null;
+  const operatingKnown = dispatch.operatingStatuses
+    ? equipment.filter(unit => dispatch.operatingStatuses?.has(unit.unit_id)).length : 0;
   const refreshAll = useCallback(() => {
     refreshData();
     return refreshDispatch();
@@ -137,9 +140,9 @@ export default function ExecutiveDashboard() {
             <div className="grid grid-cols-2 gap-3">
               <KPICard
                 icon={<Activity size={20} />}
-                value={useWorkshopMaster ? (operatingCount === null ? '—' : `${operatingCount}/${equipment.length}`)
+                value={useWorkshopMaster ? (operatingCount === null || operatingKnown === 0 ? '—' : `${operatingCount}/${operatingKnown}`)
                   : snapshot.pct === null ? 'Sin verificar' : `${snapshot.pct}%`}
-                label={useWorkshopMaster ? 'Equipos operativos'
+                label={useWorkshopMaster ? (operatingKnown > 0 && operatingKnown < equipment.length ? 'Equipos operativos · unidades con dato' : 'Equipos operativos')
                   : snapshot.available === null ? 'Aptos para despacho' : `Aptos para despacho · ${snapshot.available}/${snapshot.total}`}
                 color="#16A34A"
               />
@@ -190,6 +193,7 @@ export default function ExecutiveDashboard() {
             </section>
           )}
           {useWorkshopMaster && <PanamaWorkshopSummary data={dispatch.workshop} loading={dispatch.loading} card />}
+          {useWorkshopMaster && <PanamaFuelReconciliation data={data.fuelReconciliation} />}
           {project === 'tmf-panama' && !useWorkshopMaster && data.error && <PanamaSourceRecords source="orders" limit={3} />}
 
           {/* Fleet grid */}

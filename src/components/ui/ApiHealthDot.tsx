@@ -8,7 +8,15 @@ const STATUS_COLOR: Record<string, string> = {
   loading: '#94A3B8',
 };
 
-const CHECK_LABELS = { identity: 'Sesión', fleet: 'Maestro de flota', operations: 'Registro operativo' };
+const CHECK_LABELS = { identity: 'Sesión', fleet: 'Maestro de flota', operations: 'Registro operativo',
+  masters: 'Maestros de Taller', evidence: 'Adjuntos privados' };
+const CHECK_ACTIONS: Record<keyof typeof CHECK_LABELS, string> = {
+  identity: 'Vuelve a iniciar sesión.',
+  fleet: 'Consulta el último corte disponible.',
+  operations: 'Conserva el borrador y comprueba si el folio existe antes de reintentar.',
+  masters: 'Usa el último corte visible con su fecha.',
+  evidence: 'Conserva el archivo y vuelve a intentar adjuntarlo cuando el servicio regrese.',
+};
 const CHECK_STATUS = { ok: 'Disponible', degraded: 'Servicio parcial', down: 'Fuera de servicio' };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -85,12 +93,19 @@ export default function ApiHealthDot() {
                     <div key={check} className="flex justify-between gap-3">
                       <dt className="text-white/80">{CHECK_LABELS[check as keyof typeof CHECK_LABELS] ?? check}</dt>
                       <dd className={state === 'up' ? 'text-green-300' : 'text-amber-300'}>
-                        {state === 'up' ? 'Disponible' : 'No disponible'}
+                        {state === 'up' ? 'Disponible' : <>
+                          <span>No disponible</span>
+                          <span className="block mt-1">{CHECK_ACTIONS[check as keyof typeof CHECK_LABELS]}</span>
+                        </>}
                       </dd>
                     </div>
                   ))}
                 </dl>
               )}
+              {health.status !== 'ok' && <button type="button" onClick={() => void health.refresh()}
+                className="mt-2 rounded-md border border-white/30 px-2 py-1 text-white">
+                Volver a comprobar
+              </button>}
 
               {health.db && (
                 <div className="border-t border-white/10 pt-2">

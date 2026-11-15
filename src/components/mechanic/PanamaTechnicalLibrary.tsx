@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { ExternalLink } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { hermesApiUrl } from '../../lib/hermes-api-base';
 import { useAuthStore } from '../../stores/auth-store';
 
@@ -8,20 +9,26 @@ interface TechnicalDocument {
   title: string;
   model: string;
   source: string;
+  revision?: string;
   url: string;
 }
 
 export default function PanamaTechnicalLibrary({ kind }: { kind: TechnicalDocument['kind'] }) {
+  const [params] = useSearchParams();
+  const unit = params.get('unit');
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState({ query: '', revision: 0 });
-  const [records, setRecords] = useState<TechnicalDocument[]>([]);
-  const [state, setState] = useState<'loading' | 'ready' | 'unavailable'>('loading');
   const userId = useAuthStore(auth => auth.userId);
+  const scope = JSON.stringify([kind, unit, userId, search]);
+  const [result, setResult] = useState<{ scope: string; state: 'ready' | 'unavailable'; records: TechnicalDocument[] }>();
+  const state = result?.scope === scope ? result.state : 'loading';
+  const records = result?.scope === scope ? result.records : [];
 
   useEffect(() => {
     const controller = new AbortController();
-    const params = new URLSearchParams({ kind, q: search.query });
-    fetch(hermesApiUrl('/api/panama/documentos-tecnicos?' + params), {
+    const queryParams = new URLSearchParams({ kind, q: search.query });
+    if (unit) queryParams.set('unit', unit);
+    fetch(hermesApiUrl('/api/panama/documentos-tecnicos?' + queryParams), {
       credentials: 'same-origin',
       cache: 'no-store',
       signal: controller.signal,
@@ -30,19 +37,16 @@ export default function PanamaTechnicalLibrary({ kind }: { kind: TechnicalDocume
       const { documents } = await res.json();
       if (!Array.isArray(documents)) throw new Error('Respuesta no válida');
       if (!controller.signal.aborted) {
-        setRecords(documents);
-        setState('ready');
+        setResult({ scope, state: 'ready', records: documents });
       }
     }).catch(() => {
-      if (!controller.signal.aborted) setState('unavailable');
+      if (!controller.signal.aborted) setResult({ scope, state: 'unavailable', records: [] });
     });
     return () => controller.abort();
-  }, [kind, search, userId]);
+  }, [kind, search, unit, scope]);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setRecords([]);
-    setState('loading');
     setSearch(previous => ({ query: query.trim(), revision: previous.revision + 1 }));
   }
 
@@ -50,6 +54,7 @@ export default function PanamaTechnicalLibrary({ kind }: { kind: TechnicalDocume
   return (
     <section className="space-y-4 py-4">
       <h1 className="text-lg font-semibold text-navy">{title}</h1>
+      {unit && <p className="text-sm text-slate-600">Unidad: {unit}</p>}
       <form onSubmit={submit} className="space-y-2">
         <label className="block text-sm font-medium">
           Modelo o documento
@@ -69,6 +74,7 @@ export default function PanamaTechnicalLibrary({ kind }: { kind: TechnicalDocume
             <li key={record.url} className="rounded-xl border border-slate-200 bg-white p-3">
               <p className="font-semibold text-navy">{record.title}</p>
               <p className="text-sm text-slate-600">{record.model} · {record.source}</p>
+              <p className="text-sm text-slate-600">{record.revision ? `Revisión ${record.revision}` : 'Revisión no registrada'}</p>
               <a href={record.url} target="_blank" rel="noopener noreferrer"
                 className="inline-flex min-h-12 items-center gap-2 text-sm font-semibold text-blue-800 underline">
                 <ExternalLink size={16} aria-hidden="true" /> Abrir documento de {record.model}

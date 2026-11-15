@@ -110,6 +110,7 @@ export default function WorkOrderDetailPage() {
   const [mechanicsError, setMechanicsError] = useState('');
   const [evidence, setEvidence] = useState<{ file: File; preview: string }[]>([]);
   const [functionalTest, setFunctionalTest] = useState('');
+  const [diagnosis, setDiagnosis] = useState('');
   const [laborHours, setLaborHours] = useState('');
   const [performedOn, setPerformedOn] = useState(mexicoDateInput);
   const [meter, setMeter] = useState('');
@@ -125,6 +126,7 @@ export default function WorkOrderDetailPage() {
   }, [fetched, fetchWorkOrders]);
 
   const wo = requestedFolio ? getWorkOrderById(requestedFolio) : undefined;
+  const previous = wo?.previousOtId ? getWorkOrderById(wo.previousOtId) : undefined;
   const otId = wo?.ot_id ?? requestedFolio;
   const equipment = useEquipmentById(wo?.unidad ?? '');
   const panamaWorkflow = project === 'tmf-panama';
@@ -191,11 +193,13 @@ export default function WorkOrderDetailPage() {
       } else {
         let execution: WorkshopExecutionInput | undefined;
         if (panamaWorkflow && field === 'estado' && value === 'Resuelta') {
-          execution = { functionalTest, ...(laborHours !== '' && { laborHours }), ...(isPM && { performedOn, meter, completedItems }) };
+          execution = { functionalTest, ...(diagnosis.trim() && { diagnosis }),
+            ...(laborHours !== '' && { laborHours }), ...(isPM && { performedOn, meter, completedItems }) };
         }
         await updateOTField(otId, field, value, execution);
         if (execution) {
           setFunctionalTest('');
+          setDiagnosis('');
           setLaborHours('');
           setMeter('');
           setCompletedItems([]);
@@ -325,10 +329,14 @@ export default function WorkOrderDetailPage() {
           <p className="text-xs text-text-secondary mb-1">Descripcion</p>
           <p className="text-sm text-text break-words">{wo.descripcion}</p>
           {wo.previousOtId && <Link className="mt-2 inline-flex min-h-11 items-center text-sm font-semibold text-amber underline"
-            to={`/workorders/${encodeURIComponent(wo.previousOtId)}`}>Reincidencia de {wo.previousOtId}</Link>}
+            to={`/workorders/${encodeURIComponent(wo.previousOtId)}`}>Reincidencia de {previous?.folio ?? wo.previousOtId}</Link>}
         </div>
 
         <PanamaPartsMovements ot={wo.ot_id} />
+        {panamaWorkflow && <Link to={`/manuals?unit=${encodeURIComponent(wo.unidad)}`}
+          className="inline-flex min-h-11 items-center text-sm font-semibold text-amber underline">
+          Manuales de {wo.unidad}
+        </Link>}
 
         {wo.partes_necesarias && (
           <div>
@@ -396,6 +404,7 @@ export default function WorkOrderDetailPage() {
       {panamaWorkflow && wo.execution && (
         <section className="rounded-xl border border-border bg-white p-4 shadow-sm" aria-label="Prueba funcional entregada">
           <h2 className="text-sm font-semibold text-text">Prueba funcional de {wo.execution.userName}</h2>
+          {wo.execution.diagnosis && <p className="mt-1 break-words text-sm text-text"><strong>Causa confirmada:</strong> {wo.execution.diagnosis}</p>}
           <p className="mt-1 break-words text-sm text-text">{wo.execution.functionalTest}</p>
           {wo.execution.laborHours != null && <p className="mt-1 text-sm text-text-secondary">{wo.execution.laborHours} h de trabajo registradas</p>}
           {wo.execution.performedOn && <p className="mt-1 text-sm text-text-secondary">Ejecución {wo.execution.performedOn} · {wo.execution.meter} h</p>}
@@ -437,6 +446,11 @@ export default function WorkOrderDetailPage() {
                 </button>
               </div>
               {isSubmittingProof && <>
+                {!isPM && <label className="flex flex-col gap-1 text-xs font-medium text-text-secondary">
+                  Causa confirmada (si se identificó)
+                  <textarea className="rounded-xl border border-border p-2.5 text-sm text-text" rows={2} maxLength={1500}
+                    value={diagnosis} onChange={(event) => setDiagnosis(event.target.value)} />
+                </label>}
                 <label className="flex flex-col gap-1 text-xs font-medium text-text-secondary">
                   Resultado de la prueba funcional
                   <textarea className="rounded-xl border border-border p-2.5 text-sm text-text" rows={2} maxLength={1500}

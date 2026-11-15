@@ -42,7 +42,7 @@ function readiness(sheets, session = manager) {
   return dispatchWorkshop({ path: 'api/workshop/readiness', method: 'GET', session, sheets, now });
 }
 
-test('shows confirmed operating units separately from dispatch restrictions and keeps documented stops', async () => {
+test('an enforced Sticker restriction overrides an operating confirmation while a non-stopping report does not', async () => {
   const store = sheetsWith({
     masters: {
       failures: section([{ id: 'CASE-1', unit: 'QA02', status: 'Detenido reportado', last: date }]),
@@ -52,7 +52,8 @@ test('shows confirmed operating units separately from dispatch restrictions and 
   const read = store.read;
   store.nativeOperations = true;
   store.read = async tab => {
-    if (tab === 'HERMES_PA_CONFIRMACION_OPERATIVA') return [['UNIDAD'], ['QA01', 'operativo'], ['QA02', 'operativo']];
+    if (tab === 'HERMES_PA_CONFIRMACION_OPERATIVA') return [['UNIDAD'], ['QA01', 'operativo'], ['QA02', 'operativo'], ['QA03', 'operativo']];
+    if (tab === 'Averias') return [fault('QA03', 'OT-0120', 'Abierta')];
     if (tab === 'Inspeccion_Stickers') {
       const red = Array(18).fill('');
       red[5] = 'QA01';
@@ -63,7 +64,8 @@ test('shows confirmed operating units separately from dispatch restrictions and 
   };
 
   const { body } = await readiness(store);
-  assert.deepEqual(body.operatingStatuses, [['QA01', 'operativo'], ['QA02', 'inoperativo']]);
+  assert.deepEqual(body.operatingStatuses, [['QA01', 'inoperativo'], ['QA02', 'inoperativo'], ['QA03', 'operativo']]);
+  assert.equal(body.operatingCheckedAt, now.toISOString());
   assert.equal(body.stickers[0][12], 'Rojo');
   assert.deepEqual(body.inspections, []);
   const limited = { ...manager, allUnits: false, assignedUnits: ['QA02'] };

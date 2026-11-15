@@ -265,6 +265,29 @@ test('Panamá health distinguishes the official fleet from its writable workbook
   ]);
 });
 
+test('health identifies independent master and evidence failures, including consultation mode', async () => {
+  const sheets = { nativeOperations: true, read: async () => [[]],
+    readWorkshopMasters: async () => ({ failures: {}, orders: null }) };
+  const sessionReader = async () => ({ ...operator, project: 'tmf-panama' });
+  const request = { method: 'GET', query: { path: 'health' } };
+  const result = response();
+  await createHermesGateway({ sheets, sessionReader, enablePanamaOperations: false,
+    probeEvidence: async () => false })(request, result);
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.body.status, 'degraded');
+  assert.equal(result.body.writeEnabled, false);
+  assert.deepEqual(result.body.checks, {
+    identity: 'up', fleet: 'up', operations: 'up', masters: 'down', evidence: 'down',
+  });
+  sheets.readWorkshopMasters = async () => ({ failures: {}, orders: {} });
+  const recovered = response();
+  await createHermesGateway({ sheets, sessionReader, enablePanamaOperations: true,
+    probeEvidence: async () => true })(request, recovered);
+  assert.equal(recovered.body.checks.masters, 'up');
+  assert.equal(recovered.body.checks.evidence, 'up');
+  assert.equal(recovered.body.status, 'ok');
+});
+
 test('a failed Panama consultation reports an unavailable source rather than an uncertain write', async () => {
   const gateway = createHermesGateway({
     sessionReader: async () => ({ ...operator, project: 'tmf-panama' }),

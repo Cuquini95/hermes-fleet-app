@@ -14,6 +14,8 @@ export default function FleetPage() {
 
   const dispatch = useFleetDispatch(equipment);
   const role = useAuthStore((state) => state.role);
+  const panama = useAuthStore((state) => state.project === 'tmf-panama' && !state.previewDemo);
+  const operatingOnly = panama && !!dispatch.operatingStatuses;
   const equipmentError = useEquipmentStore((state) => state.error);
   const ready = useEquipmentStore((state) => state.fetched) && dispatch.verified && !dispatch.loading && !equipmentError;
   const refetch = useEquipmentStore((state) => state.refetch);
@@ -31,7 +33,8 @@ export default function FleetPage() {
         </button>
         <h1 className="text-xl font-bold text-text">Equipos</h1>
         <span className="ml-auto text-sm font-semibold text-text-secondary">
-          {snapshot.available !== null ? `${snapshot.available}/${snapshot.total} aptos para despacho` : 'Disponibilidad por verificar'}
+          {operatingOnly ? 'Estado operativo'
+            : snapshot.available !== null ? `${snapshot.available}/${snapshot.total} aptos para despacho` : 'Disponibilidad por verificar'}
         </span>
         <button type="button" onClick={() => void Promise.all([refetch(), dispatch.refresh()])} aria-label="Actualizar flota" className="p-2 rounded-xl bg-white border border-border">
           <RefreshCw size={18} />
@@ -53,7 +56,8 @@ export default function FleetPage() {
           </ul>
         </section>
       )}
-      <FleetGrid equipment={equipment} dispatch={dispatch} selectedUnit={params.get('unit') ?? undefined} onClearSelectedUnit={() => setParams({}, { replace: true })} />
+      <FleetGrid equipment={equipment} dispatch={dispatch} operatingOnly={operatingOnly}
+        selectedUnit={params.get('unit') ?? undefined} onClearSelectedUnit={() => setParams({}, { replace: true })} />
     </div>
   );
 }

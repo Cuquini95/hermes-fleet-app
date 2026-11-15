@@ -188,12 +188,15 @@ async function report(context) {
   const clientAffected = !['', 'n/a', 'ninguno', '--', 'na', 'none'].includes(customer.toLowerCase());
   const priority = body.canMove ? 'MEDIA' : clientAffected ? 'CRITICA' : 'ALTA';
   const notes = `Ubicación: ${location}. Cliente: ${customer}. Puede moverse: ${body.canMove ? 'Sí' : 'No'}`;
-  const previousOtId = isPanama(context) ? text(body.previousOtId, 'OT anterior', 90) : '';
-  if (previousOtId) {
-    const previous = (await context.sheets.read(TAB.orders)).filter(row => row[1] === previousOtId);
-    assert(previous.length === 1 && previous[0][3]?.trim().toUpperCase() === code, 400, 'OT anterior no disponible para esta unidad');
+  const previousReference = isPanama(context) ? text(body.previousOtId, 'OT anterior', 90).toUpperCase() : '';
+  let previousOtId = '';
+  if (previousReference) {
+    const previous = (await context.sheets.read(TAB.orders)).filter(row => row[3]?.trim().toUpperCase() === code
+      && /^OT-/i.test(row[1] ?? '') && (row[1].toUpperCase() === previousReference || row[25] === previousReference));
+    assert(previous.length === 1, 400, 'OT anterior no disponible para esta unidad');
     assert(previous[0][9] === 'Completado' && normalizeModel(previous[0][4]) === normalizeModel(type), 400,
       'Selecciona una OT cerrada de la misma unidad y tipo de falla');
+    previousOtId = previous[0][1];
   }
   const writes = failureWrites(context, { id: context.otId, unit: code, type, description, priority, photos, downtime, notes });
   const result = { otId: context.otId };
@@ -350,9 +353,11 @@ async function executionFor(context, order) {
   const { body, session } = context;
   assert(order.row[17] === session.userId, 403, 'La entrega corresponde al ejecutor asignado');
   const functionalTest = text(body.execution?.functionalTest, 'Resultado de la prueba funcional', 1500, true);
+  const diagnosis = text(body.execution?.diagnosis, 'Causa confirmada', 1500);
   const reportedHours = body.execution?.laborHours;
   const laborHours = reportedHours == null ? null : decimal(reportedHours, 'Horas de trabajo', 0.01, 9999);
   const execution = { userId: session.userId, userName: session.userName, submittedAt: context.now, functionalTest,
+    ...(diagnosis && { diagnosis }),
     ...(laborHours !== null && { laborHours }) };
   if (order.row[4] !== 'PM') return { execution };
   const pm = await pmDefinition(context, order);
@@ -811,9 +816,18 @@ async function readinessSources(context) {
       for (const record of official.failures.records) {
         if (/^(detenido reportado|en reparaci[oó]n|esperando pieza)$/i.test(record.status.trim())) stopped.add(record.unit.toUpperCase());
       }
+      const observed = context.now ?? new Date();
+      const localDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Panama',
+        year: 'numeric', month: '2-digit', day: '2-digit' }).format(observed);
+      const enforced = buildDispatchReadinessMap(response.stickers, response.inspections,
+        new Date(`${localDay}T12:00:00`), response.returns);
+      for (const [unit, restriction] of enforced) {
+        if (restriction.level === 'blocked' || restriction.level === 'restricted') stopped.add(unit);
+      }
       response.operatingStatuses = [...new Set([...running, ...stopped])]
         .filter(unit => unit && scopeAllows(session, unit))
         .map(unit => [unit, stopped.has(unit) ? 'inoperativo' : 'operativo']);
+      response.operatingCheckedAt = observed.toISOString();
     }
   }
   return response;

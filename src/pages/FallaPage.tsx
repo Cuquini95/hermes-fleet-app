@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { z } from 'zod';
 import { useEquipmentList } from '../hooks/useEquipmentList';
@@ -44,13 +44,15 @@ const emptyDraft: FallaDraft = {
 };
 
 export default function FallaPage() {
+  const [params] = useSearchParams();
   const userId = useAuthStore((s) => s.userId);
   const project = useAuthStore((s) => s.project);
   const scope = JSON.stringify([project, userId]);
-  return <FallaForm key={scope} scope={scope} isPanama={project === 'tmf-panama'} />;
+  return <FallaForm key={scope} scope={scope} isPanama={project === 'tmf-panama'}
+    requestedUnit={project === 'tmf-panama' ? params.get('unit')?.trim().toUpperCase() : undefined} />;
 }
 
-function FallaForm({ scope, isPanama }: { scope: string; isPanama: boolean }) {
+function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama: boolean; requestedUnit?: string }) {
   const navigate = useNavigate();
   const equipment = useEquipmentList();
   const sending = useRef(false);
@@ -79,6 +81,18 @@ function FallaForm({ scope, isPanama }: { scope: string; isPanama: boolean }) {
     });
     return () => { active = false; };
   }, [scope]);
+
+  useEffect(() => {
+    if (!ready || !requestedUnit || !equipment.some(unit => unit.unit_id === requestedUnit)) return;
+    const current = currentDraft.current;
+    const hasExistingCapture = current.unidad || current.tipoFalla || current.descripcion || current.puedeMoverse !== null
+      || current.clienteAfectado || current.ubicacion || current.downtime || current.previousOtId || current.photos.length
+      || current.mutationId || current.pending;
+    if (hasExistingCapture) return;
+    const next = { ...current, unidad: requestedUnit };
+    currentDraft.current = next;
+    setDraft(next);
+  }, [equipment, ready, requestedUnit]);
 
   useEffect(() => {
     const previews = draft.photos.map(file => ({ file, preview: URL.createObjectURL(file) }));

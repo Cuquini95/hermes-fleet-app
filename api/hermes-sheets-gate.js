@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { isSameOriginAuthRequest, requireSession } from './_lib/session-auth.js';
 import { canonicalTab, createHermesSheets } from './_lib/hermes-google-sheets.js';
-import { dispatchEvidence } from './_lib/hermes-evidence.js';
+import { checkEvidenceAvailability, dispatchEvidence } from './_lib/hermes-evidence.js';
 import { panamaOperationalStore } from './_lib/hermes-operational-store.js';
 import { rejectIfRateLimited } from './_lib/rate-limit.js';
 import meterHandler from './_lib/cmms-meter.js';
@@ -96,6 +96,14 @@ const unitCode = value => String(value ?? '').trim().toUpperCase();
 const supportsUnit = (session, unit) => session.allUnits === true || (Boolean(unitCode(unit)) && session.assignedUnits?.some(value => unitCode(value) === unitCode(unit)) === true);
 const invalid = (res, status, error) => res.status(status).json({ error });
 const knownPath = value => (Array.isArray(value) ? value.join('/') : String(value ?? '')).replace(/^\/+|\/+$/g, '');
+
+function healthProbe(operation) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('Health check timed out')), 4000);
+  });
+  return Promise.race([Promise.resolve().then(operation), deadline]).finally(() => clearTimeout(timer));
+}
 
 const workshop = context => import('./_lib/hermes-workshop.js').then(module => module.dispatchWorkshop(context));
 const purchasing = context => import('./_lib/hermes-purchasing.js').then(module => module.dispatchPurchasing(context));
@@ -204,6 +212,7 @@ export function createHermesGateway({
   dispatchPurchasing = purchasing,
   readPanama,
   readOfficialShifts,
+  probeEvidence = checkEvidenceAvailability,
   panamaTechnicalCatalog = () => process.env.HERMES_PANAMA_TECHNICAL_CATALOG_JSON,
   panamaOnly = false,
   enablePanamaOperations = false,
@@ -244,11 +253,24 @@ export function createHermesGateway({
       if (path === 'api/panama/documentos-tecnicos') {
         if (session.project !== PANAMA_PROJECT || !WORKSHOP.includes(session.role)) return invalid(res, 403, 'Consulta no autorizada.');
         if (req.method !== 'GET') return invalid(res, 405, 'Método no permitido.');
-        const result = technicalDocuments(panamaTechnicalCatalog(), req.query);
+        let asset;
+        if (req.query?.unit !== undefined) {
+          if (typeof req.query.unit !== 'string' || !/^[A-Z0-9][A-Z0-9 -]{0,39}$/i.test(req.query.unit.trim())) {
+            return invalid(res, 400, 'Unidad inválida.');
+          }
+          const unit = unitCode(req.query.unit);
+          if (!supportsUnit(session, unit)) return invalid(res, 403, 'Consulta no autorizada.');
+          const inventory = await sheets.read('01 Inventario', { cached: true });
+          const matches = inventory.filter(row => unitCode(row[1]) === unit);
+          if (matches.length !== 1 || !matches[0][4]?.trim()) return invalid(res, 404, 'No se pudo confirmar el modelo de esta unidad.');
+          asset = { model: matches[0][4], serial: matches[0][6] };
+        }
+        const result = technicalDocuments(panamaTechnicalCatalog(), req.query, asset);
         return res.status(result.status).json(result.body);
       }
       const shiftRoute = path === 'api/panama/turnos' || path.startsWith('api/panama/turnos/');
-      if ((path.startsWith('api/panama/') && !shiftRoute) || (session.project === PANAMA_PROJECT && !enablePanamaOperations)) {
+      if ((path.startsWith('api/panama/') && !shiftRoute)
+        || (session.project === PANAMA_PROJECT && !enablePanamaOperations && path !== 'health')) {
         const result = await dispatchPanama({ path, method: req.method, query: req.query, session, read: demo ? demoSheets.readSummary : readPanama });
         return res.status(result.status).json(result.body);
       }
@@ -258,21 +280,30 @@ export function createHermesGateway({
           await sheets.read('01 Inventario', { cached: true });
           return res.status(200).json({ status: 'ok', writeEnabled });
         }
-        const [fleet, operations] = await Promise.allSettled([
-          sheets.read('01 Inventario', { cached: true }),
-          sheets.read('ORDENES_TRABAJO', { cached: true, requireExisting: true }),
+        const [fleet, operations, masters, evidence] = await Promise.allSettled([
+          healthProbe(() => sheets.read('01 Inventario', { cached: true })),
+          healthProbe(() => sheets.read('ORDENES_TRABAJO', { cached: true, requireExisting: true })),
+          healthProbe(() => sheets.readWorkshopMasters?.()),
+          healthProbe(() => !demo && sheets.nativeOperations ? probeEvidence() : undefined),
         ]);
         const checks = {
           identity: 'up',
           fleet: fleet.status === 'fulfilled' ? 'up' : 'down',
           operations: operations.status === 'fulfilled' ? 'up' : 'down',
         };
+        if (sheets.readWorkshopMasters) {
+          checks.masters = masters.status === 'fulfilled' && !!masters.value?.failures && !!masters.value?.orders ? 'up' : 'down';
+        }
+        if (!demo && sheets.nativeOperations) {
+          checks.evidence = evidence.status === 'fulfilled' && evidence.value === true ? 'up' : 'down';
+        }
+        const canWrite = enablePanamaOperations && writeEnabled && checks.operations === 'up';
         return res.status(200).json({
-          status: checks.fleet === 'up' && checks.operations === 'up' ? 'ok' : 'degraded',
+          status: Object.values(checks).every(check => check === 'up') ? 'ok' : 'degraded',
           checks,
-          writeEnabled: writeEnabled && checks.operations === 'up',
+          writeEnabled: canWrite,
           dataMode: demo ? 'demo' : 'operational',
-          ...(permittedGroups && { operationGroups: writeEnabled && checks.operations === 'up' ? [...permittedGroups] : [] }),
+          ...(permittedGroups && { operationGroups: canWrite ? [...permittedGroups] : [] }),
           deployment: {
             project: 'hermes-panama',
             environment: process.env.VERCEL_ENV ?? 'local',

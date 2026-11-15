@@ -46,6 +46,18 @@ const linked = (cell, url) => typeof cell === 'string' && cell.split(/,\s*/).inc
 const scopeUnits = units => [...new Set(units.map(unitCode))].sort();
 const sameUnits = (a, b) => Array.isArray(a) && a.length === b.length && a.every((unit, index) => unit === b[index]);
 
+export async function checkEvidenceAvailability() {
+  const config = identityConfig();
+  if (config.project !== PROJECT) return false;
+  const [metadata, bucket] = await Promise.all([
+    identityRequest(config, METADATA, { query: { select: 'id', limit: '1' } }),
+    identityRequest(config, `/storage/v1/bucket/${BUCKET}`),
+  ]);
+  if (!metadata.ok || !bucket.ok) return false;
+  const details = await bucket.json();
+  return details.id === BUCKET && details.public === false;
+}
+
 function linkId(value) {
   if (typeof value !== 'string' || !value.startsWith(LINK)) return null;
   const id = value.slice(LINK.length);

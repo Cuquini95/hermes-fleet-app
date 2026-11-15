@@ -29,6 +29,7 @@ function fixture(pmChecklists = []) {
   let beforeCommit;
   const sheets = {
     async read(tab) { return structuredClone(data.get(tab) || []); },
+    seed(tab, rows) { data.set(tab, structuredClone(rows)); },
     async replay({ key, fingerprint }) {
       const mutation = mutations.get(key);
       if (mutation && mutation.fingerprint !== fingerprint) throw Object.assign(new Error('Operación distinta'), { status: 409 });
@@ -193,9 +194,13 @@ test('el retorno de una OT no libera otra avería abierta de la misma unidad', a
 test('una reincidencia conserva el cierre original y queda vinculada a una nueva OT', async () => {
   const { request, sheets } = fixture();
   const otId = await startRepair(request);
-  await transition(request, mechanic, otId, 'Resuelta', executionProof);
+  await transition(request, mechanic, otId, 'Resuelta', { ...executionProof, diagnosis: 'Daño confirmado en banda lateral.' });
   await transition(request, workshop, otId, 'Completado');
-  const payload = report({ previousOtId: otId, description: 'Reincidencia declarada QA' });
+  const previous = await sheets.read('ORDENES_TRABAJO');
+  while (previous[0].length <= 25) previous[0].push('');
+  previous[0][25] = 'OT-0100';
+  sheets.seed('ORDENES_TRABAJO', previous);
+  const payload = report({ previousOtId: 'OT-0100', description: 'Reincidencia declarada QA' });
   const recurrence = await request('report', operator, payload);
   assert.equal(recurrence.status, 201);
   assert.equal(recurrence.body.previousOtId, otId);
@@ -203,6 +208,7 @@ test('una reincidencia conserva el cierre original y queda vinculada a una nueva
   assert.equal((await request('report', operator, payload)).body.otId, recurrence.body.otId);
   const [first, second] = await sheets.read('ORDENES_TRABAJO');
   assert.equal(first[9], 'Completado');
+  assert.equal(JSON.parse(first[20]).diagnosis, 'Daño confirmado en banda lateral.');
   assert.equal(second[24], otId);
   const log = await sheets.read('OT_STATUS_LOG');
   assert.equal(log.filter(row => row[1] === recurrence.body.otId && row[2] === 'reincidencia' && row[4] === otId).length, 1);

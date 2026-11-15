@@ -47,9 +47,13 @@ function purchasing(request, cookie) {
 
 export async function checkLoad(fixture, record, withGateway) {
   const request = requester(fixture.origin);
-  await record('HTTP-100', async () => {
+  for (const count of [28, 100]) await record(`HTTP-${count}`, async () => {
     const durations = [];
-    const actors = await Promise.all(loadAccounts.map(async account => {
+    const ordersExpected = ['coordinador', 'gerencia', 'jefe_taller', 'mecanico', 'supervisor'];
+    let orderReads = 0;
+    let inconsistentOrders = 0;
+    const cohort = count === 28 ? loadAccounts.slice(-28) : loadAccounts;
+    const attempts = await Promise.allSettled(cohort.map(async account => {
       const start = performance.now();
       const cookie = await loginAs(request, account);
       const session = good(await request('/api/auth/session', { cookie }), 'Restaurar sesión');
@@ -59,13 +63,25 @@ export async function checkLoad(fixture, record, withGateway) {
         const fleet = good(await request('/hermes-api/api/sheets/read?tab=01%20Inventario', { cookie }), 'Primera consulta de inventario');
         assert(Array.isArray(fleet.data) && fleet.data.some(row => row.includes('DZ203')), 'El inventario de prueba no llegó a la sesión');
         if (!session.allUnits) assert(!fleet.data.some(row => row.includes('EX410')), 'Se mostró una unidad de prueba fuera del alcance');
+        if (ordersExpected.includes(session.role)) {
+          const orders = async () => good(await workshop(request, cookie)('orders'), 'Consulta concurrente de órdenes')
+            .orders.map(row => row[1]).sort();
+          const [first, second] = await Promise.all([orders(), orders()]);
+          orderReads += 2;
+          if (new Set(first).size !== first.length || JSON.stringify(first) !== JSON.stringify(second)) inconsistentOrders++;
+        }
       }
       durations.push(performance.now() - start);
       return session.userId;
     }));
-    assert.equal(new Set(actors).size, 100);
+    const errors = attempts.filter(outcome => outcome.status === 'rejected');
+    assert.equal(errors.length, 0, `${errors.length}/${count} sesiones fallaron: ${errors[0]?.reason?.message ?? ''}`);
+    assert.equal(inconsistentOrders, 0, 'Los folios deben permanecer estables entre lecturas concurrentes');
+    const actors = attempts.flatMap(outcome => outcome.status === 'fulfilled' ? [outcome.value] : []);
+    assert.equal(new Set(actors).size, count);
     const sorted = durations.toSorted((a, b) => a - b);
-    return { sessions: actors.length, peakProviderLogins: fixture.peakLogins(), firstInventory: withGateway, p95Ms: Math.round(sorted[94]), maxMs: Math.round(sorted[99]) };
+    return { sessions: actors.length, synthetic: true, firstInventory: withGateway, orderReads, inconsistentOrders, errors: errors.length,
+      p50Ms: Math.round(sorted[Math.ceil(count * .50) - 1]), p95Ms: Math.round(sorted[Math.ceil(count * .95) - 1]), maxMs: Math.round(sorted.at(-1)) };
   });
 }
 

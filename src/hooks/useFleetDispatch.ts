@@ -43,6 +43,7 @@ interface ReadinessSources {
   workshop?: WorkshopSummary;
   masterRestrictions?: UnitDispatchReadiness[];
   operatingStatuses?: [string, OperatingStatus][];
+  operatingCheckedAt?: string;
 }
 
 export interface FleetDispatch {
@@ -51,6 +52,7 @@ export interface FleetDispatch {
   pendingReturns: PendingOperationalReturn[];
   workshop?: WorkshopSummary;
   operatingStatuses?: ReadonlyMap<string, OperatingStatus>;
+  operatingCheckedAt?: string;
   verified: boolean;
   loading: boolean;
   message: string;
@@ -85,7 +87,8 @@ export function useFleetDispatch(equipment: Equipment[], enabled = true): FleetD
         setLoaded(previous => {
           if (previous?.identity !== identity) return { identity, sources: result };
           // Keep known restrictions from a source until it responds again.
-          const merged = { ...result, operatingStatuses: result.operatingStatuses ?? previous.sources.operatingStatuses };
+          const merged = { ...result, operatingStatuses: result.operatingStatuses ?? previous.sources.operatingStatuses,
+            operatingCheckedAt: result.operatingCheckedAt ?? previous.sources.operatingCheckedAt };
           for (const name of result.unavailable) {
             if (name === 'workshopMaster') {
               const restrictions = new Map(previous.sources.masterRestrictions?.map(row => [row.unitId, row]));
@@ -106,6 +109,7 @@ export function useFleetDispatch(equipment: Equipment[], enabled = true): FleetD
             failures: last?.failures ?? [], stickers: last?.stickers ?? [], inspections: last?.inspections ?? [],
             returns: last?.returns ?? [], masterRestrictions: last?.masterRestrictions,
             operatingStatuses: last?.operatingStatuses,
+            operatingCheckedAt: last?.operatingCheckedAt,
             workshop: workshop && {
               ...workshop,
               failures: { ...workshop.failures, masterAvailable: false, operationalAvailable: false },
@@ -152,5 +156,6 @@ export function useFleetDispatch(equipment: Equipment[], enabled = true): FleetD
     : '';
   return { effectiveEquipment, readiness, pendingReturns: sources?.returns ?? [], workshop: sources?.workshop,
     operatingStatuses: sources?.operatingStatuses ? new Map(sources.operatingStatuses) : undefined,
+    operatingCheckedAt: sources?.operatingCheckedAt,
     verified, loading, message, refresh };
 }
