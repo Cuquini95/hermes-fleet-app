@@ -447,9 +447,16 @@ async function transition(context) {
     }
   }
   if (field === 'mecanico_asignado') {
-    const assignee = await mechanicFor(context, value, row[3].toUpperCase());
+    const assignee = await mechanicFor(context, value, unit);
     writes.push({ tab: TAB.orders, row: index, col: 17, values: [assignee?.userId || ''] });
     value = assignee?.userName || '';
+    if (isPanama(context)) {
+      const scheduled = linkedRows(await sheets.read(TAB.schedule), 2, 3, otId, unit);
+      if (scheduled) writes.push(
+        { tab: TAB.schedule, row: scheduled.index, col: 4, values: [value || 'Sin asignar'] },
+        { tab: TAB.schedule, row: scheduled.index, col: 9, values: [assignee?.userId || ''] },
+      );
+    }
   }
   if (field === 'prioridad') assert(PRIORITIES.has(value), 400, 'Prioridad inválida');
   if (field === 'progreso') value = String(decimal(value, 'Progreso', 0, 100));

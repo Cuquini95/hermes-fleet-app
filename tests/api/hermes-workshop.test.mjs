@@ -10,7 +10,7 @@ const operator = account('operator-qa', 'operador');
 const workshop = account('workshop-qa', 'jefe_taller');
 const coordinator = account('coordinator-qa', 'coordinador');
 const mechanic = account('mechanic-qa', 'mecanico');
-const secondMechanic = account('mechanic-qa-2', 'mecanico');
+const secondMechanic = { ...account('mechanic-qa-2', 'mecanico'), userName: 'QA segundo mecánico' };
 const supervisor = { ...account('supervisor-qa', 'supervisor'), canReviewPanamaHse: true };
 const manager = account('manager-qa', 'gerencia');
 
@@ -142,6 +142,40 @@ test('asigna por identidad, persiste avances y cierra OT y avería con actor, fe
   assert.equal(history[0][7], supervisor.userId);
 });
 
+test('reasignar una OT actualiza su calendario, conserva el trabajo y transfiere el acceso', async () => {
+  const { request } = fixture();
+  const otId = await startRepair(request);
+  const change = (actor, field, value) => request('transition', actor, { mutationId: randomUUID(), otId, field, value });
+  assert.equal((await change(mechanic, 'progreso', '75')).status, 200);
+  const scheduled = await request('schedule', workshop, {
+    mutationId: randomUUID(), otId, date: '2026-11-18', hours: '2.5', notes: 'Revisar mangueras',
+  });
+  assert.equal(scheduled.status, 200);
+  const reassign = { mutationId: randomUUID(), otId, field: 'mecanico_asignado', value: secondMechanic.userId };
+  assert.equal((await request('transition', coordinator, reassign)).status, 200);
+  assert.equal((await request('transition', coordinator, reassign)).body.replayed, true);
+  assert.equal((await change(mechanic, 'progreso', '80')).status, 403);
+  assert.deepEqual((await request('orders', mechanic)).body.orders, []);
+
+  const { orders, history } = (await request('orders', secondMechanic)).body;
+  assert.equal(orders[0][1], otId);
+  assert.equal(orders[0][16], '75');
+  assert.equal(orders[0][17], secondMechanic.userId);
+  assert.deepEqual(history.filter(entry => entry[2] === 'mecanico_asignado' && entry[3])
+    .map(entry => [entry[3], entry[4], entry[7]]), [[mechanic.userName, secondMechanic.userName, coordinator.userId]]);
+
+  const { body: { schedule } } = await request('schedule', workshop);
+  assert.equal(schedule.length, 1);
+  assert.deepEqual(schedule[0].slice(1, 10), [
+    '2026-11-18', otId, 'CA20', secondMechanic.userName, '2.5', 'CRITICA', 'Programado', 'Revisar mangueras', secondMechanic.userId,
+  ]);
+  assert.equal((await transition(request, secondMechanic, otId, 'Resuelta',
+    { ...executionProof, diagnosis: 'Manguera dañada', laborHours: 2.5 })).status, 200);
+  const [resolved] = (await request('orders', secondMechanic)).body.orders;
+  assert.equal(JSON.parse(resolved[20]).diagnosis, 'Manguera dañada');
+  assert.equal(JSON.parse(resolved[20]).laborHours, 2.5);
+});
+
 test('una OT cerrada sigue inmovilizada hasta el retorno de Operaciones por un tercero', async () => {
   const { request, sheets } = fixture();
   const otId = await startRepair(request);
@@ -213,6 +247,35 @@ test('una reincidencia conserva el cierre original y queda vinculada a una nueva
   const log = await sheets.read('OT_STATUS_LOG');
   assert.equal(log.filter(row => row[1] === recurrence.body.otId && row[2] === 'reincidencia' && row[4] === otId).length, 1);
   assert.equal((await request('report', operator, report({ previousOtId: recurrence.body.otId }))).status, 400);
+});
+
+test('reintentar un DVIR reprobado conserva su única OT y evidencia en dos familias', async () => {
+  const { request, sheets, attach } = fixture();
+  const units = ['CA20', 'EX401'];
+  sheets.seed('01 Inventario', [[], [], [],
+    ['', 'CA20', 'Camión articulado', 'Cat', '745'],
+    ['', 'EX401', 'Excavadora', 'Develon', 'DX360'],
+  ]);
+  const inspector = account('operator-dvir-qa', 'operador', units);
+  const reviewer = account('coordinator-dvir-qa', 'coordinador', units);
+  const checks = Array.from({ length: 12 }, (_, index) => index === 2
+    ? { status: 'falla', notes: 'Hallazgo QA' } : { status: 'ok' });
+  for (const [unit, model] of [['CA20', 'Cat 745'], ['EX401', 'Develon DX360']]) {
+    const mutationId = randomUUID();
+    const photo = attach('dvir', mutationId, inspector, unit);
+    const body = { mutationId, unit, date: '2026-11-15', time: '07:20', type: 'pre-operacion', meter: 4000, checks, photos: [photo] };
+    const initial = await request('dvir', inspector, body);
+    assert.equal(initial.status, 201);
+    const { otId, inspectionId } = initial.body;
+    const retry = await request('dvir', inspector, body);
+    assert.equal(retry.status, 200);
+    assert.deepEqual([retry.body.otId, retry.body.inspectionId, retry.body.replayed], [otId, inspectionId, true]);
+    const inspections = (await sheets.read('14 Inspecciones')).filter(row => row[4] === unit);
+    assert.deepEqual(inspections.map(row => [row[1], row[5], row[24], row[25]]), [[inspectionId, model, photo, otId]]);
+    const orders = (await request('orders', reviewer)).body.orders.filter(row => row[3] === unit);
+    assert.deepEqual(orders.map(row => [row[1], row[4], row[10]]), [[otId, 'DVIR', photo]]);
+    assert.equal((await sheets.read('Averias')).filter(row => row[13] === otId).length, 1);
+  }
 });
 
 test('un DVIR fallido mantiene el bloqueo aunque Taller cierre la reparación', async () => {

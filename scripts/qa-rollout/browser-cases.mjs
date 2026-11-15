@@ -431,18 +431,30 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     await record('MÓVIL-TALLER-360-LENTO', () => inRole('operador', 360, async page => {
       const description = 'Falla sintética en conexión lenta';
       await fillFailure(page, description, false, 'EX401');
-      sheet.failNext({ matches: writes => writes.some(write => write.tab === tabs.orders), delay: 1000 });
-      await clickByName(page, 'Confirmar');
+      const attempts = [];
+      page.on('request', request => {
+        if (request.method() === 'POST' && request.url().endsWith('/api/workshop/report')) attempts.push(request.postDataJSON().mutationId);
+      });
+      sheet.failNext({ matches: writes => writes.some(write => write.tab === tabs.orders), delay: 1000, when: 'after' });
+      await page.getByRole('button', { name: 'Confirmar', exact: true }).evaluate(button => {
+        button.click();
+        button.click();
+      });
       await sleep(200);
       assert.equal(sheet.read(tabs.orders).find(row => row[5] === description), undefined);
       assert.equal(await page.getByText(/OT.*creada|reporte guardado/i).count(), 0, 'La app confirmó antes de guardar');
       const order = await waitUntil(() => sheet.read(tabs.orders).find(row => row[5] === description), 'No llegó la OT sintética');
+      await visible(page.getByRole('button', { name: 'Reintentar', exact: true }));
+      assert.equal(attempts.length, 1);
+      await clickByName(page, 'Reintentar');
       await visible(page.getByText(/OT creada/i));
+      assert.deepEqual(attempts, [order[0], order[0]]);
+      assert.equal(sheet.read(tabs.orders).filter(row => row[5] === description).length, 1);
       filed = { folio: order[1], description };
       assert.equal(sheet.read(tabs.failure).filter(row => row[13] === order[1]).length, 1);
       await noHorizontalOverflow(page, 360);
       await shot(page, 'falla-360.png');
-      return { ...filed, linked: true, prematureConfirmation: false };
+      return { ...filed, linked: true, prematureConfirmation: false, confirmationRecovered: true, duplicateSuppressed: true };
     }));
 
     await record('MÓVIL-TALLER-390-FOTO', () => inRole('operador', 390, async page => {
@@ -504,17 +516,32 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await page.getByLabel('Mecánico (opcional)').selectOption(firstAccount('mecanico').user.id);
       const knownRows = sheet.read(tabs.pm).length;
       await clickByName(page, 'Activar Orden de PM');
-      await clickByName(page, 'Confirmar');
+      const attempts = [];
+      page.on('request', request => {
+        if (request.method() === 'POST' && request.url().endsWith('/api/workshop/pm')) attempts.push(request.postDataJSON().mutationId);
+      });
+      sheet.failNext({ matches: writes => writes.some(write => write.tab === tabs.pm), when: 'after' });
+      await page.getByRole('button', { name: 'Confirmar', exact: true }).evaluate(button => {
+        button.click();
+        button.click();
+      });
       const saved = await waitUntil(() => sheet.read(tabs.pm).slice(knownRows).find(row => row[2] === 'EX401'), 'No se guardó la Orden de PM');
       const folio = saved[0];
       pmMobileFolio = folio;
+      await visible(page.getByRole('button', { name: /Reintentar/ }));
+      assert.equal(attempts.length, 1);
+      await clickByName(page, /Reintentar/);
       await page.getByRole('button', { name: 'Abrir Calendario', exact: true }).tap();
+      assert.equal(attempts.length, 2);
+      assert.equal(attempts[0], attempts[1]);
+      assert.equal(sheet.read(tabs.pm).length, knownRows + 1);
+      assert.equal(sheet.read(tabs.schedule).filter(row => row[2] === folio).length, 1);
       await page.waitForURL(`${origin}/calendar`);
       await visible(page.getByRole('button', { name: new RegExp(folio) }));
       await page.reload({ waitUntil: 'domcontentloaded' });
       await visible(page.getByRole('button', { name: new RegExp(folio) }));
       await noHorizontalOverflow(page, 360);
-      return { folio, unit: 'EX401', reloaded: true };
+      return { folio, unit: 'EX401', reloaded: true, confirmationRecovered: true, duplicateSuppressed: true };
     }));
 
     await record('MÓVIL-PM-ENTREGA-ACEPTACIÓN', async () => {
@@ -920,14 +947,31 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       const card = page.locator('article').filter({ has: page.getByRole('heading', { name: number, exact: true }) });
       const line = card.locator('li').filter({ has: page.getByRole('heading', { name: /Filtro OC móvil QA/ }) });
       const lineId = sheet.read(tabs.lines).find(row => row[0] === purchaseFolio && row[1] === '1')[6];
-      const receive = async (quantity, reference, balance) => {
+      const attempts = [];
+      page.on('request', request => {
+        if (request.method() === 'POST' && request.url().endsWith('/api/purchasing/order-receive')) attempts.push(request.postDataJSON().operationId);
+      });
+      const receive = async (quantity, reference, balance, loseConfirmation = false) => {
         await line.getByRole('button', { name: 'Recibir partida' }).tap();
         await line.getByLabel('Cantidad recibida').fill(quantity);
         await line.getByLabel('Referencia o remisión').fill(reference);
-        await line.getByRole('button', { name: 'Registrar recepción', exact: true }).tap();
+        const submit = line.getByRole('button', { name: 'Registrar recepción', exact: true });
+        if (loseConfirmation) {
+          sheet.failNext({ matches: writes => writes.some(write => write.tab === tabs.lines), when: 'after' });
+          await submit.evaluate(button => {
+            button.click();
+            button.click();
+          });
+          await visible(line.getByRole('alert'));
+          assert.equal(attempts.length, 1);
+          assert.equal(JSON.parse(sheet.read(tabs.lines).find(row => row[6] === lineId)[11]).length, 1);
+        }
+        await submit.tap();
         await visible(line.getByText('Pendientes ' + balance, { exact: true }));
       };
-      await receive('0.75', 'Entrega QA A', '1.25');
+      await receive('0.75', 'Entrega QA A', '1.25', true);
+      assert.equal(attempts.length, 2);
+      assert.equal(attempts[0], attempts[1]);
       await receive('1.25', 'Entrega QA B', '0');
       await page.reload({ waitUntil: 'domcontentloaded' });
       await visible(card.getByText(/Entrega QA A/));
@@ -937,7 +981,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       assert.equal(JSON.parse(item[11]).length, 2);
       await noHorizontalOverflow(page, 390);
       await shot(page, 'oc-recepcion-parcial-390.png');
-      return { folio: purchaseFolio, received: 2, remainingOnLine: 0, receipts: 2, orderStatus: 'Recibida parcial' };
+      return { folio: purchaseFolio, received: 2, remainingOnLine: 0, receipts: 2, orderStatus: 'Recibida parcial', confirmationRecovered: true, duplicateSuppressed: true };
     }, browserWarehouse));
 
     await record('MÓVIL-GASTOS-RECIBO-REPARTO', () => inRole('jefe_taller', 390, async page => {
