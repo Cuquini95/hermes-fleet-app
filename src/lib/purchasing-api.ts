@@ -14,6 +14,9 @@ export interface InventoryMovement {
   by: string;
   stockAfter: string;
   measurementUnit: string;
+  originalIssueId?: string;
+  returnable?: string | null;
+  valuation?: { unitCost: string; currency: string; reference: string; delta: string } | null;
 }
 
 export interface PurchaseIssuer {

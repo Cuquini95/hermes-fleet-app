@@ -1205,7 +1205,37 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       assert.equal(JSON.parse(item[11]).length, 2);
       await noHorizontalOverflow(page, 390);
       await shot(page, 'oc-recepcion-parcial-390.png');
-      return { folio: purchaseFolio, received: 2, remainingOnLine: 0, receipts: 2, orderStatus: 'Recibida parcial', confirmationRecovered: true, duplicateSuppressed: true };
+
+      const ot = 'OT-MOV-QA-001';
+      const movements = 'Movimientos Repuestos PA';
+      sheet.seed(tabs.orders, [...sheet.read(tabs.orders),
+        ['M-QA', ot, '12/11/2026', 'DZ203', 'Mecánica', 'Movimiento QA', 'MEDIA', 'MEDIA', '', 'En Reparación']]);
+      const stock = () => Number(sheet.read(tabs.parts).find(row => row[0] === 'QA-001')[5]);
+      const before = stock();
+      await page.goto(`${origin}/workorders/${ot}`, { waitUntil: 'domcontentloaded' });
+      const history = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Movimientos de repuestos', exact: true }) });
+      await history.getByLabel('SKU del catálogo').fill('QA-001');
+      await history.getByLabel('Cantidad', { exact: true }).fill('2');
+      await history.getByLabel('Referencia del movimiento').fill('SALIDA-QA-MÓVIL');
+      await history.getByRole('button', { name: 'Registrar movimiento' }).tap();
+      await visible(history.getByText(/Costo OT.*25\.00.*VALUACIÓN-QA-01/));
+      const original = sheet.read(movements).find(row => row[9] === 'SALIDA-QA-MÓVIL');
+      assert.equal(stock(), before - 2);
+      await history.getByLabel('Movimiento', { exact: true }).selectOption('Devolución');
+      await history.getByLabel('Salida original').selectOption(original[0]);
+      await history.getByLabel('Cantidad', { exact: true }).fill('1');
+      await history.getByLabel('Referencia del movimiento').fill('DEV-QA-MÓVIL');
+      await history.getByRole('button', { name: 'Registrar movimiento' }).tap();
+      await visible(history.getByText('Salida original · SALIDA-QA-MÓVIL'));
+      await visible(history.getByText('Saldo para devolución 1'));
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await visible(history.getByText(/Costo OT.*12\.50.*VALUACIÓN-QA-01/));
+      const returned = sheet.read(movements).find(row => row[9] === 'DEV-QA-MÓVIL');
+      assert.deepEqual([returned[14], JSON.parse(returned[15]).delta, stock()], [original[0], '-12.50', before - 1]);
+      await noHorizontalOverflow(page, 390);
+
+      return { folio: purchaseFolio, received: 2, remainingOnLine: 0, receipts: 2, orderStatus: 'Recibida parcial', confirmationRecovered: true,
+        duplicateSuppressed: true, returnLinked: true, costReversed: '-12.50', remainingReturnable: 1 };
     }, browserWarehouse));
 
     await record('MÓVIL-GASTOS-RECIBO-REPARTO', () => inRole('jefe_taller', 390, async page => {

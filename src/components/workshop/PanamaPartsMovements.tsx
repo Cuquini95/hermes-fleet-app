@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { formatPanamaReceiptDate, purchaseRead, purchaseWrite, type InventoryMovement } from '../../lib/purchasing-api';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { displayMoney, formatPanamaReceiptDate, purchaseRead, purchaseWrite, type InventoryMovement } from '../../lib/purchasing-api';
 import { useAuthStore } from '../../stores/auth-store';
 
 export default function PanamaPartsMovements({ ot = '', onMoved }: { ot?: string; onMoved?: () => void }) {
@@ -18,10 +18,17 @@ function Movements({ ot, canReceive, onMoved }: { ot: string; canReceive: boolea
   const [partNumber, setPartNumber] = useState('');
   const [quantity, setQuantity] = useState('');
   const [reference, setReference] = useState('');
+  const [originalIssueId, setOriginalIssueId] = useState('');
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [reload, setReload] = useState(0);
+  const inFlight = useRef(false);
+  const returns = kind === 'Devolución';
+  const eligible = items.filter(item => item.kind === 'Salida' && Number(item.returnable) > 0
+    && item.ot.toUpperCase() === workOrder.trim().toUpperCase());
+  const original = eligible.find(item => item.id === originalIssueId);
+  const issueReference = new Map(items.filter(item => item.kind === 'Salida').map(item => [item.id, item.reference]));
 
   useEffect(() => {
     const abort = new AbortController();
@@ -35,22 +42,27 @@ function Movements({ ot, canReceive, onMoved }: { ot: string; canReceive: boolea
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (saving) return;
+    if (inFlight.current || (returns && !original)) return;
+    inFlight.current = true;
     setSaving(true);
     setStatus('');
     setError('');
     try {
       await purchaseWrite('inventory-move', {
-        ot: workOrder.trim(), kind, partNumber: partNumber.trim(), quantity: quantity.trim().replace(',', '.'), reference: reference.trim(),
+        ot: workOrder.trim(), kind, partNumber: returns ? original?.partNumber : partNumber.trim(),
+        quantity: quantity.trim().replace(',', '.'), reference: reference.trim(),
+        ...(returns && { originalIssueId }),
       });
       setStatus('Movimiento registrado.');
       setReference('');
       setQuantity('');
+      setOriginalIssueId('');
       setReload((count) => count + 1);
       onMoved?.();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'No se pudo registrar el movimiento.');
     } finally {
+      inFlight.current = false;
       setSaving(false);
     }
   }
@@ -61,14 +73,24 @@ function Movements({ ot, canReceive, onMoved }: { ot: string; canReceive: boolea
       <h2 className="font-semibold">Movimientos de repuestos</h2>
       {canReceive && <form onSubmit={submit}>
         <fieldset disabled={saving} className="grid gap-2 sm:grid-cols-2">
-          <label className="text-sm">Movimiento<select className={input} value={kind} onChange={(event) => setKind(event.target.value === 'Devolución' ? 'Devolución' : 'Salida')}>
+          <label className="text-sm">Movimiento<select aria-label="Movimiento" className={input} value={kind} onChange={(event) => {
+            setKind(event.target.value === 'Devolución' ? 'Devolución' : 'Salida');
+            setOriginalIssueId('');
+            setQuantity('');
+          }}>
             <option>Salida</option><option>Devolución</option>
           </select></label>
-          <label className="text-sm">Orden de trabajo<input required readOnly={Boolean(ot)} maxLength={90} className={input} value={workOrder} onChange={(event) => setWorkOrder(event.target.value)} /></label>
-          <label className="text-sm">SKU del catálogo<input required maxLength={120} className={input} value={partNumber} onChange={(event) => setPartNumber(event.target.value)} /></label>
+          <label className="text-sm">Orden de trabajo<input required readOnly={Boolean(ot)} maxLength={90} className={input} value={workOrder} onChange={(event) => { setWorkOrder(event.target.value); setOriginalIssueId(''); }} /></label>
+          {returns ? <label className="text-sm">Salida original<select aria-label="Salida original" required className={input} value={originalIssueId} onChange={event => setOriginalIssueId(event.target.value)}>
+            <option value="">{eligible.length ? 'Selecciona la salida' : 'Sin salidas con saldo verificable'}</option>
+            {eligible.map(item => <option key={item.id} value={item.id}>{item.partNumber} · {item.reference} · saldo {item.returnable}</option>)}
+          </select></label> : <label className="text-sm">SKU del catálogo<input required maxLength={120} className={input} value={partNumber} onChange={(event) => setPartNumber(event.target.value)} /></label>}
           <label className="text-sm">Cantidad<input required className={input} inputMode="decimal" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
           <label className="text-sm">Referencia del movimiento<input required maxLength={160} className={input} value={reference} onChange={(event) => setReference(event.target.value)} /></label>
-          <button type="submit" className="self-end min-h-11 rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white">Registrar movimiento</button>
+          {original && <p className="text-xs text-slate-700">Saldo de la salida {original.returnable} {original.measurementUnit}
+            {original.valuation ? ` · Costo original ${displayMoney(original.valuation.unitCost, original.valuation.currency)} por unidad` : ' · Costo pendiente de conciliar'}
+          </p>}
+          <button type="submit" disabled={returns && !original} className="self-end min-h-11 rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Registrar movimiento</button>
         </fieldset>
       </form>}
       {status && <p role="status" className="text-sm text-emerald-800">{status}</p>}
@@ -79,6 +101,11 @@ function Movements({ ot, canReceive, onMoved }: { ot: string; canReceive: boolea
           <li key={item.id} className="break-words rounded-lg bg-slate-50 p-2">
             <p>{item.kind} · {item.partNumber} · {item.quantity} {item.measurementUnit} · existencia {item.stockAfter}</p>
             <p className="text-slate-700">{item.ot || item.orderNumber || item.order} · {item.unit} · {item.reference} · {item.by} · {formatPanamaReceiptDate(item.at)}</p>
+            {item.originalIssueId && <p>Salida original · {issueReference.get(item.originalIssueId) || item.originalIssueId}</p>}
+            {item.kind === 'Salida' && <p>{item.returnable == null ? 'Saldo por conciliar' : `Saldo para devolución ${item.returnable}`}</p>}
+            {['Salida', 'Devolución'].includes(item.kind) && <p>{item.valuation
+              ? `Costo OT ${displayMoney(item.valuation.delta, item.valuation.currency)} · ${item.valuation.reference}`
+              : 'Costo pendiente de conciliar'}</p>}
           </li>
         ))}
       </ul>}

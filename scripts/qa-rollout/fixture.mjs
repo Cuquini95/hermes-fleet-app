@@ -424,6 +424,9 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
     HERMES_UPSTREAM_URL: '', HERMES_UPSTREAM_TOKEN: '', HERMES_GOOGLE_SERVICE_ACCOUNT_JSON: '',
     HERMES_GOOGLE_SHEET_ID: '', HERMES_GOOGLE_SHEETS_ID: '', TELEGRAM_BOT_TOKEN: '',
     HERMES_EXPENSE_PRICE_CURRENCY: 'USD',
+    HERMES_PANAMA_INVENTORY_VALUATIONS_JSON: JSON.stringify([
+      { partNumber: 'QA-001', unitCost: '12.50', currency: 'USD', reference: 'VALUACIÓN-QA-01' },
+    ]),
     HERMES_PANAMA_PM_TRIGGER_RULES_JSON: JSON.stringify([{
       unit: 'DZ205', level: 'PM-250', reference: 'Plan sintético QA rev1', dueDate: '2026-11-12',
       condition: { source: 'dozers', minCritical: 1 },

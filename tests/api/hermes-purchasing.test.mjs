@@ -74,12 +74,12 @@ function store({ vendors = [['NOMBRE'], ['Proveedor de prueba', 'RFC-QA', 'Direc
   };
 }
 
-function setup(options) {
+function setup(options, purchasingOptions = {}) {
   const sheets = store(options);
   const call = (action, body, session = manager, query) => dispatchPurchasing({
     path: 'api/purchasing/' + action,
     method: body ? 'POST' : 'GET',
-    body, query, session, sheets,
+    body, query, session, sheets, ...purchasingOptions,
   });
   async function readOrder(folio, session = manager) {
     const response = await call('order', null, session, { folio });
@@ -607,4 +607,35 @@ test('Panamá valida la compatibilidad y registra movimientos de stock conciliab
   const history = (await call('inventory-movements', null, warehouse, { ot: 'OT-QA-01' })).body.items;
   assert.deepEqual(history.map(item => [item.kind,item.quantity]), [['Devolución','1'],['Salida','2']]);
   assert.equal(sheets.inspect('Movimientos Repuestos PA').length, 5);
+});
+
+test('cada devolución debita la salida elegida y revierte su valuación original hasta el último centavo', async () => {
+  const inventoryValuations = [{ partNumber: 'SKU-QA', unitCost: '9.99', currency: 'USD', reference: 'COSTO-APROBADO-QA' }];
+  const { call, sheets } = setup(undefined, { inventoryValuations });
+  const warehouse = { ...manager, project: 'tmf-panama', role: 'jefe_taller', canApprovePurchases: false, canReceivePurchases: true };
+  const move = (kind, quantity, reference, originalIssueId) => call('inventory-move', {
+    operationId: randomUUID(), kind, quantity, reference, partNumber: 'SKU-QA', ot: 'OT-QA-01', originalIssueId,
+  }, warehouse);
+  const first = await move('Salida', '1.001', 'SAL-A');
+  assert.equal(first.status, 200);
+  assert.equal(first.body.valuation?.delta, '10.00');
+  inventoryValuations[0].unitCost = '14.00';
+  const second = await move('Salida', '1.001', 'SAL-B');
+  assert.equal(second.body.valuation?.delta, '14.01');
+  assert.equal((await move('Devolución', '0.5', 'SIN-ORIGEN')).status, 409);
+  assert.equal((await move('Devolución', '1.2', 'EXCESO', first.body.id)).status, 409);
+  assert.equal((await move('Devolución', '0.5', 'NO-EXISTE', 'abc')).status, 409);
+  const partial = await move('Devolución', '0.5', 'DEV-A1', first.body.id);
+  assert.equal(partial.body.valuation?.delta, '-5.00');
+  const remaining = () => call('inventory-movements', null, warehouse, { ot: 'OT-QA-01' }).then(r => r.body.items);
+  assert.equal((await remaining()).find(item => item.id === first.body.id)?.returnable, '0.501');
+  const attempts = await Promise.all([move('Devolución', '0.501', 'DEV-A2', first.body.id), move('Devolución', '0.501', 'DEV-A3', first.body.id)]);
+  assert.deepEqual(attempts.map(r => r.status).sort(), [200,409]);
+  const rows = await remaining();
+  const returned = rows.filter(item => item.originalIssueId === first.body.id);
+  assert.deepEqual(returned.map(item => [item.valuation.delta,item.valuation.unitCost,item.valuation.reference]), [
+    ['-5.00','9.99','COSTO-APROBADO-QA'], ['-5.00','9.99','COSTO-APROBADO-QA'],
+  ]);
+  assert.equal(rows.find(item => item.id === second.body.id)?.returnable, '1.001');
+  assert.equal(sheets.inspect(TAB.catalog)[1][5], '2.999');
 });

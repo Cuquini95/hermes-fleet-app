@@ -400,15 +400,69 @@ function movementRecord(row) {
     id: trim(row[0]), at: trim(row[1]), kind: trim(row[2]), partNumber: trim(row[3]), quantity: trim(row[4]),
     unit: trim(row[5]), order: trim(row[6]), lineId: trim(row[7]), ot: trim(row[8]), reference: trim(row[9]),
     by: trim(row[10]), actorId: trim(row[11]), stockAfter: trim(row[12]), measurementUnit: trim(row[13]),
+    originalIssueId: trim(row[14]), valuation: recordedInventoryValue(row[15]),
   };
 }
 
-function inventoryWrites({ part, nextStock, session, tx, kind, amount, unit, folio = '', lineId = '', ot = '', reference }) {
+function valueDefinition(input) {
+  const { unitCost, currency, reference } = input ?? {};
+  return /^(?:0|[1-9]\d{0,11})(?:\.\d{1,2})?$/.test(String(unitCost ?? ''))
+    && ['USD', 'PAB'].includes(currency) && typeof reference === 'string' && reference.trim() && reference.length <= 160
+    ? { unitCost: money(decimal(unitCost, 2, 'costo autorizado')), currency, reference: reference.trim() } : null;
+}
+
+function approvedInventoryValue(session, supplied, sku) {
+  if (session.previewDemo && supplied === undefined) return null;
+  try {
+    const rows = supplied ?? JSON.parse(process.env.HERMES_PANAMA_INVENTORY_VALUATIONS_JSON || '[]');
+    const matches = rows.filter(row => upper(row?.partNumber) === upper(sku));
+    if (!matches.length) return null;
+    const value = matches.length === 1 ? valueDefinition(matches[0]) : null;
+    if (!value) error(409, 'Concilia la valuación autorizada de este SKU.');
+    return value;
+  } catch {
+    error(409, 'No se pudo verificar la valuación autorizada del repuesto.');
+  }
+}
+
+function recordedInventoryValue(cell) {
+  if (!cell) return null;
+  try {
+    const value = JSON.parse(cell);
+    const definition = valueDefinition(value);
+    if (definition && typeof value.delta === 'string' && /^-?\d+\.\d{2}$/.test(value.delta)) {
+      return { ...definition, delta: value.delta };
+    }
+  } catch {
+    // Preserve the original cell for a documented reconciliation.
+  }
+  return null;
+}
+
+function movementScope(row) {
+  return JSON.stringify([upper(row[8]), upper(row[5]), upper(row[3])]);
+}
+
+function issueBalance(issue, related) {
+  const issues = related.filter(row => row[2] === 'Salida');
+  const returns = related.filter(row => row[2] === 'Devolución');
+  const legacy = returns.filter(row => !trim(row[14]));
+  if (legacy.length && issues.length !== 1) error(409, 'Concilia las devoluciones anteriores antes de devolver otra salida de esta OT.');
+  const applied = returns.filter(row => trim(row[14]) === trim(issue[0]) || !trim(row[14]));
+  const returned = applied.reduce((sum, row) => sum + decimalCell(row[4], 3, 'devolución anterior', true), 0n);
+  const issued = decimalCell(issue[4], 3, 'salida anterior', true);
+  if (returned > issued) error(409, 'El saldo de la salida original requiere conciliación.');
+  return { returned, left: issued - returned, hasLegacy: legacy.length > 0 };
+}
+
+function inventoryWrites({ part, nextStock, session, tx, kind, amount, unit, folio = '', lineId = '', ot = '', reference,
+  originalIssueId = '', valuation = null }) {
   return [
     { tab: PURCHASE_TABS.catalog, row: part.index, col: 5, values: [quantity(nextStock)] },
     append(PURCHASE_TABS.inventoryMovements, [[
       tx.version, timestamp().iso, kind, part.row[0], quantity(amount), unit, folio, lineId, ot, reference,
       session.userName, session.userId, quantity(nextStock), part.row[4] || '',
+      ...(originalIssueId || valuation ? [originalIssueId, valuation ? JSON.stringify(valuation) : ''] : []),
     ]]),
   ];
 }
@@ -430,7 +484,7 @@ async function stockForWriting(sheets, part) {
   return available;
 }
 
-async function moveInventory(body, session, sheets, tx) {
+async function moveInventory(body, session, sheets, tx, inventoryValuations) {
   const kind = body.kind;
   if (!['Salida', 'Devolución'].includes(kind)) error(400, 'Selecciona salida o devolución.');
   const ot = upper(field(body.ot, 90, 'OT', true));
@@ -453,24 +507,49 @@ async function moveInventory(body, session, sheets, tx) {
   const available = await stockForWriting(sheets, part);
   if (kind === 'Salida' && amount > available) error(409, 'La cantidad supera la existencia.');
   const history = entries(movements).map(({ row }) => row);
-  const related = history.filter(row => upper(row[3]) === upper(sku) && upper(row[8]) === ot);
+  const scope = JSON.stringify([ot, unit, upper(sku)]);
+  const related = history.filter(row => movementScope(row) === scope);
   if (related.some(row => row[2] === kind && upper(row[9]) === upper(reference))) {
     error(409, 'La referencia ya está registrada para este repuesto y OT.');
   }
-  const issued = related.reduce((sum, row) =>
-    sum + (row[2] === 'Salida' ? 1n : -1n) * decimalCell(row[4], 3, 'movimiento anterior'), 0n);
-  if (kind === 'Devolución' && amount > issued) error(409, 'La devolución supera lo entregado a esta OT.');
+  let originalIssueId = '';
+  let valuation = null;
+  if (kind === 'Salida') {
+    const approved = approvedInventoryValue(session, inventoryValuations, sku);
+    if (approved) valuation = { ...approved, delta: money(lineCost(amount, decimal(approved.unitCost, 2, 'costo autorizado'))) };
+  } else {
+    const requested = field(body.originalIssueId, 120, 'salida original');
+    const issues = related.filter(row => row[2] === 'Salida' && (!requested || trim(row[0]) === requested));
+    if (issues.length !== 1) error(409, 'Selecciona una salida original de esta OT, unidad y SKU.');
+    const [issue] = issues;
+    originalIssueId = trim(issue[0]);
+    if (!originalIssueId || history.filter(row => trim(row[0]) === originalIssueId).length !== 1) {
+      error(409, 'La salida original requiere conciliación.');
+    }
+    const { returned, left, hasLegacy } = issueBalance(issue, related);
+    if (amount > left) error(409, 'La devolución supera el saldo de la salida original.');
+    const original = recordedInventoryValue(issue[15]);
+    if (issue[15] && (!original || hasLegacy)) error(409, 'Concilia el costo de las devoluciones previas antes de continuar.');
+    if (original) {
+      const originalPrice = decimal(original.unitCost, 2, 'costo original');
+      const issued = returned + left;
+      if (original.delta !== money(lineCost(issued, originalPrice))) error(409, 'La valuación de la salida original no cuadra.');
+      const reversal = lineCost(returned + amount, originalPrice) - lineCost(returned, originalPrice);
+      valuation = { ...original, delta: reversal === 0n ? '0.00' : '-' + money(reversal) };
+    }
+  }
   const nextStock = available + (kind === 'Salida' ? -amount : amount);
   const guards = [inventoryGuard(part, history)];
-  const writes = inventoryWrites({ part, nextStock, session, tx, kind, amount, unit, ot, reference });
+  const writes = inventoryWrites({ part, nextStock, session, tx, kind, amount, unit, ot, reference, originalIssueId, valuation });
   if (kind === 'Salida' && sheets.nativeOperations) {
     guards.push(orderWriteGuard(order.row));
     writes.push({ tab: 'ORDENES_TRABAJO', row: order.index, col: 18, values: [tx.version] });
   }
   return tx.commit([
     ...writes,
-    auditRow(session, tx.operationId, kind + ' de repuesto', ot, part.row[0] + ' · ' + quantity(amount)),
-  ], { id: tx.operationId, stock: quantity(nextStock), ot }, guards);
+    auditRow(session, tx.operationId, kind + ' de repuesto', ot,
+      [part.row[0], quantity(amount), originalIssueId, valuation ? valuation.currency + ' ' + valuation.delta : 'Costo pendiente'].filter(Boolean).join(' · ')),
+  ], { id: tx.version, stock: quantity(nextStock), ot, originalIssueId, valuation }, guards);
 }
 
 async function submitRequest(body, session, sheets, tx) {
@@ -1004,7 +1083,7 @@ async function changeExpense(action, body, session, sheets, tx) {
 const WRITES = new Set(['request-submit', 'request-status', 'order-save', 'order-status', 'order-receive', 'order-invoice', 'order-payment', 'order-delete', 'inventory-move', 'expense-save', 'expense-delete', 'expense-review']);
 const READS = new Set(['orders', 'order', 'receiving', 'requests', 'expenses', 'inventory-movements', 'expense-options']);
 
-export async function dispatchPurchasing({ path, method, body = {}, query = {}, session, sheets, evidenceStorage }) {
+export async function dispatchPurchasing({ path, method, body = {}, query = {}, session, sheets, evidenceStorage, inventoryValuations }) {
   const action = path.replace(/^api\/purchasing\//, '');
   let tx;
   try {
@@ -1031,9 +1110,23 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
     }
     if (action === 'inventory-movements') {
       const ot = upper(field(query.ot, 90, 'OT'));
-      const rows = entries(await sheets.read(PURCHASE_TABS.inventoryMovements));
-      const items = rows.map(({ row }) => movementRecord(row))
-        .filter(item => item.id && canUseUnit(session, item.unit) && (!ot || upper(item.ot) === ot));
+      const rows = entries(await sheets.read(PURCHASE_TABS.inventoryMovements)).map(({ row }) => row)
+        .filter(row => trim(row[0]) && canUseUnit(session, row[5]) && (!ot || upper(row[8]) === ot));
+      const groups = new Map();
+      for (const row of rows) {
+        const key = movementScope(row), group = groups.get(key) ?? [];
+        group.push(row);
+        groups.set(key, group);
+      }
+      const items = rows.map(row => {
+        const item = movementRecord(row);
+        if (item.kind !== 'Salida') return item;
+        try {
+          return { ...item, returnable: quantity(issueBalance(row, groups.get(movementScope(row))).left) };
+        } catch {
+          return { ...item, returnable: null };
+        }
+      });
       const numbers = await purchaseNumbers(sheets, session, items.map(item => item.order));
       return ok({ items: items.reverse().map(item => ({ ...item, orderNumber: numbers.get(item.order) })) });
     }
@@ -1101,7 +1194,7 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
     if (previous !== null) return ok(previous);
     if (action === 'request-submit') return await submitRequest(body, session, sheets, tx);
     if (action === 'request-status') return await changeRequest(body, session, sheets, tx);
-    if (action === 'inventory-move') return await moveInventory(body, session, sheets, tx);
+    if (action === 'inventory-move') return await moveInventory(body, session, sheets, tx, inventoryValuations);
     if (action === 'order-save') return await saveOrder(body, session, sheets, tx);
     if (action === 'expense-save') return await saveExpense(body, session, sheets, tx, evidenceStorage);
     if (action === 'expense-delete' || action === 'expense-review') return await changeExpense(action, body, session, sheets, tx);
