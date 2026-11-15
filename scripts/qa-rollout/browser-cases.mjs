@@ -125,7 +125,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     return date[1];
   }
 
-  async function fillFailure(page, description, withPhoto, unit = 'DZ203', previousOtId) {
+  async function fillFailure(page, description, withPhoto, unit = 'DZ203', previousOtId, stopStartedAt) {
     await page.goto(`${origin}/falla`, { waitUntil: 'domcontentloaded' });
     await dismissPrivacy(page);
     const selects = page.locator('#main-content select');
@@ -134,6 +134,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     await page.getByPlaceholder('Describe los síntomas observados...').fill(description);
     if (previousOtId) await page.getByLabel('OT anterior si la falla se repitió').fill(previousOtId);
     await clickByName(page, 'No');
+    if (stopStartedAt) await page.getByLabel('Inicio de parada · hora de Panamá').fill(stopStartedAt);
     if (withPhoto) {
       await page.getByPlaceholder('Nombre del cliente afectado').fill('Cliente ficticio QA');
       await page.locator('input[type=file]').first().setInputFiles({ name: 'foto-sintetica.png', mimeType: 'image/png', buffer: photoPng });
@@ -483,7 +484,9 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     let filed;
     await record('MÓVIL-TALLER-360-LENTO', () => inRole('operador', 360, async page => {
       const description = 'Falla sintética en conexión lenta';
-      await fillFailure(page, description, false, 'EX401');
+      const start = new Date(Date.now() - 3_600_000).toISOString().slice(0, 16) + ':00.000Z';
+      const localStart = new Date(Date.parse(start) - 5 * 3_600_000).toISOString().slice(0, 16);
+      await fillFailure(page, description, false, 'EX401', undefined, localStart);
       const attempts = [];
       page.on('request', request => {
         if (request.method() === 'POST' && request.url().endsWith('/api/workshop/report')) attempts.push(request.postDataJSON().mutationId);
@@ -505,6 +508,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       assert.equal(sheet.read(tabs.orders).filter(row => row[5] === description).length, 1);
       filed = { folio: order[1], description };
       assert.equal(sheet.read(tabs.failure).filter(row => row[13] === order[1]).length, 1);
+      assert.equal(JSON.parse(sheet.read(tabs.failure).find(row => row[13] === order[1])[16]).startedAt, start);
       await noHorizontalOverflow(page, 360);
       await shot(page, 'falla-360.png');
       return { ...filed, linked: true, prematureConfirmation: false, confirmationRecovered: true, duplicateSuppressed: true };
@@ -808,6 +812,60 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         sheet.nativeOperations = previousMode;
         sheet.seed(tabs.sticker, previousStickers);
         sheet.seed(confirmationTab, previousConfirmations);
+      }
+    });
+
+    if (withGateway) await record('MÓVIL-TIEMPO-CAÍDO-POR-TURNO', async () => {
+      const previousFailures = sheet.read(tabs.failure);
+      const previousOrders = sheet.read(tabs.orders);
+      const failure = (id, start, cause) => Object.assign(Array(17).fill(''), {
+        0: '13/11/2026', 2: 'DZ203', 3: cause, 9: 'Completado', 11: 'Puede moverse: No', 13: id,
+        16: start ? JSON.stringify({ stopped: true, startedAt: start }) : '',
+      });
+      const order = (id, end, folio) => Object.assign(Array(26).fill(''), {
+        1: id, 3: 'DZ203', 4: 'Avería', 5: 'Parada sintética QA', 7: 'ALTA', 9: 'Completado', 25: folio,
+        20: JSON.stringify({ userId: 'tecnico-sintetico', diagnosis: 'Causa confirmada en QA', functionalTest: 'Prueba funcional QA' }),
+        21: JSON.stringify({ userId: 'taller-sintetico', acceptedAt: end }),
+        22: JSON.stringify({ userId: 'operaciones-sintetico', decision: 'accepted', returnedAt: end, recordedAt: end }),
+      });
+      sheet.seed(tabs.failure, [previousFailures[0],
+        failure('OT-STOP-QA-A', '2026-11-13T21:30:00Z', 'Hidráulica'),
+        failure('OT-STOP-QA-B', '2026-11-13T22:00:00Z', 'Motor'), failure('OT-STOP-QA-C', '', 'Mecánica'),
+      ]);
+      sheet.seed(tabs.orders, [...previousOrders,
+        order('OT-STOP-QA-A', '2026-11-14T00:30:00Z', 'OT-0801'),
+        order('OT-STOP-QA-B', '2026-11-14T01:30:00Z', 'OT-0802'),
+        order('OT-STOP-QA-C', '2026-11-14T01:30:00Z', 'OT-0803'),
+      ]);
+      try {
+        return await inRole('coordinador', 360, async page => {
+          await page.goto(`${origin}/workorders`, { waitUntil: 'domcontentloaded' });
+          await dismissPrivacy(page);
+          await page.getByRole('link', { name: 'Tiempo caído', exact: true }).click();
+          await visible(page.getByRole('heading', { name: 'Tiempo caído por avería' }));
+          await page.getByLabel('Desde', { exact: true }).fill('2026-11-13');
+          await page.getByLabel('Hasta', { exact: true }).fill('2026-11-13');
+          await page.getByLabel('Unidad', { exact: true }).fill('dz203');
+          await clickByName(page, 'Consultar');
+          const summary = page.getByRole('region', { name: 'Resumen de tiempo caído' });
+          await visible(summary.getByText('4 h 0 min', { exact: true }));
+          await visible(summary.getByText(/1 parada medida/));
+          const shifts = page.getByRole('list', { name: 'Horas por turno' });
+          await visible(shifts.getByText('1 h 30 min', { exact: true }));
+          await visible(shifts.getByText('2 h 30 min', { exact: true }));
+          const pending = page.getByRole('region', { name: 'Paradas pendientes de confirmar' });
+          await visible(pending.getByText('DZ203 · OT-0803', { exact: true }));
+          assert.equal(await page.getByRole('link', { name: 'OT-0801', exact: true }).getAttribute('href'), '/workorders/OT-0801');
+          assert.equal(await page.getByRole('link', { name: 'OT-0802', exact: true }).getAttribute('href'), '/workorders/OT-0802');
+          await noHorizontalOverflow(page, 360);
+          await shot(page, 'tiempo-caido-360.png');
+          await page.getByRole('link', { name: 'OT-0801', exact: true }).click();
+          await visible(page.getByRole('heading', { name: 'OT-0801', exact: true }));
+          return { intervals: 1, hours: 4, day: 1.5, night: 2.5, unmeasuredExcluded: 1, orderLink: true, width: 360 };
+        });
+      } finally {
+        sheet.seed(tabs.failure, previousFailures);
+        sheet.seed(tabs.orders, previousOrders);
       }
     });
 

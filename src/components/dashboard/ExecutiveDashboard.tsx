@@ -120,6 +120,9 @@ export default function ExecutiveDashboard() {
               <Link to="/panama" className="inline-flex min-h-11 items-center rounded-lg border border-border bg-card px-3 text-sm font-semibold text-text">
                 Maestros TMF
               </Link>
+              <Link to="/panama/tiempo-caido" className="inline-flex min-h-11 items-center rounded-lg border border-border bg-card px-3 text-sm font-semibold text-text">
+                Tiempo caído
+              </Link>
             </div>
           )}
           {data.error && (

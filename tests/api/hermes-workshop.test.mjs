@@ -60,6 +60,7 @@ function fixture(pmChecklists = [], triggers = {}) {
       return { replayed: false, result };
     },
   };
+  if (triggers.workshopMaster) sheets.readWorkshopMasters = async () => triggers.workshopMaster;
   const request = (path, session, body = undefined, query = {}) => dispatchWorkshop({
     path: `api/workshop/${path}`, method: body === undefined ? 'GET' : 'POST', body,
     query, session, sheets, pmChecklists, ...triggers,
@@ -78,6 +79,123 @@ const transition = (request, actor, otId, value, execution) => request('transiti
   mutationId: randomUUID(), otId, field: 'estado', value, execution,
 });
 const executionProof = { functionalTest: 'Prueba funcional registrada, sin fuga y con respuesta normal.' };
+
+test('tiempo caído une dos OT superpuestas y reparte el intervalo una vez entre turnos de Panamá', async () => {
+  const { request, sheets } = fixture([], {
+    now: new Date('2026-11-14T02:00:00Z'),
+    downtimeShiftStarts: { day: '06:00', night: '18:00' },
+    workshopMaster: { failures: { records: [{ id: 'AV-QA', order: 'OT-0102', unit: 'CA20', last: '13-Nov-2026', status: 'Detenido reportado' }] } },
+  });
+  const failure = (id, unit, start, cause) => {
+    const row = Array(17).fill('');
+    Object.assign(row, { 0: '13/11/2026', 2: unit, 3: cause, 11: 'Puede moverse: No', 13: id, 15: 'operator-qa',
+      16: JSON.stringify({ stopped: true, startedAt: start }) });
+    return row;
+  };
+  sheets.seed('Averias', [
+    failure('OT-FIRST', 'CA20', '2026-11-13T21:30:00Z', 'Hidráulica'),
+    failure('OT-SECOND', 'CA20', '2026-11-13T22:00:00Z', 'Motor'),
+    failure('OT-OTHER', 'EX401', '2026-11-13T20:00:00Z', 'Eléctrica'),
+    failure('OT-CORRUPT', 'CA20', '2026-11-13T17:00:00Z', 'Frenos'),
+    failure('OT-SAME-ACTOR', 'CA20', '2026-11-13T18:00:00Z', 'Frenos'),
+    Object.assign(failure('OT-FUTURE', 'CA20', '2026-11-12T19:00:00Z', 'Frenos'), { 0: '12/11/2026' }),
+    ['13/11/2026', '', 'CA20', 'Transmisión', '', '', '', '>8 horas', '', 'Abierta', '', 'Puede moverse: No | OT: OT-LEGACY', '', 'foto-legada'],
+  ]);
+  const order = (id, unit, end, folio) => {
+    const row = Array(26).fill('');
+    Object.assign(row, { 1: id, 3: unit, 4: 'Avería', 9: end ? 'Completado' : 'En Reparación', 25: folio });
+    if (end) {
+      row[20] = JSON.stringify({ userId: 'mechanic-qa', functionalTest: 'Prueba funcional QA' });
+      row[21] = JSON.stringify({ userId: 'workshop-qa', acceptedAt: end });
+      row[22] = JSON.stringify({ decision: 'accepted', userId: 'supervisor-qa', returnedAt: end, recordedAt: end });
+    }
+    return row;
+  };
+  const corrupt = order('OT-CORRUPT', 'CA20', '2026-11-14T00:30:00Z', 'OT-0106');
+  corrupt[22] = '{"decision":';
+  const sameActor = order('OT-SAME-ACTOR', 'CA20', '2026-11-14T00:30:00Z', 'OT-0107');
+  sameActor[21] = JSON.stringify({ userId: 'mechanic-qa', acceptedAt: '2026-11-14T00:30:00Z' });
+  const future = order('OT-FUTURE', 'CA20', '2026-11-14T00:30:00Z', 'OT-0108');
+  future[22] = JSON.stringify({ ...JSON.parse(future[22]), recordedAt: '2026-11-14T03:00:00Z' });
+  sheets.seed('ORDENES_TRABAJO', [
+    order('OT-FIRST', 'CA20', '2026-11-14T00:30:00Z', 'OT-0102'),
+    order('OT-SECOND', 'CA20', '2026-11-14T01:30:00Z', 'OT-0103'),
+    order('OT-OTHER', 'EX401', null, 'OT-0104'), order('OT-LEGACY', 'CA20', null, 'OT-0105'), corrupt, sameActor, future,
+  ]);
+  const query = { from: '2026-11-13', through: '2026-11-13' };
+  assert.equal((await request('downtime', mechanic, undefined, query)).status, 403);
+  const response = await request('downtime', workshop, undefined, query);
+  assert.equal(response.status, 200);
+  assert.equal(response.body.intervals.length, 1);
+  const [interval] = response.body.intervals;
+  assert.deepEqual([interval.unit, interval.seconds, interval.open, interval.causes], ['CA20', 14400, false, ['Hidráulica', 'Motor']]);
+  assert.deepEqual(interval.orders.map(order => order.folio), ['OT-0102', 'OT-0103']);
+  assert.deepEqual(interval.segments.map(row => [row.date, row.shift, row.seconds]), [
+    ['2026-11-13', 'Día', 5400], ['2026-11-13', 'Noche', 9000],
+  ]);
+  assert.deepEqual(response.body.pending.map(row => row.folio), ['OT-0106', 'OT-0107', 'OT-0108', 'OT-0105', 'OT-0102']);
+  assert.deepEqual(response.body.pending.at(-1), { date: '2026-11-13', unit: 'CA20', folio: 'OT-0102',
+    reason: 'Hermes registra el retorno y el Maestro de Taller aún indica parada' });
+});
+
+test('el filtro recorta las horas y atribuye la madrugada al turno que comenzó la víspera', async () => {
+  const { request, sheets } = fixture([], {
+    now: new Date('2026-11-14T12:00:00Z'),
+    downtimeShiftStarts: { day: '06:00', night: '18:00' },
+  });
+  const failure = Array(17).fill('');
+  Object.assign(failure, { 0: '13/11/2026', 2: 'CA20', 3: 'Hidráulica', 13: 'OT-NOCHE',
+    16: JSON.stringify({ stopped: true, startedAt: '2026-11-14T04:00:00Z' }) });
+  sheets.seed('Averias', [failure]);
+  sheets.seed('ORDENES_TRABAJO', [['', 'OT-NOCHE', '', 'CA20', 'Avería', '', '', '', '', 'Abierta']]);
+  const { body } = await request('downtime', workshop, undefined, { from: '2026-11-14', through: '2026-11-14' });
+  assert.equal(body.seconds, 7 * 3600);
+  assert.deepEqual(body.intervals[0].segments.map(({ date, shift, seconds }) => [date, shift, seconds]), [
+    ['2026-11-13', 'Noche', 6 * 3600], ['2026-11-14', 'Día', 3600],
+  ]);
+  assert.equal((await request('downtime', workshop, undefined, { from: '2026-10-14', through: '2026-11-14' })).status, 400);
+  assert.equal((await request('downtime', workshop, undefined, { unit: 'EX401' })).status, 403);
+});
+
+test('una hora automática futura permite reportar y queda pendiente, igual que un comprobante dañado', async () => {
+  const { request, sheets } = fixture();
+  const created = await request('report', operator, report({ stopReportedAt: new Date(Date.now() + 3_600_000).toISOString() }));
+  assert.equal(created.status, 201);
+  const saved = (await sheets.read('Averias'))[0];
+  assert.deepEqual(JSON.parse(saved[16]), { stopped: true, startedAt: null, source: 'pending' });
+  saved[0] = '12/11/2026';
+  saved[16] = '{"stopped":';
+  sheets.seed('Averias', [saved]);
+  const result = await request('downtime', workshop, undefined, { from: '2026-11-13', through: '2026-11-13' });
+  assert.equal(result.body.seconds, 0);
+  assert.deepEqual(result.body.pending.map(row => row.folio), [created.body.otId]);
+});
+
+test('una falla con movilidad puede registrar una parada explícita y un retorno técnico no la cierra', async () => {
+  const { request, sheets } = fixture();
+  const data = report({ canMove: true, stopped: true, stopStartedAt: new Date(Date.now()-10*60_000).toISOString() });
+  const created = await request('report', operator, data);
+  assert.equal(created.status, 201);
+  const [row] = await sheets.read('Averias');
+  assert.deepEqual(JSON.parse(row[16]), { stopped: true, startedAt: data.stopStartedAt, source: 'operator' });
+  assert.equal((await request('report', operator, data)).body.otId, created.body.otId);
+  assert.equal((await sheets.read('Averias')).length, 1);
+  assert.equal((await request('report', operator, report({ canMove: false, stopped: false }))).status, 400);
+  await request('transition', workshop, { mutationId: randomUUID(), otId: created.body.otId, field: 'mecanico_asignado', value: mechanic.userId });
+  assert.equal((await transition(request, mechanic, created.body.otId, 'En Reparación')).status, 200);
+  assert.equal((await transition(request, mechanic, created.body.otId, 'Resuelta', { ...executionProof, diagnosis: 'Manguera rota' })).status, 200);
+  assert.equal((await transition(request, workshop, created.body.otId, 'Completado')).status, 200);
+  const open = await request('downtime', workshop);
+  assert.equal(open.body.intervals[0].open, true);
+  assert.equal(open.body.intervals[0].segments.length, 0);
+  assert.equal(open.body.shiftStarts, null);
+  const returned = await request('returns', supervisor, { mutationId: randomUUID(), otId: created.body.otId, decision: 'accepted', notes: 'Operación confirmó el retorno.' });
+  assert.equal(returned.status, 200);
+  const closed = await request('downtime', workshop);
+  assert.equal(closed.body.intervals[0].open, false);
+  assert.equal(closed.body.intervals[0].endedAt, returned.body.receipt.returnedAt);
+  assert.deepEqual(closed.body.intervals[0].causes, ['Manguera rota']);
+});
 
 test('un servicio PM conserva los tres disparadores y dos confirmaciones producen una sola OT', async () => {
   const sources = { sections: {

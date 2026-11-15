@@ -6,6 +6,7 @@ import { reconcilePanamaWorkshop } from './hermes-panama-workshop.js';
 import { HermesSheetError, PANAMA_READINESS_TAB } from './hermes-google-sheets.js';
 import { isEvidenceError, verifyEvidence } from './hermes-evidence.js';
 import { evaluatePmTriggers, pmLevelKey } from './hermes-pm-triggers.js';
+import { buildPanamaDowntime, downtimeInstant, downtimeShiftStarts, downtimeWindow, isReportedStop } from './hermes-panama-downtime.js';
 
 const TAB = {
   inventory: '01 Inventario', orders: 'ORDENES_TRABAJO', history: 'OT_STATUS_LOG', failures: 'Averias',
@@ -154,10 +155,10 @@ function orderRow(context, data) {
 }
 
 function failureWrites(context, data) {
-  const { id, unit, type, description, priority, photos, downtime = '', notes = '' } = data;
+  const { id, unit, type, description, priority, photos, downtime = '', notes = '', stop } = data;
   return [
     { tab: TAB.failures, append: [[context.date, context.time, unit, type, description, priority, context.session.userName,
-      downtime, '', 'Abierta', '', notes, '', id, (photos || []).join(', '), context.session.userId]] },
+      downtime, '', 'Abierta', '', notes, '', id, (photos || []).join(', '), context.session.userId, ...(stop ? [JSON.stringify(stop)] : [])]] },
     { tab: TAB.orders, append: [orderRow(context, { ...data, reference: id })] },
     { tab: TAB.history, append: [historyRow(context, id, 'estado', '', 'Abierta')] },
   ];
@@ -191,6 +192,25 @@ async function report(context) {
   const location = text(body.location, 'Ubicación', 180);
   const downtime = text(body.downtime, 'Tiempo de paro', 40);
   assert(typeof body.canMove === 'boolean', 400, 'Indica si la unidad puede moverse');
+  let stop;
+  if (isPanama(context)) {
+    const stopped = body.stopped ?? !body.canMove;
+    assert(typeof stopped === 'boolean' && (body.canMove || stopped), 400, 'Confirma si la falla detuvo la operación');
+    assert(stopped || !(body.stopStartedAt || body.stopReportedAt), 400, 'La hora de inicio requiere una parada confirmada');
+    if (stopped) {
+      const now = Date.parse(context.now);
+      if (body.stopStartedAt) {
+        const start = downtimeInstant(body.stopStartedAt);
+        assert(Number.isFinite(start) && start <= now, 400, 'La hora de inicio de la parada no es válida');
+        stop = { stopped, startedAt: new Date(start).toISOString(), source: 'operator' };
+      } else if (body.stopReportedAt) {
+        const captured = downtimeInstant(body.stopReportedAt);
+        stop = Number.isFinite(captured) && captured <= now
+          ? { stopped, startedAt: new Date(captured).toISOString(), source: 'capture' }
+          : { stopped, startedAt: null, source: 'pending' };
+      } else stop = { stopped, startedAt: context.now, source: 'report' };
+    } else stop = { stopped };
+  }
   const photos = await attachmentUrls(context, body.photos, 'report', code, 'falla-photos');
   const clientAffected = !['', 'n/a', 'ninguno', '--', 'na', 'none'].includes(customer.toLowerCase());
   const priority = body.canMove ? 'MEDIA' : clientAffected ? 'CRITICA' : 'ALTA';
@@ -205,7 +225,7 @@ async function report(context) {
       'Selecciona una OT cerrada de la misma unidad y tipo de falla');
     previousOtId = previous[0][1];
   }
-  const writes = failureWrites(context, { id: context.otId, unit: code, type, description, priority, photos, downtime, notes });
+  const writes = failureWrites(context, { id: context.otId, unit: code, type, description, priority, photos, downtime, notes, stop });
   const result = { otId: context.otId };
   if (previousOtId) {
     const [row] = writes[1].append;
@@ -1101,7 +1121,7 @@ async function readinessSources(context) {
       for (const row of orders.value) {
         if (row[9] === 'Completado' && storedObject(row[WORKFLOW.operations])?.decision === 'accepted') running.add(row[3]);
       }
-      const stopped = activeFailureUnits(failures.value.filter(row => /Puede moverse: No$/.test(row[11] ?? '')));
+      const stopped = activeFailureUnits(failures.value.filter(isReportedStop));
       for (const record of official.failures.records) {
         if (/^(detenido reportado|en reparaci[oó]n|esperando pieza)$/i.test(record.status.trim())) stopped.add(record.unit.toUpperCase());
       }
@@ -1122,6 +1142,23 @@ async function readinessSources(context) {
   return response;
 }
 
+async function downtimeReport(context) {
+  const { session, sheets, query } = context;
+  assert(MANAGEMENT.has(session.role), 403, 'Consulta reservada a Taller y Operaciones');
+  if (query?.unit) requireUnit(session, query.unit);
+  const now = +(context.now ?? new Date());
+  const window = downtimeWindow(query, now);
+  assert(window, 400, 'Selecciona un período de hasta 31 días en hora de Panamá');
+  const shifts = downtimeShiftStarts(context.downtimeShiftStarts ?? process.env.HERMES_PANAMA_DOWNTIME_SHIFT_STARTS);
+  const [[failures, orders, logs], masters] = await Promise.all([
+    sheets.readMany?.([TAB.failures, TAB.orders, TAB.history]) ?? Promise.all([TAB.failures, TAB.orders, TAB.history].map(tab => sheets.read(tab))),
+    Promise.resolve().then(() => sheets.readWorkshopMasters?.()).catch(() => null),
+  ]);
+  const requested = query?.unit ? unitCode(query.unit) : '';
+  return buildPanamaDowntime({ failures, orders, logs, master: masters?.failures, now, window, shifts,
+    allows: unit => scopeAllows(session, unit) && (!requested || requested === unit) });
+}
+
 const MUTATIONS = {
   report: [report, ROLES, true], dvir: [dvir, INSPECT, true], transition: [transition, ORDER_READ, false],
   pm: [pm, ASSIGN, true], pmbatch: [pmBatch, ASSIGN, false], schedule: [schedule, ASSIGN, false],
@@ -1134,7 +1171,7 @@ export async function dispatchWorkshop(input) {
   const endpoint = path?.match(/^api\/workshop\/([a-z]+)$/)?.[1];
   try {
     assert(session?.userId && session.userName && ROLES.has(session.role), 401, 'Sesión inválida');
-    if (['returns', 'pmchecklist', 'pmtemplate', 'pmtriggers', 'schedulecheck', 'pmbatch', 'pmbatchcheck'].includes(endpoint)) {
+    if (['returns', 'pmchecklist', 'pmtemplate', 'pmtriggers', 'schedulecheck', 'pmbatch', 'pmbatchcheck', 'downtime'].includes(endpoint)) {
       assert(isPanama(input), 404, 'Acción de taller no disponible');
     }
     if (method === 'POST' && endpoint === 'pmbatchcheck') {
@@ -1155,6 +1192,9 @@ export async function dispatchWorkshop(input) {
     }
     if (method === 'GET' && endpoint === 'readiness') {
       return { status: 200, body: await readinessSources(input) };
+    }
+    if (method === 'GET' && endpoint === 'downtime') {
+      return { status: 200, body: await downtimeReport(input) };
     }
     if (method === 'GET' && endpoint === 'returns') {
       assert(OPERATIONS.has(session.role), 403, 'Tu rol no puede revisar la recepción de Operaciones');

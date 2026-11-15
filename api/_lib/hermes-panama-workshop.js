@@ -23,7 +23,7 @@ const state = value => equivalents.get(plain(value)) ?? plain(value);
 const priorityKey = value => plain(value).replace(/^CRITICO$/, 'CRITICA');
 const isOrder = value => /^OT-[A-Z0-9]+(?:-[A-Z0-9]+)*$/.test(key(value));
 
-function dateOf(value) {
+export function panamaWorkshopDate(value) {
   const raw = clean(value);
   if (/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/i.test(raw) && Number.isFinite(Date.parse(raw))) {
     return panamaDay.format(new Date(raw));
@@ -39,12 +39,16 @@ function dateOf(value) {
   return Number.isFinite(+date) && date.toISOString().slice(0, 10) === iso ? iso : null;
 }
 
+export function panamaWorkshopFailureOrder(row) {
+  return isOrder(row[13]) ? key(row[13])
+    : key(clean(row[11]).match(/(?:^|\|)\s*OT:\s*(OT-[A-Z0-9]+(?:-[A-Z0-9]+)*)\b/i)?.[1]);
+}
+
 function operationalFailures(rows) {
   return rows?.flatMap(row => {
-    const id = isOrder(row[13]) ? key(row[13])
-      : key(clean(row[11]).match(/(?:^|\|)\s*OT:\s*(OT-[A-Z0-9]+(?:-[A-Z0-9]+)*)\b/i)?.[1]);
+    const id = panamaWorkshopFailureOrder(row);
     const unit = key(row[2]);
-    const date = dateOf(row[0]);
+    const date = panamaWorkshopDate(row[0]);
     if (!unit || !date) return [];
     return [{ id, order: id, unit, status: clean(row[9]), date }];
   }) ?? null;
@@ -59,7 +63,7 @@ function masterRecord(row, failures) {
   return {
     id: key(row.id), unit: key(row.unit), status: clean(row.status), source: 'master',
     ...(row.description ? { description: clean(row.description) } : {}),
-    ...(failures ? { date: dateOf(row.last), order: key(row.order) } : { priority: clean(row.priority) }),
+    ...(failures ? { date: panamaWorkshopDate(row.last), order: key(row.order) } : { priority: clean(row.priority) }),
   };
 }
 
@@ -151,7 +155,7 @@ export function reconcilePanamaWorkshop(masters, failureRows, orderRows, allows,
   const today = panamaDay.format(now);
   const cases = failures.records.filter(record => !record.excludedFromCount);
   const todayVerified = failures.masterAvailable && (failures.operationalAvailable || cases.length > 0)
-    && (!failures.capturedAt || dateOf(failures.capturedAt) === today)
+    && (!failures.capturedAt || panamaWorkshopDate(failures.capturedAt) === today)
     && cases.every(record => record.date);
   const orderRecords = orders.records.filter(record => !record.excludedFromCount);
   const openOrders = orderRecords.filter(record => openOrderStates.has(state(record.status)));

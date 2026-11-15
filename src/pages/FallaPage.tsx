@@ -65,6 +65,10 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
   const currentDraft = useRef(draft);
   const [photos, setPhotos] = useState<PhotoItem[]>([]);
   const { unidad, tipoFalla, descripcion, puedeMoverse, clienteAfectado, ubicacion, downtime, previousOtId, pending } = draft;
+  const stopped = isPanama && (puedeMoverse === false || draft.stopped === true);
+  const localStart = stopped && draft.stopStartedAt
+    ? Date.parse(`${draft.stopStartedAt}:00-05:00`) : null;
+  const validStart = localStart === null || (Number.isFinite(localStart) && localStart <= Date.now());
 
   useEffect(() => {
     let active = true;
@@ -131,7 +135,7 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
     descripcion: descripcion.trim(),
     puedeMoverse: puedeMoverse === null ? undefined : puedeMoverse,
   });
-  const canSubmit = validation.success;
+  const canSubmit = validation.success && validStart;
 
   function handlePhotoCapture(file: File) {
     void updateDraft({ photos: [...currentDraft.current.photos, file] });
@@ -158,14 +162,18 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
     setSaving(true);
     setShowConfirm(false);
     const mutationId = draft.mutationId || crypto.randomUUID();
+    const reportedAt = draft.reportedAt || (stopped && localStart === null && !draft.mutationId ? new Date().toISOString() : undefined);
+    const stopInput = localStart !== null ? { stopped: true, stopStartedAt: new Date(localStart).toISOString() }
+      : reportedAt ? { stopped: true, stopReportedAt: reportedAt } : {};
     try {
-      await updateDraft({ mutationId, pending: draft.pending || 'Aún falta confirmación del servidor.' });
+      await updateDraft({ mutationId, reportedAt, pending: draft.pending || 'Aún falta confirmación del servidor.' });
       const response = await saveWorkshopCapture<{ otId: string }>({
         endpoint: 'report',
         mutationId,
         input: {
           unit: unidad, type: tipoFalla, description: descripcion.trim(), canMove: puedeMoverse,
           customer: clienteAfectado, location: ubicacion, downtime,
+          ...(stopped ? stopInput : {}),
           ...(isPanama && previousOtId.trim() ? { previousOtId: previousOtId.trim().toUpperCase() } : {}),
         },
         photos: draft.photos.map(file => ({ file })),
@@ -181,7 +189,7 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
       showToast(`OT creada. ${response.result.otId} disponible en Órdenes`);
     } catch (error) {
       if (error instanceof WorkshopApiError && [400, 413, 415].includes(error.status)) {
-        await updateDraft({ mutationId: '', pending: '' });
+        await updateDraft({ mutationId: '', reportedAt: undefined, pending: '' });
       }
       showToast(error instanceof Error ? error.message : 'No se pudo preparar el reporte', 'error');
     } finally {
@@ -304,7 +312,7 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
             <button
               type="button"
               aria-pressed={puedeMoverse === true}
-              onClick={() => void updateDraft({ puedeMoverse: true })}
+              onClick={() => void updateDraft({ puedeMoverse: true, ...(draft.stopped ? {} : { stopStartedAt: '' }) })}
               className={`min-h-12 flex-1 rounded-xl py-2 text-sm font-medium transition-colors ${
                 puedeMoverse === true
                   ? 'bg-[#9A5706] text-white'
@@ -332,6 +340,27 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
           )}
         </div>
 
+        {isPanama && puedeMoverse === true && (
+          <label className="flex min-h-12 items-center gap-2 text-sm font-medium text-text">
+            <input type="checkbox" checked={draft.stopped === true}
+              onChange={event => void updateDraft({ stopped: event.target.checked, ...(event.target.checked ? {} : { stopStartedAt: '' }) })} />
+            La falla detuvo la operación
+          </label>
+        )}
+
+        {stopped && (
+          <div className="flex min-w-0 flex-col gap-1">
+            <label htmlFor="falla-started-at" className="text-sm font-medium text-text-secondary">Inicio de parada · hora de Panamá</label>
+            <input id="falla-started-at" type="datetime-local" value={draft.stopStartedAt ?? ''}
+              onChange={event => void updateDraft({ stopStartedAt: event.target.value })}
+              aria-invalid={!validStart} aria-describedby="falla-started-at-hint"
+              className="w-full min-w-0 rounded-xl border border-border bg-white p-3 text-sm text-text" />
+            <p id="falla-started-at-hint" className={`text-xs ${validStart ? 'text-text-secondary' : 'text-critical'}`}>
+              {validStart ? 'Si lo dejas vacío, se usará la hora en que confirmes el reporte.' : 'La hora de inicio debe ser anterior o igual a la hora actual.'}
+            </p>
+          </div>
+        )}
+
         {/* Cliente afectado */}
         <div className="flex flex-col gap-1">
           <label htmlFor="falla-cliente" className="text-sm font-medium text-text-secondary">Cliente afectado</label>
@@ -358,7 +387,7 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
 
         {/* Downtime estimado */}
         <div className="flex flex-col gap-1">
-          <label htmlFor="falla-downtime" className="text-sm font-medium text-text-secondary">Downtime estimado</label>
+          <label htmlFor="falla-downtime" className="text-sm font-medium text-text-secondary">{isPanama ? 'Tiempo de paro estimado' : 'Downtime estimado'}</label>
           <select id="falla-downtime"
             value={downtime}
             onChange={(e) => void updateDraft({ downtime: e.target.value })}

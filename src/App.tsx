@@ -29,6 +29,7 @@ const DashboardPage       = lazy(() => import('./pages/DashboardPage'));
 
 const WorkOrderDetailPage = lazy(() => import('./pages/WorkOrderDetailPage'));
 const WorkOrdersPage      = lazy(() => import('./pages/WorkOrdersPage'));
+const PanamaDowntimePage  = lazy(() => import('./pages/PanamaDowntimePage'));
 const PMSchedulePage      = lazy(() => import('./pages/PMSchedulePage'));
 const PMWorkOrderPage     = lazy(() => import('./pages/PMWorkOrderPage'));
 const CalendarPage        = lazy(() => import('./pages/CalendarPage'));
@@ -170,6 +171,7 @@ export default function App() {
         {/* Work orders */}
         <Route path="/workorders/:otId" element={<RequireRole roles={WORKSHOP}><PageBoundary role={role}><S><WorkOrderDetailPage /></S></PageBoundary></RequireRole>} />
         <Route path="/workorders"       element={<RequireRole roles={WORKSHOP}><PageBoundary role={role}><S><WorkOrdersPage /></S></PageBoundary></RequireRole>} />
+        <Route path="/panama/tiempo-caido" element={<RequireRole roles={ADMIN}><PageBoundary role={role}><S><PanamaDowntimePage /></S></PageBoundary></RequireRole>} />
         <Route path="/pm"               element={<RequireRole roles={ADMIN}><PageBoundary role={role}><S><PMSchedulePage /></S></PageBoundary></RequireRole>} />
         <Route path="/pm-order"         element={<RequireRole roles={MANAGEMENT}><PageBoundary role={role}><S><PMWorkOrderPage /></S></PageBoundary></RequireRole>} />
         <Route path="/calendar"         element={<RequireRole roles={CALENDAR_ACCESS}><PageBoundary role={role}><S><CalendarPage /></S></PageBoundary></RequireRole>} />
