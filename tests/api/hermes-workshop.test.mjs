@@ -63,7 +63,7 @@ function fixture(pmChecklists = [], triggers = {}) {
   const request = (path, session, body = undefined, query = {}) => dispatchWorkshop({
     path: `api/workshop/${path}`, method: body === undefined ? 'GET' : 'POST', body,
     query, session, sheets, pmChecklists, ...triggers,
-    listMechanics: async () => [mechanic, secondMechanic],
+    listMechanics: triggers.listMechanics ?? (async () => [mechanic, secondMechanic]),
     evidenceStorage: { find: async id => evidence.get(id) },
   });
   return { sheets, request, attach, fail: value => { fail = value; }, interrupt: hook => { beforeCommit = hook; } };
@@ -495,6 +495,144 @@ test('Taller puede comprobar el checklist exacto por unidad y nivel antes de pro
   assert.equal((await request('pmtemplate', workshop, undefined, { unit: 'CA20', level: 'PM-500' })).body.checklist, null);
   assert.equal((await request('pmtemplate', { ...workshop, assignedUnits: ['DZ203'] }, undefined, { unit: 'CA20', level: 'PM-250' })).status, 403);
   assert.equal((await request('pmtemplate', operator, undefined, { unit: 'CA20', level: 'PM-250' })).status, 403);
+});
+
+async function pmBatchFixture() {
+  const sources = { sections: {
+    maintenance: [
+      { unit: 'CA20', next: 'PM-250', hours: '4000', due: '3990', reading: 'Actualizada' },
+      { unit: 'DZ203', next: 'PM-500', hours: '1500', due: '1520', reading: 'Actualizada' },
+    ],
+    maintenancePlan: ['CA20', 'DZ203'].map(unit => ({ unit, active: 'Sí', approved: 'Sí' })),
+  }, snapshots: { maintenance: '2026-11-15T17:00:00Z', maintenancePlan: '2026-11-15T17:00:00Z' } };
+  const checklists = [
+    { model: 'Cat 745', level: 'PM-250', reference: 'QA articulado', tasks: [{ id: 'oil', label: 'Aceite QA' }] },
+    { model: 'Komatsu D155AX-6', level: 'PM-500', reference: 'QA variante por PIN', serial: 'PIN-QA', tasks: [{ id: 'filter', label: 'Filtro QA' }] },
+  ];
+  const env = fixture(checklists, { readPmSources: async () => sources,
+    listMechanics: async () => [{ ...mechanic, assignedUnits: ['CA20', 'DZ203', 'EX410'] }] });
+  env.sheets.seed('01 Inventario', [...await env.sheets.read('01 Inventario'), ['', 'DZ203', '', 'Komatsu', 'D155AX-6', '', 'PIN-QA']]);
+  const lead = { ...workshop, assignedUnits: ['CA20', 'DZ203'] };
+  const batch = { items: [{ unit: 'CA20', hours: '2' }, { unit: 'DZ203', hours: '3' }],
+    scheduledDate: '2026-11-16', shift: 'Día', partsStatus: 'not_required' };
+  return { ...env, sources, lead, batch };
+}
+
+test('PM por lote conserva folio, checklist y vencimiento propios en una sola escritura y al reintentar', async () => {
+  const { request, sheets, lead, batch, sources } = await pmBatchFixture();
+  const review = await request('pmbatchcheck', lead, batch);
+  assert.equal(review.status, 200);
+  assert.deepEqual(review.body.items.map(row => [row.unit, row.level, row.dueAt, row.checklistReference]), [
+    ['CA20', 'PM-250', 3990, 'QA articulado'], ['DZ203', 'PM-500', 1520, 'QA variante por PIN'],
+  ]);
+  assert.deepEqual(await sheets.read('ORDENES_TRABAJO'), []);
+  const save = { ...batch, mutationId: randomUUID(), confirmation: review.body.confirmation };
+  const result = await request('pmbatch', lead, save);
+  assert.equal(result.status, 201);
+  const orderIds = result.body.orders.map(row => row.otId);
+  assert.equal(new Set(orderIds).size, 2);
+  assert.deepEqual((await sheets.read('WORKSHOP_SCHEDULE')).map(row => [row[2], row[3], row[5], row[11]]), [
+    [orderIds[0], 'CA20', '2', 'Día'], [orderIds[1], 'DZ203', '3', 'Día'],
+  ]);
+  for (const [index, otId] of orderIds.entries()) {
+    const reopened = await request('pmchecklist', lead, undefined, { otId });
+    assert.deepEqual(
+      [reopened.body.level, reopened.body.initialMeter, reopened.body.dueAt, reopened.body.checklist.reference],
+      index === 0 ? ['PM-250', '4000', 3990, 'QA articulado'] : ['PM-500', '1500', 1520, 'QA variante por PIN'],
+    );
+  }
+  sources.sections.maintenance = null;
+  const replay = await request('pmbatch', lead, save);
+  assert.equal(replay.status, 200);
+  assert.equal(replay.body.replayed, true);
+  assert.deepEqual(replay.body.orders, result.body.orders);
+  assert.equal((await request('pmbatch', workshop, save)).status, 403);
+  assert.equal((await sheets.read('ORDENES_TRABAJO')).length, 2);
+});
+
+test('PM por lote rechaza roles, unidades repetidas y vencimientos cambiados sin guardar una parte', async () => {
+  const { request, sheets, lead, batch, sources } = await pmBatchFixture();
+  assert.equal((await request('pmbatchcheck', operator, batch)).status, 403);
+  assert.equal((await request('pmbatchcheck', workshop, batch)).status, 403);
+  assert.equal((await request('pmbatchcheck', lead, { ...batch, items: [batch.items[0], { unit: 'ca20', hours: '3' }] })).status, 400);
+  const review = await request('pmbatchcheck', lead, batch);
+  assert.equal(review.status, 200);
+  sources.sections.maintenance[1].due = '1530';
+  const saved = await request('pmbatch', lead, { ...batch, mutationId: randomUUID(), confirmation: review.body.confirmation });
+  assert.equal(saved.status, 409);
+  for (const tab of ['ORDENES_TRABAJO', 'Ordenes Mantenimiento', 'WORKSHOP_SCHEDULE']) assert.deepEqual(await sheets.read(tab), []);
+  sources.sections.maintenancePlan[1].approved = 'No';
+  const unapproved = await request('pmbatchcheck', lead, batch);
+  assert.equal(unapproved.status, 409);
+  assert.match(unapproved.body.error, /DZ203/);
+});
+
+test('PM por lote se puede programar con una lectura directa del maestro sin fecha de corte publicada', async () => {
+  const { request, lead, batch, sources } = await pmBatchFixture();
+  sources.snapshots = {};
+  const review = await request('pmbatchcheck', lead, batch);
+  assert.equal(review.status, 200);
+  const saved = await request('pmbatch', lead, { ...batch, mutationId: randomUUID(), confirmation: review.body.confirmation });
+  assert.equal(saved.status, 201);
+  assert.deepEqual(saved.body.orders.map(row => row.dueAt), [3990, 1520]);
+});
+
+test('una programación individual concurrente impide guardar un lote parcialmente', async () => {
+  const { request, sheets, lead, batch, interrupt } = await pmBatchFixture();
+  const review = await request('pmbatchcheck', lead, batch);
+  assert.equal(review.status, 200);
+  interrupt(async () => {
+    const single = await request('pm', lead, {
+      mutationId: randomUUID(), unit: 'DZ203', level: 'PM-500', includedLevels: 'PM-500', hours: 3, scheduledDate: batch.scheduledDate,
+    });
+    assert.equal(single.status, 201);
+  });
+  const result = await request('pmbatch', lead, { ...batch, mutationId: randomUUID(), confirmation: review.body.confirmation });
+  assert.equal(result.status, 409);
+  assert.deepEqual((await sheets.read('ORDENES_TRABAJO')).map(row => row[3]), ['DZ203']);
+  assert.deepEqual((await sheets.read('WORKSHOP_SCHEDULE')).map(row => row[3]), ['DZ203']);
+});
+
+test('el mismo lote recupera el comprobante si se guardó mientras la segunda solicitud revisaba los datos', async () => {
+  const { request, sheets, lead, batch } = await pmBatchFixture();
+  const review = await request('pmbatchcheck', lead, batch);
+  const save = { ...batch, mutationId: randomUUID(), confirmation: review.body.confirmation };
+  const readOrders = sheets.read.bind(sheets);
+  let competing;
+  sheets.read = async tab => {
+    if (tab === 'ORDENES_TRABAJO') {
+      sheets.read = readOrders;
+      competing = await request('pmbatch', lead, save);
+    }
+    return readOrders(tab);
+  };
+  const duplicate = await request('pmbatch', lead, save);
+  assert.equal(competing.status, 201);
+  assert.equal(duplicate.status, 200);
+  assert.deepEqual(duplicate.body.orders, competing.body.orders);
+  assert.equal((await sheets.read('ORDENES_TRABAJO')).length, 2);
+});
+
+test('una programación concurrente obliga a revisar la sobrecarga conjunta antes de confirmar el lote', async () => {
+  const { request, sheets, lead, batch: input, interrupt } = await pmBatchFixture();
+  sheets.seed('01 Inventario', [...await sheets.read('01 Inventario'), ['', 'EX410', '', 'Mack', 'Granite']]);
+  const scheduler = { ...lead, assignedUnits: [...lead.assignedUnits, 'EX410'] };
+  const batch = { ...input, mechanicId: mechanic.userId };
+  const review = await request('pmbatchcheck', scheduler, batch);
+  assert.equal(review.status, 200);
+  assert.deepEqual(review.body.warnings, []);
+  interrupt(async () => {
+    const single = await request('pm', scheduler, { mutationId: randomUUID(), unit: 'EX410',
+      level: 'PM-500', includedLevels: 'PM-500', hours: '4', mechanicId: mechanic.userId, scheduledDate: batch.scheduledDate });
+    assert.equal(single.status, 201);
+  });
+  const original = { ...batch, mutationId: randomUUID(), confirmation: review.body.confirmation };
+  assert.equal((await request('pmbatch', scheduler, original)).status, 409);
+  assert.equal((await sheets.read('WORKSHOP_SCHEDULE')).length, 1);
+  const recheck = await request('pmbatchcheck', scheduler, batch);
+  assert.match(recheck.body.warnings[0].message, /9 h/);
+  assert.equal((await request('pmbatch', scheduler, { ...original, confirmation: recheck.body.confirmation })).status, 201);
+  assert.equal((await sheets.read('WORKSHOP_SCHEDULE')).length, 3);
 });
 
 test('el PM conserva la revisión por PIN y exige evidencia privada vinculada al paso', async () => {

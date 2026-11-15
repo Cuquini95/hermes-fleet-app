@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { SkeletonList } from '../components/ui/Skeleton';
+import PanamaPmBatch from '../components/workshop/PanamaPmBatch';
 import { PANAMA_PM_MASTER_URL, PANAMA_PM_REGISTER_URL, fetchPanamaMaintenance, type MaintenanceEntry, type PanamaMaintenance } from '../lib/panama-maintenance';
 import LegacyPMSchedulePage from './LegacyPMSchedulePage';
 
@@ -59,6 +60,8 @@ function PanamaPMSchedule({ userId, canSchedule }: { userId?: string; canSchedul
   const navigate = useNavigate();
   const [refresh, setRefresh] = useState(0);
   const [data, setData] = useState<PanamaMaintenance | null>(null);
+  const [batchOpen, setBatchOpen] = useState(false);
+  const entries = data?.entries ? [...data.entries].sort((a, b) => (a.remaining ?? Infinity) - (b.remaining ?? Infinity)) : null;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -90,14 +93,17 @@ function PanamaPMSchedule({ userId, canSchedule }: { userId?: string; canSchedul
       {data?.sourceDate && <p className="mb-3 text-xs text-text-secondary">
         Corte del {new Date(data.sourceDate).toLocaleString('es-PA', { timeZone: 'America/Panama', dateStyle: 'short', timeStyle: 'short' })} · Panamá
       </p>}
-      {canSchedule && <Link to="/pm-order" className="mb-4 inline-flex min-h-11 items-center rounded-xl bg-amber px-4 text-sm font-semibold text-white">Nueva Orden PM</Link>}
+      {canSchedule && userId && <div className={`mb-4 ${batchOpen ? '' : 'flex flex-wrap items-start gap-2'}`}>
+        {!batchOpen && <Link to="/pm-order" className="inline-flex min-h-11 items-center rounded-xl bg-amber px-4 text-sm font-semibold text-white">Nueva Orden PM</Link>}
+        <PanamaPmBatch entries={entries} userId={userId} onOpenChange={setBatchOpen} />
+      </div>}
       {data === null && <SkeletonList count={4} />}
       {data?.entries === null && <p role="alert" className="mb-4 rounded-xl bg-amber-50 p-4 text-sm text-text">
         PM FLOTA no disponible. No se pudo verificar qué equipos están vencidos. Consulta el maestro y actualiza.
       </p>}
       {data?.entries?.length === 0 && <p className="mb-4 rounded-xl bg-amber-50 p-4 text-sm text-text">PM FLOTA no devolvió equipos en tu alcance. Confirma la cobertura del maestro.</p>}
-      {data?.entries && <div className="grid gap-3 sm:grid-cols-2">
-        {[...data.entries].sort((a, b) => (a.remaining ?? Infinity) - (b.remaining ?? Infinity)).map(entry => <MaintenanceCard key={entry.unit} entry={entry} canSchedule={canSchedule} />)}
+      {!batchOpen && entries && <div className="grid gap-3 sm:grid-cols-2">
+        {entries.map(entry => <MaintenanceCard key={entry.unit} entry={entry} canSchedule={canSchedule} />)}
       </div>}
       {data && (
         <section className="mt-5 rounded-xl border border-border bg-white p-4">

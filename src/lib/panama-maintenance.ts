@@ -37,6 +37,7 @@ export interface MaintenanceEntry {
   allowedLevels: string[];
   latestAccepted: AcceptedPm | null;
   reconciliationPending: boolean;
+  batchBlock: string | null;
   projectedNext: { dueAt: number; level: string } | null;
 }
 
@@ -142,12 +143,17 @@ export function buildPanamaMaintenance(sections: Sources, history: string[][] | 
     const reconciliationPending = accepted !== null && (masterLast === null || accepted.meter > masterLast
       || (accepted.meter === masterLast && /POR CONFIRMAR/.test(clean(row.last))));
     const projectedNext = accepted && reconciliationPending ? projection(accepted, plan, intervals, anchors.get(unit) ?? null) : null;
+    let batchBlock = null;
+    if (reconciliationPending) batchBlock = 'Cierre por conciliar';
+    else if (!officialLevel || dueAt === null || currentHours === null) batchBlock = 'Vencimiento por verificar';
+    else if (/SIN |FALTA|ACTUALIZAR|INACTIVO|ATRASAD|PROVISIONAL/.test(clean(`${row.reading ?? ''} ${row.status ?? ''}`))) batchBlock = 'Lectura o estado por verificar';
+    else if (clean(plan?.active) !== 'SI' || clean(plan?.approved) !== 'SI') batchBlock = 'Plan de PM por confirmar';
     return {
       unit, model: row.model || plan?.model || '', level: officialLevel, dueAt, currentHours, remaining,
       state: officialLevel && dueAt !== null && currentHours !== null ? sourceState(row, remaining) : 'unknown',
       sourceStatus: row.status ?? '', reading: row.reading ?? '', plan: row.plan ?? '', lastOfficial: row.last ?? '',
       checklistUrl: checklistLink(plan?.checklist), allowedLevels: intervals.map(interval => `PM-${interval}`),
-      latestAccepted: accepted, reconciliationPending,
+      latestAccepted: accepted, reconciliationPending, batchBlock,
       projectedNext,
     };
   }) ?? null;

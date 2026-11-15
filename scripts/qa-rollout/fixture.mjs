@@ -435,12 +435,17 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
       unit: 'DZ205', level: 'PM-250', reference: 'Plan sintético QA rev1', dueDate: '2026-11-12',
       condition: { source: 'dozers', minCritical: 1 },
     }]),
-    HERMES_PANAMA_PM_CHECKLISTS_JSON: JSON.stringify(['PM-250', 'PM-1'].flatMap(level => [
+    HERMES_PANAMA_PM_CHECKLISTS_JSON: JSON.stringify([...['PM-250', 'PM-1'].flatMap(level => [
       { model: 'Komatsu D65EX-16', level, reference: 'Checklist genérico QA',
         tasks: [{ id: 'generic', label: 'Tarea genérica' }] },
       { model: 'Komatsu D65EX-16', level, serial: 'QA-EX401', reference: 'Checklist sintético QA, revisión 1',
         tasks: [{ id: 'review-qa', label: 'Comprobación sintética de mantenimiento', evidence: 'photo' }] },
-    ])),
+    ]),
+      { model: 'Caterpillar 745', level: 'PM-500', serial: 'QA-DZ203', reference: 'Checklist QA, articulado',
+        tasks: [{ id: 'axle', label: 'Revisar eje QA' }] },
+      { model: 'Mack Granite', level: 'PM-1000', reference: 'Checklist QA, volquete',
+        tasks: [{ id: 'filter', label: 'Revisar filtro QA' }] },
+    ]),
     HERMES_PURCHASE_ISSUERS_JSON: JSON.stringify([{ id: 'TP_PA_QA', name: 'Trans Plus Panamá QA', currency: 'USD', taxLabel: 'ITBMS', taxBps: 700, template: 'transplus' }]),
   });
   async function stop() {
@@ -463,15 +468,20 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
       gateway = gate.createHermesGateway({ sheets: sheet, writeEnabled: true, panamaOnly: true, enablePanamaOperations: true, enablePanamaFuelCapture: true,
         readPanama: async spec => {
           const rows = {
-            maintenance: { unit: 'DZ205', status: 'VENCIDO', next: 'PM-250', remaining: '-2', reading: 'Actualizada', plan: 'Aprobado', due: '388', hours: '390' },
-            maintenancePlan: { unit: 'DZ205', active: 'Sí', approved: 'Sí', cycle: '250' },
-            dozers: { unit: 'DZ205', group: 'QA', critical: '2', upcoming: '0', noData: '0' },
+            maintenance: [
+              { unit: 'DZ205', status: 'VENCIDO', next: 'PM-250', remaining: '-2', reading: 'Actualizada', plan: 'Aprobado', due: '388', hours: '390' },
+              { unit: 'DZ203', status: 'PRÓXIMO', next: 'PM-500', remaining: '25', reading: 'Actualizada', due: '1500', hours: '1475', model: 'Caterpillar 745' },
+              { unit: 'EX410', status: 'PRÓXIMO', next: 'PM-1000', remaining: '20', reading: 'Actualizada', due: '440', hours: '420', model: 'Mack Granite' },
+            ],
+            maintenancePlan: [['DZ205', '250'], ['DZ203', '500'], ['EX410', '1000']]
+              .map(([unit, cycle]) => ({ unit, active: 'Sí', approved: 'Sí', cycle })),
+            dozers: [{ unit: 'DZ205', group: 'QA', critical: '2', upcoming: '0', noData: '0' }],
           };
           const row = rows[spec.key];
           if (!row) throw new Error('Fuente sintética sin datos');
           const columns = Object.entries({ ...spec.columns, ...spec.optionalColumns });
-          return { rows: [columns.map(([, name]) => name), columns.map(([property]) => row[property] ?? '')],
-            captured_at: '2026-11-13T04:00:00Z' };
+          const values = [columns.map(([, name]) => name), ...row.map(item => columns.map(([property]) => item[property] ?? ''))];
+          return spec.key.startsWith('maintenance') ? values : { rows: values, captured_at: '2026-11-13T04:00:00Z' };
         },
         readOfficialShifts: async () => ({ capturedAt: '2026-11-13T04:00:00Z', records: [
           { unit: 'DZ203', id: 'REG-QA-HOROMETRO', date: '12-Nov-2026', shift: 'Día', start: '390', end: '397' },

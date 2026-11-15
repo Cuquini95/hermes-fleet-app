@@ -1,10 +1,12 @@
 // Runs only against an in-memory Postgres engine, with disposable fixtures.
 // Run with an installed PGlite 0.5.16: HERMES_PGLITE_ENTRY=/absolute/path/to/dist/index.js node scripts/qa-rollout/verify-panama-restore.mjs
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { dispatchWorkshop } from '../../api/_lib/hermes-workshop.js';
+import { createPanamaOperationalStore } from '../../api/_lib/hermes-operational-store.js';
 
 const entry = process.env.HERMES_PGLITE_ENTRY;
 if (!entry || !isAbsolute(entry)) throw new Error('Indica la ruta absoluta de PGlite en HERMES_PGLITE_ENTRY.');
@@ -31,6 +33,59 @@ async function save(connection, key, changes, outcome) {
     [key, `hash:${key}`, [`qa:${key}`], JSON.stringify(changes), JSON.stringify(outcome)],
   );
   return response.rows[0].saved;
+}
+
+async function verifyPmBatch(connection) {
+  const units = ['QA-DZ203', 'QA-EX401'];
+  const sheets = createPanamaOperationalStore({
+    readInventory: async () => units.map((unit, index) => ['', unit, '', 'QA', String(index + 1)]),
+    request: async (path, { query, body }) => {
+      if (path.endsWith('/hermes_panama_operational_tables')) {
+        const names = query.name.startsWith('eq.') ? [query.name.slice(3)] : JSON.parse(`[${query.name.slice(4, -1)}]`);
+        return Response.json((await connection.query(
+          'select name,rows from public.hermes_panama_operational_tables where name=any($1::text[])', [names],
+        )).rows);
+      }
+      if (path.endsWith('/hermes_panama_commit_receipts')) {
+        return Response.json((await connection.query(
+          'select fingerprint,result from public.hermes_panama_commit_receipts where operation_key=$1', [query.operation_key.slice(3)],
+        )).rows);
+      }
+      assert(path.endsWith('/rpc/hermes_panama_commit'));
+      const { operation_key, operation_fingerprint, guards, changes, outcome } = body;
+      const written = await connection.query('select public.hermes_panama_commit($1,$2,$3,$4::jsonb,$5::jsonb) as saved',
+        [operation_key, operation_fingerprint, guards, JSON.stringify(changes), JSON.stringify(outcome)]);
+      return Response.json(written.rows[0].saved);
+    },
+  });
+  const request = (endpoint, body, method = 'POST', query) => dispatchWorkshop({
+    path: 'api/workshop/' + endpoint, method, body, query, sheets,
+    session: { userId: operatorId, userName: 'Coordinación QA', project: 'tmf-panama', role: 'coordinador', assignedUnits: units },
+    readPmSources: async () => ({ snapshots: { maintenance: '2026-11-15T21:15:00Z' }, sections: {
+      maintenance: units.map((unit, index) => ({ unit, next: index ? 'PM-500' : 'PM-250', hours: '4000', due: index ? '4125' : '3975', reading: 'Actualizada' })),
+      maintenancePlan: units.map(unit => ({ unit, active: 'Sí', approved: 'Sí' })),
+    } }),
+    pmChecklists: units.map((unit, index) => ({ model: `QA ${index + 1}`, level: index ? 'PM-500' : 'PM-250',
+      reference: `QA checklist ${unit}`, tasks: [{ id: 'check', label: 'Comprobar QA' }] })),
+  });
+  const batch = { scheduledDate: '2026-11-16', shift: 'Día', partsStatus: 'not_required',
+    items: units.map(unit => ({ unit, hours: '2' })) };
+  const review = await request('pmbatchcheck', batch);
+  assert.equal(review.status, 200);
+  const operation = { ...batch, confirmation: review.body.confirmation, mutationId: randomUUID() };
+  const result = await request('pmbatch', operation);
+  assert.equal(result.status, 201);
+  assert.deepEqual(result.body.orders.map(order => [order.folio, order.dueAt]), [['OT-0104', 3975], ['OT-0105', 4125]]);
+  const retry = await request('pmbatch', operation);
+  assert.equal(retry.status, 200);
+  assert.deepEqual(retry.body.orders, result.body.orders);
+  for (const order of result.body.orders) {
+    const detail = await request('pmchecklist', undefined, 'GET', { otId: order.otId });
+    assert.equal(detail.body.checklist.reference, order.checklistReference);
+    assert.equal(detail.body.dueAt, order.dueAt);
+  }
+  assert.equal((await rows(connection, 'WORKSHOP_SCHEDULE')).length, 3);
+  return result.body.orders.map(order => order.folio);
 }
 
 try {
@@ -84,9 +139,10 @@ try {
   await create(restored, 3);
   assert.equal((await rows(restored, orders)).at(-1)[25], 'OT-0103');
   assert.equal((await rows(restored, purchases)).at(-1)[27], '3004');
+  const batchFolios = await verifyPmBatch(restored);
   console.log(JSON.stringify({ environment: 'Postgres aislado / adjunto archivado sintético',
     restoredInMs: Math.round(performance.now() - began), concurrentCreations: 2, folios: 'OT-0100..0103 / OC 3001..3004',
-    retained: ['OT y evidencia', 'aprobación de OC', 'recepción y saldo', 'comprobante de reintento'] }));
+    batchFolios, retained: ['OT y evidencia', 'aprobación de OC', 'recepción y saldo', 'comprobante de reintento'] }));
 } catch (error) {
   console.error(error.message, error.code ?? '');
   process.exitCode = 1;

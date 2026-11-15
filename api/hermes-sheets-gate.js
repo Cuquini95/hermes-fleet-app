@@ -5,7 +5,7 @@ import { checkEvidenceAvailability, dispatchEvidence } from './_lib/hermes-evide
 import { panamaOperationalStore } from './_lib/hermes-operational-store.js';
 import { rejectIfRateLimited } from './_lib/rate-limit.js';
 import meterHandler from './_lib/cmms-meter.js';
-import { dispatchPanama, PANAMA_PROJECT, readOfficialPanamaShifts } from './_lib/hermes-panama.js';
+import { dispatchPanama, PANAMA_PROJECT, readOfficialPanamaShifts, readPanamaForPmScheduling } from './_lib/hermes-panama.js';
 import { createPanamaDemoSheets } from './_lib/hermes-panama-demo.js';
 import { technicalDocuments } from './_lib/hermes-technical-library.js';
 import { dispatchPanamaMeter, METER_TAB, validatePanamaMeterAppend } from './_lib/hermes-panama-meter.js';
@@ -60,7 +60,7 @@ const APPEND = new Map([
 const PANAMA_OPERATION_GROUPS = new Map([
   ['taller', ['api/workshop/report', 'api/workshop/transition', 'api/workshop/returns']],
   ['inspecciones', ['api/workshop/dvir', 'api/workshop/sticker', 'api/workshop/stickerreview']],
-  ['pm', ['api/workshop/pm', 'api/workshop/schedule']],
+  ['pm', ['api/workshop/pm', 'api/workshop/schedule', 'api/workshop/pmbatchcheck', 'api/workshop/pmbatch']],
   ['turnos', ['api/panama/turnos/entregar', 'api/panama/turnos/revisar']],
   ['despacho', ['api/panama/turnos/despacho']],
   ['compras', ['api/purchasing/request-submit', 'api/purchasing/request-status', 'api/purchasing/order-save',
@@ -322,7 +322,10 @@ export function createHermesGateway({
         return res.status(200).json(history);
       }
       if (path === 'api/sheets/read') return await sheetRead(req, res, sheets, session);
-      if (req.method !== 'GET' && pausedOperations.has(path)) return invalid(res, 503, 'Operación en pausa. Usa el procedimiento vigente de tu área.');
+      if (req.method !== 'GET' && (pausedOperations.has(path)
+          || (['api/workshop/pmbatch', 'api/workshop/pmbatchcheck'].includes(path) && pausedOperations.has('api/workshop/pm')))) {
+        return invalid(res, 503, 'Operación en pausa. Usa el procedimiento vigente de tu área.');
+      }
 
       const route = PROXY.get(path) ?? (/^diagrams\/file\/[A-Za-z0-9_-]+\.pdf$/i.test(path) ? { method: 'GET', roles: WORKSHOP } : undefined);
       if (route) {
@@ -375,8 +378,9 @@ export function createHermesGateway({
 
       const dispatch = path.startsWith('api/workshop/') ? dispatchWorkshop : path.startsWith('api/purchasing/') ? dispatchPurchasing : null;
       if (!dispatch) return invalid(res, 404, 'Ruta no disponible.');
+      const batchPm = ['api/workshop/pmbatch', 'api/workshop/pmbatchcheck'].includes(path);
       const readPmSources = async () => (await dispatchPanama({ path: 'api/panama/maintenance', method: 'GET', session,
-        read: demo ? demoSheets.readSummary : readPanama })).body;
+        read: demo ? demoSheets.readSummary : readPanama ?? (batchPm ? readPanamaForPmScheduling : undefined) })).body;
       const result = await dispatch({ path, method: req.method, body: req.body ?? {}, query: req.query ?? {}, session, sheets, listMechanics, readPmSources });
       return res.status(result.status).json(result.body);
     } catch (error) {

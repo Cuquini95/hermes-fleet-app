@@ -250,7 +250,7 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
     }
   }
 
-  if (loading && !fetched) {
+  if (loading && !wo) {
     return (
       <div className="flex items-center justify-center py-20">
         <div className="animate-spin rounded-full h-8 w-8 border-2 border-amber border-t-transparent" />
@@ -428,6 +428,7 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
         <section className="flex flex-col gap-2 rounded-xl border border-border bg-white p-4 shadow-sm" aria-label="Checklist del modelo">
           <h2 className="text-sm font-semibold text-text">Checklist del modelo</h2>
           {pm && <p className="text-sm text-text">{pm.model} · {pm.level}{pm.serial && ` · Serie ${pm.serial}`}</p>}
+          {typeof pm?.dueAt === 'number' && <p className="text-sm text-text">Vencimiento oficial: {pm.dueAt.toLocaleString('es-PA')} h</p>}
           {pmError && <p role="alert" className="text-sm text-red-700">{pmError}</p>}
           {!pm && !pmError && <p className="text-sm text-text-secondary">Consultando checklist…</p>}
           {pm && !pm.checklist && <p className="text-sm text-text-secondary">Checklist pendiente de validar para este modelo y nivel. La entrega permanece pendiente.</p>}

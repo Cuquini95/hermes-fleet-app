@@ -41,6 +41,7 @@ export interface PMChecklistDefinition {
   level: string;
   serial?: string;
   initialMeter: string;
+  dueAt?: number;
   checklist: PMChecklist | null;
   triggers?: PMTrigger[];
 }

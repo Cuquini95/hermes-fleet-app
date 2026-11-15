@@ -642,6 +642,53 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       return { folio, unit: 'EX401', reloaded: true, confirmationRecovered: true, duplicateSuppressed: true, overloadBeforeSave: true, retainedShiftAndParts: true };
     }));
 
+    await record('MÓVIL-PM-POR-LOTE', () => inRole('coordinador', 360, async page => {
+      await page.goto(`${origin}/pm`, { waitUntil: 'domcontentloaded' });
+      await dismissPrivacy(page);
+      const start = performance.now();
+      await clickByName(page, 'Programar por lote');
+      await page.getByRole('checkbox', { name: 'Seleccionar DZ203', exact: true }).check();
+      await page.getByRole('checkbox', { name: 'Seleccionar EX410', exact: true }).check();
+      await page.getByLabel('Horas estimadas de DZ203').fill('2');
+      await page.getByLabel('Horas estimadas de EX410').fill('3');
+      await page.getByLabel('Fecha programada').fill('2026-12-06');
+      await page.getByLabel('Turno').selectOption('Día');
+      await page.getByLabel('Disponibilidad de repuestos').selectOption('not_required');
+      await clickByName(page, 'Revisar lote');
+      await visible(page.getByText('Checklist QA, articulado', { exact: true }));
+      await visible(page.getByText('Checklist QA, volquete', { exact: true }));
+      const prior = sheet.read(tabs.pm).length;
+      const attempts = [];
+      page.on('request', request => {
+        if (request.method() === 'POST' && request.url().endsWith('/api/workshop/pmbatch')) attempts.push(request.postDataJSON().mutationId);
+      });
+      sheet.failNext({ matches: writes => writes.some(write => write.tab === tabs.pm && write.append?.length === 2), when: 'after' });
+      await clickByName(page, 'Confirmar 2 órdenes');
+      await visible(page.getByRole('button', { name: 'Reintentar el mismo lote' }));
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await dismissPrivacy(page);
+      await clickByName(page, 'Reintentar el mismo lote');
+      await visible(page.getByText('2 órdenes programadas', { exact: true }));
+      const elapsedMs = Math.round(performance.now() - start);
+      const batch = sheet.read(tabs.pm).slice(prior);
+      assert.deepEqual(attempts, [attempts[0], attempts[0]]);
+      assert.equal(new Set(batch.map(row => row[0])).size, 2);
+      assert.deepEqual(batch.map(row => [row[2], row[4], row[6]]), [['EX410', 'PM-1000', '420'], ['DZ203', 'PM-500', '1475']]);
+      await noHorizontalOverflow(page, 360);
+      await shot(page, 'pm-por-lote-360.png');
+      await page.getByRole('link', { name: 'Abrir calendario' }).click();
+      await page.waitForURL(`${origin}/calendar?fecha=2026-12-06`);
+      const scheduledDay = page.locator('section').filter({ has: page.locator('time[datetime="2026-12-06"]') });
+      for (const row of batch) await visible(scheduledDay.getByRole('button', { name: new RegExp(row[0]) }));
+      for (const [index, row] of batch.entries()) {
+        const otId = row[0];
+        await page.goto(`${origin}/workorders/${otId}`, { waitUntil: 'domcontentloaded' });
+        await visible(page.getByText(index ? /Vencimiento oficial: 1,500 h/ : /Vencimiento oficial: 440 h/));
+        await visible(page.getByText(index ? 'Checklist QA, articulado' : 'Checklist QA, volquete', { exact: true }));
+      }
+      return { units: batch.map(row => row[2]), folios: batch.map(row => row[0]), elapsedMs, recoveredAfterReload: true, distinctChecklists: true };
+    }));
+
     await record('MÓVIL-PM-ENTREGA-ACEPTACIÓN', async () => {
       assert(pmMobileFolio, 'Falta la OT de PM programada en el caso móvil');
       const path = `${origin}/workorders/${encodeURIComponent(pmMobileFolio)}`;

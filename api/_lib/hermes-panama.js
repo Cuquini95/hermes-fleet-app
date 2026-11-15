@@ -76,9 +76,9 @@ export async function readOfficialPanamaShifts() {
 // projection as the source sheets. Operational reconciliation still requires Sheets.
 const snapshots = new Map();
 
-function readSnapshot(spec) {
+function readSnapshot(spec, { fresh = false } = {}) {
   const previous = snapshots.get(spec.key);
-  if (previous && Date.now() < previous.expiresAt) return previous.promise;
+  if (!fresh && previous && Date.now() < previous.expiresAt) return previous.promise;
   const promise = (async () => {
     const config = identityConfig();
     if (config.project !== PANAMA_PROJECT) throw new Error('Panama snapshot project mismatch');
@@ -103,6 +103,14 @@ async function readSourceForConsultation(spec) {
   catch (error) {
     if (process.env.VERCEL_ENV !== 'production') throw error;
     return readSnapshot(spec);
+  }
+}
+
+export async function readPanamaForPmScheduling(spec) {
+  try { return await getRows(spec); }
+  catch (error) {
+    if (process.env.VERCEL_ENV !== 'production') throw error;
+    return readSnapshot(spec, { fresh: true });
   }
 }
 

@@ -35,6 +35,7 @@ const WORKFLOW = { execution: 20, technical: 21, operations: 22, pm: 23, recurre
 const PRIORITIES = new Set(['CRITICA', 'ALTA', 'MEDIA', 'BAJA']);
 const SCHEDULABLE = new Set(['Abierta', 'En Espera de Asignación', 'En Reparación', 'Esperando Pieza']);
 const WORKSHOP_DAY_HOURS = 8;
+const MAX_PM_BATCH = 25;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DVIR_LABELS = ['Motor', 'Transmisión', 'Frenos', 'Dirección', 'Hidráulico', 'Eléctrico', 'Neumáticos', 'Estructura', 'Luces', 'Fluidos', 'Cabina', 'Tren de rodaje'];
 const dateFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Panama', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -100,12 +101,15 @@ function requireUnit(session, value) {
   return code;
 }
 
-async function equipmentFor({ sheets, session }, value) {
-  const code = requireUnit(session, value);
-  const rows = await sheets.read(TAB.inventory);
+function inventoryEquipment(rows, code) {
   const row = rows.find((r) => (r[1] || '').trim().toUpperCase() === code);
   assert(row, 404, 'Unidad no encontrada en el inventario');
   return { code, model: [row[3], row[4]].filter(Boolean).join(' '), serial: row[6]?.trim() || '', type: row[2] || '', meter: row[9] || '' };
+}
+
+async function equipmentFor({ sheets, session }, value) {
+  const code = requireUnit(session, value);
+  return inventoryEquipment(await sheets.read(TAB.inventory), code);
 }
 
 function orderVisible(session, row) {
@@ -171,8 +175,8 @@ export function unitReadinessChange(unit, revision, key, at) {
   };
 }
 
-async function commit(context, writes, result, guard, readiness) {
-  const guards = readiness ? [readiness.guard] : [];
+async function commit(context, writes, result, guard, readiness, extraGuard) {
+  const guards = [readiness?.guard, extraGuard].filter(Boolean);
   if (readiness) writes.push(readiness.write);
   const saved = await context.sheets.commit({ key: context.key, fingerprint: context.fingerprint, guard, guards, writes, result });
   return { status: saved.replayed ? 200 : context.create ? 201 : 200, body: { ...saved.result, replayed: saved.replayed } };
@@ -425,6 +429,7 @@ async function transition(context) {
   const before = effective[col] || '';
   let value = field === 'foto_url' ? '' : text(body.value, 'Valor', 3000);
   const writes = [];
+  let scheduleGuard;
   const unit = row[3].trim().toUpperCase();
   const readiness = field === 'estado' && isPanama(context)
     ? unitReadinessChange(unit, await readUnitReadinessRevision(sheets, unit), context.key, context.now)
@@ -475,11 +480,24 @@ async function transition(context) {
     writes.push({ tab: TAB.orders, row: index, col: 17, values: [assignee?.userId || ''] });
     value = assignee?.userName || '';
     if (isPanama(context)) {
-      const scheduled = linkedRows(await sheets.read(TAB.schedule), 2, 3, otId, unit);
-      if (scheduled) writes.push(
-        { tab: TAB.schedule, row: scheduled.index, col: 4, values: [value || 'Sin asignar'] },
-        { tab: TAB.schedule, row: scheduled.index, col: 9, values: [assignee?.userId || ''] },
-      );
+      const schedule = await sheets.read(TAB.schedule);
+      const scheduled = linkedRows(schedule, 2, 3, otId, unit);
+      if (scheduled) {
+        const { row: event } = scheduled;
+        const hours = Number(event[5]);
+        if (assignee && assignee.userId !== event[9] && hours > 0) {
+          const assessment = await scheduleAssessment(context, schedule, { otId, unit,
+            mechanic: assignee, hours, date: event[1], resources: {} });
+          const capacity = assessment.warnings.find(item => item.code === 'capacity');
+          assert(!capacity, 409, `${capacity?.message ?? ''} Confirma la reasignación desde Calendario de Taller.`);
+        }
+        scheduleGuard = calendarWriteGuard(schedule);
+        writes.push(
+          { tab: TAB.schedule, row: scheduled.index, col: 4, values: [value || 'Sin asignar'] },
+          { tab: TAB.schedule, row: scheduled.index, col: 9, values: [assignee?.userId || ''] },
+          { tab: TAB.schedule, row: scheduled.index, col: 14, values: [digest(context.key)] },
+        );
+      }
     }
   }
   if (field === 'prioridad') assert(PRIORITIES.has(value), 400, 'Prioridad inválida');
@@ -497,8 +515,10 @@ async function transition(context) {
     { tab: TAB.orders, row: index, col: 18, values: [nextOrderVersion(context)] },
     { tab: TAB.history, append: [historyRow(context, otId, field, before, value)] },
   );
-  return commit(context, writes, { otId }, orderWriteGuard(row), readiness);
+  return commit(context, writes, { otId }, orderWriteGuard(row), readiness, scheduleGuard);
 }
+
+const calendarWriteGuard = rows => `panama:schedule:${digest(rows)}`;
 
 function scheduleValue(context, { otId, unit, mechanic, hours, date, priority, notes, resources }) {
   return [context.mutationId, date, otId, unit, mechanic?.userName || 'Sin asignar', String(hours), priority, 'Programado', notes,
@@ -520,14 +540,14 @@ function scheduleResources(input, previous = []) {
   return { shift, partsStatus, partsDetail };
 }
 
-async function scheduleAssessment(context, rows, { otId, unit, mechanic, hours, date, resources }) {
+async function scheduleAssessment(context, rows, { otId, unit, mechanic, hours, date, resources }, orders) {
   const warnings = [];
   let plannedHours = null;
   if (mechanic?.userId) {
     const active = rows.filter(row => row[2] !== otId && /^OT-/.test(row[2] || '') && row[1] === date && row[7] !== 'Completado'
       && (row[9] ? row[9] === mechanic.userId : row[4] === mechanic.userName));
     const closed = active.length
-      ? new Set((await context.sheets.read(TAB.orders)).filter(row => row[9] === 'Completado').map(row => row[1]))
+      ? new Set((orders ?? await context.sheets.read(TAB.orders)).filter(row => row[9] === 'Completado').map(row => row[1]))
       : new Set();
     plannedHours = active.filter(row => !closed.has(row[2])).reduce((sum, row) => {
       const hours = Number(row[5]);
@@ -564,9 +584,33 @@ async function scheduleCheck(context) {
   return scheduleAssessment(context, rows, { otId: order?.otId, unit, mechanic, date, hours, resources });
 }
 
-async function pmOrders(sheets, unit, level) {
-  return (await sheets.read(TAB.orders)).filter(row => /^OT-/.test(row[1] || '') && row[3]?.trim().toUpperCase() === unit && row[4] === 'PM'
+function pmOrders(rows, unit, level) {
+  return rows.filter(row => /^OT-/.test(row[1] || '') && row[3]?.trim().toUpperCase() === unit && row[4] === 'PM'
     && pmLevelKey(storedObject(row[WORKFLOW.pm])?.level ?? /^Mantenimiento Preventivo (PM[ -]?\d{1,5})\b/i.exec(row[5] ?? '')?.[1]) === level);
+}
+
+function openPm(orders) {
+  return orders.findLast(row => !['Completado', 'Cancelado', 'Cancelada'].includes(row[9]));
+}
+
+function pmOccurrence(unit, level, orders, rules) {
+  const current = openPm(orders);
+  const completed = orders.filter(row => row[9] === 'Completado');
+  const hoursRule = rules.find(rule => rule.kind === 'hours');
+  const officialDue = hoursRule?.actual != null && hoursRule.threshold != null ? hoursRule.threshold : null;
+  const consumed = new Map();
+  for (const row of completed) {
+    const reasons = storedObject(row[WORKFLOW.pm])?.triggers;
+    if (Array.isArray(reasons)) reasons.forEach(reason => consumed.set(reason.occurrence, row));
+  }
+  const due = rules.filter(rule => rule.state === 'due');
+  const triggerReasons = due.filter(rule => !consumed.has(rule.occurrence));
+  const sameDue = officialDue === null ? null : completed.findLast(row => storedObject(row[WORKFLOW.pm])?.dueAt === officialDue);
+  return {
+    existing: current || sameDue || (due.length && !triggerReasons.length ? consumed.get(due.at(-1).occurrence) : null),
+    guard: `panama:pm:${digest([unit, level, orders.at(-1)?.[1] ?? 'initial'])}`,
+    triggerReasons,
+  };
 }
 
 async function existingPm(context, row) {
@@ -575,8 +619,25 @@ async function existingPm(context, row) {
   return { status: 200, body: { otId, schedule, existing: true, completed: row[9] === 'Completado' } };
 }
 
+function pmWrites(context, { unit, model, level, included, meter, notes, date, hours, mechanic, resources, parts, definition }) {
+  const { otId, session } = context;
+  const priority = 'MEDIA';
+  const description = `Mantenimiento Preventivo ${level}. Incluye: ${included}`;
+  const schedule = scheduleValue(context, { otId, unit, mechanic, hours, date, priority, notes, resources });
+  const common = [unit, model, level, included, meter];
+  const order = orderRow(context, { id: otId, unit, type: 'PM', description, priority, parts, notes, mechanic });
+  if (definition) order.push('', '', '', JSON.stringify(definition));
+  return { schedule, writes: [
+    { tab: TAB.pm, append: [[otId, context.date, ...common, description, String(hours), mechanic?.userName || 'Sin asignar', session.userName, 'Programada', parts, notes]] },
+    { tab: TAB.pmHistory, append: [[context.date, otId, ...common, String(hours), mechanic?.userName || 'Sin asignar', session.userName, 'Programada', parts, notes]] },
+    { tab: TAB.orders, append: [order] },
+    { tab: TAB.history, append: [historyRow(context, otId, 'estado', '', 'Abierta')] },
+    { tab: TAB.schedule, append: [schedule] },
+  ] };
+}
+
 async function pm(context) {
-  const { body, session } = context;
+  const { body } = context;
   const { code, model, serial, meter } = await equipmentFor(context, body.unit);
   const level = text(body.level, 'Nivel PM', 25, true);
   assert(/^PM[ -]?\d{1,5}$/i.test(level), 400, 'Nivel PM inválido');
@@ -586,51 +647,146 @@ async function pm(context) {
   const hours = decimal(body.hours, 'Horas estimadas', 0.25, 240);
   let triggerReasons = [];
   let pmGuard;
+  let officialHours;
   if (isPanama(context)) {
     const normalized = pmLevelKey(level);
-    const orders = await pmOrders(context.sheets, code, normalized);
-    const open = orders.findLast(row => !['Completado', 'Cancelado', 'Cancelada'].includes(row[9]));
+    const orders = pmOrders(await context.sheets.read(TAB.orders), code, normalized);
+    const open = openPm(orders);
     if (open) return existingPm(context, open);
     const { rules } = await evaluatePmTriggers(context, code, normalized);
-    const consumed = new Map();
-    for (const row of orders.filter(order => order[9] === 'Completado')) {
-      const reasons = storedObject(row[WORKFLOW.pm])?.triggers;
-      if (Array.isArray(reasons)) reasons.forEach(reason => consumed.set(reason.occurrence, row));
-    }
-    const due = rules.filter(rule => rule.state === 'due');
-    triggerReasons = due.filter(rule => !consumed.has(rule.occurrence));
-    if (due.length && !triggerReasons.length) return existingPm(context, consumed.get(due.at(-1).occurrence));
-    pmGuard = `panama:pm:${digest([code, normalized, orders.at(-1)?.[1] ?? 'initial'])}`;
+    const occurrence = pmOccurrence(code, normalized, orders, rules);
+    if (occurrence.existing) return existingPm(context, occurrence.existing);
+    ({ guard: pmGuard, triggerReasons } = occurrence);
+    officialHours = rules.find(rule => rule.kind === 'hours' && rule.actual != null && rule.threshold != null);
   }
   const mechanic = await mechanicFor(context, body.mechanicId, code);
   const otId = context.otId;
-  const priority = 'MEDIA';
-  const description = `Mantenimiento Preventivo ${level}. Incluye: ${included}`;
   const resources = isPanama(context) ? scheduleResources(body) : null;
-  if (resources) requireScheduleConfirmation(await scheduleAssessment(context, await context.sheets.read(TAB.schedule),
+  const calendar = resources ? await context.sheets.read(TAB.schedule) : null;
+  if (calendar) requireScheduleConfirmation(await scheduleAssessment(context, calendar,
     { unit: code, mechanic, hours, date, resources }), body.scheduleConfirmation);
   const parts = text(body.parts, 'Partes', 5000) || resources?.partsDetail || '';
-  const schedule = scheduleValue(context, { otId, unit: code, mechanic, hours, date, priority, notes, resources });
-  const common = [code, model, level, included, meter];
-  const order = orderRow(context, { id: otId, unit: code, type: 'PM', description, priority, parts, notes, mechanic });
   const definition = isPanama(context) ? { model, level, initialMeter: meter, ...(serial && { serial }),
+    ...(officialHours && { dueAt: officialHours.threshold, ...(officialHours.cut && { sourceCut: officialHours.cut }) }),
     checklist: configuredChecklist(context, model, level, serial), ...(triggerReasons.length && { triggers: triggerReasons }) } : null;
-  if (definition) order.push('', '', '', JSON.stringify(definition));
+  const { schedule, writes } = pmWrites(context, { unit: code, model, level, included, meter, notes, date, hours, mechanic, resources, parts, definition });
   try {
-    return await commit(context, [
-    { tab: TAB.pm, append: [[otId, context.date, ...common, description, String(hours), mechanic?.userName || 'Sin asignar', session.userName, 'Programada', parts, notes]] },
-    { tab: TAB.pmHistory, append: [[context.date, otId, ...common, String(hours), mechanic?.userName || 'Sin asignar', session.userName, 'Programada', parts, notes]] },
-    { tab: TAB.orders, append: [order] },
-    { tab: TAB.history, append: [historyRow(context, otId, 'estado', '', 'Abierta')] },
-    { tab: TAB.schedule, append: [schedule] },
-    ], { otId, schedule, ...(definition && { checklist: definition.checklist }) }, pmGuard);
+    return await commit(context, writes, { otId, schedule, ...(definition && { checklist: definition.checklist }) },
+      pmGuard, undefined, calendar ? calendarWriteGuard(calendar) : undefined);
   } catch (error) {
     if (pmGuard && Number(error?.status ?? error?.statusCode) === 409) {
-      const competing = (await pmOrders(context.sheets, code, pmLevelKey(level))).findLast(row => row[9] !== 'Completado');
+      const competing = openPm(pmOrders(await context.sheets.read(TAB.orders), code, pmLevelKey(level)));
       if (competing) return existingPm(context, competing);
     }
     throw error;
   }
+}
+
+function batchUnits(session, value) {
+  assert(Array.isArray(value) && value.length >= 2 && value.length <= MAX_PM_BATCH, 400, 'Selecciona entre 2 y 25 equipos');
+  const units = value.map(item => requireUnit(session, item?.unit));
+  assert(new Set(units).size === units.length, 400, 'Cada equipo puede aparecer una sola vez en el lote');
+  return units;
+}
+
+async function preparePmBatch(context) {
+  const { body, session, sheets } = context;
+  const units = batchUnits(session, body.items);
+  const date = isoDate(body.scheduledDate);
+  const resources = scheduleResources(body);
+  assert(resources.shift && resources.partsStatus, 400, 'Indica el turno y el estado de los repuestos');
+  const mechanic = await mechanicFor(context, body.mechanicId, units[0]);
+  assert(!mechanic || units.every(unit => scopeAllows(mechanic, unit)), 400, 'El mecánico debe cubrir todos los equipos del lote');
+  const [inventory, [orders, schedule], sources] = await Promise.all([
+    sheets.read(TAB.inventory),
+    sheets.readMany?.([TAB.orders, TAB.schedule]) ?? Promise.all([sheets.read(TAB.orders), sheets.read(TAB.schedule)]),
+    context.readPmSources?.(),
+  ]);
+  assert(Array.isArray(sources?.sections?.maintenance) && Array.isArray(sources?.sections?.maintenancePlan),
+    503, 'La fuente oficial de PM FLOTA no está disponible');
+  const sourceContext = { ...context, readPmSources: async () => sources };
+  const prepared = await Promise.all(units.map(async (unit, index) => {
+    const hours = decimal(body.items[index].hours, `Horas estimadas de ${unit}`, 0.25, 240);
+    const { model, serial } = inventoryEquipment(inventory, unit);
+    const [official] = sources.sections.maintenance.filter(row => unit === row.unit?.trim().toUpperCase());
+    const level = pmLevelKey(official?.next);
+    assert(level, 409, `${unit}: falta un nivel vigente en PM FLOTA`);
+    const { rules } = await evaluatePmTriggers(sourceContext, unit, level);
+    const { actual, threshold, cut } = rules[0];
+    assert(actual !== null && threshold !== null, 409, `${unit}: falta un vencimiento con horómetro y plan aprobados`);
+    const checklist = configuredChecklist(context, model, level, serial);
+    assert(checklist, 409, `${unit}: falta un checklist validado para ${model} ${level}`);
+    const matching = pmOrders(orders, unit, level);
+    const { existing, triggerReasons, guard } = pmOccurrence(unit, level, matching, rules);
+    assert(!existing, 409, `${unit}: ya existe una orden para este servicio (${existing?.[25] || existing?.[1]})`);
+    const latestAccepted = orders.reduce((latest, row) => {
+      if (row[3]?.trim().toUpperCase() !== unit || row[4] !== 'PM' || row[9] !== 'Completado'
+        || !storedObject(row[WORKFLOW.technical])?.acceptedAt) return latest;
+      const savedMeter = storedObject(row[WORKFLOW.execution])?.meter;
+      return /^\d+(?:\.\d+)?$/.test(savedMeter ?? '') ? Math.max(latest, Number(savedMeter)) : latest;
+    }, -1);
+    const masterLast = /\ba\s+([\d,.]+)\s*h/i.exec(official.last ?? '')?.[1];
+    assert(latestAccepted < 0 || (!!masterLast && Number(masterLast.replaceAll(',', '')) >= latestAccepted
+      && !/POR CONFIRMAR/i.test(official.last)), 409, `${unit}: hay un cierre PM por conciliar con el maestro`);
+    const definition = { model, level, initialMeter: String(actual), ...(serial && { serial }), checklist,
+      dueAt: threshold, ...(cut && { sourceCut: cut }), ...(triggerReasons.length && { triggers: triggerReasons }) };
+    return { unit, hours, definition, guard };
+  }));
+  const totalHours = prepared.reduce((sum, item) => sum + item.hours, 0);
+  const { warnings, plannedHours } = await scheduleAssessment(context, schedule, {
+    unit: units.join(','), mechanic, hours: totalHours, date, resources,
+  }, orders);
+  const confirmation = digest({ user: session.userId, date, resources, mechanicId: mechanic?.userId, planCut: sources.snapshots?.maintenancePlan,
+    plannedHours, warnings, prepared });
+  const items = prepared.map(({ unit, hours, definition }) => ({
+    unit, hours, level: definition.level, dueAt: definition.dueAt, checklistReference: definition.checklist.reference,
+  }));
+  return { items, warnings, confirmation, prepared, date, resources, mechanic,
+    scheduleGuard: calendarWriteGuard(schedule), sourceCut: sources.snapshots?.maintenance };
+}
+
+async function pmBatchFolios(context, result) {
+  if (!context.sheets.nativeOperations) return result;
+  const aliases = new Map((await context.sheets.read(TAB.orders)).map(row => [row[1], row[25]]));
+  const orders = result.orders.map(order => {
+    const folio = aliases.get(order.otId);
+    assert(/^OT-\d{4,15}$/.test(folio ?? ''), 503, 'No se pudo confirmar el folio. Reintenta el mismo lote.');
+    return { ...order, folio };
+  });
+  return { ...result, orders };
+}
+
+async function pmBatch(context) {
+  let batch;
+  try {
+    batch = await preparePmBatch(context);
+    assert(context.body.confirmation === batch.confirmation, 409, 'Cambió la programación o el corte de PM. Revisa el lote de nuevo.');
+  } catch (error) {
+    // A concurrent retry may have observed its own newly committed orders during preflight.
+    const prior = await context.sheets.replay({ key: context.key, fingerprint: context.fingerprint });
+    if (prior) return { status: 200, body: { ...await pmBatchFolios(context, prior), replayed: true } };
+    throw error;
+  }
+  const { date, resources, mechanic, prepared, items, scheduleGuard } = batch;
+  const orders = [];
+  const writesByTab = new Map();
+  for (const [index, { unit, hours, definition }] of prepared.entries()) {
+    const key = `${context.key}:${unit}`;
+    const otId = `OT-${digest(key).slice(0, 16).toUpperCase()}`;
+    const { writes } = pmWrites({ ...context, key, otId }, { unit, model: definition.model, level: definition.level,
+      included: definition.level, meter: definition.initialMeter, notes: '', date, hours, mechanic, resources,
+      parts: resources.partsDetail, definition });
+    orders.push({ ...items[index], otId });
+    for (const { tab, append } of writes) {
+      if (!writesByTab.has(tab)) writesByTab.set(tab, []);
+      writesByTab.get(tab).push(...append);
+    }
+  }
+  const result = await context.sheets.commit({ key: context.key, fingerprint: context.fingerprint,
+    guards: [scheduleGuard, ...prepared.map(item => item.guard)], writes: [...writesByTab].map(([tab, append]) => ({ tab, append })),
+    result: { orders, date } });
+  return { status: result.replayed ? 200 : 201,
+    body: { ...await pmBatchFolios(context, result.result), replayed: result.replayed } };
 }
 
 async function schedule(context) {
@@ -662,7 +818,8 @@ async function schedule(context) {
     { tab: TAB.orders, row: index, col: 17, values: [mechanic?.userId || ''] },
     { tab: TAB.history, append: [historyRow(context, otId, 'mecanico_asignado', effective[8] || '', mechanic?.userName || '')] },
   );
-  return commit(context, writes, { schedule: result }, orderWriteGuard(row));
+  return commit(context, writes, { schedule: result }, orderWriteGuard(row), undefined,
+    resources ? calendarWriteGuard(rows) : undefined);
 }
 
 function pendingOperationalReturn(row) {
@@ -967,7 +1124,7 @@ async function readinessSources(context) {
 
 const MUTATIONS = {
   report: [report, ROLES, true], dvir: [dvir, INSPECT, true], transition: [transition, ORDER_READ, false],
-  pm: [pm, ASSIGN, true], schedule: [schedule, ASSIGN, false],
+  pm: [pm, ASSIGN, true], pmbatch: [pmBatch, ASSIGN, false], schedule: [schedule, ASSIGN, false],
   sticker: [sticker, ROLES, true], stickerreview: [stickerReview, SUPERVISE, false],
   returns: [operationalReturn, OPERATIONS, false],
 };
@@ -977,7 +1134,14 @@ export async function dispatchWorkshop(input) {
   const endpoint = path?.match(/^api\/workshop\/([a-z]+)$/)?.[1];
   try {
     assert(session?.userId && session.userName && ROLES.has(session.role), 401, 'Sesión inválida');
-    if (['returns', 'pmchecklist', 'pmtemplate', 'pmtriggers', 'schedulecheck'].includes(endpoint)) assert(isPanama(input), 404, 'Acción de taller no disponible');
+    if (['returns', 'pmchecklist', 'pmtemplate', 'pmtriggers', 'schedulecheck', 'pmbatch', 'pmbatchcheck'].includes(endpoint)) {
+      assert(isPanama(input), 404, 'Acción de taller no disponible');
+    }
+    if (method === 'POST' && endpoint === 'pmbatchcheck') {
+      assert(ASSIGN.has(session.role), 403, 'Tu rol no puede programar órdenes');
+      const { items, warnings, confirmation, sourceCut } = await preparePmBatch({ ...input, body: body ?? {} });
+      return { status: 200, body: { items, warnings, confirmation, ...(sourceCut && { sourceCut }) } };
+    }
     if (method === 'GET' && endpoint === 'pmtriggers') {
       assert(MANAGEMENT.has(session.role), 403, 'Consulta reservada a Taller y Operaciones');
       const unit = requireUnit(session, input.query?.unit);
@@ -1049,8 +1213,9 @@ export async function dispatchWorkshop(input) {
     delete operation.expectedUserId;
     const fingerprint = digest(operation);
     if (create) requireUnit(session, body.unit);
+    if (endpoint === 'pmbatch') batchUnits(session, body.items);
     const prior = await sheets.replay({ key, fingerprint });
-    if (prior) return { status: 200, body: { ...prior, replayed: true } };
+    if (prior) return { status: 200, body: { ...(endpoint === 'pmbatch' ? await pmBatchFolios(input, prior) : prior), replayed: true } };
     const date = new Date();
     const local = dateFormatter.format(date).split('-').reverse().join('/');
     return await handler({ ...input, key, mutationId, fingerprint, create, now: date.toISOString(), date: local,

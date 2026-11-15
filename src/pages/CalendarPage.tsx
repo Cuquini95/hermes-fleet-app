@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ChevronLeft, ChevronRight, CalendarDays, AlertTriangle } from 'lucide-react';
 import { createPortal } from 'react-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth-store';
 import { mexicoDateInput } from '../lib/date-utils';
 import { PARTS_STATUS_LABELS, requestWorkshop, type ScheduleResources, type WorkshopMechanic } from '../lib/workshop-api';
@@ -117,11 +118,15 @@ export default function CalendarPage() {
   const canSchedule = role === 'jefe_taller' || role === 'coordinador' || role === 'gerencia';
   const today = mexicoDateInput();
   const localToday = new Date(`${today}T12:00:00`);
+  const [params] = useSearchParams();
+  const requestedDay = params.get('fecha') ?? '';
+  const targetDay = new Date(`${requestedDay}T12:00:00`);
+  const initialDay = /^\d{4}-\d{2}-\d{2}$/.test(requestedDay) && toISO(targetDay) === requestedDay ? targetDay : localToday;
   const [roster, setRoster] = useState<WorkshopMechanic[]>([]);
   const [rosterError, setRosterError] = useState('');
 
-  const [weekMonday, setWeekMonday] = useState<Date>(() => getMondayOfWeek(localToday));
-  const [showWeekend, setShowWeekend] = useState(() => [0, 6].includes(localToday.getDay()));
+  const [weekMonday, setWeekMonday] = useState<Date>(() => getMondayOfWeek(initialDay));
+  const [showWeekend, setShowWeekend] = useState(() => [0, 6].includes(initialDay.getDay()));
   const [entries, setEntries] = useState<ScheduleEntry[]>([]);
   const [loadingSchedule, setLoadingSchedule] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
@@ -193,6 +198,7 @@ export default function CalendarPage() {
     });
   const mechanics = Array.from(new Set(['Sin asignar', ...roster.map((item) => item.userName), ...visibleEntries.map((entry) => entry.mecanico)]));
   const conflicts = buildConflicts(visibleEntries);
+  const folioFor = (id: string) => workorders.find(order => order.ot_id === id)?.folio ?? id;
 
   function handleCellClick(mechanic: string, date: Date) {
     if (!canSchedule) return;
@@ -319,13 +325,15 @@ export default function CalendarPage() {
               const dayEntries = visibleEntries.filter((entry) => entry.fecha_programada === iso);
               return (
                 <section key={iso} className="rounded-xl border border-slate-200 bg-white p-3">
-                  <h2 className="mb-2 text-sm font-semibold capitalize text-slate-700">{date.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'short' })}</h2>
+                  <h2 className="mb-2 text-sm font-semibold capitalize text-slate-700">
+                    <time dateTime={iso}>{date.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'short' })}</time>
+                  </h2>
                   {dayEntries.length === 0 ? <p className="text-xs text-slate-500">Sin órdenes programadas.</p> : (
                     <ul className="space-y-2">
                       {dayEntries.map((entry) => (
                         <li key={entry.ot_id}>
                           <button type="button" onClick={() => setSelectedEntry(entry)} className="w-full rounded-lg bg-slate-100 p-2 text-left text-sm text-[#162252]">
-                            <span className="block font-semibold">{entry.ot_id} · {entry.unidad}</span>
+                            <span className="block font-semibold">{folioFor(entry.ot_id)} · {entry.unidad}</span>
                             <span className="block text-xs">{entry.mecanico} · {entry.horas_estimadas} h{entry.resources.shift && ` · ${entry.resources.shift}`}</span>
                           </button>
                         </li>
@@ -388,7 +396,7 @@ export default function CalendarPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-base font-bold text-[#162252]">{selectedEntry.ot_id}</h2>
+              <h2 className="text-base font-bold text-[#162252]">{folioFor(selectedEntry.ot_id)}</h2>
               <button
                 type="button"
                 onClick={() => setSelectedEntry(null)}

@@ -77,7 +77,7 @@ function OTCard({ entry, ot, onClick }: OTCardProps) {
         styles.text,
       ].join(' ')}
     >
-      <div className="font-semibold truncate">{entry.ot_id}</div>
+      <div className="font-semibold truncate">{ot?.folio ?? entry.ot_id}</div>
       <div className="truncate opacity-80">{entry.unidad}</div>
       {entry.horas_estimadas ? (
         <div className="opacity-60">{entry.horas_estimadas}h</div>
