@@ -65,7 +65,7 @@ const PANAMA_OPERATION_GROUPS = new Map([
   ['despacho', ['api/panama/turnos/despacho']],
   ['compras', ['api/purchasing/request-submit', 'api/purchasing/request-status', 'api/purchasing/order-save',
     'api/purchasing/order-status', 'api/purchasing/order-delete']],
-  ['recepcion', ['api/purchasing/order-receive', 'api/purchasing/inventory-move']],
+  ['recepcion', ['api/purchasing/order-receive', 'api/purchasing/order-dispatch', 'api/purchasing/inventory-move', 'api/purchasing/inventory-reservation']],
   ['finanzas', ['api/purchasing/order-invoice', 'api/purchasing/order-payment']],
   ['gastos', ['api/purchasing/expense-save', 'api/purchasing/expense-delete', 'api/purchasing/expense-review']],
   ['horometro', [`api/sheets/append:${METER_TAB}`, 'api/panama/horometros']],
@@ -76,6 +76,11 @@ const PANAMA_OPERATION_GROUPS = new Map([
   ['activos', ['api/sheets/append:Activos']],
 ]);
 const operationGroup = new Map([...PANAMA_OPERATION_GROUPS].flatMap(([group, routes]) => routes.map(route => [route, group])));
+const relatedPause = new Map([
+  ['api/workshop/pmbatch', 'api/workshop/pm'], ['api/workshop/pmbatchcheck', 'api/workshop/pm'],
+  ['api/purchasing/inventory-reservation', 'api/purchasing/inventory-move'],
+  ['api/purchasing/order-dispatch', 'api/purchasing/order-receive'],
+]);
 const liveGroups = 'taller,inspecciones,pm,turnos,compras,recepcion,finanzas,gastos,horometro,combustible,fletes,llantas,proveedores,activos';
 
 function enabledPanamaGroups(value) {
@@ -322,8 +327,7 @@ export function createHermesGateway({
         return res.status(200).json(history);
       }
       if (path === 'api/sheets/read') return await sheetRead(req, res, sheets, session);
-      if (req.method !== 'GET' && (pausedOperations.has(path)
-          || (['api/workshop/pmbatch', 'api/workshop/pmbatchcheck'].includes(path) && pausedOperations.has('api/workshop/pm')))) {
+      if (req.method !== 'GET' && (pausedOperations.has(path) || pausedOperations.has(relatedPause.get(path)))) {
         return invalid(res, 503, 'Operación en pausa. Usa el procedimiento vigente de tu área.');
       }
 

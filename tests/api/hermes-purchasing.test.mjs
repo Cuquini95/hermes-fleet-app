@@ -201,6 +201,101 @@ const newOrder = (input = {}) => ({
   ...input,
 });
 
+const warehouseLead = { ...manager, userId: 'almacen-qa', role: 'jefe_taller', project: 'tmf-panama', previewDemo: true,
+  canApprovePurchases: false, canReceivePurchases: true };
+
+function seedWarehouseCatalog(sheets) {
+  const [header, first] = sheets.inspect(TAB.catalog);
+  const second = [...first];
+  header[14] = 'Almacén';
+  first[14] = 'Patio A';
+  second[14] = 'Patio B';
+  second[5] = '10';
+  sheets.seed(TAB.catalog, [header, first, second]);
+}
+
+test('reservas simultáneas no exceden el stock por almacén y la salida consume solo su reserva', async () => {
+  const { sheets, call } = setup();
+  seedWarehouseCatalog(sheets);
+  const input = { ot: 'OT-QA-01', warehouse: 'Patio A', partNumber: 'SKU-QA' };
+  const reserve = reference => ({ ...input, operationId: randomUUID(), kind: 'Reserva', quantity: '3', reference });
+  const [first, second] = await Promise.all(['Reserva A', 'Reserva B'].map(reference => call('inventory-reservation', reserve(reference), warehouseLead)));
+  assert.deepEqual([first.status, second.status].sort(), [200, 409]);
+  const reservationId = (first.status === 200 ? first : second).body.id;
+  const view = async () => (await call('inventory-stock', null, warehouseLead)).body.items
+    .map(row => [row.warehouse, row.physical, row.reserved, row.available]);
+  assert.deepEqual(await view(), [['Patio A','4','3','1'],['Patio B','10','0','10']]);
+  const move = { ...input, operationId: randomUUID(), kind: 'Salida', quantity: '2', reference: 'Vale QA' };
+  assert.equal((await call('inventory-move', move, warehouseLead)).status, 409);
+  assert.equal((await call('inventory-move', { ...move, warehouse: 'Patio B', reservationId }, warehouseLead)).status, 409);
+  const consume = { ...move, reservationId };
+  const consumed = await call('inventory-move', consume, warehouseLead);
+  assert.equal(consumed.status, 200);
+  assert.deepEqual((await call('inventory-move', consume, warehouseLead)).body, consumed.body);
+  assert.deepEqual(await view(), [['Patio A','2','1','1'],['Patio B','10','0','10']]);
+  const release = { ...input, operationId: randomUUID(), kind: 'Liberación', quantity: '1', reference: 'Liberación QA', reservationId };
+  assert.equal((await call('inventory-reservation', release, warehouseLead)).status, 200);
+  assert.deepEqual(await view(), [['Patio A','2','0','2'],['Patio B','10','0','10']]);
+  const restricted = { ...warehouseLead, allUnits: false, assignedUnits: ['QA-EX401'] };
+  assert.equal((await call('inventory-reservation', reserve('Fuera de alcance'), restricted)).status, 403);
+  assert.deepEqual((await call('inventory-stock', null, restricted)).body.items, []);
+});
+
+test('solo un despacho confirmado entra en tránsito y su recepción parcial cuadra por partida y almacén', async () => {
+  const { sheets, call, readOrder } = setup();
+  seedWarehouseCatalog(sheets);
+  const buyer = { ...manager, project: 'tmf-panama', previewDemo: true };
+  const created = await call('order-save', newOrder({ entity: 'TP_PA_DEMO', unit: 'QA-DZ203',
+    lines: [{ partNumber: 'SKU-QA', description: 'Filtro QA', quantity: '5', unitPrice: '10' }] }), buyer);
+  assert.equal(created.status, 200);
+  const { folio, version } = created.body;
+  assert.equal((await call('order-status', { operationId: randomUUID(), folio, version, status: 'Aprobada', reason: 'QA' }, buyer)).status, 200);
+  const balances = async () => (await call('inventory-stock', null, warehouseLead)).body.items
+    .map(row => [row.warehouse, row.physical, row.inTransit]);
+  assert.deepEqual(await balances(), [['Patio A','4','0'],['Patio B','10','0']]);
+  let order = await readOrder(folio, buyer);
+  const lineId = order.lines[0].id;
+  const dispatch = { operationId: randomUUID(), folio, version: order.version, lineId, quantity: '4', warehouse: 'Patio B', reference: 'Guía QA' };
+  const shipped = await call('order-dispatch', dispatch, warehouseLead);
+  assert.equal(shipped.status, 200);
+  assert.deepEqual((await call('order-dispatch', dispatch, warehouseLead)).body, shipped.body);
+  assert.deepEqual(await balances(), [['Patio A','4','0'],['Patio B','10','4']]);
+  order = await readOrder(folio, buyer);
+  const receipt = { operationId: randomUUID(), folio, version: order.version, lineId, quantity: '2', reference: 'Remisión QA' };
+  assert.equal((await call('order-receive', receipt, warehouseLead)).status, 409);
+  assert.equal((await call('order-receive', { ...receipt, dispatchId: shipped.body.dispatchId, warehouse: 'Patio A' }, warehouseLead)).status, 409);
+  assert.equal((await call('order-receive', { ...receipt, dispatchId: shipped.body.dispatchId }, warehouseLead)).status, 200);
+  assert.deepEqual(await balances(), [['Patio A','4','0'],['Patio B','12','2']]);
+  const catalog = sheets.inspect(TAB.catalog);
+  catalog[2][10] = 'QA-DZ203, QA-EX401';
+  sheets.seed(TAB.catalog, catalog);
+  const restricted = { ...warehouseLead, allUnits: false, assignedUnits: ['QA-EX401'] };
+  const scoped = await call('inventory-stock', null, restricted);
+  assert.deepEqual(scoped.body.items.map(row => [row.warehouse, row.inTransit]), [['Patio B', '0']]);
+  order = await readOrder(folio, buyer);
+  const cancel = { operationId: randomUUID(), folio, version: order.version, lineId, cancelDispatchId: shipped.body.dispatchId,
+    reference: 'Proveedor canceló el remanente' };
+  assert.equal((await call('order-dispatch', cancel, warehouseLead)).status, 200);
+  assert.deepEqual(await balances(), [['Patio A','4','0'],['Patio B','12','0']]);
+  const track = sheets.inspect(TAB.inventoryMovements);
+  assert.deepEqual(track.slice(1).map(row => [row[2], row[4], row[16], row[18]]), [
+    ['Despacho', '4', 'Patio B', shipped.body.dispatchId],
+    ['Recepción', '2', 'Patio B', shipped.body.dispatchId],
+    ['Cancelación de despacho', '2', 'Patio B', shipped.body.dispatchId],
+  ]);
+  sheets.seed(TAB.inventoryMovements, track.filter(row => row[2] !== 'Despacho'));
+  assert.deepEqual(await balances(), [['Patio A','4','0'],['Patio B','12',null]]);
+});
+
+test('una ubicación de estante histórica nunca se usa para inventar un almacén', async () => {
+  const { sheets, call } = setup();
+  const catalog = sheets.inspect(TAB.catalog);
+  catalog[1][8] = 'Estante A-2';
+  sheets.seed(TAB.catalog, catalog);
+  const { body } = await call('inventory-stock', null, warehouseLead);
+  assert.deepEqual(body.items.map(row => [row.warehouse, row.physical, row.reserved, row.inTransit]), [['', '4', null, null]]);
+});
+
 test('mantiene la huérfana y guarda tres importes con el mismo folio después de un fallo', async () => {
   const { call, readOrder, sheets } = setup();
   const input = newOrder();

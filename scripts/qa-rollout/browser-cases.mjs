@@ -1285,6 +1285,79 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         duplicateSuppressed: true, returnLinked: true, costReversed: '-12.50', remainingReturnable: 1 };
     }, browserWarehouse));
 
+    await record('MÓVIL-STOCK-POR-ALMACÉN', () => inRole('jefe_taller', 390, async page => {
+      const sku = 'QA-BODEGA', ot = 'OT-STOCK-QA', oc = 'OC-STOCK-QA';
+      const inventory = sheet.read(tabs.parts);
+      inventory[4][14] = 'Almacén';
+      for (const [warehouse, stock] of [['Patio Norte', '4'], ['Patio Sur', '10']]) {
+        inventory.push([sku, 'Filtro compartido QA', '', '', 'pza', stock, '1', '20', '', '', 'DZ203', '', '', '', warehouse]);
+      }
+      sheet.seed(tabs.parts, inventory);
+      sheet.seed(tabs.orders, [...sheet.read(tabs.orders),
+        ['STOCK-QA', ot, '12/11/2026', 'DZ203', 'Mecánica', 'Stock QA', 'MEDIA', 'MEDIA', '', 'En Reparación']]);
+      const header = Array(28).fill('');
+      Object.assign(header, { 0: oc, 1: '15/11/2026', 2: 'Proveedor QA', 5: 'DZ203', 6: '100.00', 7: '7.00', 10: '107.00',
+        11: 'Aprobada', 13: 'QA Gerencia', 15: 'version-stock', 16: JSON.stringify({ id: 'TP_PA_QA', name: 'QA', currency: 'USD' }),
+        17: 'approver-stock-qa', 18: '2026-11-15T16:00:00Z', 27: '3999' });
+      sheet.seed(tabs.purchases, [...sheet.read(tabs.purchases), header]);
+      sheet.seed(tabs.lines, [...sheet.read(tabs.lines), [oc, '1', 'Filtro compartido QA', '5', '20', '100', 'LINE-STOCK-QA', '', '', sku, '0', '[]']]);
+      const balance = async (warehouse, physical, reserved, available, transit) => {
+        const card = page.getByRole('article', { name: `${sku} · ${warehouse}`, exact: true });
+        for (const [label, amount] of [['Existencia', physical], ['Reservado', reserved], ['Disponible', available], ['En tránsito', transit]]) {
+          const value = card.getByText(label, { exact: true }).locator('..');
+          await visible(value.getByText(String(amount), { exact: true }));
+        }
+        return card;
+      };
+      await page.goto(`${origin}/inventory`, { waitUntil: 'domcontentloaded' });
+      await dismissPrivacy(page);
+      const north = await balance('Patio Norte', 4, 0, 4, 0);
+      await north.getByRole('button', { name: 'Reservar', exact: true }).click();
+      await north.getByLabel('Orden de trabajo').fill(ot);
+      await north.getByLabel('Cantidad de reserva').fill('3');
+      await north.getByLabel('Referencia').fill('Vale reserva QA');
+      await north.getByRole('button', { name: 'Confirmar reserva' }).click();
+      await balance('Patio Norte', 4, 3, 1, 0);
+      await balance('Patio Sur', 10, 0, 10, 0);
+      await page.getByLabel('Estado de stock').selectOption('Bajo');
+      await visible(page.getByRole('article', { name: `${sku} · Patio Norte` }));
+      assert.equal(await page.getByRole('article', { name: `${sku} · Patio Sur` }).count(), 0);
+      await page.getByLabel('Estado de stock').selectOption('');
+      await page.goto(`${origin}/panama/recepciones`, { waitUntil: 'domcontentloaded' });
+      await page.getByRole('searchbox').fill('3999');
+      await clickByName(page, 'Confirmar despacho');
+      await page.getByLabel('Almacén de destino').selectOption('Patio Sur');
+      await page.getByLabel('Cantidad despachada').fill('4');
+      await page.getByLabel('Guía del proveedor').fill('Guía tránsito QA');
+      const attempts = [];
+      page.on('request', request => {
+        if (request.method() === 'POST' && request.url().endsWith('/api/purchasing/order-dispatch')) attempts.push(request.postDataJSON().operationId);
+      });
+      sheet.failNext({ matches: writes => writes.some(write => write.tab === tabs.lines), when: 'after' });
+      await clickByName(page, 'Registrar despacho');
+      await visible(page.getByRole('alert').filter({ hasText: 'No pudimos confirmar el guardado' }));
+      await visible(page.getByRole('button', { name: 'Confirmar movimiento pendiente' }));
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await dismissPrivacy(page);
+      await clickByName(page, 'Confirmar movimiento pendiente');
+      await page.getByRole('searchbox').fill('3999');
+      await visible(page.getByText('Guía tránsito QA · 4 en tránsito'));
+      assert.equal(attempts.length, 2);
+      assert.equal(attempts[0], attempts[1]);
+      await clickByName(page, 'Recibir partida');
+      await page.getByLabel('Guía a recibir').selectOption({ label: 'Guía tránsito QA · 4' });
+      await page.getByLabel('Cantidad recibida').fill('2');
+      await page.getByLabel('Referencia o remisión').fill('Remisión parcial QA');
+      await clickByName(page, 'Registrar recepción');
+      await visible(page.getByText('Guía tránsito QA · 2 en tránsito'));
+      await page.goto(`${origin}/inventory`, { waitUntil: 'domcontentloaded' });
+      await balance('Patio Norte', 4, 3, 1, 0);
+      await balance('Patio Sur', 12, 0, 12, 2);
+      await noHorizontalOverflow(page, 390);
+      await shot(page, 'inventario-por-almacen-390.png');
+      return { sku, warehouses: 2, physicalAfterReceipt: 12, reserved: 3, inTransit: 2, persistedAfterNavigation: true, recoveredAfterReload: true };
+    }, browserWarehouse));
+
     await record('MÓVIL-COSTO-REAL-OT', () => inRole('gerencia', 390, async page => {
       const ot = 'OT-COSTO-QA';
       const order = Array(26).fill('');

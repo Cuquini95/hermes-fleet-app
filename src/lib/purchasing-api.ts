@@ -10,11 +10,15 @@ export interface InventoryMovement {
   order: string;
   orderNumber?: string;
   ot: string;
+  otFolio?: string;
   reference: string;
   by: string;
   stockAfter: string;
   measurementUnit: string;
   originalIssueId?: string;
+  warehouse?: string;
+  reservationId?: string;
+  dispatchId?: string;
   returnable?: string | null;
   valuation?: { unitCost: string; currency: string; reference: string; delta: string } | null;
 }
@@ -158,7 +162,26 @@ export interface PurchaseOverview {
 
 export type PurchaseReceivingLine = Pick<PurchaseLine, 'id' | 'number' | 'description' | 'partNumber' | 'quantity' | 'received'> & {
   receipts: Omit<PurchaseReceipt, 'actorId'>[];
+  warehouse?: string;
+  warehouses?: string[];
+  dispatches?: { id: string; reference: string; remaining: string }[];
+  dispatchReview?: boolean;
 };
+
+export interface WarehouseStock {
+  partNumber: string;
+  description: string;
+  oem: string;
+  warehouse: string;
+  measure: string;
+  minimum: string | null;
+  physical: string | null;
+  reserved: string | null;
+  available: string | null;
+  inTransit: string | null;
+  review?: string;
+  reservations: { id: string; unit: string; ot: string; folio?: string; reference: string; remaining: string }[];
+}
 
 export type PurchaseReceivingOrder = Pick<PurchaseOrder, 'folio' | 'number' | 'unit' | 'vendorName' | 'deliveryDate' | 'receiptStatus' | 'version'> & {
   lines: PurchaseReceivingLine[];

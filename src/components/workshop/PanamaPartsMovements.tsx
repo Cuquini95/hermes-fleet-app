@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { displayMoney, formatPanamaReceiptDate, purchaseRead, purchaseWrite, type InventoryMovement } from '../../lib/purchasing-api';
+import { displayMoney, formatPanamaReceiptDate, purchaseRead, purchaseWrite, type InventoryMovement, type WarehouseStock } from '../../lib/purchasing-api';
 import { useAuthStore } from '../../stores/auth-store';
 
 export default function PanamaPartsMovements({ ot = '', onMoved }: { ot?: string; onMoved?: () => void }) {
   const userId = useAuthStore((state) => state.userId);
   const project = useAuthStore((state) => state.project);
   const role = useAuthStore((state) => state.role);
-  const canReceive = useAuthStore((state) => state.canReceivePurchases);
+  const canReceive = useAuthStore((state) => state.canReceivePurchases && !state.canApprovePurchases);
   if (project !== 'tmf-panama' || (!canReceive && !['jefe_taller','coordinador','supervisor','gerencia'].includes(role ?? ''))) return null;
   return <Movements key={userId + ':' + ot} ot={ot} canReceive={canReceive} onMoved={onMoved} />;
 }
@@ -16,6 +16,8 @@ function Movements({ ot, canReceive, onMoved }: { ot: string; canReceive: boolea
   const [kind, setKind] = useState<'Salida' | 'Devolución'>('Salida');
   const [workOrder, setWorkOrder] = useState(ot);
   const [partNumber, setPartNumber] = useState('');
+  const [warehouse, setWarehouse] = useState('');
+  const [stock, setStock] = useState<WarehouseStock[]>([]);
   const [quantity, setQuantity] = useState('');
   const [reference, setReference] = useState('');
   const [originalIssueId, setOriginalIssueId] = useState('');
@@ -25,8 +27,11 @@ function Movements({ ot, canReceive, onMoved }: { ot: string; canReceive: boolea
   const [reload, setReload] = useState(0);
   const inFlight = useRef(false);
   const returns = kind === 'Devolución';
+  const warehouseOptions = stock.filter(item => item.warehouse && item.available !== null
+    && item.partNumber.toUpperCase() === partNumber.trim().toUpperCase()).map(item => item.warehouse);
+  const requestedOt = workOrder.trim().toUpperCase();
   const eligible = items.filter(item => item.kind === 'Salida' && Number(item.returnable) > 0
-    && item.ot.toUpperCase() === workOrder.trim().toUpperCase());
+    && [item.ot, item.otFolio].some(id => id?.toUpperCase() === requestedOt));
   const original = eligible.find(item => item.id === originalIssueId);
   const issueReference = new Map(items.filter(item => item.kind === 'Salida').map(item => [item.id, item.reference]));
 
@@ -40,6 +45,15 @@ function Movements({ ot, canReceive, onMoved }: { ot: string; canReceive: boolea
     return () => abort.abort();
   }, [ot, reload]);
 
+  useEffect(() => {
+    if (!canReceive) return;
+    const abort = new AbortController();
+    void purchaseRead<{ items: WarehouseStock[] }>('inventory-stock', undefined, abort.signal)
+      .then(result => { if (!abort.signal.aborted) setStock(result.items); })
+      .catch(() => { if (!abort.signal.aborted) setStock([]); });
+    return () => abort.abort();
+  }, [canReceive, reload]);
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (inFlight.current || (returns && !original)) return;
@@ -52,6 +66,7 @@ function Movements({ ot, canReceive, onMoved }: { ot: string; canReceive: boolea
         ot: workOrder.trim(), kind, partNumber: returns ? original?.partNumber : partNumber.trim(),
         quantity: quantity.trim().replace(',', '.'), reference: reference.trim(),
         ...(returns && { originalIssueId }),
+        ...(!returns && warehouse && { warehouse }),
       });
       setStatus('Movimiento registrado.');
       setReference('');
@@ -84,7 +99,13 @@ function Movements({ ot, canReceive, onMoved }: { ot: string; canReceive: boolea
           {returns ? <label className="text-sm">Salida original<select aria-label="Salida original" required className={input} value={originalIssueId} onChange={event => setOriginalIssueId(event.target.value)}>
             <option value="">{eligible.length ? 'Selecciona la salida' : 'Sin salidas con saldo verificable'}</option>
             {eligible.map(item => <option key={item.id} value={item.id}>{item.partNumber} · {item.reference} · saldo {item.returnable}</option>)}
-          </select></label> : <label className="text-sm">SKU del catálogo<input required maxLength={120} className={input} value={partNumber} onChange={(event) => setPartNumber(event.target.value)} /></label>}
+          </select></label> : <label className="text-sm">SKU del catálogo<input required maxLength={120} className={input} value={partNumber} onChange={(event) => { setPartNumber(event.target.value); setWarehouse(''); }} /></label>}
+          {!returns && warehouseOptions.length > 1 && <label className="text-sm">Almacén de salida
+            <select required className={input} value={warehouse} onChange={event => setWarehouse(event.target.value)}>
+              <option value="">Seleccionar almacén</option>
+              {warehouseOptions.map(option => <option key={option}>{option}</option>)}
+            </select>
+          </label>}
           <label className="text-sm">Cantidad<input required className={input} inputMode="decimal" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
           <label className="text-sm">Referencia del movimiento<input required maxLength={160} className={input} value={reference} onChange={(event) => setReference(event.target.value)} /></label>
           {original && <p className="text-xs text-slate-700">Saldo de la salida {original.returnable} {original.measurementUnit}
@@ -99,8 +120,9 @@ function Movements({ ot, canReceive, onMoved }: { ot: string; canReceive: boolea
       {items.length > 0 && <ul className="space-y-2 text-sm">
         {items.slice(0, 30).map((item) => (
           <li key={item.id} className="break-words rounded-lg bg-slate-50 p-2">
-            <p>{item.kind} · {item.partNumber} · {item.quantity} {item.measurementUnit} · existencia {item.stockAfter}</p>
-            <p className="text-slate-700">{item.ot || item.orderNumber || item.order} · {item.unit} · {item.reference} · {item.by} · {formatPanamaReceiptDate(item.at)}</p>
+            <p>{item.kind} · {item.partNumber}{item.warehouse && ` · ${item.warehouse}`} · {item.quantity} {item.measurementUnit}
+              {item.stockAfter && ` · existencia ${item.stockAfter}`}</p>
+            <p className="text-slate-700">{item.otFolio || item.ot || item.orderNumber || item.order} · {item.unit} · {item.reference} · {item.by} · {formatPanamaReceiptDate(item.at)}</p>
             {item.originalIssueId && <p>Salida original · {issueReference.get(item.originalIssueId) || item.originalIssueId}</p>}
             {item.kind === 'Salida' && <p>{item.returnable == null ? 'Saldo por conciliar' : `Saldo para devolución ${item.returnable}`}</p>}
             {['Salida', 'Devolución'].includes(item.kind) && <p>{item.valuation

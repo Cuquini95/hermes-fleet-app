@@ -7,6 +7,7 @@ import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { dispatchWorkshop } from '../../api/_lib/hermes-workshop.js';
 import { createPanamaOperationalStore } from '../../api/_lib/hermes-operational-store.js';
+import { dispatchPurchasing, PURCHASE_TABS } from '../../api/_lib/hermes-purchasing.js';
 
 const entry = process.env.HERMES_PGLITE_ENTRY;
 if (!entry || !isAbsolute(entry)) throw new Error('Indica la ruta absoluta de PGlite en HERMES_PGLITE_ENTRY.');
@@ -35,9 +36,8 @@ async function save(connection, key, changes, outcome) {
   return response.rows[0].saved;
 }
 
-async function verifyPmBatch(connection) {
-  const units = ['QA-DZ203', 'QA-EX401'];
-  const sheets = createPanamaOperationalStore({
+function storeOnMemoryDatabase(connection, units) {
+  return createPanamaOperationalStore({
     readInventory: async () => units.map((unit, index) => ['', unit, '', 'QA', String(index + 1)]),
     request: async (path, { query, body }) => {
       if (path.endsWith('/hermes_panama_operational_tables')) {
@@ -53,11 +53,21 @@ async function verifyPmBatch(connection) {
       }
       assert(path.endsWith('/rpc/hermes_panama_commit'));
       const { operation_key, operation_fingerprint, guards, changes, outcome } = body;
-      const written = await connection.query('select public.hermes_panama_commit($1,$2,$3,$4::jsonb,$5::jsonb) as saved',
-        [operation_key, operation_fingerprint, guards, JSON.stringify(changes), JSON.stringify(outcome)]);
-      return Response.json(written.rows[0].saved);
+      try {
+        const written = await connection.query('select public.hermes_panama_commit($1,$2,$3,$4::jsonb,$5::jsonb) as saved',
+          [operation_key, operation_fingerprint, guards, JSON.stringify(changes), JSON.stringify(outcome)]);
+        return Response.json(written.rows[0].saved);
+      } catch (error) {
+        if (!['PT400','PT409'].includes(error.code)) throw error;
+        return Response.json({ code: error.code, message: error.message }, { status: Number(error.code.slice(2)) });
+      }
     },
   });
+}
+
+async function verifyPmBatch(connection) {
+  const units = ['QA-DZ203', 'QA-EX401'];
+  const sheets = storeOnMemoryDatabase(connection, units);
   const request = (endpoint, body, method = 'POST', query) => dispatchWorkshop({
     path: 'api/workshop/' + endpoint, method, body, query, sheets,
     session: { userId: operatorId, userName: 'Coordinación QA', project: 'tmf-panama', role: 'coordinador', assignedUnits: units },
@@ -86,6 +96,34 @@ async function verifyPmBatch(connection) {
   }
   assert.equal((await rows(connection, 'WORKSHOP_SCHEDULE')).length, 3);
   return result.body.orders.map(order => order.folio);
+}
+
+async function verifyWarehouseReserve(connection) {
+  const unit = 'QA-DZ203';
+  const sku = 'RESERVA-QA';
+  const warehouse = 'Almacén de prueba';
+  const [,,,, header] = await rows(connection, PURCHASE_TABS.catalog);
+  await save(connection, 'init-warehouse-stock', [
+    { tab: PURCHASE_TABS.catalog, row: 4, values: [...header, 'Almacén'] },
+    { tab: PURCHASE_TABS.catalog, append: [[sku, 'Filtro QA', '', '', 'pza', '4', '1', '', '', '', unit, '', '', '', warehouse]] },
+  ], { ready: true });
+  const sheets = storeOnMemoryDatabase(connection, [unit]);
+  const session = { userId: operatorId, userName: 'Almacén QA', role: 'jefe_taller', project: 'tmf-panama',
+    canReceivePurchases: true, canApprovePurchases: false, assignedUnits: [unit] };
+  const call = (action, body) => dispatchPurchasing({ path: 'api/purchasing/' + action, method: body ? 'POST' : 'GET', body, sheets, session });
+  const attempts = ['RESERVA-QA-1', 'RESERVA-QA-2'].map(reference => ({ operationId: randomUUID(), kind: 'Reserva',
+    warehouse, partNumber: sku, quantity: '3', ot: 'OT-0100', reference }));
+  const results = await Promise.all(attempts.map(input => call('inventory-reservation', input)));
+  assert.deepEqual(results.map(result => result.status).sort(), [200, 409]);
+  const winner = results.findIndex(result => result.status === 200);
+  const replay = await call('inventory-reservation', attempts[winner]);
+  assert.deepEqual(replay.body, results[winner].body);
+  const report = await call('inventory-stock');
+  assert.equal(report.status, 200);
+  assert.deepEqual(report.body.items.map(item => [item.physical, item.reserved, item.available, item.reservations[0]?.folio]),
+    [['4', '3', '1', 'OT-0100']]);
+  assert.equal((await rows(connection, PURCHASE_TABS.inventoryMovements)).length, 2);
+  return { simultaneous: 2, reserved: '3', available: '1', replayed: true };
 }
 
 try {
@@ -140,9 +178,10 @@ try {
   assert.equal((await rows(restored, orders)).at(-1)[25], 'OT-0103');
   assert.equal((await rows(restored, purchases)).at(-1)[27], '3004');
   const batchFolios = await verifyPmBatch(restored);
+  const warehouseReserve = await verifyWarehouseReserve(restored);
   console.log(JSON.stringify({ environment: 'Postgres aislado / adjunto archivado sintético',
     restoredInMs: Math.round(performance.now() - began), concurrentCreations: 2, folios: 'OT-0100..0103 / OC 3001..3004',
-    batchFolios, retained: ['OT y evidencia', 'aprobación de OC', 'recepción y saldo', 'comprobante de reintento'] }));
+    batchFolios, warehouseReserve, retained: ['OT y evidencia', 'aprobación de OC', 'recepción y saldo', 'comprobante de reintento'] }));
 } catch (error) {
   console.error(error.message, error.code ?? '');
   process.exitCode = 1;
