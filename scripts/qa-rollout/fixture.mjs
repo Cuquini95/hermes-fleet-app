@@ -422,6 +422,10 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
     HERMES_UPSTREAM_URL: '', HERMES_UPSTREAM_TOKEN: '', HERMES_GOOGLE_SERVICE_ACCOUNT_JSON: '',
     HERMES_GOOGLE_SHEET_ID: '', HERMES_GOOGLE_SHEETS_ID: '', TELEGRAM_BOT_TOKEN: '',
     HERMES_EXPENSE_PRICE_CURRENCY: 'USD',
+    HERMES_PANAMA_PM_TRIGGER_RULES_JSON: JSON.stringify([{
+      unit: 'DZ205', level: 'PM-250', reference: 'Plan sintético QA rev1', dueDate: '2026-11-12',
+      condition: { source: 'dozers', minCritical: 1 },
+    }]),
     HERMES_PANAMA_PM_CHECKLISTS_JSON: JSON.stringify(['PM-250', 'PM-1'].flatMap(level => [
       { model: 'Komatsu D65EX-16', level, reference: 'Checklist genérico QA',
         tasks: [{ id: 'generic', label: 'Tarea genérica' }] },
@@ -448,6 +452,18 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
     if (withGateway) {
       if (typeof gate.createHermesGateway !== 'function') throw new Error('La versión no exporta createHermesGateway');
       gateway = gate.createHermesGateway({ sheets: sheet, writeEnabled: true, panamaOnly: true, enablePanamaOperations: true, enablePanamaFuelCapture: true,
+        readPanama: async spec => {
+          const rows = {
+            maintenance: { unit: 'DZ205', status: 'VENCIDO', next: 'PM-250', remaining: '-2', reading: 'Actualizada', plan: 'Aprobado', due: '388', hours: '390' },
+            maintenancePlan: { unit: 'DZ205', active: 'Sí', approved: 'Sí', cycle: '250' },
+            dozers: { unit: 'DZ205', group: 'QA', critical: '2', upcoming: '0', noData: '0' },
+          };
+          const row = rows[spec.key];
+          if (!row) throw new Error('Fuente sintética sin datos');
+          const columns = Object.entries({ ...spec.columns, ...spec.optionalColumns });
+          return { rows: [columns.map(([, name]) => name), columns.map(([property]) => row[property] ?? '')],
+            captured_at: '2026-11-13T04:00:00Z' };
+        },
         readOfficialShifts: async () => ({ capturedAt: '2026-11-13T04:00:00Z', records: [
           { unit: 'DZ203', id: 'REG-QA-HOROMETRO', date: '12-Nov-2026', shift: 'Día', start: '390', end: '397' },
         ] }),

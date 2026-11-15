@@ -14,7 +14,7 @@ const secondMechanic = { ...account('mechanic-qa-2', 'mecanico'), userName: 'QA 
 const supervisor = { ...account('supervisor-qa', 'supervisor'), canReviewPanamaHse: true };
 const manager = account('manager-qa', 'gerencia');
 
-function fixture(pmChecklists = []) {
+function fixture(pmChecklists = [], triggers = {}) {
   const data = new Map([['01 Inventario', [[], [], [], ['', 'CA20', '', 'Cat', '745', '', '', '', '', '4000']]]]);
   const mutations = new Map();
   const evidence = new Map();
@@ -62,7 +62,7 @@ function fixture(pmChecklists = []) {
   };
   const request = (path, session, body = undefined, query = {}) => dispatchWorkshop({
     path: `api/workshop/${path}`, method: body === undefined ? 'GET' : 'POST', body,
-    query, session, sheets, pmChecklists,
+    query, session, sheets, pmChecklists, ...triggers,
     listMechanics: async () => [mechanic, secondMechanic],
     evidenceStorage: { find: async id => evidence.get(id) },
   });
@@ -78,6 +78,42 @@ const transition = (request, actor, otId, value, execution) => request('transiti
   mutationId: randomUUID(), otId, field: 'estado', value, execution,
 });
 const executionProof = { functionalTest: 'Prueba funcional registrada, sin fuga y con respuesta normal.' };
+
+test('un servicio PM conserva los tres disparadores y dos confirmaciones producen una sola OT', async () => {
+  const sources = { sections: {
+    maintenance: [{ unit: 'CA20', next: 'PM-250', hours: '4000', due: '3990', reading: 'Actualizada' }],
+    maintenancePlan: [{ unit: 'CA20', active: 'Sí', approved: 'Sí' }],
+    dozers: [{ unit: 'CA20', critical: '2', noData: '0' }],
+  }, snapshots: { maintenance: '2026-11-13T13:00:00Z' } };
+  const pmTriggerRules = [{ unit: 'CA20', level: 'PM-250', reference: 'Plan QA rev1',
+    dueDate: '2026-11-12', condition: { source: 'dozers', minCritical: 1 } }];
+  const { request, sheets } = fixture([], { readPmSources: async () => sources, pmTriggerRules });
+  const preflight = await request('pmtriggers', workshop, undefined, { unit: 'CA20', level: 'PM250' });
+  assert.equal(preflight.status, 200);
+  assert.deepEqual(preflight.body.rules.map(r => [r.kind,r.state,r.actual,r.threshold]), [
+    ['hours','due',4000,3990],['date','due',preflight.body.today,'2026-11-12'],['condition','due',2,1],
+  ]);
+  assert.equal((await request('pmtriggers', operator, undefined, { unit: 'CA20', level: 'PM250' })).status, 403);
+  const base = { unit: 'CA20', level: 'PM-250', includedLevels: 'PM-250', scheduledDate: '2026-11-16', hours: '2' };
+  const [one,two] = await Promise.all([workshop,coordinator].map(actor => request('pm', actor, { ...base, mutationId: randomUUID() })));
+  assert.deepEqual([one.status,two.status].sort(), [200,201]);
+  assert.equal(one.body.otId,two.body.otId);
+  assert.equal((await sheets.read('WORKSHOP_SCHEDULE')).length,1);
+  const [order] = await sheets.read('ORDENES_TRABAJO');
+  const reasons = JSON.parse(order[23]).triggers;
+  assert.deepEqual(reasons.map(reason => reason.kind), ['hours','date','condition']);
+  assert.equal(reasons[0].cut,'2026-11-13T13:00:00Z');
+  order[9] = 'Completado';
+  sheets.seed('ORDENES_TRABAJO',[order]);
+  const stale = await request('pm', workshop, { ...base, mutationId: randomUUID() });
+  assert.equal(stale.body.otId,order[1]);
+  sources.sections.maintenance[0].due = '4220';
+  sources.sections.maintenance[0].hours = '4221';
+  const next = await request('pm', workshop, { ...base, mutationId: randomUUID() });
+  assert.equal(next.status,201);
+  assert.notEqual(next.body.otId,order[1]);
+  assert.deepEqual(JSON.parse((await sheets.read('ORDENES_TRABAJO'))[1][23]).triggers.map(reason => reason.kind), ['hours']);
+});
 
 async function startRepair(request) {
   const { body: { otId } } = await request('report', operator, report());

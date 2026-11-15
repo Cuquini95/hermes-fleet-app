@@ -5,6 +5,7 @@ import { PANAMA_PROJECT } from './hermes-panama.js';
 import { reconcilePanamaWorkshop } from './hermes-panama-workshop.js';
 import { HermesSheetError, PANAMA_READINESS_TAB } from './hermes-google-sheets.js';
 import { isEvidenceError, verifyEvidence } from './hermes-evidence.js';
+import { evaluatePmTriggers, pmLevelKey } from './hermes-pm-triggers.js';
 
 const TAB = {
   inventory: '01 Inventario', orders: 'ORDENES_TRABAJO', history: 'OT_STATUS_LOG', failures: 'Averias',
@@ -563,6 +564,17 @@ async function scheduleCheck(context) {
   return scheduleAssessment(context, rows, { otId: order?.otId, unit, mechanic, date, hours, resources });
 }
 
+async function pmOrders(sheets, unit, level) {
+  return (await sheets.read(TAB.orders)).filter(row => /^OT-/.test(row[1] || '') && row[3]?.trim().toUpperCase() === unit && row[4] === 'PM'
+    && pmLevelKey(storedObject(row[WORKFLOW.pm])?.level ?? /^Mantenimiento Preventivo (PM[ -]?\d{1,5})\b/i.exec(row[5] ?? '')?.[1]) === level);
+}
+
+async function existingPm(context, row) {
+  const otId = row[1];
+  const schedule = linkedRows(await context.sheets.read(TAB.schedule), 2, 3, otId, row[3].trim().toUpperCase())?.row;
+  return { status: 200, body: { otId, schedule, existing: true, completed: row[9] === 'Completado' } };
+}
+
 async function pm(context) {
   const { body, session } = context;
   const { code, model, serial, meter } = await equipmentFor(context, body.unit);
@@ -572,6 +584,24 @@ async function pm(context) {
   const notes = text(body.notes, 'Observaciones', 2000);
   const date = isoDate(body.scheduledDate);
   const hours = decimal(body.hours, 'Horas estimadas', 0.25, 240);
+  let triggerReasons = [];
+  let pmGuard;
+  if (isPanama(context)) {
+    const normalized = pmLevelKey(level);
+    const orders = await pmOrders(context.sheets, code, normalized);
+    const open = orders.findLast(row => !['Completado', 'Cancelado', 'Cancelada'].includes(row[9]));
+    if (open) return existingPm(context, open);
+    const { rules } = await evaluatePmTriggers(context, code, normalized);
+    const consumed = new Map();
+    for (const row of orders.filter(order => order[9] === 'Completado')) {
+      const reasons = storedObject(row[WORKFLOW.pm])?.triggers;
+      if (Array.isArray(reasons)) reasons.forEach(reason => consumed.set(reason.occurrence, row));
+    }
+    const due = rules.filter(rule => rule.state === 'due');
+    triggerReasons = due.filter(rule => !consumed.has(rule.occurrence));
+    if (due.length && !triggerReasons.length) return existingPm(context, consumed.get(due.at(-1).occurrence));
+    pmGuard = `panama:pm:${digest([code, normalized, orders.at(-1)?.[1] ?? 'initial'])}`;
+  }
   const mechanic = await mechanicFor(context, body.mechanicId, code);
   const otId = context.otId;
   const priority = 'MEDIA';
@@ -584,15 +614,23 @@ async function pm(context) {
   const common = [code, model, level, included, meter];
   const order = orderRow(context, { id: otId, unit: code, type: 'PM', description, priority, parts, notes, mechanic });
   const definition = isPanama(context) ? { model, level, initialMeter: meter, ...(serial && { serial }),
-    checklist: configuredChecklist(context, model, level, serial) } : null;
+    checklist: configuredChecklist(context, model, level, serial), ...(triggerReasons.length && { triggers: triggerReasons }) } : null;
   if (definition) order.push('', '', '', JSON.stringify(definition));
-  return commit(context, [
+  try {
+    return await commit(context, [
     { tab: TAB.pm, append: [[otId, context.date, ...common, description, String(hours), mechanic?.userName || 'Sin asignar', session.userName, 'Programada', parts, notes]] },
     { tab: TAB.pmHistory, append: [[context.date, otId, ...common, String(hours), mechanic?.userName || 'Sin asignar', session.userName, 'Programada', parts, notes]] },
     { tab: TAB.orders, append: [order] },
     { tab: TAB.history, append: [historyRow(context, otId, 'estado', '', 'Abierta')] },
     { tab: TAB.schedule, append: [schedule] },
-  ], { otId, schedule, ...(definition && { checklist: definition.checklist }) });
+    ], { otId, schedule, ...(definition && { checklist: definition.checklist }) }, pmGuard);
+  } catch (error) {
+    if (pmGuard && Number(error?.status ?? error?.statusCode) === 409) {
+      const competing = (await pmOrders(context.sheets, code, pmLevelKey(level))).findLast(row => row[9] !== 'Completado');
+      if (competing) return existingPm(context, competing);
+    }
+    throw error;
+  }
 }
 
 async function schedule(context) {
@@ -939,7 +977,14 @@ export async function dispatchWorkshop(input) {
   const endpoint = path?.match(/^api\/workshop\/([a-z]+)$/)?.[1];
   try {
     assert(session?.userId && session.userName && ROLES.has(session.role), 401, 'Sesión inválida');
-    if (['returns', 'pmchecklist', 'pmtemplate', 'schedulecheck'].includes(endpoint)) assert(isPanama(input), 404, 'Acción de taller no disponible');
+    if (['returns', 'pmchecklist', 'pmtemplate', 'pmtriggers', 'schedulecheck'].includes(endpoint)) assert(isPanama(input), 404, 'Acción de taller no disponible');
+    if (method === 'GET' && endpoint === 'pmtriggers') {
+      assert(MANAGEMENT.has(session.role), 403, 'Consulta reservada a Taller y Operaciones');
+      const unit = requireUnit(session, input.query?.unit);
+      const level = pmLevelKey(input.query?.level);
+      assert(level, 400, 'Nivel PM inválido');
+      return { status: 200, body: await evaluatePmTriggers(input, unit, level) };
+    }
     if (method === 'GET' && endpoint === 'schedulecheck') {
       assert(ASSIGN.has(session.role), 403, 'Tu rol no puede programar órdenes');
       return { status: 200, body: await scheduleCheck(input) };
@@ -1012,7 +1057,7 @@ export async function dispatchWorkshop(input) {
       time: timeFormatter.format(date), otId: `OT-${digest(key).slice(0, 16).toUpperCase()}` });
   } catch (error) {
     const status = Number(error?.status ?? error?.statusCode);
-    if (error instanceof WorkshopError || isEvidenceError(error) || (error instanceof HermesSheetError && status === 400)) {
+    if (error instanceof WorkshopError || isEvidenceError(error) || (error instanceof HermesSheetError && [400, 409].includes(status))) {
       return { status, body: { error: error.message } };
     }
     if (status === 409) return { status, body: { error: 'La operación ya existe o el registro cambió. Actualiza y vuelve a revisar.' } };

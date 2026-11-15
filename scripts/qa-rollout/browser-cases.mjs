@@ -555,6 +555,37 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     }
 
     let pmMobileFolio;
+    await record('MÓVIL-PM-DISPARADORES-Y-ORDEN-ÚNICA', () => inRole('jefe_taller', 360, async page => {
+      const path = `${origin}/pm-order?unidad=DZ205&nivel=PM-250`;
+      const create = async () => {
+        await page.goto(path, { waitUntil: 'domcontentloaded' });
+        const rules = page.getByRole('region', { name: 'Disparadores de mantenimiento' });
+        await visible(rules.getByText(/390 h registradas \/ 388 h programadas/));
+        await visible(rules.getByText(/vence 2026-11-12/));
+        await visible(rules.getByText(/2 críticos \/ umbral 1/));
+        await page.getByLabel('Horas estimadas').fill('2');
+        await page.getByLabel('Turno').selectOption('Día');
+        await page.getByLabel('Disponibilidad de repuestos').selectOption('not_required');
+        await clickByName(page, 'Activar Orden de PM');
+        await clickByName(page, 'Confirmar');
+      };
+      await create();
+      await visible(page.getByRole('button', { name: 'Abrir Calendario' }));
+      const rows = () => sheet.read(tabs.orders).filter(row => row[3] === 'DZ205' && row[4] === 'PM');
+      const [order] = rows();
+      assert.equal(rows().length, 1);
+      assert.equal(JSON.parse(order[23]).triggers.length, 3);
+      await create();
+      await visible(page.getByText('Ya existe una orden para este servicio.'));
+      assert.equal(rows().length, 1);
+      await clickByName(page, `Abrir orden ${order[1]}`);
+      const reasons = page.getByRole('region', { name: 'Motivo del mantenimiento' });
+      await visible(reasons.getByText(/390 h registradas/));
+      await visible(reasons.getByText(/Plan sintético QA rev1/).first());
+      await noHorizontalOverflow(page, 360);
+      return { folio: order[1], reasons: 3, duplicateSuppressed: true, persisted: true };
+    }));
+
     await record('MÓVIL-PROGRAMA-PM-CALENDARIO', () => inRole('jefe_taller', 360, async page => {
       await page.goto(`${origin}/pm`, { waitUntil: 'domcontentloaded' });
       await dismissPrivacy(page);

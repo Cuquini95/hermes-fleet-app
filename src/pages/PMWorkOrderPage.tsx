@@ -11,13 +11,14 @@ import { getCumulativePMParts, getAvailablePMLevels, type PMPart } from '../data
 import { mexicoDateInput } from '../lib/date-utils';
 import { requestWorkshop, WorkshopApiError, checkSchedule, mechanicCoversUnit, PANAMA_PM_CHECKLIST_SOURCE,
   type ScheduleAssessment, type ScheduleResources, type WorkshopMechanic } from '../lib/workshop-api';
-import type { PMChecklist } from '../types/workorder';
+import type { PMChecklist, PMTrigger } from '../types/workorder';
 import { useAuthStore } from '../stores/auth-store';
 import { PANAMA_PM_MASTER_URL, fetchPanamaMaintenance, type PanamaMaintenance } from '../lib/panama-maintenance';
 import { printPMOrder } from '../lib/print-pm-order';
 import ConfirmModal from '../components/ui/ConfirmModal';
 import SuccessToast from '../components/ui/SuccessToast';
 import ScheduleResourcesFields from '../components/calendar/ScheduleResourcesFields';
+import PmTriggerList from '../components/workshop/PmTriggerList';
 
 const CATEGORY_ICONS: Record<string, string> = {
   Filtro: '🔧',
@@ -67,15 +68,18 @@ export default function PMWorkOrderPage() {
   const [toastMessage, setToastMessage] = useState('');
   const [toastVisible, setToastVisible] = useState(false);
   const [printData, setPrintData] = useState<Parameters<typeof printPMOrder>[0] | null>(null);
+  const [existing, setExisting] = useState<{ otId: string; completed?: boolean } | null>(null);
   const [checklistMissing, setChecklistMissing] = useState(false);
   const [official, setOfficial] = useState<PanamaMaintenance | null>(null);
   const [preflight, setPreflight] = useState<{ key: string; model?: string; serial?: string; checklist?: PMChecklist | null }>({ key: '' });
+  const [triggerState, setTriggerState] = useState<{ key: string; rules?: PMTrigger[] }>({ key: '' });
 
   const selectedEquipment = equipment.find((eq) => eq.unit_id === unidad);
   const model = selectedEquipment?.model ?? '';
   const officialEntry = official?.entries?.find(entry => entry.unit === unidad.toUpperCase());
   const templateKey = `${unidad}:${pmLevel}`;
   const selectedTemplate = preflight.key === templateKey ? preflight : null;
+  const selectedTriggers = triggerState.key === templateKey ? triggerState : null;
   const officialModel = officialEntry?.model || model;
 
   useEffect(() => {
@@ -90,9 +94,13 @@ export default function PMWorkOrderPage() {
   useEffect(() => {
     if (!isPanama || !unidad || !pmLevel) return;
     let active = true;
-    void requestWorkshop<{ model: string; serial?: string; checklist: PMChecklist | null }>(`pmtemplate?${new URLSearchParams({ unit: unidad, level: pmLevel })}`)
+    const query = new URLSearchParams({ unit: unidad, level: pmLevel });
+    void requestWorkshop<{ model: string; serial?: string; checklist: PMChecklist | null }>(`pmtemplate?${query}`)
       .then(result => { if (active) setPreflight({ key: templateKey, ...result }); })
       .catch(() => { if (active) setPreflight({ key: templateKey }); });
+    void requestWorkshop<{ rules: PMTrigger[] }>(`pmtriggers?${query}`)
+      .then(result => { if (active) setTriggerState({ key: templateKey, rules: result.rules }); })
+      .catch(() => { if (active) setTriggerState({ key: templateKey }); });
     return () => { active = false; };
   }, [isPanama, unidad, pmLevel, templateKey, userId]);
 
@@ -141,6 +149,8 @@ export default function PMWorkOrderPage() {
   }, []);
 
   function handleUnitChange(newUnit: string) {
+    setExisting(null);
+    mutationId.current = '';
     setUnidad(newUnit);
     setPmLevel('');
     setMechanicId('');
@@ -148,6 +158,8 @@ export default function PMWorkOrderPage() {
   }
 
   function handleLevelSelect(level: string) {
+    setExisting(null);
+    mutationId.current = '';
     setPmLevel(level);
     setHoursOverride('');
   }
@@ -157,7 +169,7 @@ export default function PMWorkOrderPage() {
   }
 
   async function handleSubmitIntent() {
-    if (!canSubmit || sending.current || printData) return;
+    if (!canSubmit || sending.current || printData || existing) return;
     sending.current = true;
     setSaving(true);
     setError('');
@@ -184,18 +196,23 @@ export default function PMWorkOrderPage() {
 
     const levelsIncluded = partsKit?.levelsIncluded.length ? partsKit.levelsIncluded : [pmLevel];
     try {
-      const { otId, schedule, checklist } = await requestWorkshop<{ otId: string; schedule: string[]; checklist?: PMChecklist | null }>('pm', {
+      const result = await requestWorkshop<{ otId: string; schedule?: string[]; checklist?: PMChecklist | null; existing?: boolean; completed?: boolean }>('pm', {
         mutationId: mutationId.current, unit: unidad, level: pmLevel, includedLevels: levelsIncluded.join('+'),
         hours: estimatedHours, mechanicId, scheduledDate, notes: observaciones,
         parts: partsKit?.parts.map((part) => `${part.partNumber} x${part.quantity}`).join(', ') ?? '',
         ...(isPanama && { ...scheduleResources, scheduleConfirmation: assessment?.confirmation }),
       });
       setPending(false);
+      if (result.existing) {
+        setExisting(result);
+        return;
+      }
+      const { otId, schedule, checklist } = result;
       setChecklistMissing(checklist === null);
       setPrintData({
-        otId, date: schedule[1] ?? scheduledDate, unidad, model: officialModel, pmLevel, levelsIncluded,
+        otId, date: schedule?.[1] ?? scheduledDate, unidad, model: officialModel, pmLevel, levelsIncluded,
         horometro: isPanama ? officialEntry?.currentHours ?? null : selectedEquipment?.current_horometro ?? null, estimatedHours: Number(estimatedHours),
-        mecanico: schedule[4] ?? '', autorizadoPor: userName, observaciones, parts: partsKit?.parts ?? [],
+        mecanico: schedule?.[4] ?? '', autorizadoPor: userName, observaciones, parts: partsKit?.parts ?? [],
       });
       setToastMessage(`${otId} programada en Calendario para ${scheduledDate}`);
       setToastVisible(true);
@@ -355,6 +372,12 @@ export default function PMWorkOrderPage() {
               </a>
             </div>
           )}
+          {isPanama && pmLevel && <section aria-label="Disparadores de mantenimiento" className="mt-3 space-y-2 rounded-xl border border-border p-3">
+            <h2 className="text-sm font-semibold">Cuándo toca el servicio</h2>
+            {selectedTriggers?.rules
+              ? <PmTriggerList rules={selectedTriggers.rules} />
+              : <p className="text-sm text-text-secondary">{selectedTriggers ? 'No se pudieron consultar las reglas.' : 'Consultando reglas…'}</p>}
+          </section>}
           {pmLevel && partsKit && partsKit.levelsIncluded.length > 0 && (
             <p className="text-xs text-text-secondary mt-2">
               Incluye: {partsKit?.levelsIncluded.join(' + ')} — ~{partsKit?.totalEstimatedHours ?? 0} hrs estimadas
@@ -472,6 +495,12 @@ export default function PMWorkOrderPage() {
 
       </fieldset>
       {error && <p role="alert" className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+      {existing && <div role="status" className="mb-3 rounded-xl border border-border bg-white p-3 text-sm">
+        <p>{existing.completed ? 'Este vencimiento ya fue atendido.' : 'Ya existe una orden para este servicio.'}</p>
+        <button type="button" onClick={() => navigate(`/workorders/${encodeURIComponent(existing.otId)}`)} className="min-h-11 font-semibold underline">
+          Abrir orden {existing.otId}
+        </button>
+      </div>}
       {printData && (
         <>
           {checklistMissing && <p className="mb-3 rounded-xl border border-border bg-white p-3 text-sm text-text">
@@ -499,7 +528,7 @@ export default function PMWorkOrderPage() {
           <Wrench size={20} />
           Imprimir Orden de PM
         </button>
-      ) : (
+      ) : !existing && (
         <button
           type="button"
           onClick={pending ? handleConfirm : handleSubmitIntent}

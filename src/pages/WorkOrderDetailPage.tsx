@@ -18,6 +18,7 @@ import { uploadPhoto } from '../lib/photo-upload';
 import { uploadEvidence } from '../lib/evidence-upload';
 import PhotoCapture from '../components/ui/PhotoCapture';
 import OperationalReturnCard from '../components/workshop/OperationalReturnCard';
+import PmTriggerList from '../components/workshop/PmTriggerList';
 
 const FIELD_LABELS: Record<StatusLogEntry['field'], string> = {
   estado: 'Estado',
@@ -411,6 +412,12 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
         )}
       </div>
 
+      {panamaWorkflow && isPM && !!pm?.triggers?.length && (
+        <section aria-label="Motivo del mantenimiento" className="space-y-2 rounded-xl border border-border bg-white p-4">
+          <h2 className="text-sm font-semibold">Motivo del mantenimiento</h2>
+          <PmTriggerList rules={pm.triggers} />
+        </section>
+      )}
       {panamaWorkflow && isPM && (
         <section className="flex flex-col gap-2 rounded-xl border border-border bg-white p-4 shadow-sm" aria-label="Checklist del modelo">
           <h2 className="text-sm font-semibold text-text">Checklist del modelo</h2>

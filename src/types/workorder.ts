@@ -42,6 +42,17 @@ export interface PMChecklistDefinition {
   serial?: string;
   initialMeter: string;
   checklist: PMChecklist | null;
+  triggers?: PMTrigger[];
+}
+
+export interface PMTrigger {
+  kind: 'hours' | 'date' | 'condition';
+  state: 'due' | 'ok' | 'unknown' | 'not_configured';
+  actual: number | string | null;
+  threshold: number | string | null;
+  source?: string;
+  reference?: string;
+  cut?: string;
 }
 
 export interface OperationalReceipt extends WorkshopActor {

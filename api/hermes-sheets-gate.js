@@ -375,7 +375,9 @@ export function createHermesGateway({
 
       const dispatch = path.startsWith('api/workshop/') ? dispatchWorkshop : path.startsWith('api/purchasing/') ? dispatchPurchasing : null;
       if (!dispatch) return invalid(res, 404, 'Ruta no disponible.');
-      const result = await dispatch({ path, method: req.method, body: req.body ?? {}, query: req.query ?? {}, session, sheets, listMechanics });
+      const readPmSources = async () => (await dispatchPanama({ path: 'api/panama/maintenance', method: 'GET', session,
+        read: demo ? demoSheets.readSummary : readPanama })).body;
+      const result = await dispatch({ path, method: req.method, body: req.body ?? {}, query: req.query ?? {}, session, sheets, listMechanics, readPmSources });
       return res.status(result.status).json(result.body);
     } catch (error) {
       const status = error?.status;
