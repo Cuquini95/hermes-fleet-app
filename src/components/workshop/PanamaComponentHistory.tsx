@@ -15,6 +15,8 @@ interface ComponentRow {
   remaining?: string;
   installedMeter?: string;
   elapsed?: string;
+  calculation?: { status: 'verified' | 'reproduced' | 'mismatch'; elapsed: number; remaining: number }
+    | { status: 'regressed' | 'incomplete' };
 }
 interface ComponentHistory {
   unit: string;
@@ -22,6 +24,19 @@ interface ComponentHistory {
   life: ComponentRow[];
   unavailable: string[];
   snapshots?: Record<string, string>;
+}
+
+const formatHours = (value: number) => value.toLocaleString('es-PA', { maximumFractionDigits: 3 });
+
+function LifeCalculation({ calculation }: Pick<ComponentRow, 'calculation'>) {
+  if (!calculation || calculation.status === 'verified') return null;
+  if (calculation.status === 'incomplete') return <p className="mt-1 text-slate-600">Faltan lecturas para comprobar la vida.</p>;
+  if (calculation.status === 'regressed') return <p className="mt-1 text-amber-800">El horómetro actual es menor al de montaje. Revisa el historial del medidor.</p>;
+  if ('elapsed' in calculation) return <p className={calculation.status === 'mismatch' ? 'mt-1 text-amber-800' : 'mt-1 text-slate-600'}>
+    {calculation.status === 'mismatch' && 'Difiere del maestro. '}
+    Recálculo · {formatHours(calculation.elapsed)} h de uso · {formatHours(calculation.remaining)} h restantes
+  </p>;
+  return null;
 }
 
 function Records({ items, history }: { items: ComponentRow[]; history: boolean }) {
@@ -40,6 +55,7 @@ function Records({ items, history }: { items: ComponentRow[]; history: boolean }
             </>
           )}
           <p>Horas de uso {row.elapsed || 'sin dato'} · {row.status || 'Estado sin dato'}</p>
+          {!history && <LifeCalculation calculation={row.calculation} />}
           <p className="mt-1 text-slate-600">{row.source}</p>
         </li>
       ))}

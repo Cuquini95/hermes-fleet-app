@@ -31,6 +31,7 @@ const FIELD_LABELS: Record<StatusLogEntry['field'], string> = {
   entrega_tecnica: 'Entrega técnica',
   aceptacion_tecnica: 'Aceptación técnica',
   retorno_operativo: 'Retorno de Operaciones',
+  reincidencia: 'Reincidencia',
 };
 
 const ASSIGN = ['jefe_taller', 'coordinador', 'gerencia'];
@@ -71,6 +72,7 @@ function StatusPillRow({ current }: { current: OTEstado }) {
 
 function TimelineEntry({ entry }: { entry: StatusLogEntry }) {
   const label = FIELD_LABELS[entry.field] ?? entry.field;
+  const previousOrder = entry.field === 'reincidencia';
   return (
     <div className="flex gap-3 py-2.5 border-b border-gray-100 last:border-0">
       <div className="flex flex-col items-center shrink-0 pt-0.5">
@@ -79,9 +81,11 @@ function TimelineEntry({ entry }: { entry: StatusLogEntry }) {
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-text">
-          {label}: <span className="text-text-secondary">{entry.field === 'foto_url' ? '' : entry.old_value || '(vacío)'}</span>
-          {' '}<ChevronRight size={12} className="inline text-text-secondary" />{' '}
-          <span className="text-amber font-semibold break-words">{entry.field === 'foto_url' ? 'Evidencia adjuntada' : entry.new_value}</span>
+          {label}{previousOrder ? ' · OT anterior vinculada' : <>
+            : <span className="text-text-secondary">{entry.field === 'foto_url' ? '' : entry.old_value || '(vacío)'}</span>
+            {' '}<ChevronRight size={12} className="inline text-text-secondary" />{' '}
+            <span className="text-amber font-semibold break-words">{entry.field === 'foto_url' ? 'Evidencia adjuntada' : entry.new_value}</span>
+          </>}
         </p>
         <p className="text-xs text-text-secondary mt-0.5">
           {entry.changed_by} &middot; {entry.role} &middot; {entry.timestamp}
@@ -328,8 +332,9 @@ export default function WorkOrderDetailPage() {
         <div>
           <p className="text-xs text-text-secondary mb-1">Descripcion</p>
           <p className="text-sm text-text break-words">{wo.descripcion}</p>
-          {wo.previousOtId && <Link className="mt-2 inline-flex min-h-11 items-center text-sm font-semibold text-amber underline"
-            to={`/workorders/${encodeURIComponent(wo.previousOtId)}`}>Reincidencia de {previous?.folio ?? wo.previousOtId}</Link>}
+          {wo.previousOtId && (previous ? <Link className="mt-2 inline-flex min-h-11 items-center text-sm font-semibold text-amber underline"
+            to={`/workorders/${encodeURIComponent(previous.folio ?? previous.ot_id)}`}>Reincidencia de {previous.folio ?? previous.ot_id}</Link>
+            : <p className="mt-2 text-sm text-text-secondary">OT anterior disponible para Taller y Coordinación.</p>)}
         </div>
 
         <PanamaPartsMovements ot={wo.ot_id} />

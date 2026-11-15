@@ -211,6 +211,31 @@ const componentSources = [
   }),
 ];
 
+function componentHourTicks(value) {
+  const clean = String(value ?? '').trim();
+  if (!/^-?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,3})?$/.test(clean)) return null;
+  const ticks = Math.round(Number(clean.replaceAll(',', '')) * 1000);
+  return Number.isSafeInteger(ticks) ? ticks : null;
+}
+
+function componentLifeCalculation(record) {
+  const installed = componentHourTicks(record.installedMeter);
+  const reading = componentHourTicks(record.currentMeter);
+  const target = componentHourTicks(record.target);
+  if (installed === null || reading === null || target === null || installed < 0 || reading < 0 || target <= 0) {
+    return { status: 'incomplete' };
+  }
+  if (reading < installed) return { status: 'regressed' };
+  const elapsed = reading - installed;
+  const remaining = target - elapsed;
+  const recordedElapsed = componentHourTicks(record.elapsed);
+  const recordedRemaining = componentHourTicks(record.remaining);
+  const differs = (recordedElapsed !== null && recordedElapsed !== elapsed)
+    || (recordedRemaining !== null && recordedRemaining !== remaining);
+  const status = differs ? 'mismatch' : recordedElapsed === null || recordedRemaining === null ? 'reproduced' : 'verified';
+  return { status, elapsed: elapsed / 1000, remaining: remaining / 1000 };
+}
+
 async function componentDetails({ method, query, session, read }) {
   if (method !== 'GET') return { status: 405, body: { error: 'Consulta de componentes de solo lectura.' } };
   if (!management.has(session.role) && session.role !== 'mecanico') {
@@ -234,7 +259,11 @@ async function componentDetails({ method, query, session, read }) {
     if (result.status === 'rejected') unavailable.push(spec.key);
     else {
       if (result.value.capturedAt) snapshots[spec.key] = result.value.capturedAt;
-      (spec.key.endsWith('Changes') ? changes : life).push(...result.value.records.map(record => ({ ...record, source: spec.range })));
+      const changeSource = spec.key.endsWith('Changes');
+      const rows = result.value.records.map(record => ({ ...record, source: spec.range,
+        ...(changeSource ? {} : { calculation: componentLifeCalculation(record) }),
+      }));
+      (changeSource ? changes : life).push(...rows);
     }
   });
   return { status: 200, body: { unit, changes, life, unavailable, snapshots, checkedAt: new Date().toISOString() } };

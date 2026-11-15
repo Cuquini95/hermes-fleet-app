@@ -29,3 +29,27 @@ test('component detail rejects a unit outside the authenticated assignment', asy
   const response = await dispatchPanama({ ...request, query: { unit: 'EX401' }, read: async () => assert.fail('No access to source') });
   assert.equal(response.status, 403);
 });
+
+test('component life recalculates used and remaining hours per installed position and flags conflicting readings', async () => {
+  const header = ['Equipo','Pieza','Lado','Vida','UltHor','HorAct','Usadas','Restantes','Estado'];
+  const response = await dispatchPanama({ ...request, read: async spec => spec.key !== 'dozerLife' ? [] : [
+    header,
+    ['DZ203','CADENA','Izquierdo','2,000','3,010.5','4,211.75','1,201.25','798.75','Vigente'],
+    ['DZ203','CADENA','Derecho','2,000','4,100','4,211.75','100','1,900','Vigente'],
+    ['DZ203','RODILLO','Derecho','100','4,100','4,211.75','','','Vencido'],
+    ['DZ203','RODILLO','Izquierdo','200','4,300','4,211.75','','','Sin dato'],
+    ['DZ203','SPROCKET','Izquierdo','1,000','','4,211.75','','','Sin dato'],
+    ['DZ203','PLATO','Derecho','1,000','4,101','4,211.75','—','—','Sin dato'],
+  ] });
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.life.map(({ part, position, calculation }) => [part, position, calculation]), [
+    ['CADENA', 'Izquierdo', { status: 'verified', elapsed: 1201.25, remaining: 798.75 }],
+    ['CADENA', 'Derecho', { status: 'mismatch', elapsed: 111.75, remaining: 1888.25 }],
+    ['RODILLO', 'Derecho', { status: 'reproduced', elapsed: 111.75, remaining: -11.75 }],
+    ['RODILLO', 'Izquierdo', { status: 'regressed' }],
+    ['SPROCKET', 'Izquierdo', { status: 'incomplete' }],
+    ['PLATO', 'Derecho', { status: 'reproduced', elapsed: 110.75, remaining: 889.25 }],
+  ]);
+  assert.deepEqual(response.body.life.slice(0, 2).map(({ elapsed, remaining }) => [elapsed, remaining]),
+    [['1,201.25','798.75'],['100','1,900']]);
+});

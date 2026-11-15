@@ -4,6 +4,7 @@ import { isEvidenceError, verifyEvidence } from './hermes-evidence.js';
 import { orderWriteGuard } from './hermes-workshop.js';
 import { HermesSheetError } from './hermes-google-sheets.js';
 import { readPurchaseNumber } from './hermes-operational-store.js';
+import { panamaPartCompatibility } from './hermes-part-prices.js';
 
 export const PURCHASE_TABS = Object.freeze({
   orders: 'Órdenes de Compra',
@@ -321,7 +322,6 @@ function requestUpdate(entry, version, actor, ocFolio, status, previous) {
 }
 
 const normalizeCatalogKey = value => upper(value).normalize('NFD').replace(/\p{Diacritic}/gu, '');
-const normalizeModel = value => normalizeCatalogKey(value).replace(/[^A-Z0-9]/g, '');
 
 function catalogPart(rows, sku, required = true) {
   const headerIndex = rows.findIndex(row => normalizeCatalogKey(row[0]) === 'SKU' && normalizeCatalogKey(row[5]) === 'STOCK');
@@ -335,11 +335,9 @@ function catalogPart(rows, sku, required = true) {
 function assertCompatible(part, fleet, unit) {
   const equipment = fleet.filter(row => upper(row[1]) === unit);
   if (equipment.length !== 1) error(409, 'La unidad no se pudo conciliar con la flota.');
-  const unitKey = normalizeModel(unit);
-  const model = normalizeModel(equipment[0][4]);
-  const makeAndModel = normalizeModel([equipment[0][3], equipment[0][4]].join(' '));
-  const supported = trim(part.row[10]).split(/[,;\n]+/).map(normalizeModel).filter(Boolean);
-  if (!supported.some(key => key === unitKey || key === model || (model && key === makeAndModel))) {
+  const compatibility = panamaPartCompatibility(part.row, equipment[0]);
+  if (compatibility === 'pin') error(409, 'El PIN o la serie de la unidad no coincide con la compatibilidad del repuesto.');
+  if (compatibility !== 'match') {
     error(409, 'La compatibilidad de este repuesto con la unidad no está verificada. Revisa el catálogo.');
   }
 }

@@ -10,12 +10,24 @@ const equipmentFamilies = new Map([['KOMATSU', ['KOMATSU', 'D155', 'HM400']]]);
 
 const catalogKey = value => String(value ?? '').toUpperCase().normalize('NFD').replace(/[^A-Z0-9]/g, '');
 
+export function panamaPartCompatibility(part, equipment) {
+  const rules = text(part[10]).split(/[,;\n]+/).map(text).filter(Boolean);
+  const pinRule = /^PIN\s*:/i;
+  const pins = rules.filter(rule => pinRule.test(rule)).map(rule => catalogKey(rule.replace(pinRule, '')));
+  const modelRules = rules.filter(rule => !pinRule.test(rule)).map(catalogKey).filter(Boolean);
+  const pin = catalogKey(equipment[6]);
+  if (pins.length && (!pin || !pins.includes(pin))) return 'pin';
+  if (pins.length && !modelRules.length) return 'match';
+  const model = catalogKey(equipment[4]);
+  const unit = catalogKey(equipment[1]);
+  const makeAndModel = model && catalogKey([equipment[3], equipment[4]].join(' '));
+  return modelRules.some(rule => rule === unit || rule === model || rule === makeAndModel) ? 'match' : 'model';
+}
+
 export function visiblePanamaParts(parts, fleet, session) {
   const assigned = new Set((session.assignedUnits ?? []).map(catalogKey));
-  const allowed = new Set(fleet.filter(row => assigned.has(catalogKey(row[1])))
-    .flatMap(row => [row[1], row[4], [row[3], row[4]].filter(Boolean).join(' ')])
-    .map(catalogKey).filter(Boolean));
-  return parts.filter(row => String(row[10] ?? '').split(/[,;\n]+/).some(value => allowed.has(catalogKey(value))));
+  const allowed = fleet.filter(row => assigned.has(catalogKey(row[1])));
+  return parts.filter(part => allowed.some(equipment => panamaPartCompatibility(part, equipment) === 'match'));
 }
 
 function positive(value) {

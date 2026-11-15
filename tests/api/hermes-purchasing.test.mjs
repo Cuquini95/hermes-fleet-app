@@ -33,6 +33,7 @@ function store({ vendors = [['NOMBRE'], ['Proveedor de prueba', 'RFC-QA', 'Direc
       return result;
     },
     setCatalogStockFormula(formula) { catalogStockFormula = formula; },
+    seed(tab, data) { rows[tab] = structuredClone(data); },
     failNext(mode) { failure = mode; },
     async replay({ key, fingerprint }) {
       const prior = replies.get(key);
@@ -467,6 +468,33 @@ test('Panamá separa aprobación Q25, recepción con remisión, factura y pago c
   assert.equal(order.payment.invoiceReference, 'F-01');
   assert.deepEqual(order.lines[0].receipts.map((receipt) => receipt.reference), ['R-01', 'R-02']);
   assert.equal(sheets.inspect(TAB.audit).filter((row) => row[4] === 'Pago de OC conciliado').length, 1);
+});
+
+test('Panamá exige el PIN indicado en catálogo aunque ambas unidades tengan el mismo modelo', async () => {
+  const { call, sheets } = setup();
+  sheets.seed('01 Inventario', [
+    ['#','COD1','Descripción','Marca','Modelo','Año','Serie'],
+    ['1','QA-DZ203','Equipo A','Komatsu','D65EX-16','2020','QA-A123'],
+    ['2','QA-DZ204','Equipo B','Komatsu','D65EX-16','2020','QA-B234'],
+    ['3','QA-DZ205','Equipo C','Komatsu','D65EX-16','2020',''],
+    ['4','QA-DZ206','Equipo D','Komatsu','D155','2020','QA-A123'],
+  ]);
+  const catalog = sheets.inspect(TAB.catalog);
+  catalog[1][10] = 'D65EX-16; PIN:QA-A123';
+  sheets.seed(TAB.catalog, catalog);
+  const buyer = { ...manager, role: 'jefe_taller', project: 'tmf-panama', projects: ['tmf-panama'], previewDemo: true };
+  const orderPart = equipment => ({ operationId: randomUUID(), items: [
+    { part_number: 'SKU-QA', description: 'Filtro restringido por serie', quantity: '1', equipment },
+  ] });
+  const accepted = await call('request-submit', orderPart('QA-DZ203'), buyer);
+  assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+  for (const equipment of ['QA-DZ204', 'QA-DZ205']) {
+    const rejected = await call('request-submit', orderPart(equipment), buyer);
+    assert.equal(rejected.status, 409);
+    assert.match(rejected.body.error, /PIN|serie/i);
+  }
+  assert.equal((await call('request-submit', orderPart('QA-DZ206'), buyer)).status, 409);
+  assert.equal(sheets.inspect(TAB.requests).length, 2);
 });
 
 test('Panamá valida la compatibilidad y registra movimientos de stock conciliables con la OT', async () => {

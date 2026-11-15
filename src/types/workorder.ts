@@ -8,7 +8,7 @@ export type OTStatusField = 'estado' | 'mecanico_asignado' | 'progreso' | 'obser
 export interface StatusLogEntry {
   timestamp: string;
   ot_id: string;
-  field: OTStatusField | 'programacion' | 'entrega_tecnica' | 'aceptacion_tecnica' | 'retorno_operativo';
+  field: OTStatusField | 'programacion' | 'entrega_tecnica' | 'aceptacion_tecnica' | 'retorno_operativo' | 'reincidencia';
   old_value: string;
   new_value: string;
   changed_by: string;

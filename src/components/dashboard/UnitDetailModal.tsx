@@ -177,8 +177,9 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
             <p className="text-sm text-gray-500">Cargando reporte de averías…</p>
           )}
 
-          {workshopRestriction?.level === 'blocked' && (
-            <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          {workshopRestriction && workshopRestriction.level !== 'ok' && (
+            <div className={`mb-4 rounded-lg border px-4 py-3 text-sm ${workshopRestriction.level === 'blocked'
+              ? 'border-red-200 bg-red-50 text-red-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
               <p className="font-semibold">Restricción registrada</p>
               <p>{workshopRestriction.reason}</p>
             </div>

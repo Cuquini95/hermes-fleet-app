@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 import { firstAccount, fixturePassword, loadAccounts, photoPng, roles, tabs } from './fixture.mjs';
 
@@ -88,12 +89,13 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     await visible(page.getByRole('heading', { name: folio, exact: true }));
   }
 
-  async function changeOrderStatus(page, target, folio, isPM = false) {
+  async function changeOrderStatus(page, target, folio, isPM = false, diagnosis) {
     const option = page.locator('select').filter({ has: page.getByRole('option', { name: target, exact: true }) }).first();
     await option.selectOption({ label: target });
     if (target === 'Resuelta') {
       await page.getByLabel('Resultado de la prueba funcional').fill('Prueba funcional registrada en QA móvil');
       await page.getByLabel('Horas reales de trabajo').fill('2.25');
+      if (diagnosis) await page.getByLabel('Causa confirmada (si se identificó)').fill(diagnosis);
       if (isPM) {
         await page.getByLabel('Comprobación sintética de mantenimiento').check();
         await page.getByLabel('Horómetro de ejecución').fill('1975');
@@ -118,13 +120,14 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     return date[1];
   }
 
-  async function fillFailure(page, description, withPhoto, unit = 'DZ203') {
+  async function fillFailure(page, description, withPhoto, unit = 'DZ203', previousOtId) {
     await page.goto(`${origin}/falla`, { waitUntil: 'domcontentloaded' });
     await dismissPrivacy(page);
     const selects = page.locator('#main-content select');
     await selects.nth(0).selectOption(unit);
     await selects.nth(1).selectOption({ label: 'Mecánica' });
     await page.getByPlaceholder('Describe los síntomas observados...').fill(description);
+    if (previousOtId) await page.getByLabel('OT anterior si la falla se repitió').fill(previousOtId);
     await clickByName(page, 'No');
     if (withPhoto) {
       await page.getByPlaceholder('Nombre del cliente afectado').fill('Cliente ficticio QA');
@@ -596,7 +599,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await clickByName(page, 'Guardar evidencia');
         await waitUntil(() => sheet.read(tabs.orders).find(row => row[1] === folio && /^\/hermes-api\/api\/evidence\?id=[a-f0-9]{64}$/.test(row[10] ?? '')), 'No persistió la evidencia');
         await visible(page.getByRole('img', { name: 'Foto 1', exact: true }));
-        await changeOrderStatus(page, 'Resuelta', folio);
+        await changeOrderStatus(page, 'Resuelta', folio, false, 'Manguera dañada en la OT original QA');
         assert.equal(await page.getByRole('option', { name: 'Completado', exact: true }).count(), 0);
       }, tech);
       await inRole('jefe_taller', 390, async page => {
@@ -605,7 +608,18 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await visible(page.getByText('50%', { exact: true }));
         await changeOrderStatus(page, 'Completado', folio);
       });
-      return inRole('supervisor', 390, async page => {
+      const previousStickers = sheet.read(tabs.sticker);
+      const confirmationTab = 'HERMES_PA_CONFIRMACION_OPERATIVA';
+      const previousConfirmations = sheet.read(confirmationTab);
+      const previousMode = sheet.nativeOperations;
+      const conditional = Object.assign(Array(21).fill(''), {
+        1: 'STICKER-QA-CONDICIONAL', 2: new Date().toISOString(), 5: 'EX401',
+        10: 'aprobado_supervisor', 12: 'amarillo', 13: 'yes', 14: '2099-01-01',
+      });
+      sheet.seed(tabs.sticker, [...previousStickers, conditional]);
+      sheet.seed(confirmationTab, [['UNIDAD'], ['EX401', 'operativo']]);
+      sheet.nativeOperations = true;
+      try { return await inRole('supervisor', 390, async page => {
         await page.goto(`${origin}/fleet`, { waitUntil: 'domcontentloaded' });
         await page.getByRole('link', { name: `EX401 · ${folio}`, exact: true }).click();
         await visible(page.getByRole('heading', { name: folio, exact: true }));
@@ -629,8 +643,26 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         });
         await page.getByRole('link', { name: 'Manuales de EX401' }).click();
         await visible(page.getByText('Revisión R3', { exact: true }));
-        return { folio, closedAt: row[14], returnedAt: JSON.parse(row[22]).returnedAt, progress: 50, cost: 85.25, laborHours: 2.25, evidenceLinked: true };
+        for (const destination of ['/fleet', '/dashboard']) {
+          await page.goto(origin + destination, { waitUntil: 'domcontentloaded' });
+          const tile = page.getByRole('button', { name: 'Ver detalle de EX401', exact: true });
+          await visible(tile.getByText('Inoperativo', { exact: true }));
+          await tile.tap();
+          const detail = page.getByRole('dialog', { name: 'Detalle de EX401' });
+          await visible(detail.getByText('Inoperativo', { exact: true }));
+          await visible(detail.getByText('Sticker STICKER-QA-CONDICIONAL condicionado', { exact: true }));
+          await detail.getByRole('button', { name: 'Cerrar', exact: true }).click();
+        }
+        const accepted = JSON.parse(row[22]);
+        assert.equal(new Set([JSON.parse(row[20]).userId, JSON.parse(row[21]).userId, accepted.userId]).size, 3);
+        return { folio, closedAt: row[14], returnedAt: accepted.returnedAt, progress: 50, cost: 85.25,
+          laborHours: 2.25, evidenceLinked: true, separateActors: true, restrictedInFleetAndDashboard: true };
       });
+      } finally {
+        sheet.nativeOperations = previousMode;
+        sheet.seed(tabs.sticker, previousStickers);
+        sheet.seed(confirmationTab, previousConfirmations);
+      }
     });
 
     for (const width of [360, 390]) {
@@ -734,6 +766,79 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         return { folio, unit: 'EX401', approved: true, canDispatch: true };
       }, firstAccount('supervisor'));
     });
+
+    await record('MÓVIL-OT-REINCIDENCIA-EVIDENCIA', async () => {
+      assert(filed, 'Falta la OT original');
+      const original = sheet.read(tabs.orders).find(row => row[1] === filed.folio);
+      assert.equal(original?.[9], 'Completado');
+      const description = 'Falla reincidente con evidencia QA';
+      const recurrent = await inRole('operador', 390, async page => {
+        await fillFailure(page, description, true, original[3], original[1]);
+        await clickByName(page, 'Confirmar');
+        await visible(page.getByText(/OT creada/i));
+        const row = sheet.read(tabs.orders).find(order => order[5] === description);
+        assert.equal(row[24], original[1]);
+        return row;
+      });
+      const second = loadAccounts.filter(account => account.membership.role === 'mecanico')[5];
+      await inRole('coordinador', 390, async page => {
+        await readOrder(page, recurrent[1], description);
+        const image = page.getByRole('img', { name: 'Foto 1', exact: true });
+        assert.equal(await image.getAttribute('src'), recurrent[10]);
+        assert.deepEqual(await (await page.request.get(origin + recurrent[10])).body(), photoPng);
+      });
+      await inRole('jefe_taller', 390, async page => {
+        await readOrder(page, recurrent[1], description);
+        await visible(page.getByText(recurrent[2], { exact: true }));
+        const evidence = page.getByRole('img', { name: 'Foto 1', exact: true });
+        assert.equal(await evidence.getAttribute('src'), recurrent[10]);
+        assert.deepEqual(await (await page.request.get(origin + recurrent[10])).body(), photoPng);
+        await page.getByLabel('Mecánico asignado').selectOption(second.user.id);
+        await clickByName(page, 'Asignar');
+        await waitUntil(() => sheet.read(tabs.orders).find(order => order[1] === recurrent[1] && order[17] === second.user.id), 'La OT nueva no cambió de técnico');
+        await page.getByRole('link', { name: `Reincidencia de ${original[1]}`, exact: true }).tap();
+        await visible(page.getByRole('heading', { name: original[1], exact: true }));
+        await visible(page.getByText(filed.description, { exact: true }));
+        await visible(page.getByText(/Manguera dañada en la OT original QA/));
+        await visible(page.getByText(`Cierre ${original[14]}`, { exact: true }));
+        assert.equal(await evidence.getAttribute('src'), original[10]);
+        assert.deepEqual(await (await page.request.get(origin + original[10])).body(), photoPng);
+      });
+      return inRole('mecanico', 390, async page => {
+        await readOrder(page, recurrent[1], description);
+        await visible(page.getByText('OT anterior disponible para Taller y Coordinación.', { exact: true }));
+        assert.equal(await page.getByRole('link', { name: /Reincidencia de/ }).count(), 0);
+        return { previous: original[1], recurrent: recurrent[1], evidenceFromBoth: true, priorKeptScoped: true, coordinatorPhotoAfterReload: true };
+      }, second);
+    });
+
+    await record('MÓVIL-VIDA-COMPONENTE-POR-POSICIÓN', () => inRole('gerencia', 390, async page => {
+      const { dispatchPanama } = await import(pathToFileURL(resolve(fixture.repoDirectory, 'api/_lib/hermes-panama.js')).href);
+      await page.route('**/hermes-api/api/panama/componentes?*', async route => {
+        const unit = new URL(route.request().url()).searchParams.get('unit');
+        const result = await dispatchPanama({
+          method: 'GET', path: 'api/panama/componentes', query: { unit },
+          session: { project: 'tmf-panama', role: 'gerencia', allUnits: true },
+          read: async spec => spec.key === 'dozerLife' ? [
+            ['Equipo','Pieza','Lado','Vida','UltHor','HorAct','Usadas','Restantes','Estado'],
+            ['DZ203','CADENA','Izquierdo','2,000','3,010.5','4,211.75','1,201.25','798.75','Vigente'],
+            ['DZ203','CADENA','Derecho','2,000','4,100','4,211.75','100','1,900','Vigente'],
+          ] : [],
+        });
+        await route.fulfill({ status: result.status, json: result.body });
+      });
+      await page.goto(`${origin}/panama`, { waitUntil: 'domcontentloaded' });
+      const history = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Historial y vida de componentes' }) });
+      await history.getByLabel('Código de equipo').fill('DZ203');
+      await history.getByRole('button', { name: 'Consultar componentes' }).tap();
+      const left = history.getByRole('listitem').filter({ hasText: 'CADENA · Izquierdo' });
+      const right = history.getByRole('listitem').filter({ hasText: 'CADENA · Derecho' });
+      await visible(left.getByText(/Restantes 798\.75/));
+      await visible(right.getByText(/Restantes 1,900/));
+      await visible(right.getByText(/Difiere del maestro.*111[.,]75 h de uso/));
+      await noHorizontalOverflow(page, 390);
+      return { unit: 'DZ203', retainedMaster: true, isolatedByPosition: true, recalculatedRemainingHours: 1888.25 };
+    }, loadAccounts[77]));
 
     if (!withPurchasing) return [...external];
     const browserBuyer = loadAccounts.find(account => account.membership.can_approve_purchases === true);
