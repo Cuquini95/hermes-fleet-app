@@ -1021,7 +1021,15 @@ async function saveExpense(body, session, sheets, tx, evidenceStorage) {
   const folio = 'GST-' + hash(tx.key).slice(0, 18).toUpperCase();
   const rfc = field(expense.rfc_proveedor, 60, 'identificación del proveedor');
   const invoice = field(expense.folio_factura, 120, 'factura');
-  const ot = field(expense.ot_id, 90, 'orden de trabajo');
+  let ot = field(expense.ot_id, 90, 'orden de trabajo');
+  if (panama && type === 'Servicio' && ot) {
+    if (!invoice) error(400, 'Indica la factura del servicio vinculado a la OT.');
+    const order = resolveCostOrder(await sheets.read('ORDENES_TRABAJO'), ot, session);
+    if (allocations.length !== 1 || allocations[0].unit !== order.unit) {
+      error(409, 'Asigna el servicio únicamente a la unidad de la OT.');
+    }
+    ot = order.row[1];
+  }
   const rows = distributeTax(allocations, tax, total).map((allocation, index) => [
     folio + '-' + (index + 1), documentDate, now.time, type, vendor, rfc, invoice,
     money(allocation.amount - allocation.tax), money(allocation.tax), money(allocation.amount), allocation.unit,
@@ -1080,10 +1088,157 @@ async function changeExpense(action, body, session, sheets, tx) {
   affected.map(({ row }) => 'gst:' + row[0] + ':' + hash(row)));
 }
 
-const WRITES = new Set(['request-submit', 'request-status', 'order-save', 'order-status', 'order-receive', 'order-invoice', 'order-payment', 'order-delete', 'inventory-move', 'expense-save', 'expense-delete', 'expense-review']);
-const READS = new Set(['orders', 'order', 'receiving', 'requests', 'expenses', 'inventory-movements', 'expense-options']);
+function resolveCostOrder(orders, value, session) {
+  const requested = upper(field(value, 90, 'orden de trabajo', true));
+  const matches = entries(orders).filter(({ row }) => upper(row[1]) === requested || upper(row[25]) === requested);
+  if (matches.length > 1) error(409, 'El folio de OT requiere conciliación.');
+  const row = matches[0]?.row;
+  if (!/^OT-/.test(row?.[1] ?? '') || !trim(row[3]) || upper(row[3]) === 'FLOTA') error(404, 'Orden de trabajo no encontrada.');
+  return { row, ot: upper(row[1]), unit: requireUnit(session, row[3]), folio: trim(row[25]) || row[1] };
+}
 
-export async function dispatchPurchasing({ path, method, body = {}, query = {}, session, sheets, evidenceStorage, inventoryValuations }) {
+function addLaborCost({ row, ot, unit }, session, supplied, add, flag) {
+  try {
+    const execution = JSON.parse(row[20]);
+    const review = JSON.parse(row[21]);
+    if (row[9] !== 'Completado' || !execution?.userId || !execution.functionalTest || !review?.userId
+        || review.userId === execution.userId || !(Date.parse(execution.submittedAt) <= Date.parse(review.acceptedAt))) {
+      return flag('labor', 'Falta una aceptación técnica independiente.');
+    }
+    const hours = decimal(execution.laborHours, 3, 'horas aceptadas', true);
+    const definitions = supplied ?? (session.previewDemo ? [] : JSON.parse(process.env.HERMES_PANAMA_LABOR_VALUATIONS_JSON || '[]'));
+    const candidates = definitions.filter(item => upper(item?.ot) === ot && upper(item.unit) === unit
+      && item.executorId === execution.userId && item.acceptedAt === review.acceptedAt);
+    const rate = candidates.length === 1 ? candidates[0] : null;
+    const value = rate && valueDefinition({ unitCost: rate.hourlyRate, currency: rate.currency, reference: rate.reference });
+    if (!value || decimal(rate.hours, 3, 'horas autorizadas', true) !== hours) {
+      return flag('labor', 'Falta conciliar la tarifa autorizada con las horas aceptadas.');
+    }
+    add('labor', value.currency, lineCost(hours, decimal(value.unitCost, 2, 'tarifa')), value.reference, review.acceptedAt);
+  } catch {
+    flag('labor', 'Faltan horas aceptadas o una tarifa autorizada verificable.');
+  }
+}
+
+function addInventoryCosts(rows, { ot, unit, folio }, add, flag) {
+  const ledger = entries(rows).map(({ row }) => row);
+  const matches = new Set([ot, upper(folio)]);
+  const idCount = new Map();
+  for (const row of ledger) idCount.set(trim(row[0]), (idCount.get(trim(row[0])) ?? 0) + 1);
+  const movements = ledger.filter(row => matches.has(upper(row[8])) && ['Salida', 'Devolución'].includes(row[2]));
+  const returns = movements.filter(row => row[2] === 'Devolución');
+  const used = new Set();
+  for (const issue of movements.filter(row => row[2] === 'Salida')) {
+    const id = trim(issue[0]);
+    const value = recordedInventoryValue(issue[15]);
+    let issued, rate;
+    try {
+      if (upper(issue[5]) !== unit || !id || idCount.get(id) !== 1 || !trim(issue[3]) || !trim(issue[9]) || !value) throw new Error();
+      issued = decimal(issue[4], 3, 'salida', true);
+      rate = decimal(value.unitCost, 2, 'costo de salida');
+      if (value.delta !== money(lineCost(issued, rate))) throw new Error();
+      add('parts', value.currency, lineCost(issued, rate), trim(issue[9]), id, value.reference);
+    } catch {
+      flag('parts', 'Hay salidas sin valuación o vínculo verificable.');
+      continue;
+    }
+    const linked = returns.filter(row => trim(row[14]) === id);
+    const adjustments = [];
+    let returned = 0n, reversal = 0n;
+    try {
+      for (const row of linked) {
+        used.add(row);
+        const credit = recordedInventoryValue(row[15]);
+        const returnId = trim(row[0]);
+        if (upper(row[5]) !== unit || upper(row[3]) !== upper(issue[3]) || !returnId || idCount.get(returnId) !== 1 || !trim(row[9])
+            || !credit || credit.unitCost !== value.unitCost || credit.currency !== value.currency || credit.reference !== value.reference
+            || !/^(?:-\d+\.\d{2}|0\.00)$/.test(credit.delta)) throw new Error();
+        const qty = decimal(row[4], 3, 'devolución', true);
+        const amount = decimal(credit.delta.replace(/^-/, ''), 2, 'costo devuelto');
+        const minimum = qty * rate / 1000n;
+        if (amount < minimum || amount > (qty * rate + 999n) / 1000n) throw new Error();
+        returned += qty;
+        reversal += amount;
+        adjustments.push([trim(row[9]), returnId, -amount]);
+      }
+      if (returned > issued || reversal !== lineCost(returned, rate)) throw new Error();
+      for (const [reference, sourceId, amount] of adjustments) add('returns', value.currency, amount, reference, sourceId, value.reference);
+    } catch {
+      flag('returns', 'Hay devoluciones cuyo saldo o valuación original requiere conciliación.');
+    }
+  }
+  if (returns.some(row => !used.has(row))) flag('returns', 'Hay devoluciones sin una salida original verificable.');
+}
+
+function addServiceCosts(rows, { ot, unit, folio }, add, flag) {
+  const active = entries(rows).map(({ row }) => row).filter(row => !['Eliminado', 'Rechazado'].includes(row[16]));
+  const approved = active.filter(row => row[16] === 'Aprobado');
+  const docKey = row => JSON.stringify([upper(row[21]), upper(row[5] || row[4]), upper(row[6])]);
+  const documents = new Map();
+  const groups = new Map();
+  const ids = new Map();
+  for (const row of active) {
+    const group = trim(row[17]);
+    const id = trim(row[0]);
+    groups.set(group, [...(groups.get(group) ?? []), row]);
+    ids.set(id, (ids.get(id) ?? 0) + 1);
+  }
+  for (const row of approved) {
+    const key = docKey(row);
+    const group = trim(row[17]);
+    if (documents.has(key) && documents.get(key) !== group) documents.set(key, null);
+    else if (!documents.has(key)) documents.set(key, group);
+  }
+  for (const row of active.filter(row => row[3] === 'Servicio' && [ot, upper(folio)].includes(upper(row[11])))) {
+    try {
+      const group = trim(row[17]);
+      const id = trim(row[0]);
+      if (upper(row[10]) !== unit || row[16] !== 'Aprobado' || !group || !id || ids.get(id) !== 1 || groups.get(group)?.length !== 1
+          || documents.get(docKey(row)) !== group || !trim(row[4]) || !trim(row[6]) || !trim(row[21]) || !trim(row[24])
+          || !trim(row[18]) || !trim(row[25]) || row[18] === row[25] || !Number.isFinite(Date.parse(row[26]))
+          || !['USD', 'PAB'].includes(row[22])) throw new Error();
+      const amount = decimal(row[9], 2, 'importe de factura', true);
+      if (decimal(row[7], 2, 'subtotal') + decimal(row[8], 2, 'impuesto') !== amount
+          || decimal(row[19], 2, 'total del documento') !== amount) throw new Error();
+      add('services', row[22], amount, trim(row[6]), group);
+    } catch {
+      flag('services', 'Hay facturas de servicio pendientes de aprobación o conciliación.');
+    }
+  }
+}
+
+async function readWorkOrderCost(sheets, session, identifier, laborValuations) {
+  // Check scope before reading supporting ledgers. Native readers take one snapshot of the related data.
+  resolveCostOrder(await sheets.read('ORDENES_TRABAJO'), identifier, session);
+  const [orders, movements, expenses] = await readTables(sheets, 'ORDENES_TRABAJO', PURCHASE_TABS.inventoryMovements, PURCHASE_TABS.expenses);
+  const order = resolveCostOrder(orders, identifier, session);
+  const totals = new Map();
+  const lines = [];
+  const pending = [];
+  const flag = (kind, reason) => {
+    if (!pending.some(item => item.kind === kind && item.reason === reason)) pending.push({ kind, reason });
+  };
+  const signedMoney = cents => cents < 0n ? '-' + money(-cents) : money(cents);
+  const add = (kind, currency, cents, reference, sourceId, valuationReference) => {
+    const group = totals.get(currency) ?? { labor: 0n, parts: 0n, returns: 0n, services: 0n, amount: 0n };
+    group[kind] += cents;
+    group.amount += cents;
+    totals.set(currency, group);
+    lines.push({ kind, currency, amount: signedMoney(cents), reference, sourceId, ...(valuationReference && { valuationReference }) });
+  };
+  addLaborCost(order, session, laborValuations, add, flag);
+  addInventoryCosts(movements, order, add, flag);
+  addServiceCosts(expenses, order, add, flag);
+  return { ot: order.ot, folio: order.folio, unit: order.unit, project: session.project, lines, pending,
+    totals: [...totals].sort(([a], [b]) => a.localeCompare(b)).map(([currency, group]) => ({ currency,
+      ...Object.fromEntries(Object.entries(group).map(([key, value]) => [key, signedMoney(value)])),
+    })) };
+}
+
+const WRITES = new Set(['request-submit', 'request-status', 'order-save', 'order-status', 'order-receive', 'order-invoice', 'order-payment', 'order-delete', 'inventory-move', 'expense-save', 'expense-delete', 'expense-review']);
+const READS = new Set(['orders', 'order', 'receiving', 'requests', 'expenses', 'inventory-movements', 'expense-options', 'workorder-cost']);
+
+export async function dispatchPurchasing({ path, method, body = {}, query = {}, session, sheets, evidenceStorage, inventoryValuations, laborValuations }) {
   const action = path.replace(/^api\/purchasing\//, '');
   let tx;
   try {
@@ -1099,6 +1254,7 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
       : action === 'order-receive' ? (panama ? warehouseAccess : session.role === 'gerencia')
       : action === 'inventory-move' ? warehouseAccess
       : action === 'inventory-movements' ? panama && (warehouseAccess || REQUEST_ROLES.has(session.role))
+      : action === 'workorder-cost' ? panama && session.role === 'gerencia'
       : action === 'order-invoice' ? invoiceAccess
       : action === 'order-payment' ? paymentAccess
       : action === 'requests' ? REQUEST_ROLES.has(session.role)
@@ -1108,6 +1264,7 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
     if (!roleAllowed || (action === 'order-status' && session.canApprovePurchases !== true)) {
       error(403, 'Tu cuenta no tiene permiso para realizar esta acción.');
     }
+    if (action === 'workorder-cost') return ok(await readWorkOrderCost(sheets, session, query.ot, laborValuations));
     if (action === 'inventory-movements') {
       const ot = upper(field(query.ot, 90, 'OT'));
       const rows = entries(await sheets.read(PURCHASE_TABS.inventoryMovements)).map(({ row }) => row)

@@ -8,6 +8,10 @@ TI mantiene `HERMES_PANAMA_EXPENSE_REVIEWER_IDS` con los identificadores de las 
 
 Contabilidad mantiene `HERMES_PANAMA_EXPENSE_CLOSED_THROUGH` en formato `AAAA-MM` con el último mes efectivamente cerrado. Sin confirmación del corte, Hermes exige que los movimientos correspondan al mes en curso. Las correcciones de registros aprobados o cerrados se tramitan en el maestro contable con el folio original, la entidad, la moneda, la fecha, el soporte, la razón y el actor. Los registros históricos sin moneda o entidad se muestran como pendientes de conciliar y no forman parte de un total o PDF verificado.
 
+En la ficha de OT, Gerencia consulta el costo documentado por moneda. Los repuestos usan la valuación guardada en la salida y sus devoluciones revierten ese mismo valor. Una factura externa requiere un gasto de Servicio aprobado por un revisor independiente, el número de factura y un vínculo a la unidad de la OT. El importe del servicio incluye el impuesto que consta en el documento. La vista identifica las partidas pendientes de conciliación.
+
+La mano de obra requiere horas aceptadas por Taller y una valuación documentada por Contabilidad. La entrada privada en `HERMES_PANAMA_LABOR_VALUATIONS_JSON` usa `ot` (ID interno), `unit`, `executorId`, `acceptedAt` (marca exacta de aceptación), `hours`, `hourlyRate`, `currency` (USD o PAB) y `reference`. Hermes espera una sola entrada por aceptación y verifica que las horas coincidan con la OT. Sin esa autorización, presenta la mano de obra como pendiente.
+
 ## Campos nuevos en 02 Gastos
 
 | Columna | Dato |

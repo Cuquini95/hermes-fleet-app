@@ -427,6 +427,10 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
     HERMES_PANAMA_INVENTORY_VALUATIONS_JSON: JSON.stringify([
       { partNumber: 'QA-001', unitCost: '12.50', currency: 'USD', reference: 'VALUACIÓN-QA-01' },
     ]),
+    HERMES_PANAMA_LABOR_VALUATIONS_JSON: JSON.stringify([
+      { ot: 'OT-COSTO-QA', unit: 'DZ203', executorId: 'mechanic-cost-qa', acceptedAt: '2026-11-14T16:00:00Z',
+        hours: '2.50', hourlyRate: '14.27', currency: 'USD', reference: 'HORAS-COSTO-QA' },
+    ]),
     HERMES_PANAMA_PM_TRIGGER_RULES_JSON: JSON.stringify([{
       unit: 'DZ205', level: 'PM-250', reference: 'Plan sintético QA rev1', dueDate: '2026-11-12',
       condition: { source: 'dozers', minCritical: 1 },

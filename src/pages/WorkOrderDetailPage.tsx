@@ -19,6 +19,7 @@ import { uploadEvidence } from '../lib/evidence-upload';
 import PhotoCapture from '../components/ui/PhotoCapture';
 import OperationalReturnCard from '../components/workshop/OperationalReturnCard';
 import PmTriggerList from '../components/workshop/PmTriggerList';
+import PanamaWorkOrderCost from '../components/workshop/PanamaWorkOrderCost';
 
 const FIELD_LABELS: Record<StatusLogEntry['field'], string> = {
   estado: 'Estado',
@@ -122,6 +123,7 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
   const [functionalTest, setFunctionalTest] = useState('');
   const [diagnosis, setDiagnosis] = useState('');
   const [laborHours, setLaborHours] = useState('');
+  const [costRevision, setCostRevision] = useState(0);
   const [performedOn, setPerformedOn] = useState(mexicoDateInput);
   const [meter, setMeter] = useState('');
   const [completedItems, setCompletedItems] = useState<string[]>([]);
@@ -370,7 +372,7 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
 
         {panamaWorkflow && role === 'jefe_taller' && <Link className="inline-flex min-h-11 items-center font-semibold underline"
           to={`/pedidos?${new URLSearchParams({ ot: wo.ot_id })}`}>Pedir repuestos para esta OT</Link>}
-        <PanamaPartsMovements ot={wo.ot_id} />
+        <PanamaPartsMovements ot={wo.ot_id} onMoved={() => setCostRevision(revision => revision + 1)} />
         {panamaWorkflow && <Link to={`/manuals?unit=${encodeURIComponent(wo.unidad)}`}
           className="inline-flex min-h-11 items-center text-sm font-semibold text-amber underline">
           Manuales de {wo.unidad}
@@ -413,6 +415,8 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
           </div>
         )}
       </div>
+
+      {panamaWorkflow && role === 'gerencia' && <PanamaWorkOrderCost ot={wo.ot_id} folio={wo.folio ?? wo.ot_id} unit={wo.unidad} revision={costRevision} />}
 
       {panamaWorkflow && isPM && !!pm?.triggers?.length && (
         <section aria-label="Motivo del mantenimiento" className="space-y-2 rounded-xl border border-border bg-white p-4">

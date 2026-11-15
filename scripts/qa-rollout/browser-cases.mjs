@@ -1238,6 +1238,45 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         duplicateSuppressed: true, returnLinked: true, costReversed: '-12.50', remainingReturnable: 1 };
     }, browserWarehouse));
 
+    await record('MÓVIL-COSTO-REAL-OT', () => inRole('gerencia', 390, async page => {
+      const ot = 'OT-COSTO-QA';
+      const order = Array(26).fill('');
+      Object.assign(order, { 0: 'COSTO-QA', 1: ot, 2: '14/11/2026', 3: 'DZ203', 4: 'Mecánica', 5: 'Verificación de costo',
+        7: 'MEDIA', 9: 'Completado', 20: JSON.stringify({ userId: 'mechanic-cost-qa', userName: 'QA Mecánico',
+          functionalTest: 'Prueba conforme', submittedAt: '2026-11-14T15:00:00Z', laborHours: 2.5 }),
+        21: JSON.stringify({ userId: 'chief-cost-qa', userName: 'QA Taller', acceptedAt: '2026-11-14T16:00:00Z' }), 25: 'OT-0910' });
+      const movement = (id, kind, quantity, delta, original = '') => ['COSTO-' + id, '2026-11-14T14:00:00Z', kind,
+        'QA-001', quantity, 'DZ203', '', '', ot, id, 'QA Almacén', 'qa-warehouse', '7', 'pza', original,
+        JSON.stringify({ unitCost: '12.50', currency: 'USD', reference: 'VALUACIÓN-QA-01', delta })];
+      const service = Array(29).fill('');
+      Object.assign(service, { 0: 'GST-COSTO-QA-1', 3: 'Servicio', 4: 'Proveedor QA', 5: 'RUC-COSTO-QA', 6: 'FACT-COSTO-QA',
+        7: '50.00', 8: '3.50', 9: '53.50', 10: 'DZ203', 11: ot, 16: 'Aprobado', 17: 'GST-COSTO-QA', 18: 'expense-qa',
+        19: '53.50', 21: 'TP_PA_QA', 22: 'PAB', 24: '14/11/2026', 25: 'accounting-qa', 26: '2026-11-14T17:00:00Z' });
+      const movements = 'Movimientos Repuestos PA';
+      const before = [sheet.read(tabs.orders), sheet.read(tabs.expenses), sheet.read(movements)];
+      sheet.seed(tabs.orders, [...before[0], order]);
+      sheet.seed(tabs.expenses, [...before[1], service]);
+      sheet.seed(movements, [...before[2], movement('SALIDA', 'Salida', '2', '25.00'), movement('DEV', 'Devolución', '1', '-12.50', 'COSTO-SALIDA')]);
+      try {
+        await page.goto(`${origin}/workorders/OT-0910`, { waitUntil: 'domcontentloaded' });
+        const card = page.getByRole('region', { name: 'Costo real de OT' });
+        await visible(card.getByText(/Total documentado.*USD.*48\.18/));
+        await visible(card.getByText(/Total documentado.*PAB.*53\.50/));
+        await card.getByText('Ver soportes', { exact: true }).tap();
+        await visible(card.getByText(/Mano de obra · HORAS-COSTO-QA/));
+        await visible(card.getByText(/Devoluciones · DEV/));
+        await visible(card.getByText(/Servicios externos · FACT-COSTO-QA/));
+        await noHorizontalOverflow(page, 390);
+        await shot(page, 'ot-costo-real-390.png');
+        await card.getByRole('link', { name: 'Registrar factura de servicio' }).tap();
+        await page.waitForURL(`${origin}/gastos/nuevo?ot=OT-0910&unit=DZ203`);
+        assert.equal(await page.getByLabel('OT relacionada (opcional)').inputValue(), 'OT-0910');
+        return { folio: 'OT-0910', unit: 'DZ203', totals: { USD: '48.18', PAB: '53.50' }, separateCurrencies: true, serviceFormPrefilled: true };
+      } finally {
+        [tabs.orders, tabs.expenses, movements].forEach((tab, index) => sheet.seed(tab, before[index]));
+      }
+    }));
+
     await record('MÓVIL-GASTOS-RECIBO-REPARTO', () => inRole('jefe_taller', 390, async page => {
       await page.goto(`${origin}/gastos`, { waitUntil: 'domcontentloaded' });
       await clickByName(page, 'Nuevo');

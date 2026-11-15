@@ -3,7 +3,7 @@
  * Expense entry form with OCR, multi-unit allocation, and photo capture. Shared form state across steps — splitting creates prop-drill burden without reuse upside.
  */
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Camera,
   Upload,
@@ -46,9 +46,11 @@ export default function NuevoGastoPage() {
   const actorId = useAuthStore(state => state.userId);
   const allUnits = useAuthStore(state => state.allUnits);
   const isPanama = project === 'tmf-panama';
+  const [search] = useSearchParams();
+  const fromOrder = isPanama ? search.get('ot')?.trim() ?? '' : '';
 
   // ── Form state
-  const [tipo, setTipo] = useState<GastoTipo>('Refaccion');
+  const [tipo, setTipo] = useState<GastoTipo>(fromOrder ? 'Servicio' : 'Refaccion');
   const [proveedor, setProveedor] = useState('');
   const [rfcProveedor, setRfcProveedor] = useState('');
   const [folioFactura, setFolioFactura] = useState('');
@@ -73,10 +75,10 @@ export default function NuevoGastoPage() {
   const [total, setTotal] = useState(0);
   // ── Unit mode
   const [unitMode, setUnitMode] = useState<'single' | 'multi'>('single');
-  const [unidad, setUnidad] = useState('');
+  const [unidad, setUnidad] = useState(fromOrder ? search.get('unit') ?? '' : '');
   const [splitEntries, setSplitEntries] = useState<{ unitId: string; amount: number }[]>([]);
   const [splitPickerValue, setSplitPickerValue] = useState('');
-  const [otId, setOtId] = useState('');
+  const [otId, setOtId] = useState(fromOrder);
   const [metodoPago, setMetodoPago] = useState<MetodoPago>('Efectivo');
   const [lineItems, setLineItems] = useState<OcrLineItem[]>([emptyLine()]);
   const receipt = useRef<{ file: File; operationId: string; uploadedUrl: string; unitScope: string } | null>(null);
@@ -604,8 +606,9 @@ export default function NuevoGastoPage() {
 
         {/* OT (optional) */}
         <div>
-          <label className="text-xs text-text-secondary mb-1 block">OT relacionada (opcional)</label>
+          <label htmlFor="expense-work-order" className="text-xs text-text-secondary mb-1 block">OT relacionada (opcional)</label>
           <input
+            id="expense-work-order"
             value={otId}
             onChange={(e) => setOtId(e.target.value.toUpperCase())}
             placeholder="OT-2026-044"

@@ -89,6 +89,81 @@ function setup(options, purchasingOptions = {}) {
   return { sheets, call, readOrder };
 }
 
+const costManager = { ...manager, project: 'tmf-panama' };
+const costOrder = 'OT-QA-01';
+const costUnit = 'QA-DZ203';
+const acceptedAt = '2026-11-14T16:00:00Z';
+
+function seedCostOrder(sheets) {
+  const orders = sheets.inspect('ORDENES_TRABAJO');
+  orders[1][9] = 'Completado';
+  orders[1][13] = '9999.00';
+  orders[1][20] = JSON.stringify({ userId: 'mechanic-qa', functionalTest: 'Prueba conforme', laborHours: 2.5, submittedAt: '2026-11-14T15:00:00Z' });
+  orders[1][21] = JSON.stringify({ userId: 'chief-qa', acceptedAt });
+  sheets.seed('ORDENES_TRABAJO', orders);
+}
+
+function costMovement(id, kind, quantity, delta, original = '', unit = costUnit) {
+  const row = [id, '2026-11-14T14:00:00Z', kind, 'SKU-QA', quantity, unit, '', '', costOrder, id, '', '', '', 'pza', original];
+  if (delta != null) row.push(JSON.stringify({ unitCost: '9.99', currency: 'USD', reference: 'COSTO-QA', delta }));
+  return row;
+}
+
+function costService(id, group, invoice, { status = 'Aprobado', unit = costUnit, order = costOrder } = {}) {
+  const row = Array(29).fill('');
+  Object.assign(row, { 0: id, 3: 'Servicio', 4: 'Proveedor QA', 5: 'RUC-QA', 6: invoice, 7: '50.00', 8: '3.50', 9: '53.50',
+    10: unit, 11: order, 16: status, 17: group, 18: 'author-qa', 19: '53.50', 21: 'TP_PA', 22: 'PAB',
+    24: '14/11/2026', 25: 'reviewer-qa', 26: '2026-11-14T17:00:00Z', 27: 'Factura conciliada' });
+  return row;
+}
+
+test('costo real de OT concilia horas aceptadas, salida, devolución y factura agrupados por moneda', async () => {
+  const laborValuations = [{ ot: costOrder, unit: costUnit, executorId: 'mechanic-qa', acceptedAt,
+    hours: '2.50', hourlyRate: '14.27', currency: 'USD', reference: 'MO-QA-1' }];
+  const { sheets, call } = setup(undefined, { laborValuations });
+  seedCostOrder(sheets);
+  const issue = costMovement('ISSUE-QA', 'Salida', '2.500', '24.98');
+  sheets.seed(TAB.inventoryMovements, [['ID'], issue, costMovement('RETURN-QA', 'Devolución', '1.125', '-11.24', issue[0])]);
+  sheets.seed(TAB.expenses, [['ID'], costService('SVC-1', 'GRP-1', 'FACT-QA-1'),
+    costService('SVC-2', 'GRP-2', 'FACT-QA-2', { order: 'OT-OTRA' })]);
+  const { status, body } = await call('workorder-cost', null, costManager, { ot: costOrder });
+  assert.equal(status, 200, JSON.stringify(body));
+  assert.equal(body.ot, costOrder);
+  assert.equal(body.unit, costUnit);
+  assert.equal(body.project, 'tmf-panama');
+  assert.deepEqual(body.totals, [
+    { currency: 'PAB', labor: '0.00', parts: '0.00', returns: '0.00', services: '53.50', amount: '53.50' },
+    { currency: 'USD', labor: '35.68', parts: '24.98', returns: '-11.24', services: '0.00', amount: '49.42' },
+  ]);
+  assert.deepEqual(body.lines.map(({ kind, reference }) => [kind, reference]), [
+    ['labor', 'MO-QA-1'], ['parts', 'ISSUE-QA'], ['returns', 'RETURN-QA'], ['services', 'FACT-QA-1'],
+  ]);
+  assert.deepEqual(body.pending, []);
+});
+
+test('costo real de OT conserva lo verificado y omite tarifas ajenas, devoluciones inválidas y facturas duplicadas', async () => {
+  const laborValuations = [{ ot: costOrder, unit: costUnit, executorId: 'mechanic-qa', acceptedAt,
+    hours: '3.00', hourlyRate: '14.27', currency: 'USD', reference: 'TARIFA-AJENA' }];
+  const { sheets, call } = setup(undefined, { laborValuations });
+  seedCostOrder(sheets);
+  sheets.seed(TAB.inventoryMovements, [['ID'], costMovement('ISSUE-QA', 'Salida', '1', '9.99'),
+    costMovement('RETURN-QA', 'Devolución', '1', '-9.99', 'SIN-SALIDA'), costMovement('SIN-COSTO', 'Salida', '1', null)]);
+  sheets.seed(TAB.expenses, [['ID'], costService('SVC-1', 'GRP-1', 'DOBLE-QA'),
+    costService('SVC-2', 'GRP-2', 'DOBLE-QA', { order: 'OT-OTRA' }),
+    costService('SVC-3', 'GRP-3', 'PEND-QA', { status: 'Pendiente' }),
+    costService('SVC-4', 'GRP-4', 'AJENA-QA', { unit: 'QA-EX401' })]);
+  const result = await call('workorder-cost', null, costManager, { ot: costOrder });
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body.lines.map(line => line.reference), ['ISSUE-QA']);
+  assert.deepEqual(new Set(result.body.pending.map(item => item.kind)), new Set(['labor', 'returns', 'parts', 'services']));
+  assert.doesNotMatch(JSON.stringify(result.body), /AJENA-QA|OT-OTRA|TARIFA-AJENA/);
+  for (const actor of [{ ...costManager, role: 'mecanico' }, { ...costManager, allUnits: false, assignedUnits: ['QA-EX401'] }, { ...costManager, project: 'QA' }]) {
+    const forbidden = await call('workorder-cost', null, actor, { ot: costOrder });
+    assert.equal(forbidden.status, 403);
+    assert.equal(forbidden.body.lines, undefined);
+  }
+});
+
 const requestInput = () => ({
   operationId: randomUUID(),
   items: [
