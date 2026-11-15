@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import PanamaComponentHistory from '../components/workshop/PanamaComponentHistory';
+import PanamaSourceCuts from '../components/workshop/PanamaSourceCuts';
 import { useAuthStore } from '../stores/auth-store';
 
 const definitions = [
@@ -24,6 +25,7 @@ export default function PanamaPage() {
   const canSeeComponents = useAuthStore(state => state.project === 'tmf-panama' && state.role !== 'operador');
   const canSeeShifts = useAuthStore(state => state.project === 'tmf-panama' && ['operador', 'supervisor', 'coordinador', 'gerencia'].includes(state.role ?? ''));
   const canReceive = useAuthStore(state => state.project === 'tmf-panama' && state.canReceivePurchases);
+  const canSeeCuts = useAuthStore(state => state.project === 'tmf-panama' && state.role === 'gerencia' && !state.previewDemo);
   const logout = useAuthStore(state => state.logout);
   const [sections, setSections] = useState<Sections>();
   const [snapshots, setSnapshots] = useState<Record<string, string>>({});
@@ -77,6 +79,7 @@ export default function PanamaPage() {
             Consulta con cortes de los maestros oficiales. La hora de captura figura en cada sección. Usa el maestro para consultar cambios posteriores.
           </p>
         )}
+        {canSeeCuts && <PanamaSourceCuts key={userId} reload={reload} />}
         {canSeeComponents && <PanamaComponentHistory />}
         {sections && definitions.filter(({ key }) => Object.hasOwn(sections, key)).map(({ key, title, fields }) => {
           const rows = sections[key]?.filter(row => row.unit.toUpperCase().includes(filter.trim().toUpperCase()));

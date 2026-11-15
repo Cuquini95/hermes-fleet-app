@@ -158,3 +158,29 @@ test('a focused master consultation reads only the requested source permitted by
   assert.deepEqual(Object.keys(result.body.sections), ['failures']);
   assert.equal(result.body.sections.failures[0].order, 'OT-QA-1');
 });
+
+test('diagnóstico enumera los 16 cortes y conserva el corte anterior de una fuente omitida', async () => {
+  const newest = '2026-11-15T01:16:43.960Z';
+  const older = '2026-11-14T21:18:02.050Z';
+  const readCuts = async () => [
+    { source: 'fleet', captured_at: newest, rows: ['private'] },
+    { source: 'orders', captured_at: older },
+    { source: 'failures', captured_at: 'invalid' },
+    { source: 'extraneous', captured_at: '2027-02-01T01:00:00Z' },
+  ];
+  const request = { ...query, path: 'api/panama/cortes', session: { ...teamMember, role: 'gerencia' }, readCuts };
+  const { status, body } = await dispatchPanama(request);
+  assert.equal(status, 200);
+  assert.equal(body.sources.length, 16);
+  assert.equal(body.latestCapturedAt, newest);
+  assert.deepEqual(body.sources.find(row => row.key === 'orders'), {
+    key: 'orders', label: 'Órdenes de Taller', capturedAt: older, status: 'previous',
+  });
+  assert.equal(body.sources.find(row => row.key === 'fleet').status, 'latest');
+  assert.equal(body.sources.find(row => row.key === 'failures').status, 'missing');
+  assert.doesNotMatch(JSON.stringify(body), /private|extraneous/);
+  const blocked = async () => assert.fail('Una sesión fuera de alcance no accede a los cortes');
+  for (const session of [teamMember, { ...request.session, project: 'mx' }, { ...request.session, previewDemo: true }]) {
+    assert.equal((await dispatchPanama({ ...request, session, readCuts: blocked })).status, 403);
+  }
+});

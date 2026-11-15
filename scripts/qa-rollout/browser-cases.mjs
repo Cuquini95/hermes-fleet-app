@@ -178,6 +178,34 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       }
     }, firstAccount('gerencia')));
 
+    if (withGateway) await record('MÓVIL-16-CORTES-FECHA-Y-RECUPERACIÓN', () => inRole('gerencia', 390, async page => {
+      const keys = ['fleet', 'orders', 'failures', 'shifts', 'maintenance', 'maintenancePlan', 'maintenanceAnchor',
+        'equipmentDetails', 'costs', 'purchases', 'dozers', 'dozerChanges', 'dozerLife', 'excavators', 'excavatorChanges', 'excavatorLife'];
+      let responseStatus = 200;
+      await page.route('**/hermes-api/api/panama/cortes', route => responseStatus !== 200
+        ? route.fulfill({ status: responseStatus, json: { error: 'No disponible' } })
+        : route.fulfill({ json: { project: 'tmf-panama', sources: keys.map((key, index) => ({
+          key, label: key === 'orders' ? 'Órdenes de Taller' : key, status: index === 1 ? 'previous' : 'latest',
+          capturedAt: index === 1 ? '2026-11-14T21:18:02.050Z' : '2026-11-15T01:16:43.960Z',
+        })) } }));
+      await page.goto(`${origin}/panama`, { waitUntil: 'domcontentloaded' });
+      await page.locator('summary').filter({ hasText: /^Cortes de los 16 maestros$/ }).click();
+      const list = page.getByRole('list', { name: 'Estado de cortes publicados' });
+      const orders = list.getByRole('listitem').filter({ hasText: 'Órdenes de Taller' });
+      await visible(orders.getByText(/Corte anterior conservado.*Panamá/));
+      assert.equal(await list.getByRole('listitem').count(), 16);
+      responseStatus = 503;
+      await clickByName(page, 'Actualizar');
+      await visible(page.getByText(/Se muestran las fechas verificadas anteriormente/));
+      assert.equal(await list.getByRole('listitem').count(), 16);
+      responseStatus = 403;
+      await clickByName(page, 'Actualizar');
+      await visible(page.getByText('No se pudieron consultar las fechas de corte.', { exact: true }));
+      assert.equal(await list.count(), 0);
+      await noHorizontalOverflow(page, 390);
+      return { sources: 16, olderCutLabeled: true, retainedAfterUnavailable: true, clearedAfterPermissionLoss: true };
+    }, firstAccount('gerencia')));
+
     if (withGateway) await record('MÓVIL-GERENCIA-MAESTRO-DE-TALLER', () => inRole('gerencia', 390, async page => {
       const cut = new Date().toISOString();
       const today = new Intl.DateTimeFormat('en-CA', {

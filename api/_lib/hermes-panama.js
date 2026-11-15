@@ -240,8 +240,55 @@ async function componentDetails({ method, query, session, read }) {
   return { status: 200, body: { unit, changes, life, unavailable, snapshots, checkedAt: new Date().toISOString() } };
 }
 
-export async function dispatchPanama({ path, method, query, session, read = readSourceForConsultation }) {
+const publishedCutLabels = {
+  fleet: 'Flota TMF', equipmentDetails: 'Maestro de equipos', failures: 'Fallas TMF',
+  orders: 'Órdenes de Taller', shifts: 'Registro de turnos', maintenance: 'PM de flota',
+  maintenancePlan: 'Plan de PM', maintenanceAnchor: 'Anclas de PM', costs: 'Costos por máquina',
+  purchases: 'Compras de Panamá', dozers: 'Resumen de dozers', dozerLife: 'Vida de componentes de dozers',
+  dozerChanges: 'Cambios de componentes de dozers', excavators: 'Resumen de excavadoras',
+  excavatorLife: 'Vida de componentes de excavadoras', excavatorChanges: 'Cambios de componentes de excavadoras',
+};
+
+async function readPublishedCuts() {
+  const config = identityConfig();
+  if (config.project !== PANAMA_PROJECT) throw new Error('Panama snapshot project mismatch');
+  const response = await identityRequest(config, '/rest/v1/hermes_panama_source_snapshots', {
+    query: { select: 'source,captured_at', source: `in.(${Object.keys(publishedCutLabels).join(',')})` },
+  });
+  if (!response.ok) throw new Error('Panama cuts unavailable');
+  return response.json();
+}
+
+async function publishedCuts({ method, session, readCuts }) {
+  if (method !== 'GET') return { status: 405, body: { error: 'Consulta de cortes de solo lectura.' } };
+  if (session.role !== 'gerencia' || session.previewDemo) {
+    return { status: 403, body: { error: 'Consulta reservada a Gerencia Panamá.' } };
+  }
+  try {
+    const rows = await readCuts();
+    if (!Array.isArray(rows)) throw new Error('Invalid cuts response');
+    const cuts = new Map();
+    for (const row of rows) {
+      if (!Object.hasOwn(publishedCutLabels, row?.source) || !Number.isFinite(Date.parse(row?.captured_at))) continue;
+      const stamp = Date.parse(row.captured_at);
+      if (!cuts.has(row.source) || stamp > cuts.get(row.source)) cuts.set(row.source, stamp);
+    }
+    const latest = cuts.size ? Math.max(...cuts.values()) : null;
+    const sources = Object.entries(publishedCutLabels).map(([key, label]) => {
+      const stamp = cuts.get(key);
+      return { key, label, capturedAt: stamp === undefined ? null : new Date(stamp).toISOString(),
+        status: stamp === undefined ? 'missing' : stamp === latest ? 'latest' : 'previous' };
+    });
+    return { status: 200, body: { project: PANAMA_PROJECT,
+      latestCapturedAt: latest === null ? null : new Date(latest).toISOString(), sources } };
+  } catch {
+    return { status: 503, body: { error: 'No se pudieron verificar los cortes de los maestros.' } };
+  }
+}
+
+export async function dispatchPanama({ path, method, query, session, read = readSourceForConsultation, readCuts = readPublishedCuts }) {
   if (session.project !== PANAMA_PROJECT) return { status: 403, body: { error: 'Consulta reservada a TMF Panamá.' } };
+  if (path === 'api/panama/cortes') return publishedCuts({ method, session, readCuts });
   if (path === 'api/panama/componentes') return componentDetails({ method, query, session, read });
   if (path !== 'api/panama/summary' && path !== 'api/panama/maintenance') return { status: 404, body: { error: 'Ruta no disponible para Panamá.' } };
   if (method !== 'GET') return { status: 405, body: { error: 'Hermes Panamá está en modo consulta.' } };
