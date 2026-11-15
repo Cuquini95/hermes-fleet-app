@@ -135,6 +135,49 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
   }
 
   try {
+    if (withGateway) await record('MÓVIL-FLOTA-HISTORIAL-UNIDAD', () => inRole('gerencia', 390, async page => {
+      const priorFailures = sheet.read(tabs.failure);
+      const priorOrders = sheet.read(tabs.orders);
+      const cut = new Date().toISOString();
+      sheet.seed(tabs.failure, [priorFailures[0]]);
+      const today = cut.slice(0, 10);
+      sheet.seed(tabs.orders, [priorOrders[0],
+        ['qa', 'OT-0100', today, 'DZ204', 'Avería', 'OT crítica sintética', '', 'CRITICA', '', 'Abierta'],
+        ['qa', 'OT-0101', today, 'DZ204', 'Avería', 'OT cerrada sintética', '', 'CRITICA', '', 'Completado']]);
+      sheet.setWorkshopMasters({ failures: { records: [], capturedAt: cut },
+        orders: { records: [{ id: 'OT-0001', unit: 'DZ203', status: 'Abierta' },
+          { id: 'OT-0002', unit: 'DZ204', status: 'Abierta' }], capturedAt: cut } });
+      try {
+        await clickByName(page, 'Actualizar datos');
+        const summary = page.getByRole('region', { name: 'Maestro de Taller' });
+        await visible(summary.getByText('OTs abiertas: 3', { exact: true }));
+        const indicator = page.getByRole('button', { name: 'Ver OT críticas' });
+        await visible(indicator.getByText('1 confirmada', { exact: true }));
+        await indicator.click();
+        const critical = page.getByRole('region', { name: 'Detalle de OT críticas' });
+        await visible(critical.getByRole('list', { name: 'Críticas confirmadas' }).getByText(/OT-0100/));
+        await visible(critical.getByRole('list', { name: 'Prioridad pendiente de confirmar' }).getByText(/OT-0001/));
+        assert.equal(await critical.getByText(/OT-0101/).count(), 0);
+        await clickByName(page, 'Ver detalle de DZ203');
+        const modal = page.getByRole('dialog', { name: 'Detalle de DZ203' });
+        await visible(modal.getByText('OT-0001', { exact: true }));
+        await visible(modal.getByText('Maestro de Taller', { exact: false }));
+        assert.equal(await modal.getByText('OT-0002', { exact: true }).count(), 0);
+        assert.equal(await modal.getByText('Sin reporte de avería registrado', { exact: true }).count(), 0);
+        await noHorizontalOverflow(page, 390);
+        await page.goto(`${origin}/fleet`, { waitUntil: 'domcontentloaded' });
+        await dismissPrivacy(page);
+        await clickByName(page, 'Ver detalle de DZ203');
+        await visible(modal.getByText('OT-0001', { exact: true }));
+        return { unit: 'DZ203', order: 'OT-0001', source: 'Maestro de Taller',
+          otherUnitExcluded: true, criticalOrder: 'OT-0100', orderWithoutPriority: 'OT-0001' };
+      } finally {
+        sheet.setWorkshopMasters(undefined);
+        sheet.seed(tabs.failure, priorFailures);
+        sheet.seed(tabs.orders, priorOrders);
+      }
+    }, firstAccount('gerencia')));
+
     if (withGateway) await record('MÓVIL-GERENCIA-MAESTRO-DE-TALLER', () => inRole('gerencia', 390, async page => {
       const cut = new Date().toISOString();
       const today = new Intl.DateTimeFormat('en-CA', {
@@ -656,7 +699,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await clickByName(page, 'Actualizar datos');
         await visible(page.getByRole('alert').getByText('Algunos indicadores no se pudieron cargar.', { exact: true }).or(page.getByText('Algunos indicadores no se pudieron cargar.', { exact: true })));
         await visible(ordersCard.getByText('Sin verificar', { exact: true }));
-        await visible(page.getByText('Aptos para despacho', { exact: true }).locator('xpath=..').getByText('Sin verificar', { exact: true }));
+        await visible(page.getByText('Equipos operativos', { exact: true }).locator('xpath=..').getByText('—', { exact: true }));
       } finally { sheet.setUnavailable(sources, false); }
       await clickByName(page, 'Actualizar datos');
       await visible(average);

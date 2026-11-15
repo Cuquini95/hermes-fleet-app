@@ -23,7 +23,7 @@ interface SelectedUnit {
 export default function FleetGrid({ equipment, dispatch, operatingOnly = false, selectedUnit, onClearSelectedUnit }: FleetGridProps) {
   const [selected, setSelected] = useState<SelectedUnit | null>(null)
   const fallback = useFleetDispatch(equipment, !dispatch)
-  const { effectiveEquipment, readiness: dispatchReadiness, verified, loading, message, operatingStatuses } = dispatch ?? fallback
+  const { effectiveEquipment, readiness: dispatchReadiness, verified, loading, message, operatingStatuses, workshop } = dispatch ?? fallback
 
   const sorted = operatingOnly ? equipment : [...effectiveEquipment].sort(
     (a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status),
@@ -75,6 +75,8 @@ export default function FleetGrid({ equipment, dispatch, operatingOnly = false, 
         <UnitDetailModal
           unit={active.unit}
           dispatchReadiness={operatingOnly ? undefined : active.readiness}
+          workshop={workshop}
+          workshopRestriction={operatingOnly ? dispatchReadiness.get(normalizeUnitId(active.unit.unit_id)) : undefined}
           operatingOnly={operatingOnly}
           operatingStatus={operatingStatuses?.get(normalizeUnitId(active.unit.unit_id))}
           verified={verified}

@@ -12,6 +12,8 @@ export interface WorkshopRecord {
   unit: string;
   status: string;
   source: 'master' | 'hermes';
+  description?: string;
+  order?: string;
   date?: string | null;
   needsReview?: boolean;
   operationalStatus?: string;
@@ -29,6 +31,8 @@ export interface WorkshopSummary {
   alertsToday: number | null;
   openOrders: number | null;
   criticalOTs: number | null;
+  criticalOrders?: WorkshopRecord[];
+  ordersWithoutPriority?: WorkshopRecord[];
 }
 interface ReadinessSources {
   failures: string[][];
@@ -97,10 +101,17 @@ export function useFleetDispatch(equipment: Equipment[], enabled = true): FleetD
       if (sequence.current === current) {
         setLoaded(previous => {
           const last = previous?.identity === identity ? previous.sources : undefined;
+          const workshop = last?.workshop;
           return { identity, sources: {
             failures: last?.failures ?? [], stickers: last?.stickers ?? [], inspections: last?.inspections ?? [],
             returns: last?.returns ?? [], masterRestrictions: last?.masterRestrictions,
             operatingStatuses: last?.operatingStatuses,
+            workshop: workshop && {
+              ...workshop,
+              failures: { ...workshop.failures, masterAvailable: false, operationalAvailable: false },
+              orders: { ...workshop.orders, masterAvailable: false, operationalAvailable: false },
+              alertsToday: null, openOrders: null, criticalOTs: null, criticalOrders: [],
+            },
             unavailable: ['failures', 'stickers', 'inspections', 'returns'],
           } };
         });

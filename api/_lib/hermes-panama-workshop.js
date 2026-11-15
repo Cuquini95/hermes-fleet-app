@@ -20,6 +20,7 @@ const clean = value => String(value ?? '').trim();
 const key = value => clean(value).toUpperCase();
 const plain = value => key(value).normalize('NFD').replace(/\p{Diacritic}/gu, '').replace(/\s+/g, ' ');
 const state = value => equivalents.get(plain(value)) ?? plain(value);
+const priorityKey = value => plain(value).replace(/^CRITICO$/, 'CRITICA');
 const isOrder = value => /^OT-[A-Z0-9]+(?:-[A-Z0-9]+)*$/.test(key(value));
 
 function dateOf(value) {
@@ -57,6 +58,7 @@ function operationalOrders(rows) {
 function masterRecord(row, failures) {
   return {
     id: key(row.id), unit: key(row.unit), status: clean(row.status), source: 'master',
+    ...(row.description ? { description: clean(row.description) } : {}),
     ...(failures ? { date: dateOf(row.last), order: key(row.order) } : { priority: clean(row.priority) }),
   };
 }
@@ -103,7 +105,11 @@ function reconcileSection(master, operational, failures, allows) {
     for (const record of matches) {
       if (matches.length > 1 || row.needsReview || record.unit !== row.unit || state(record.status) !== state(row.status)) {
         record.needsReview = true;
-        if (allows(row.unit)) record.operationalStatus = row.status;
+        if (record.unit === row.unit && allows(row.unit)) record.operationalStatus = row.status;
+      }
+      if (!failures && record.unit === row.unit && priorities.has(plain(record.priority))
+        && priorities.has(plain(row.priority)) && priorityKey(record.priority) !== priorityKey(row.priority)) {
+        record.priorityConflict = true;
       }
     }
     if (matches.some(record => record.unit !== row.unit)) {
@@ -151,13 +157,20 @@ export function reconcilePanamaWorkshop(masters, failureRows, orderRows, allows,
   const openOrders = orderRecords.filter(record => openOrderStates.has(state(record.status)));
   const ordersVerified = orders.masterAvailable && (orders.operationalAvailable || orderRecords.length > 0)
     && orderRecords.every(record => openOrderStates.has(state(record.status)) || finalStates.has(state(record.status)));
-  const prioritiesVerified = ordersVerified && openOrders.every(record => priorities.has(plain(record.priority)));
+  const criticalOrders = openOrders.filter(record => priorityKey(record.priority) === 'CRITICA'
+    && !record.needsReview && !record.priorityConflict);
+  const ordersWithoutPriority = orderRecords.filter(record => record.needsReview || record.priorityConflict
+    || (openOrderStates.has(state(record.status)) && !priorities.has(plain(record.priority))));
+  const prioritiesVerified = ordersVerified && ordersWithoutPriority.length === 0
+    && (orders.operationalAvailable || criticalOrders.length > 0);
   return {
     workshop: {
       failures, orders,
       alertsToday: todayVerified ? cases.filter(record => record.date === today).length : null,
       openOrders: ordersVerified ? openOrders.length : null,
-      criticalOTs: prioritiesVerified ? openOrders.filter(record => /^CRITIC[AO]$/.test(plain(record.priority))).length : null,
+      criticalOTs: prioritiesVerified ? criticalOrders.length : null,
+      criticalOrders,
+      ordersWithoutPriority,
     },
     masterRestrictions: restrictionsFor(failures, orders),
   };

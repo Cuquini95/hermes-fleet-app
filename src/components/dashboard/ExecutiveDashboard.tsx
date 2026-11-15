@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Activity, AlertTriangle, Fuel, Bell, RefreshCw, Package, ShoppingCart, Building2 } from 'lucide-react';
 import { useEquipmentList } from '../../hooks/useEquipmentList';
 import { useDashboardData } from '../../hooks/useDashboardData';
-import { useFleetDispatch } from '../../hooks/useFleetDispatch';
+import { useFleetDispatch, type WorkshopRecord } from '../../hooks/useFleetDispatch';
 import { dispatchAvailability } from '../../lib/availability';
 import { useEquipmentStore } from '../../stores/equipment-store';
 import { useAuthStore } from '../../stores/auth-store';
@@ -30,6 +30,7 @@ const TABS: { id: Tab; label: string }[] = [
 
 export default function ExecutiveDashboard() {
   const [activeTab, setActiveTab] = useState<Tab>('general');
+  const [showCriticalOrders, setShowCriticalOrders] = useState(false);
   const navigate = useNavigate();
   const equipment = useEquipmentList();
   const dispatch = useFleetDispatch(equipment);
@@ -38,6 +39,12 @@ export default function ExecutiveDashboard() {
   const demo = useAuthStore((s) => s.previewDemo);
   const useWorkshopMaster = project === 'tmf-panama' && !demo;
   const data = useDashboardData(equipment, useWorkshopMaster, dispatch.workshop);
+  const orderSection = dispatch.workshop?.orders;
+  const completeOrderSources = orderSection?.masterAvailable && orderSection.operationalAvailable;
+  const criticalOrders = dispatch.workshop?.criticalOrders ?? [];
+  const ordersWithoutPriority = dispatch.workshop?.ordersWithoutPriority ?? [];
+  const criticalCount = completeOrderSources ? data.criticalOTs : null;
+  const criticalCut = orderSection?.capturedAt;
   const equipmentError = useEquipmentStore((state) => state.error);
   const { refresh: refreshData } = data;
   const { refresh: refreshDispatch } = dispatch;
@@ -136,12 +143,19 @@ export default function ExecutiveDashboard() {
                   : snapshot.available === null ? 'Aptos para despacho' : `Aptos para despacho · ${snapshot.available}/${snapshot.total}`}
                 color="#16A34A"
               />
-              <KPICard
-                icon={<AlertTriangle size={20} />}
-                value={data.criticalOTs ?? (useWorkshopMaster ? 'Sin verificar' : '—')}
-                label="OTs Críticas"
-                color="#DC2626"
-              />
+              {useWorkshopMaster ? (
+                <button type="button" className="text-left"
+                  aria-label="Ver OT críticas" aria-expanded={showCriticalOrders}
+                  aria-controls={showCriticalOrders ? 'ot-criticas-detalle' : undefined}
+                  onClick={() => setShowCriticalOrders(open => !open)}>
+                  <KPICard icon={<AlertTriangle size={20} />} label="OTs Críticas" color="#DC2626"
+                    value={criticalCount ?? (criticalOrders.length === 1 ? '1 confirmada'
+                      : criticalOrders.length ? `${criticalOrders.length} confirmadas` : 'Sin verificar')} />
+                </button>
+              ) : (
+                <KPICard icon={<AlertTriangle size={20} />} label="OTs Críticas" color="#DC2626"
+                  value={data.criticalOTs ?? '—'} />
+              )}
               <KPICard
                 icon={<Fuel size={20} />}
                 value={data.avgConsumption}
@@ -157,6 +171,24 @@ export default function ExecutiveDashboard() {
             </div>
           )}
 
+          {useWorkshopMaster && showCriticalOrders && (
+            <section id="ot-criticas-detalle" aria-label="Detalle de OT críticas"
+              className="rounded-xl border border-border bg-card p-4">
+              <h3 className="text-sm font-semibold text-text">Detalle de OT críticas</h3>
+              {criticalCut && Number.isFinite(Date.parse(criticalCut)) && (
+                <p className="mt-1 text-xs text-text-secondary">Corte del Maestro: {new Date(criticalCut).toLocaleString('es-PA', {
+                  timeZone: 'America/Panama', dateStyle: 'medium', timeStyle: 'short',
+                })} · Panamá</p>
+              )}
+              {criticalCount === 0 && <p className="mt-2 text-sm text-text-secondary">No hay OT críticas abiertas.</p>}
+              {!completeOrderSources && <p className="mt-2 text-sm text-amber-800">Falta confirmar una fuente de órdenes de trabajo.</p>}
+              {completeOrderSources && criticalCount === null && !ordersWithoutPriority.length && (
+                <p className="mt-2 text-sm text-amber-800">Hay estados de órdenes que requieren verificación.</p>
+              )}
+              <OrderList label="Críticas confirmadas" records={criticalOrders} />
+              <OrderList label="Prioridad pendiente de confirmar" records={ordersWithoutPriority} />
+            </section>
+          )}
           {useWorkshopMaster && <PanamaWorkshopSummary data={dispatch.workshop} loading={dispatch.loading} card />}
           {project === 'tmf-panama' && !useWorkshopMaster && data.error && <PanamaSourceRecords source="orders" limit={3} />}
 
@@ -224,6 +256,21 @@ export default function ExecutiveDashboard() {
       {/* Briefing tab */}
       {activeTab === 'briefing' && <BriefingCard dispatch={dispatch} />}
 
+    </div>
+  );
+}
+
+function OrderList({ label, records }: { label: string; records: WorkshopRecord[] }) {
+  if (records.length === 0) return null;
+  return (
+    <div className="mt-2 text-sm">
+      <h4 className="font-semibold text-text">{label}</h4>
+      <ul aria-label={label} className="mt-1 space-y-1 text-text-secondary">
+        {records.map(order => <li key={`${order.source}-${order.id}`}>
+          {order.id} · {order.unit} · {order.source === 'master' ? 'Maestro de Taller' : 'Hermes'}
+          {order.needsReview && ' · Estado por conciliar'}
+        </li>)}
+      </ul>
     </div>
   );
 }
