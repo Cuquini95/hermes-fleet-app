@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Plus, Printer, Trash2 } from 'lucide-react';
 import {
-  displayMoney, formatPanamaReceiptDate, isApprovalRecorded, pendingQuantity, purchaseRead, purchaseRequests, purchaseWrite,
+  canAwardRequest, displayMoney, formatPanamaReceiptDate, isApprovalRecorded, pendingQuantity, purchaseRead, purchaseRequests, purchaseWrite,
   type PurchaseOrder, type PurchaseOverview, type PurchaseRequestLine,
 } from '../lib/purchasing-api';
 import { useAuthStore } from '../stores/auth-store';
@@ -15,6 +15,7 @@ interface DraftLine {
   quantity: string;
   unitPrice: string;
   requestLineId?: string;
+  ot?: string;
 }
 
 interface Draft {
@@ -56,9 +57,10 @@ const linkedLine = (line: PurchaseRequestLine): DraftLine => ({
   key: crypto.randomUUID(),
   description: line.descripcion,
   partNumber: line.partNum,
-  quantity: line.cantidad,
+  quantity: line.unallocatedQuantity ?? line.cantidad,
   unitPrice: line.precioUnit || line.unitPrice || '0',
   requestLineId: line.id,
+  ot: line.ot,
 });
 
 function cents(value: string) {
@@ -116,7 +118,7 @@ export default function AdminOrdenesCompraPage() {
   }, [load]);
 
   useEffect(() => {
-    const selected = requests.find((line) => line.id === initialLine && !line.ocFolio && line.estado !== 'Completado');
+    const selected = requests.find((line) => line.id === initialLine && canAwardRequest(line));
     if (!selected || converted.current === initialLine) return;
     converted.current = initialLine;
     setDraft((old) => ({ ...blankDraft(old.entity), unit: selected.equipo || 'FLOTA', lines: [linkedLine(selected)] }));
@@ -134,12 +136,19 @@ export default function AdminOrdenesCompraPage() {
   const total = tax === null || netSubtotal < 0 ? null : netSubtotal + tax + cents(draft.shipping) + cents(draft.other);
   const openOrder = data?.orders.find((order) => order.folio === receiving);
   const candidateLines = requests.filter((line) =>
-    line.estado !== 'Completado' && !line.ocFolio &&
+    canAwardRequest(line) &&
     (line.equipo || 'FLOTA').toUpperCase() === draft.unit.trim().toUpperCase() &&
     !draft.lines.some((part) => part.requestLineId === line.id));
 
   function setField<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((old) => ({ ...old, [key]: value }));
+  }
+
+  function maxAward(line: DraftLine): number | undefined {
+    const request = isPanama && requests.find(item => item.id === line.requestLineId);
+    if (!request || request.unallocatedQuantity === undefined) return undefined;
+    const current = request.allocations?.find(item => item.folio === draft.folio);
+    return (Math.round(Number(request.unallocatedQuantity) * 1000) + Math.round(Number(current?.quantity || 0) * 1000)) / 1000;
   }
 
   function updateLine(key: string, patch: Partial<DraftLine>) {
@@ -304,7 +313,7 @@ export default function AdminOrdenesCompraPage() {
                 setField('lines', [...prior, linkedLine(selected)]);
               }}>
                 <option value="">Seleccionar partida</option>
-                {candidateLines.map((line) => <option key={line.id} value={line.id}>{line.partNum} · {line.pedidoId || line.descripcion}</option>)}
+                {candidateLines.map((line) => <option key={line.id} value={line.id}>{line.partNum} · {line.pedidoId || line.descripcion}{line.unallocatedQuantity !== undefined && ` · saldo ${line.unallocatedQuantity}`}</option>)}
               </select>
             </label>
           )}
@@ -312,13 +321,16 @@ export default function AdminOrdenesCompraPage() {
             {draft.lines.map((line, index) => (
               <fieldset key={line.key} className="space-y-2 rounded-lg border border-gray-200 p-3">
                 <legend className="px-1 text-sm font-semibold">Partida {index + 1}</legend>
-                {line.requestLineId && <p className="break-all text-xs text-blue-700">Partida de pedido · {line.partNumber} · {line.requestLineId}</p>}
+                {line.requestLineId && <p className="break-words text-xs text-blue-700">
+                  Partida de pedido · {line.partNumber} · {line.requestLineId}{line.ot && ` · ${line.ot}`}
+                  {maxAward(line) !== undefined && ` · Disponible para esta OC: ${maxAward(line)}`}
+                </p>}
                 <label className="block text-sm">Descripción
                   <input aria-label={'Descripción ' + (index + 1)} required className={input} readOnly={Boolean(line.requestLineId)} value={line.description} onChange={(event) => updateLine(line.key, { description: event.target.value })} />
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   <label className="text-sm">Cantidad
-                    <input aria-label={'Cantidad ' + (index + 1)} type="number" min="0.001" step="0.001" required className={input} readOnly={Boolean(line.requestLineId)} value={line.quantity} onChange={(event) => updateLine(line.key, { quantity: event.target.value })} />
+                    <input aria-label={'Cantidad ' + (index + 1)} type="number" min="0.001" max={maxAward(line)} step="0.001" required className={input} readOnly={!isPanama && Boolean(line.requestLineId)} value={line.quantity} onChange={(event) => updateLine(line.key, { quantity: event.target.value })} />
                   </label>
                   <label className="text-sm">Precio unitario
                     <input aria-label={'Precio unitario ' + (index + 1)} type="number" min="0" step="0.01" required className={input} value={line.unitPrice} onChange={(event) => updateLine(line.key, { unitPrice: event.target.value })} />
@@ -379,6 +391,7 @@ export default function AdminOrdenesCompraPage() {
             </div>
             <p className="text-sm text-gray-600">{order.vendorName} · {order.unit} · {order.status} · Recepción {order.receiptStatus.toLowerCase()}</p>
             {order.lines.some((line) => line.requestId) && <p className="break-all text-xs text-blue-700">Pedidos vinculados · {[...new Set(order.lines.map((line) => line.requestId).filter(Boolean))].join(', ')}</p>}
+            {order.lines.some(line => line.ot) && <p className="break-words text-xs text-blue-700">OT vinculadas · {[...new Set(order.lines.map(line => line.ot).filter(Boolean))].join(', ')}</p>}
             <div className="flex flex-wrap gap-2">
               <Link className={button} to={'/admin/ordenes-compra/' + encodeURIComponent(order.number || order.folio)}><Printer size={15} className="inline" /> Ver / Imprimir</Link>
               {order.status === 'Borrador' && <button type="button" className={button} disabled={saving} onClick={() => edit(order)}>Editar</button>}

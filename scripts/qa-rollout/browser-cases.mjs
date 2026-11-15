@@ -1035,6 +1035,8 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await page.getByLabel('Unidad manual').selectOption('EX401');
         await page.getByLabel('Cantidad manual').fill('3');
         await clickByName(page, 'Agregar al carrito');
+        assert(pmMobileFolio, 'Falta la OT de EX401 para vincular el pedido');
+        await page.getByLabel('OT del pedido (opcional)').fill(pmMobileFolio);
         await clickByName(page, 'Enviar Pedido (2 partes)');
         await visible(page.getByRole('heading', { name: 'Pedido Enviado' }));
         const manual = sheet.read(tabs.requests).find(row => row[1] === 'MANUAL-UI-QA');
@@ -1042,6 +1044,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         const rows = sheet.read(tabs.requests).filter(row => row[9] === manual[9]);
         const catalog = rows.find(row => row[1] === 'QA-002');
         assert.deepEqual([catalog[3], catalog[4], manual[3], manual[4], manual[5]], ['EX401', '4', 'EX401', '3', 'Manual']);
+        assert.equal(manual[22], pmMobileFolio);
         await noHorizontalOverflow(page, 390);
         return { catalog, manual };
       });
@@ -1053,6 +1056,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         const form = page.locator('form').first();
         await form.getByLabel('Vincular partida del pedido').selectOption(lines.catalog[15]);
         await form.getByLabel('Proveedor', { exact: true }).selectOption({ label: 'Proveedor QA' });
+        await form.getByLabel('Cantidad 1', { exact: true }).fill('1');
         await form.getByLabel('ITBMS según documento').fill('0');
         await form.getByRole('button', { name: 'Guardar orden', exact: true }).tap();
         const linked = await waitUntil(() => sheet.read(tabs.requests).find(row => row[15] === lines.manual[15] && row[16]), 'La OC no se vinculó al pedido');
@@ -1062,9 +1066,25 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await clickByName(page, 'Historial');
         const orderNumber = sheet.read(tabs.purchases).find(row => row[0] === folio)[27];
         assert.match(orderNumber, /^3\d{3}$/);
-        await visible(page.getByRole('link', { name: `Ver OC ${orderNumber}`, exact: true }));
+        const requestCard = () => page.getByText('MANUAL-UI-QA', { exact: true }).locator('xpath=../..');
+        await visible(requestCard().getByRole('link', { name: `Ver OC ${orderNumber}`, exact: true }));
+        await visible(requestCard().getByText('Asignado 1 · Recibido 0 · Saldo por asignar 2'));
+        await requestCard().getByRole('link', { name: 'Crear OC por el saldo' }).tap();
+        const rest = page.locator('form').first();
+        await rest.getByLabel('Proveedor', { exact: true }).selectOption({ label: 'Segundo proveedor QA' });
+        assert.equal(await rest.getByLabel('Cantidad 1', { exact: true }).inputValue(), '2');
+        await rest.getByLabel('ITBMS según documento').fill('0');
+        await rest.getByRole('button', { name: 'Guardar orden', exact: true }).tap();
+        const second = await waitUntil(() => sheet.read(tabs.lines).find(row => row[8] === lines.manual[15] && row[0] !== folio), 'No se guardó la segunda asignación');
+        assert.equal(second[3], '2');
+        assert.equal(second[12], pmMobileFolio);
+        await page.goto(`${origin}/pedidos`, { waitUntil: 'domcontentloaded' });
+        await clickByName(page, 'Historial');
+        await visible(requestCard().getByText('Asignado 3 · Recibido 0 · Saldo por asignar 0'));
+        assert.equal(await requestCard().getByRole('link', { name: /^Ver OC / }).count(), 2);
+        await noHorizontalOverflow(page, 390);
         await shot(page, 'pedido-vinculado-390.png');
-        return { request: lines.manual[9], purchaseOrder: folio, lines: 2, historyLink: true };
+        return { request: lines.manual[9], purchaseOrder: folio, lines: 2, historyLink: true, suppliers: 2, ot: pmMobileFolio, unallocated: 0 };
       });
     });
 

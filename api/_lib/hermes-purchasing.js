@@ -192,6 +192,7 @@ function ocLine(row) {
     description: trim(row[2]), quantity: trim(row[3]), unitPrice: trim(row[4]), total: trim(row[5]),
     requestId: trim(row[7]), requestLineId: trim(row[8]), partNumber: trim(row[9]),
     received: trim(row[10]) || '0', receipts: receiptHistory(row),
+    ...(trim(row[12]) && { ot: trim(row[12]) }),
   };
 }
 
@@ -244,6 +245,7 @@ function requestRecord(row, index) {
     urgencia: trim(row[12]), notas: trim(row[13]), total: trim(row[14]),
     ocFolio: trim(row[16]), version: trim(row[17]) || 'legacy-' + hash(row).slice(0, 24),
     unitPrice: trim(row[21]),
+    ...(trim(row[22]) && { ot: trim(row[22]) }),
   };
 }
 
@@ -253,6 +255,57 @@ function parseRequests(rows) {
       ? [{ row, index, record: requestRecord(row, index) }]
       : []
   );
+}
+
+function allocationIndex(orders, lines) {
+  const headers = new Map();
+  for (const { row } of entries(orders)) {
+    const folio = upper(row[0]);
+    if (folio) headers.set(folio, headers.has(folio) ? null : row);
+  }
+  const byRequest = new Map();
+  for (const { row } of entries(lines)) {
+    const id = trim(row[8]);
+    if (!id) continue;
+    const header = headers.get(upper(row[0]));
+    if (header && ['Eliminada', 'Rechazada'].includes(header[11])) continue;
+    const bucket = byRequest.get(id) ?? [];
+    bucket.push({ header, row });
+    byRequest.set(id, bucket);
+  }
+  return byRequest;
+}
+
+function requestBalance(record, index) {
+  const allocations = [];
+  const used = new Set();
+  let allocated = 0n, received = 0n;
+  const wanted = decimalCell(record.cantidad, 3, 'pedido', true);
+  for (const { header, row } of index.get(record.id) ?? []) {
+    const folio = upper(row[0]);
+    if (!header || used.has(folio) || upper(header[5]) !== upper(record.equipo || 'FLOTA') || upper(row[9]) !== upper(record.partNum)
+      || (record.ot && upper(row[12]) !== upper(record.ot))) error(409, 'El vínculo de la partida requiere conciliación.');
+    used.add(folio);
+    const qty = decimalCell(row[3], 3, 'asignado', true);
+    const delivery = decimalCell(row[10] || '0', 3, 'recibido');
+    if (delivery > qty) error(409, 'La recepción de la partida requiere conciliación.');
+    allocated += qty;
+    received += delivery;
+    allocations.push({ folio: trim(header[0]), number: readPurchaseNumber(header), vendor: trim(header[2]),
+      quantity: quantity(qty), received: quantity(delivery), status: trim(header[11]) || 'Borrador' });
+  }
+  if (allocated > wanted || (record.ocFolio && !used.has(upper(record.ocFolio)))) {
+    error(409, 'Concilia el saldo y las órdenes vinculadas de la partida.');
+  }
+  return { wanted, allocated, received, allocations };
+}
+
+function allocationUpdate(entry, nextIndex, tx, session, writes, guards) {
+  const next = requestBalance({ ...entry.record, ocFolio: '' }, nextIndex);
+  const prior = entry.row[19] || (entry.record.ocFolio ? 'Pendiente' : entry.record.estado);
+  const status = next.received === next.wanted ? 'Completado' : next.allocated > 0n ? 'Pedido' : prior;
+  writes.push(requestUpdate(entry, tx.version, session.userId, next.allocations[0]?.folio ?? '', status, next.allocated > 0n ? prior : ''));
+  guards.push(requestGuard(entry.record));
 }
 
 function orderLookup(folio, data, lines, session) {
@@ -427,22 +480,31 @@ async function submitRequest(body, session, sheets, tx) {
   const now = timestamp();
   const folio = 'PED-' + hash(tx.key).slice(0, 18).toUpperCase();
   const panamaCatalog = session.project === 'tmf-panama' && body.items.some(item => item?.isManual !== true);
+  const hasWorkOrder = session.project === 'tmf-panama' && body.items.some(item => item?.ot);
   const [stock, fleet] = panamaCatalog
     ? await Promise.all([sheets.read(PURCHASE_TABS.catalog), sheets.read('01 Inventario')])
     : [[], []];
+  const workOrders = hasWorkOrder ? await sheets.read('ORDENES_TRABAJO') : [];
   const rows = body.items.map((item, index) => {
     const part = field(item.part_number, 120, 'número de parte', true);
     const description = field(item.description, 500, 'descripción', true);
     const qty = decimal(item.quantity, 3, 'pedido', true);
     const unitPrice = decimal(item.unit_price ?? 0, 2, 'precio unitario');
     const unit = requireUnit(session, field(item.equipment, 48, 'unidad', true));
+    const ot = session.project === 'tmf-panama' ? upper(field(item.ot, 90, 'orden de trabajo')) : '';
+    if (ot) {
+      const matches = entries(workOrders).filter(({ row }) => upper(row[1]) === ot);
+      if (matches.length !== 1 || !/^OT-[A-Z0-9_-]+$/.test(ot) || upper(matches[0].row[3]) !== unit) {
+        error(404, 'La OT no está disponible para la unidad del pedido.');
+      }
+    }
     if (panamaCatalog && item.isManual !== true) assertCompatible(catalogPart(stock, part), fleet, unit);
     const source = item.isManual === true ? 'Manual' : field(item.source, 120, 'origen') || 'Catálogo';
     const priority = ['Normal', 'Urgente', 'Crítico'].includes(item.urgencia) ? item.urgencia : 'Normal';
     return [
       now.date, part, description, unit, quantity(qty), source, 'Pendiente', '', '', folio, now.time, session.userName,
       priority, field(item.notes, 1000, 'notas'), money(lineCost(qty, unitPrice)), folio + '-L' + (index + 1),
-      '', tx.version, session.userId, '', now.iso, money(unitPrice),
+      '', tx.version, session.userId, '', now.iso, money(unitPrice), ...(ot ? [ot] : []),
     ];
   });
   await validateOperationalUnits(sheets, ...rows.map(row => row[3]));
@@ -472,7 +534,7 @@ function requireDraft(order) {
   if (order.status !== 'Borrador') error(409, 'Solo se pueden editar partidas de un borrador.');
 }
 
-function buildOrderLines(body, unit, folio, current, requests, session) {
+function buildOrderLines(body, unit, folio, current, requests, session, allocations) {
   if (!Array.isArray(body.lines) || body.lines.length < 1 || body.lines.length > 100) {
     error(400, 'Agrega entre 1 y 100 partidas a la orden.');
   }
@@ -495,10 +557,15 @@ function buildOrderLines(body, unit, folio, current, requests, session) {
       const record = request.record;
       requireUnit(session, record.equipo);
       if (upper(record.equipo || 'FLOTA') !== unit) error(409, 'La unidad de la OC debe coincidir con la del pedido.');
-      if (record.estado === 'Completado' || (record.ocFolio && record.ocFolio !== folio)) {
+      if (record.estado === 'Completado' || (!allocations && record.ocFolio && record.ocFolio !== folio)) {
         error(409, 'La partida del pedido ya tiene una orden o está completada.');
       }
-      if (qty !== decimalCell(record.cantidad, 3, 'pedido', true)) {
+      if (allocations) {
+        const balance = requestBalance(record, allocations);
+        const includingCurrent = balance.allocations.find(entry => upper(entry.folio) === upper(folio));
+        const own = includingCurrent ? decimalCell(includingCurrent.quantity, 3, 'asignado') : 0n;
+        if (qty > balance.wanted - balance.allocated + own) error(409, 'La cantidad supera el saldo por asignar de la partida.');
+      } else if (qty !== decimalCell(record.cantidad, 3, 'pedido', true)) {
         error(409, 'La cantidad de la partida vinculada debe coincidir con la solicitada.');
       }
     }
@@ -533,7 +600,8 @@ async function saveOrder(body, session, sheets, tx) {
   const date = calendarDate(body.date, 'la orden', true);
   const deliveryDate = calendarDate(body.deliveryDate, 'entrega', false);
   const requests = parseRequests(requestRows);
-  const items = buildOrderLines(body, unit, folio, current, requests, session);
+  const allocations = panama ? allocationIndex(orderRows, lineRows) : null;
+  const items = buildOrderLines(body, unit, folio, current, requests, session, allocations);
   const subtotal = items.reduce((sum, line) => sum + lineCost(line.qty, line.price), 0n);
   const discount = panama ? decimal(body.discount ?? '0', 2, 'descuento') : 0n;
   if (discount > subtotal) error(400, 'El descuento debe ser menor o igual al subtotal.');
@@ -554,13 +622,16 @@ async function saveOrder(body, session, sheets, tx) {
   const orderWrite = current ? wholeRow(PURCHASE_TABS.orders, current.header.index, values) : append(PURCHASE_TABS.orders, [values]);
   const writes = [orderWrite];
   const newLines = [];
+  const projectedLines = [];
   const lineRowsById = new Map(current?.items.map((item) => [ocLine(item.row).id, item]) || []);
   for (const item of items) {
+    const old = lineRowsById.get(item.id);
     const line = [
       folio, String(item.number), item.description, quantity(item.qty), money(item.price), money(lineCost(item.qty, item.price)),
-      item.id, item.request?.record.pedidoId || '', item.requestLineId, item.partNumber, '0', '[]',
+      item.id, item.request?.record.pedidoId || '', item.requestLineId, item.partNumber, '0', '[]', ...(item.request?.record.ot ? [item.request.record.ot] : []),
     ];
-    const old = lineRowsById.get(item.id);
+    if (old?.row.length > 12 && line.length === 12) line.push('');
+    projectedLines.push(line);
     if (old) {
       writes.push(wholeRow(PURCHASE_TABS.lines, old.index, line));
       lineRowsById.delete(item.id);
@@ -574,14 +645,24 @@ async function saveOrder(body, session, sheets, tx) {
   }
   const guards = current ? [orderGuard(current.record)] : ['oc:create:' + folio];
   const linked = new Set(items.map((item) => item.requestLineId).filter(Boolean));
-  for (const entry of requests) {
-    if (linked.has(entry.record.id) && entry.record.ocFolio !== folio) {
-      writes.push(requestUpdate(entry, tx.version, session.userId, folio, 'Pedido', entry.record.estado));
-      guards.push(requestGuard(entry.record));
+  if (allocations) {
+    current?.record.lines.forEach(line => { if (line.requestLineId) linked.add(line.requestLineId); });
+    const next = allocationIndex([...orderRows.filter(row => upper(row[0]) !== upper(folio)), values],
+      [...lineRows.filter(row => upper(row[0]) !== upper(folio)), ...projectedLines]);
+    for (const entry of requests.filter(item => linked.has(item.record.id))) {
+      requestBalance(entry.record, allocations);
+      allocationUpdate(entry, next, tx, session, writes, guards);
     }
-    if (entry.record.ocFolio === folio && !linked.has(entry.record.id)) {
-      writes.push(requestUpdate(entry, tx.version, session.userId, '', entry.row[19] || 'Pendiente', ''));
-      guards.push(requestGuard(entry.record));
+  } else {
+    for (const entry of requests) {
+      if (linked.has(entry.record.id) && entry.record.ocFolio !== folio) {
+        writes.push(requestUpdate(entry, tx.version, session.userId, folio, 'Pedido', entry.record.estado));
+        guards.push(requestGuard(entry.record));
+      }
+      if (entry.record.ocFolio === folio && !linked.has(entry.record.id)) {
+        writes.push(requestUpdate(entry, tx.version, session.userId, '', entry.row[19] || 'Pendiente', ''));
+        guards.push(requestGuard(entry.record));
+      }
     }
   }
   writes.push(auditRow(session, tx.operationId, current ? 'OC editada' : 'OC creada', folio, items.length + ' partidas'));
@@ -710,11 +791,18 @@ async function changeOrder(action, body, session, sheets, tx) {
     }
     const receipts = JSON.stringify([...line.receipts, receipt]);
     if (receipts.length > 45000) error(409, 'El historial de la partida requiere archivarse antes de recibir más.');
-    writes.push(wholeRow(PURCHASE_TABS.lines, item.index, [...item.row.slice(0, 10), quantity(newReceived), receipts]));
+    const updatedLine = [...item.row.slice(0, 10), quantity(newReceived), receipts, ...item.row.slice(12)];
+    writes.push(wholeRow(PURCHASE_TABS.lines, item.index, updatedLine));
     const full = newReceived === requested && record.lines.every((other) =>
       other.id === lineId || decimalCell(other.received, 3, 'recibido') >= decimalCell(other.quantity, 3, 'ordenado', true));
     values[11] = record.status === 'Pagada' ? 'Pagada' : full ? 'Recibida' : 'Recibida parcial';
-    if (newReceived === requested && line.requestLineId) {
+    if (panama && line.requestLineId) {
+      const request = requests.find(entry => entry.record.id === line.requestLineId);
+      if (!request) error(409, 'Falta conciliar el vínculo entre la partida recibida y el pedido.');
+      requestBalance(request.record, allocationIndex(orderRows, lineRows));
+      const next = allocationIndex(orderRows, lineRows.map((row, index) => index === item.index ? updatedLine : row));
+      allocationUpdate(request, next, tx, session, writes, guards);
+    } else if (newReceived === requested && line.requestLineId) {
       const request = requests.find((entry) => entry.record.id === line.requestLineId && entry.record.ocFolio === folio);
       if (!request) error(409, 'Falta conciliar el vínculo entre la partida recibida y el pedido.');
       writes.push(requestUpdate(request, tx.version, session.userId, folio, 'Completado', request.row[19] || ''));
@@ -724,9 +812,19 @@ async function changeOrder(action, body, session, sheets, tx) {
   }
 
   if (values[11] === 'Eliminada' || values[11] === 'Rechazada') {
-    for (const entry of requests.filter((request) => request.record.ocFolio === folio)) {
-      writes.push(requestUpdate(entry, tx.version, session.userId, '', entry.row[19] || 'Pendiente', ''));
-      guards.push(requestGuard(entry.record));
+    if (panama) {
+      const current = allocationIndex(orderRows, lineRows);
+      const next = allocationIndex(orderRows.map((row, index) => index === header.index ? values : row), lineRows);
+      const linkedIds = new Set(record.lines.map(line => line.requestLineId).filter(Boolean));
+      for (const entry of requests.filter(request => linkedIds.has(request.record.id))) {
+        requestBalance(entry.record, current);
+        allocationUpdate(entry, next, tx, session, writes, guards);
+      }
+    } else {
+      for (const entry of requests.filter((request) => request.record.ocFolio === folio)) {
+        writes.push(requestUpdate(entry, tx.version, session.userId, '', entry.row[19] || 'Pendiente', ''));
+        guards.push(requestGuard(entry.record));
+      }
     }
   }
   writes.push(wholeRow(PURCHASE_TABS.orders, header.index, Array.from(values, (value) => value ?? '')));
@@ -940,6 +1038,22 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
       return ok({ items: items.reverse().map(item => ({ ...item, orderNumber: numbers.get(item.order) })) });
     }
     if (action === 'requests') {
+      if (panama) {
+        const [requests, orders, lines] = await readTables(sheets, PURCHASE_TABS.requests, PURCHASE_TABS.orders, PURCHASE_TABS.lines);
+        const index = allocationIndex(orders, lines);
+        const items = parseRequests(requests).filter(({ record }) => canUseUnit(session, record.equipo)).reverse().map(({ record }) => {
+          try {
+            const balance = requestBalance(record, index);
+            return { ...record, allocations: balance.allocations, allocatedQuantity: quantity(balance.allocated),
+              receivedQuantity: quantity(balance.received), unallocatedQuantity: quantity(balance.wanted - balance.allocated),
+              ocNumber: balance.allocations.find(entry => entry.folio === record.ocFolio)?.number };
+          } catch (cause) {
+            if (!(cause instanceof RequestError) || cause.status !== 409) throw cause;
+            return { ...record, allocationReview: true };
+          }
+        });
+        return ok({ items });
+      }
       const data = parseRequests(await sheets.read(PURCHASE_TABS.requests));
       const items = data.filter(({ record }) => canUseUnit(session, record.equipo)).map(({ record }) => record).reverse();
       const numbers = await purchaseNumbers(sheets, session, items.map(item => item.ocFolio));

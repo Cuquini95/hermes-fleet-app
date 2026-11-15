@@ -3,7 +3,7 @@
  * Parts-orders workflow page — one cohesive list+detail flow with shared inventory lookup state.
  */
 import { useCallback, useState, useEffect, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ShoppingCart,
   Plus,
@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { useCartStore, type CartItem } from '../stores/cart-store';
-import { PurchaseApiError, purchaseRequests, purchaseWrite, type PurchaseRequestLine } from '../lib/purchasing-api';
+import { canAwardRequest, PurchaseApiError, purchaseRequests, purchaseWrite, type PurchaseRequestLine } from '../lib/purchasing-api';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { useCatalogoStore } from '../stores/catalogo-store';
 import { masterPurchaseState, readPanamaPurchaseMaster, type MasterPurchase, type PurchaseMaster } from '../lib/panama-purchase-master';
@@ -80,6 +80,7 @@ const cutFormatter = new Intl.DateTimeFormat('es-PA', {
 // ════════════════════════════════════════════════════════════════════════════
 export default function PedidosPage() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const role = useAuthStore((s) => s.role);
   const isPanama = useAuthStore((s) => s.project === 'tmf-panama');
   const identity = useAuthStore((s) => `${s.userId}|${s.project}|${s.role}`);
@@ -102,6 +103,7 @@ export default function PedidosPage() {
   const historialQuery = useRef<AbortController | null>(null);
   const [history, setHistory] = useState<OrderHistory>();
   const [submitError, setSubmitError] = useState('');
+  const [requestOt, setRequestOt] = useState(() => params.get('ot') ?? '');
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
 
   const scoped = history?.identity === identity ? history : undefined;
@@ -194,8 +196,12 @@ export default function PedidosPage() {
     setSubmitting(true);
     setSubmitError('');
     try {
-      const { folio } = await purchaseWrite<{ folio: string }>('request-submit', { items });
+      const ot = isPanama ? requestOt.trim().toUpperCase() : '';
+      const { folio } = await purchaseWrite<{ folio: string }>('request-submit', {
+        items: ot ? items.map(item => ({ ...item, ot })) : items,
+      });
       clearCart();
+      setRequestOt('');
       setSubmitted(folio);
     } catch (cause) {
       setSubmitError(cause instanceof Error ? cause.message : 'No se confirmó el envío. Reintenta con las mismas partidas.');
@@ -405,6 +411,11 @@ export default function PedidosPage() {
                 </div>
               )}
 
+              {isPanama && <label className="mb-3 block text-sm font-semibold">
+                OT del pedido (opcional)
+                <input value={requestOt} onChange={event => setRequestOt(event.target.value)} maxLength={90}
+                  className="mt-1 w-full rounded-lg border border-border p-2" placeholder="OT-0100" />
+              </label>}
               <button
                 disabled={submitting}
                 onClick={handleSubmit}
@@ -904,14 +915,26 @@ function PedidoRowCard({
         {row.notas && <p className="text-xs text-text-secondary mb-3 italic">{row.notas}</p>}
 
         {updateError && <p role="alert" className="mb-2 text-xs text-red-700">{updateError}</p>}
-        {row.ocFolio && (isGerencia ? (
+        {row.ot && <p className="text-sm font-medium">OT {row.ot}</p>}
+        {row.allocationReview && <p role="alert" className="text-sm text-amber-800">Saldo por conciliar con las órdenes vinculadas.</p>}
+        {row.unallocatedQuantity !== undefined && <p className="py-2 text-sm text-text">
+          Asignado {row.allocatedQuantity} · Recibido {row.receivedQuantity} · Saldo por asignar {row.unallocatedQuantity}
+        </p>}
+        {row.allocations?.map(award => <div key={award.folio} className="my-1 rounded-lg border border-border p-2 text-sm">
+          {isGerencia
+            ? <Link className="font-semibold text-blue-800 underline" to={`/admin/ordenes-compra/${encodeURIComponent(award.number || award.folio)}`}>Ver OC {award.number || award.folio}</Link>
+            : <p className="font-medium">OC {award.number || award.folio}</p>}
+          <p>{award.vendor} · {award.status}</p>
+          <p>Asignado {award.quantity} · Recibido {award.received}</p>
+        </div>)}
+        {row.ocFolio && !row.allocations?.length && (isGerencia ? (
           <Link className="block py-2 text-sm font-semibold text-blue-800" to={`/admin/ordenes-compra/${encodeURIComponent(row.ocNumber || row.ocFolio)}`}>
             Ver OC {row.ocNumber || row.ocFolio}
           </Link>
         ) : <p className="py-2 text-sm text-text-secondary">OC {row.ocNumber || row.ocFolio}</p>)}
-        {isGerencia && nextStatus && !row.ocFolio && (
+        {isGerencia && canAwardRequest(row) && (
           <Link className="block rounded-lg bg-slate-900 px-3 py-2 mb-2 text-center text-sm font-semibold text-white" to={`/admin/ordenes-compra?partida=${encodeURIComponent(row.id)}`}>
-            Convertir a OC
+            {row.allocations?.length ? 'Crear OC por el saldo' : 'Convertir a OC'}
           </Link>
         )}
         {isGerencia && nextStatus && !row.ocFolio && (

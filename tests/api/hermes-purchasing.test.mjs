@@ -295,6 +295,59 @@ test('impone roles y unidades en la lectura y escritura de Compras', async () =>
   assert.deepEqual((await call('orders', null, limited)).body.orders, []);
 });
 
+test('Panamá divide una partida entre proveedores sin perder la OT ni superar el saldo', async () => {
+  const { call, readOrder } = setup({ vendors: [
+    ['NOMBRE'], ['Proveedor de prueba', 'RFC-QA', 'Dirección QA'], ['Segundo proveedor', 'RFC-QA-2', 'Dirección QA 2'],
+  ] });
+  const buyer = { ...manager, project: 'tmf-panama', previewDemo: true };
+  const requester = { ...buyer, role: 'jefe_taller', userId: 'qa-jefe' };
+  const warehouse = { ...requester, userId: 'qa-almacen', canApprovePurchases: false, canReceivePurchases: true };
+  const requested = { operationId: randomUUID(), items: [
+    { part_number: 'SKU-QA', description: 'Filtro QA', quantity: '7', unit_price: '6.05', equipment: 'QA-DZ203', ot: 'OT-QA-01' },
+  ] };
+  assert.equal((await call('request-submit', { ...requested, items: [{ ...requested.items[0], ot: 'OT-NO-EXISTE' }] }, requester)).status, 404);
+  assert.equal((await call('request-submit', requested, requester)).status, 200);
+  const readRequest = async () => (await call('requests', null, buyer)).body.items[0];
+  const entry = await readRequest();
+  assert.equal(entry.ot, 'OT-QA-01');
+  assert.equal(entry.unallocatedQuantity, '7');
+  const entity = (await call('orders', null, buyer)).body.issuers[0].id;
+  const create = (amount, vendorName = 'Proveedor de prueba', vendorRfc = 'RFC-QA') => call('order-save', newOrder({
+    vendorName, vendorRfc, entity, unit: 'QA-DZ203', tax: '0.00',
+    lines: [{ requestLineId: entry.id, quantity: amount, unitPrice: '5.00' }],
+  }), buyer);
+  const first = await create('3');
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  assert.equal((await readRequest()).unallocatedQuantity, '4');
+  const disposable = await create('1', 'Segundo proveedor', 'RFC-QA-2');
+  assert.equal(disposable.status, 200);
+  const abandoned = await readOrder(disposable.body.folio, buyer);
+  assert.equal((await readRequest()).unallocatedQuantity, '3');
+  assert.equal((await call('order-delete', { operationId: randomUUID(), folio: abandoned.folio, version: abandoned.version }, buyer)).status, 200);
+  assert.equal((await readRequest()).unallocatedQuantity, '4');
+  const candidates = await Promise.all([create('4', 'Segundo proveedor', 'RFC-QA-2'), create('4', 'Segundo proveedor', 'RFC-QA-2')]);
+  assert.deepEqual(candidates.map(x => x.status).sort(), [200,409]);
+  const second = candidates.find(x => x.status === 200);
+  const full = await readRequest();
+  assert.equal(full.unallocatedQuantity, '0');
+  assert.equal(full.receivedQuantity, '0');
+  assert.equal(full.allocations.length, 2);
+  for (const creation of [first,second]) {
+    const folio = creation.body.folio;
+    let order = await readOrder(folio, buyer);
+    assert.equal(order.lines[0].ot, 'OT-QA-01');
+    assert.equal(order.lines[0].partNumber, 'SKU-QA');
+    assert.equal(order.lines[0].requestLineId, entry.id);
+    assert.equal((await call('order-status', { operationId: randomUUID(), folio, version: order.version, status: 'Aprobada', reason: 'QA soporte' }, buyer)).status, 200);
+    order = await readOrder(folio, buyer);
+    assert.equal((await call('order-receive', { operationId: randomUUID(), folio, version: order.version,
+      lineId: order.lines[0].id, quantity: order.lines[0].quantity, reference: 'Remisión ' + folio }, warehouse)).status, 200);
+    assert.equal((await readRequest()).estado, creation === first ? 'Pedido' : 'Completado');
+    assert.equal((await readOrder(folio,buyer)).lines[0].ot, 'OT-QA-01');
+  }
+  assert.equal((await readRequest()).receivedQuantity, '7');
+});
+
 test('Almacén de Panamá consulta y recibe por partida dentro de su asignación', async (t) => {
   const priorIssuers = process.env.HERMES_PURCHASE_ISSUERS_JSON;
   process.env.HERMES_PURCHASE_ISSUERS_JSON = JSON.stringify([{

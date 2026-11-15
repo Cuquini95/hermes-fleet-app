@@ -54,6 +54,7 @@ export interface PurchaseLine {
   partNumber: string;
   requestId: string;
   requestLineId: string;
+  ot?: string;
   received: string;
   receipts: PurchaseReceipt[];
 }
@@ -124,6 +125,17 @@ export interface PurchaseRequestLine {
   estado: string;
   ocFolio: string;
   ocNumber?: string;
+  ot?: string;
+  allocationReview?: boolean;
+  allocatedQuantity?: string;
+  receivedQuantity?: string;
+  unallocatedQuantity?: string;
+  allocations?: { folio: string; number?: string; vendor: string; quantity: string; received: string; status: string }[];
+}
+
+export function canAwardRequest(line: PurchaseRequestLine) {
+  return !line.allocationReview && line.estado !== 'Completado'
+    && (line.unallocatedQuantity === undefined ? !line.ocFolio : Number(line.unallocatedQuantity) > 0);
 }
 
 export interface PurchaseOverview {

@@ -368,6 +368,8 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
             : <p className="mt-2 text-sm text-text-secondary">OT anterior disponible para Taller y Coordinación.</p>)}
         </div>
 
+        {panamaWorkflow && role === 'jefe_taller' && <Link className="inline-flex min-h-11 items-center font-semibold underline"
+          to={`/pedidos?${new URLSearchParams({ ot: wo.ot_id })}`}>Pedir repuestos para esta OT</Link>}
         <PanamaPartsMovements ot={wo.ot_id} />
         {panamaWorkflow && <Link to={`/manuals?unit=${encodeURIComponent(wo.unidad)}`}
           className="inline-flex min-h-11 items-center text-sm font-semibold text-amber underline">
