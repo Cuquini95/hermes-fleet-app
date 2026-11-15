@@ -8,7 +8,7 @@ import meterHandler from './_lib/cmms-meter.js';
 import { dispatchPanama, PANAMA_PROJECT, readOfficialPanamaShifts } from './_lib/hermes-panama.js';
 import { createPanamaDemoSheets } from './_lib/hermes-panama-demo.js';
 import { technicalDocuments } from './_lib/hermes-technical-library.js';
-import { validatePanamaMeterAppend } from './_lib/hermes-shifts.js';
+import { dispatchPanamaMeter, METER_TAB, validatePanamaMeterAppend } from './_lib/hermes-panama-meter.js';
 import { readPersonalHistory } from './_lib/hermes-profile.js';
 import { visiblePanamaParts } from './_lib/hermes-part-prices.js';
 
@@ -68,7 +68,7 @@ const PANAMA_OPERATION_GROUPS = new Map([
   ['recepcion', ['api/purchasing/order-receive', 'api/purchasing/inventory-move']],
   ['finanzas', ['api/purchasing/order-invoice', 'api/purchasing/order-payment']],
   ['gastos', ['api/purchasing/expense-save', 'api/purchasing/expense-delete', 'api/purchasing/expense-review']],
-  ['horometro', ['api/sheets/append:04B Registro Horómetros']],
+  ['horometro', [`api/sheets/append:${METER_TAB}`, 'api/panama/horometros']],
   ['combustible', ['api/sheets/append:Combustible']],
   ['fletes', ['api/sheets/append:Reporte_Fletes_Transporte']],
   ['llantas', ['api/sheets/append:13 Neumáticos']],
@@ -160,7 +160,7 @@ async function sheetAppend(req, res, sheets, session) {
       return invalid(res, 400, 'La unidad no figura en el inventario TMF.');
     }
   }
-  const row = values.slice();
+  const row = session.project === PANAMA_PROJECT && tab === METER_TAB ? values.slice(0, 10) : values.slice();
   if (rule.actor !== undefined) row[rule.actor] = session.userName;
   if (session.project === PANAMA_PROJECT && rule.actorId !== undefined) {
     while (row.length < rule.actorId) row.push('');
@@ -169,11 +169,10 @@ async function sheetAppend(req, res, sheets, session) {
   const fingerprint = createHash('sha256').update(JSON.stringify([tab, row])).digest('hex');
   const key = `append:${session.userId}:${fingerprint}`;
   let guard;
-  if (session.project === PANAMA_PROJECT && tab === '04B Registro Horómetros') {
+  if (session.project === PANAMA_PROJECT && tab === METER_TAB) {
     const previous = await sheets.replay({ key, fingerprint });
     if (previous) return res.status(200).json(previous);
-    const version = await validatePanamaMeterAppend(sheets, tab, row);
-    guard = `panama:meter:${String(row[2]).trim().toUpperCase()}:${version}`;
+    guard = await validatePanamaMeterAppend(sheets, row);
   }
   await sheets.commit({ key, fingerprint, guard, writes: [{ tab, append: [row] }], result: { success: true } });
   return res.status(200).json({ success: true });
@@ -269,7 +268,8 @@ export function createHermesGateway({
         return res.status(result.status).json(result.body);
       }
       const shiftRoute = path === 'api/panama/turnos' || path.startsWith('api/panama/turnos/');
-      if ((path.startsWith('api/panama/') && !shiftRoute)
+      const meterRoute = path === 'api/panama/horometros';
+      if ((path.startsWith('api/panama/') && !shiftRoute && !meterRoute)
         || (session.project === PANAMA_PROJECT && !enablePanamaOperations && path !== 'health')) {
         const result = await dispatchPanama({ path, method: req.method, query: req.query, session, read: demo ? demoSheets.readSummary : readPanama });
         return res.status(result.status).json(result.body);
@@ -345,6 +345,12 @@ export function createHermesGateway({
         if (permittedGroups && (!group || !permittedGroups.has(group))) {
           return invalid(res, 503, 'Este flujo está en consulta. Usa el procedimiento vigente de tu área.');
         }
+      }
+      if (meterRoute) {
+        const result = await dispatchPanamaMeter({ method: req.method, query: req.query, body: req.body, session, sheets,
+          readOfficialShifts: demo ? undefined : readOfficialShifts,
+          mayWrite: writeEnabled && !pausedOperations.has(path) && (!permittedGroups || permittedGroups.has('horometro')) });
+        return res.status(result.status).json(result.body);
       }
       if (shiftRoute) {
         const result = await shifts({ path, method: req.method, body: req.body ?? {}, session, sheets,

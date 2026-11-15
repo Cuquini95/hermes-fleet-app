@@ -139,6 +139,66 @@ test('Panamá blocks TMF fuel capture until explicitly enabled in the isolated f
   assert.equal(writes, 1);
 });
 
+test('el cambio autorizado conserva lecturas brutas y horas acumuladas y muestra el corte oficial sin editarlo', async () => {
+  const tab = '04B Registro Horómetros';
+  const data = [
+    ['12/11/2026','07:00:00','CA20','Equipo QA','Operador QA','inicio','390'],
+    ['12/11/2026','07:00:00','OTRA','Equipo QA','Otro operario','inicio','9000'],
+  ];
+  const receipts = new Map();
+  const guards = [];
+  const caseSession = { ...operator, project: 'tmf-panama' };
+  let session = caseSession;
+  const sheets = {
+    read: async name => name === tab ? structuredClone(data) : [[], [], [], ['', 'CA20', '', 'Cat', '745']],
+    replay: async ({ key }) => receipts.get(key) ?? null,
+    commit: async ({ key, guard, writes, result }) => {
+      guards.push(guard);
+      for (const write of writes) {
+        assert.equal(write.tab, tab);
+        data.push(...write.append);
+      }
+      receipts.set(key, result);
+      return { result };
+    },
+  };
+  const gate = createHermesGateway({
+    sheets, sessionReader: async () => session, writeEnabled: true, enablePanamaOperations: true,
+    readOfficialShifts: async () => ({ capturedAt: '2026-11-13T04:00:00Z', records: [
+      { unit: 'CA20', id: 'REG-01', date: '12-Nov-2026', shift: 'Día', start: '390', end: '397' },
+      { unit: 'OTRA', id: 'REG-02', date: '12-Nov-2026', shift: 'Día', start: '9000', end: '9002' },
+    ] }),
+  });
+  const request = async (method, body, unit = 'CA20', path = 'api/panama/horometros') => {
+    const res = response();
+    await gate({ method, body, query: { path, unit } }, res);
+    return res;
+  };
+  const replacement = { unit: 'CA20', date: '2026-11-12', time: '14:00', previousHours: '397', newHours: '2', reference: 'OT-QA-123',
+    mutationId: 'cafebabe-0100-4000-9000-cafebabecafe' };
+  assert.equal((await request('GET')).body.official.shifts[0].start, 390);
+  assert.equal((await request('GET', undefined, 'OTRA')).statusCode, 403);
+  assert.equal((await request('POST', replacement)).statusCode, 403);
+  session = { ...caseSession, role: 'supervisor' };
+  assert.equal((await request('POST', { ...replacement, previousHours: '450' })).statusCode, 409);
+  assert.equal((await request('POST', replacement)).statusCode, 201);
+  assert.equal((await request('POST', replacement)).statusCode, 200);
+  session = caseSession;
+  const append = hours => request('POST', { tab, values: ['12/11/2026','16:00:00','CA20','Cat 745','QA','final',hours,'','','','spoof'] },
+    'CA20', 'api/sheets/append');
+  assert.equal((await append('1')).statusCode, 409);
+  assert.equal((await append('6')).statusCode, 409);
+  assert.equal((await append('4')).statusCode, 200);
+  const snapshot = (await request('GET')).body;
+  assert.deepEqual(snapshot.history.map(row => [row.kind,row.rawHours,row.totalHours]), [['final',4,399],['cambio',2,397],['inicio',390,390]]);
+  assert.equal(snapshot.history[1].reference, 'OT-QA-123');
+  assert.equal(snapshot.history[2].reconciliation, 'match');
+  assert.equal(snapshot.history[0].reconciliation, 'review');
+  assert.equal(snapshot.official.shifts.length, 1);
+  assert.deepEqual(guards, ['panama:meter:CA20:1','panama:meter:CA20:2']);
+  assert.equal(data.at(-1).length, 10);
+});
+
 function transport() {
   const existing = new Map([
     ['Averías', { properties: { sheetId: 11, title: 'Averías', gridProperties: { rowCount: 1000, columnCount: 26 } }, rows: [['folio']] }],

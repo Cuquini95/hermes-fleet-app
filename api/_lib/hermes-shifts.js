@@ -34,35 +34,6 @@ function quantity(value, label, decimalPlaces) {
   return number;
 }
 
-function meterSample(row) {
-  const date = String(row[0] ?? '').trim().split('/');
-  const day = date.length === 3 ? `${date[2]}-${date[1].padStart(2, '0')}-${date[0].padStart(2, '0')}` : String(row[0] ?? '').trim();
-  const time = String(row[1] ?? '').trim();
-  const hours = String(row[6] ?? '').trim();
-  const timestamp = Date.parse(`${day}T${time}-05:00`);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !/^\d{2}:\d{2}(?::\d{2})?$/.test(time)
-    || !/^\d{1,8}(?:\.\d{1,3})?$/.test(hours) || !Number.isFinite(timestamp)) return null;
-  const local = new Date(timestamp - 5 * 3600000).toISOString();
-  if (local.slice(0, 16) !== `${day}T${time.slice(0, 5)}`) return null;
-  return { timestamp, hours: Number(hours) };
-}
-
-export async function validatePanamaMeterAppend(sheets, tab, row) {
-  const sample = meterSample(row);
-  requireValue(sample && ['inicio', 'final'].includes(row[5]), 400, 'Registra una lectura, turno, fecha y hora válidos.');
-  const unit = canonical(String(row[2]));
-  const samples = (await sheets.read(tab)).filter(previous => canonical(String(previous[2] ?? '')) === unit)
-    .map(meterSample).filter(Boolean);
-  const chronological = samples.every(previous => {
-    if (previous.timestamp === sample.timestamp) return previous.hours === sample.hours;
-    const seconds = (sample.timestamp - previous.timestamp) / 1000;
-    const difference = sample.hours - previous.hours;
-    return seconds * difference >= 0 && Math.abs(difference) <= Math.abs(seconds) / 3600 + 0.1;
-  });
-  requireValue(chronological, 409, 'El horómetro no concuerda con las lecturas de la unidad. Verifica el medidor o concilia el cambio con Supervisión.');
-  return samples.length;
-}
-
 function shiftFields(body) {
   const date = text(body.date, 'Fecha', 10);
   const asDate = new Date(`${date}T00:00:00Z`);
@@ -201,7 +172,7 @@ async function dispatchAssignment({ method, body, session, sheets, listShiftOper
 
 const officialMonths = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
-function officialShiftDate(value) {
+export function officialShiftDate(value) {
   const date = String(value ?? '').trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(date)) return date;
   const formatted = /^(\d{1,2})-([a-z]{3})-(\d{4})$/i.exec(date);
@@ -211,7 +182,7 @@ function officialShiftDate(value) {
 }
 
 const shiftKey = ({ unit, date, shift }) => JSON.stringify([canonical(unit), date, canonical(shift)]);
-const officialReading = value => /^\d[\d,]*(?:\.\d+)?$/.test(String(value).trim()) ? Number(String(value).replaceAll(',', '')) : NaN;
+export const officialReading = value => /^\d[\d,]*(?:\.\d+)?$/.test(String(value).trim()) ? Number(String(value).replaceAll(',', '')) : NaN;
 
 function reconcileAccepted(records, official) {
   const { records: shiftRows, capturedAt } = Array.isArray(official) ? { records: official } : official;

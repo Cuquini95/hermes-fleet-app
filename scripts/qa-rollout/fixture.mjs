@@ -447,7 +447,11 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
     auth = { '/api/auth/login': login.default, '/api/auth/session': validate.default, '/api/auth/logout': logout.default };
     if (withGateway) {
       if (typeof gate.createHermesGateway !== 'function') throw new Error('La versión no exporta createHermesGateway');
-      gateway = gate.createHermesGateway({ sheets: sheet, writeEnabled: true, panamaOnly: true, enablePanamaOperations: true, enablePanamaFuelCapture: true });
+      gateway = gate.createHermesGateway({ sheets: sheet, writeEnabled: true, panamaOnly: true, enablePanamaOperations: true, enablePanamaFuelCapture: true,
+        readOfficialShifts: async () => ({ capturedAt: '2026-11-13T04:00:00Z', records: [
+          { unit: 'DZ203', id: 'REG-QA-HOROMETRO', date: '12-Nov-2026', shift: 'Día', start: '390', end: '397' },
+        ] }),
+      });
       if (typeof parts.createPartsHandler === 'function') auth['/api/parts/import'] = parts.createPartsHandler({
         readRows: sheet.readRange, readFleet: () => sheet.read(tabs.fleet), panama: true,
         sendAlert: async changes => { alerts.push(clone(changes)); return { sent: true }; },

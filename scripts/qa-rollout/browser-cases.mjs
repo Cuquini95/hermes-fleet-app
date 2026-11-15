@@ -390,12 +390,57 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await visible(part.getByText(/8 h del turno/));
         await part.getByRole('button', { name: 'Aceptar parte', exact: true }).click();
         await visible(part.getByText(/Aceptado por Supervisión/));
-        await visible(part.getByText('Pendiente de conciliación en REGISTRO'));
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await visible(part.getByText('Sin coincidencia en el corte de REGISTRO'));
         assert.equal(sheet.read(shiftTab).filter(row => row[0] === folio).at(-1)[20], 'accept');
         await noHorizontalOverflow(page, 390);
         await shot(page, 'relevo-aceptado-390.png');
       });
       return { folio, hours: 8, scopes: ['operador', 'supervisor'], officialReconciliation: 'pendiente' };
+    });
+
+    await record('MÓVIL-HORÓMETRO-CAMBIO-CON-CONTINUIDAD', async () => {
+      const tab = '04B Registro Horómetros';
+      sheet.seed(tab, [...sheet.read(tab), ['12/11/2026','07:00:00','DZ203','Caterpillar 745','QA','inicio','390']]);
+      const path = `${origin}/horometro`;
+      const select = async page => {
+        await page.goto(path, { waitUntil: 'domcontentloaded' });
+        await page.getByLabel('Unidad', { exact: true }).selectOption('DZ203');
+        await visible(page.getByText(/REG-QA-HOROMETRO/));
+      };
+      await inRole('supervisor', 360, async page => {
+        await select(page);
+        await clickByName(page, 'Registrar cambio de medidor');
+        await page.getByLabel('Fecha del cambio').fill('2026-11-12');
+        await page.getByLabel('Hora en Panamá').fill('14:00');
+        await page.getByLabel('Lectura final anterior').fill('397');
+        await page.getByLabel('Lectura inicial nueva').fill('2');
+        await page.getByLabel('Referencia de Taller').fill('OT-QA-CAMBIO');
+        await clickByName(page, 'Confirmar cambio');
+        await visible(page.getByText('397 h acumuladas', { exact: true }));
+        await page.getByText('Ver lecturas y cambios').click();
+        await visible(page.getByText(/397 → 2 h en medidor/));
+        await visible(page.getByText(/Coincide con REGISTRO para la fecha del parte/));
+        await noHorizontalOverflow(page, 360);
+      }, firstAccount('supervisor'));
+      await inRole('operador', 390, async page => {
+        await select(page);
+        assert.equal(await page.getByRole('button', { name: 'Registrar cambio de medidor' }).count(), 0);
+        await page.getByLabel('Horómetro', { exact: true }).fill('1');
+        await clickByName(page, 'Registrar Horómetro');
+        await clickByName(page, 'Confirmar');
+        await visible(page.getByText(/El horómetro no concuerda/));
+        await page.getByLabel('Horómetro', { exact: true }).fill('4');
+        await clickByName(page, 'Registrar Horómetro');
+        await clickByName(page, 'Confirmar');
+        await visible(page.getByText('399 h acumuladas', { exact: true }));
+        await select(page);
+        await visible(page.getByText('399 h acumuladas', { exact: true }));
+        await noHorizontalOverflow(page, 390);
+      }, firstAccount('operador'));
+      const rows = sheet.read(tab).filter(row => row[2] === 'DZ203');
+      assert.deepEqual(rows.map(row => row[6]), ['390','2','4']);
+      return { earlier: 390, replacementTotal: 397, updatedTotal: 399, invalidReadingRejected: true, officialCutVisible: true, reloaded: true };
     });
 
     await record('MÓVIL-CAMPO-CONFIRMACIÓN', () => inRole('operador', 390, async page => {

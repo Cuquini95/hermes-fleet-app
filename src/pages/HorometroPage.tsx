@@ -11,6 +11,7 @@ import { queueSubmission, flushQueue } from '../lib/offline-queue';
 import { useAuthStore } from '../stores/auth-store';
 import ConfirmModal from '../components/ui/ConfirmModal';
 import SuccessToast, { type ToastType } from '../components/ui/SuccessToast';
+import PanamaMeterHistory from '../components/workshop/PanamaMeterHistory';
 
 type TurnoType = 'inicio' | 'final';
 
@@ -40,6 +41,7 @@ export default function HorometroPage() {
   const [retry, setRetry] = useState<{ row: string[]; meterReading: CmmsMeterReading; label: string }>();
   const [syncingExisting, setSyncingExisting] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
+  const [meterRevision, setMeterRevision] = useState(0);
 
   const selectedEquipment = equipment.find((eq) => eq.unit_id === unidad);
   const horasActual = horometro ? parseFloat(horometro) : null;
@@ -148,7 +150,8 @@ export default function HorometroPage() {
       }
       setRetry(undefined);
       if (isPanama) {
-        show(`Horómetro ${label} registrado en Hermes. Conciliación con REGISTRO TMF y enlace CMMS pendientes.`, 'info');
+        setMeterRevision(value => value + 1);
+        show(`Horómetro ${label} registrado en Hermes.`, 'success');
         return;
       }
       try {
@@ -251,8 +254,9 @@ export default function HorometroPage() {
 
       {/* Unit selector */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-border mb-4">
-        <label className="text-sm font-medium text-text-secondary block mb-2">Unidad</label>
+        <label htmlFor="meter-unit" className="text-sm font-medium text-text-secondary block mb-2">Unidad</label>
         <select
+          id="meter-unit"
           value={unidad}
           onChange={(e) => setUnidad(e.target.value)}
           className="w-full rounded-xl border border-border p-4 bg-white text-text text-lg font-semibold"
@@ -266,10 +270,13 @@ export default function HorometroPage() {
         </select>
       </div>
 
+      {isPanama && unidad && userId && <PanamaMeterHistory key={`${userId}:${unidad}`} unit={unidad} actorId={userId} refresh={meterRevision} />}
+
       {/* Horómetro large input */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-border mb-4">
-        <label className="text-sm font-medium text-text-secondary block mb-2">Horómetro</label>
+        <label htmlFor="meter-reading" className="text-sm font-medium text-text-secondary block mb-2">Horómetro</label>
         <input
+          id="meter-reading"
           type="number"
           value={horometro}
           onChange={(e) => setHorometro(e.target.value)}
