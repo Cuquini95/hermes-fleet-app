@@ -79,6 +79,7 @@ export default function NuevoGastoPage() {
   const [splitEntries, setSplitEntries] = useState<{ unitId: string; amount: number }[]>([]);
   const [splitPickerValue, setSplitPickerValue] = useState('');
   const [otId, setOtId] = useState(fromOrder);
+  const linkedService = isPanama && tipo === 'Servicio' && Boolean(otId.trim());
   const [metodoPago, setMetodoPago] = useState<MetodoPago>('Efectivo');
   const [lineItems, setLineItems] = useState<OcrLineItem[]>([emptyLine()]);
   const receipt = useRef<{ file: File; operationId: string; uploadedUrl: string; unitScope: string } | null>(null);
@@ -489,8 +490,10 @@ export default function NuevoGastoPage() {
 
         {/* RFC */}
         <div>
-          <label className="text-xs text-text-secondary mb-1 block">RUC o identificación fiscal del proveedor (opcional)</label>
+          <label htmlFor="expense-vendor-id" className="text-xs text-text-secondary mb-1 block">RUC o identificación fiscal del proveedor{linkedService ? '' : ' (opcional)'}</label>
           <input
+            id="expense-vendor-id"
+            required={linkedService}
             value={rfcProveedor}
             onChange={(e) => setRfcProveedor(e.target.value.toUpperCase())}
             placeholder="Identificación del documento"
@@ -500,8 +503,10 @@ export default function NuevoGastoPage() {
 
         {/* Folio */}
         <div>
-          <label className="text-xs text-text-secondary mb-1 block">Folio / Factura (opcional)</label>
+          <label htmlFor="expense-invoice" className="text-xs text-text-secondary mb-1 block">Folio / Factura{linkedService ? '' : ' (opcional)'}</label>
           <input
+            id="expense-invoice"
+            required={linkedService}
             value={folioFactura}
             onChange={(e) => setFolioFactura(e.target.value)}
             placeholder="A-04821"

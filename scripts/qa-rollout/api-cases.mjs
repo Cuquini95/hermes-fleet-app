@@ -499,14 +499,24 @@ export async function checkPurchasing(fixture, record) {
     assert.equal(received.status, 'Recibida');
     assert.equal((await api('order-status', { ...base, operationId: randomUUID(), version: received.version, status: 'Pagada' })).status, 403);
     assert.equal((await treasury('order-payment', { ...base, operationId: randomUUID(), version: received.version, reference: 'BANCO-QA-OC', amount: received.total })).status, 409);
-    good(await accounting('order-invoice', { ...base, operationId: randomUUID(), version: received.version, reference: 'FAC-QA-OC', amount: received.total }), 'Conciliar factura');
+    const invoice = { ...base, version: received.version, reference: 'FAC-QA-OC', amount: received.total, currency: received.issuer.currency,
+      tax: received.tax, lines: received.lines.map(item => ({ lineId: item.id, quantity: item.quantity, unitPrice: item.unitPrice })) };
+    const mismatch = await accounting('order-invoice', { ...invoice, operationId: randomUUID(), currency: 'PAB', tax: '0',
+      lines: invoice.lines.map((item, index) => index === 0 ? { ...item, quantity: '1', unitPrice: '999.99' } : item) });
+    assert.equal(mismatch.status, 409);
+    assert.match(mismatch.data.error, /moneda.*ITBMS.*cantidad.*precio/i);
+    assert.equal((await getOrder()).invoice, null);
+    good(await accounting('order-invoice', { ...invoice, operationId: randomUUID() }), 'Conciliar factura');
     const invoiced = await getOrder();
+    assert.equal(invoiced.invoice.match.lines.length, received.lines.length);
+    assert.deepEqual(invoiced.invoice.match.lines[0].receiptIds, received.lines[0].receipts.map(receipt => receipt.id));
     good(await treasury('order-payment', { ...base, operationId: randomUUID(), version: invoiced.version, reference: 'BANCO-QA-OC', amount: invoiced.total }), 'Registrar pago externo conciliado');
     const paid = await getOrder();
     assert.equal(paid.status, 'Pagada');
     assert.equal(paid.payment.invoiceReference, paid.invoice.reference);
     assert.equal(new Set([paid.approvedById, receiver.user.id, paid.invoice.actorId, paid.payment.actorId]).size, 4);
-    return { folio: created.folio, approvedById: manager.user.id, received: 2, remaining: 0, receipts: 2, partialStatus: final.status, finalStatus: paid.status, invoice: paid.invoice.reference, payment: paid.payment.reference };
+    return { folio: created.folio, approvedById: manager.user.id, received: 2, remaining: 0, receipts: 2, partialStatus: final.status, finalStatus: paid.status,
+      invoice: paid.invoice.reference, payment: paid.payment.reference, lineMatching: true, mismatchesRejected: ['moneda', 'impuesto', 'cantidad', 'precio'] };
   });
 
   await record('API-GASTOS-REPARTO-RECIBO', async () => {

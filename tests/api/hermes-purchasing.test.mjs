@@ -109,9 +109,9 @@ function costMovement(id, kind, quantity, delta, original = '', unit = costUnit)
   return row;
 }
 
-function costService(id, group, invoice, { status = 'Aprobado', unit = costUnit, order = costOrder } = {}) {
+function costService(id, group, invoice, { status = 'Aprobado', unit = costUnit, order = costOrder, ruc = 'RUC-QA' } = {}) {
   const row = Array(29).fill('');
-  Object.assign(row, { 0: id, 3: 'Servicio', 4: 'Proveedor QA', 5: 'RUC-QA', 6: invoice, 7: '50.00', 8: '3.50', 9: '53.50',
+  Object.assign(row, { 0: id, 3: 'Servicio', 4: 'Proveedor QA', 5: ruc, 6: invoice, 7: '50.00', 8: '3.50', 9: '53.50',
     10: unit, 11: order, 16: status, 17: group, 18: 'author-qa', 19: '53.50', 21: 'TP_PA', 22: 'PAB',
     24: '14/11/2026', 25: 'reviewer-qa', 26: '2026-11-14T17:00:00Z', 27: 'Factura conciliada' });
   return row;
@@ -149,7 +149,7 @@ test('costo real de OT conserva lo verificado y omite tarifas ajenas, devolucion
   sheets.seed(TAB.inventoryMovements, [['ID'], costMovement('ISSUE-QA', 'Salida', '1', '9.99'),
     costMovement('RETURN-QA', 'Devolución', '1', '-9.99', 'SIN-SALIDA'), costMovement('SIN-COSTO', 'Salida', '1', null)]);
   sheets.seed(TAB.expenses, [['ID'], costService('SVC-1', 'GRP-1', 'DOBLE-QA'),
-    costService('SVC-2', 'GRP-2', 'DOBLE-QA', { order: 'OT-OTRA' }),
+    costService('SVC-2', 'GRP-2', 'DOBLE-QA', { order: 'OT-OTRA', ruc: '' }),
     costService('SVC-3', 'GRP-3', 'PEND-QA', { status: 'Pendiente' }),
     costService('SVC-4', 'GRP-4', 'AJENA-QA', { unit: 'QA-EX401' })]);
   const result = await call('workorder-cost', null, costManager, { ot: costOrder });
@@ -157,11 +157,28 @@ test('costo real de OT conserva lo verificado y omite tarifas ajenas, devolucion
   assert.deepEqual(result.body.lines.map(line => line.reference), ['ISSUE-QA']);
   assert.deepEqual(new Set(result.body.pending.map(item => item.kind)), new Set(['labor', 'returns', 'parts', 'services']));
   assert.doesNotMatch(JSON.stringify(result.body), /AJENA-QA|OT-OTRA|TARIFA-AJENA/);
-  for (const actor of [{ ...costManager, role: 'mecanico' }, { ...costManager, allUnits: false, assignedUnits: ['QA-EX401'] }, { ...costManager, project: 'QA' }]) {
+  for (const actor of [{ ...costManager, role: 'mecanico' }, { ...costManager, project: 'QA' }]) {
     const forbidden = await call('workorder-cost', null, actor, { ot: costOrder });
     assert.equal(forbidden.status, 403);
     assert.equal(forbidden.body.lines, undefined);
   }
+  const scoped = { ...costManager, allUnits: false, assignedUnits: ['QA-EX401'] };
+  const [foreign, missing] = await Promise.all([costOrder, 'OT-INEXISTENTE'].map(ot => call('workorder-cost', null, scoped, { ot })));
+  assert.deepEqual(foreign, missing);
+  assert.equal(foreign.status, 404);
+});
+
+test('costo real de OT advierte una devolución de la salida etiquetada con otro folio', async () => {
+  const { sheets, call } = setup();
+  seedCostOrder(sheets);
+  const issue = costMovement('ISSUE-QA', 'Salida', '1', '9.99');
+  const returnRow = costMovement('DEV-AJENA', 'Devolución', '1', '-9.99', issue[0]);
+  returnRow[8] = 'OT-AJENA';
+  sheets.seed(TAB.inventoryMovements, [['ID'], issue, returnRow]);
+  const { status, body } = await call('workorder-cost', null, costManager, { ot: costOrder });
+  assert.equal(status, 200);
+  assert.ok(body.pending.some(item => item.kind === 'returns'));
+  assert.doesNotMatch(JSON.stringify(body), /DEV-AJENA|OT-AJENA/);
 });
 
 const requestInput = () => ({
@@ -582,10 +599,67 @@ test('Panamá separa aprobación Q25, recepción con remisión, factura y pago c
   assert.equal(order.receiptStatus, 'Recibida');
   assert.equal((await call('order-payment', input({ reference: 'P-01', amount: order.total }), treasury)).status, 409);
   assert.equal((await call('order-invoice', input({ reference: 'F-01', amount: '1' }), accounting)).status, 409);
-  assert.equal((await call('order-invoice', input({ reference: 'F-01', amount: order.total }), accounting)).status, 200);
+  const invoiceLines = [{ lineId: order.lines[0].id, quantity: '2', unitPrice: '10.00' }];
+  const fields = { reference: 'F-01', amount: order.total, currency: 'USD', tax: order.tax, lines: invoiceLines };
+  const inconsistent = await call('order-invoice', input({ ...fields, currency: 'PAB', tax: '0.04',
+    lines: [{ ...invoiceLines[0], quantity: '1', unitPrice: '20.00' }],
+  }), accounting);
+  assert.equal(inconsistent.status, 409);
+  assert.match(inconsistent.body.error, /moneda.*ITBMS.*cantidad.*precio/i);
+  assert.equal((await readOrder(folio, buyer)).invoice, null);
+  assert.equal((await call('order-invoice', input({ ...fields, lines: [...invoiceLines, ...invoiceLines] }), accounting)).status, 409);
+  const receivedLines = sheets.inspect(TAB.lines);
+  const unsupported = structuredClone(receivedLines);
+  const unsupportedLine = unsupported.find(row => row[6] === invoiceLines[0].lineId);
+  const unsupportedHistory = JSON.parse(unsupportedLine[11]);
+  unsupportedHistory[0].actorId = buyer.userId;
+  unsupportedLine[11] = JSON.stringify(unsupportedHistory);
+  sheets.seed(TAB.lines, unsupported);
+  assert.equal((await call('order-invoice', input(fields), accounting)).status, 409);
+  sheets.seed(TAB.lines, receivedLines);
+  assert.equal((await call('order-invoice', input(fields), accounting)).status, 200);
   order = await readOrder(folio, buyer);
   assert.equal(order.invoice.reference, 'F-01');
   assert.equal(order.invoice.actorId, accounting.userId);
+  assert.equal(order.invoice.match.tax, order.tax);
+  assert.deepEqual(order.invoice.match.lines.map(({ receiptEvidence, ...line }) => line), [{
+    lineId: order.lines[0].id, quantity: '2', unitPrice: '10.00', receiptIds: order.lines[0].receipts.map(receipt => receipt.id),
+  }]);
+  const historical = sheets.inspect(TAB.orders);
+  const invoiceRow = historical.find(row => row[0] === folio);
+  const { match, matchReviewedById, matchReviewedAt, ...previousInvoice } = JSON.parse(invoiceRow[23]);
+  assert.ok(match && matchReviewedById && matchReviewedAt);
+  previousInvoice.actorId = 'cuenta-historica-qa';
+  invoiceRow[23] = JSON.stringify(previousInvoice);
+  sheets.seed(TAB.orders, historical);
+  assert.equal((await call('order-payment', input({ reference: 'P-01', amount: order.total }), treasury)).status, 409);
+  assert.equal((await call('order-invoice', input({ ...fields, reference: 'F-OTRA' }), accounting)).status, 409);
+  assert.equal((await call('order-invoice', input(fields), accounting)).status, 200);
+  order = await readOrder(folio, buyer);
+  assert.equal(order.invoice.actorId, previousInvoice.actorId);
+  assert.equal(order.invoice.matchReviewedById, accounting.userId);
+  const changedLines = structuredClone(receivedLines);
+  const changedLine = changedLines.find(row => row[6] === invoiceLines[0].lineId);
+  const changedHistory = JSON.parse(changedLine[11]);
+  changedHistory[0].reference = 'Remisión corregida QA';
+  changedLine[11] = JSON.stringify(changedHistory);
+  sheets.seed(TAB.lines, changedLines);
+  assert.equal((await call('order-payment', input({ reference: 'P-01', amount: order.total }), treasury)).status, 409);
+  changedHistory[0].reference = 'R-01';
+  changedHistory[0].id = 'remision-sustituida-qa';
+  changedLine[11] = JSON.stringify(changedHistory);
+  sheets.seed(TAB.lines, changedLines);
+  assert.equal((await call('order-payment', input({ reference: 'P-01', amount: order.total }), treasury)).status, 409);
+  order = await readOrder(folio, buyer);
+  assert.equal(order.payment, null);
+  assert.equal(order.invoiceReconciled, false);
+  assert.equal((await call('order-invoice', input(fields), accounting)).status, 200);
+  order = await readOrder(folio, buyer);
+  assert.equal(order.invoiceReconciled, true);
+  assert.equal(order.invoice.actorId, previousInvoice.actorId);
+  assert.equal(order.invoice.match.lines[0].receiptIds[0], 'remision-sustituida-qa');
+  const previousMatchAudit = sheets.inspect(TAB.audit).find(row => row[4] === 'Conciliación anterior de factura');
+  assert.notEqual(JSON.parse(previousMatchAudit[5]).match.lines[0].receiptIds[0], 'remision-sustituida-qa');
   assert.equal(order.status, 'Recibida');
   assert.equal((await call('order-payment', input({ reference: 'P-01', amount: order.total }), { ...accounting, canRecordPurchasePayments: true })).status, 403);
   assert.equal((await call('order-payment', input({ reference: 'P-01', amount: order.total }), buyer)).status, 403);

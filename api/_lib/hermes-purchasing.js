@@ -211,7 +211,7 @@ function orderRecord(row, items) {
   const lines = items.map((item) => ocLine(item.row)).sort((a, b) => Number(a.number) - Number(b.number));
   const anyReceived = lines.some((line) => Number(line.received) > 0);
   const allReceived = lines.length > 0 && lines.every((line) => Number(line.received) >= Number(line.quantity));
-  return {
+  const record = {
     folio: trim(row[0]), number: readPurchaseNumber(row), date: trim(row[1]), vendorName: trim(row[2]), vendorRfc: trim(row[3]), vendorAddress: trim(row[4]),
     unit: trim(row[5]), subtotal: trim(row[6]), tax: trim(row[7]), shipping: trim(row[8]), other: trim(row[9]), total: trim(row[10]),
     discount: trim(row[25]) || '0.00', vendorSource: row[26] === 'manual' ? 'manual' : 'catalog',
@@ -222,6 +222,7 @@ function orderRecord(row, items) {
     receiptStatus: allReceived ? 'Recibida' : anyReceived ? 'Recibida parcial' : 'Pendiente',
     lines,
   };
+  return { ...record, invoiceReconciled: record.status === 'Pagada' ? Boolean(record.invoice?.match) : invoiceMatchesCurrent(record) };
 }
 
 function hasRecordedApproval({ status, approvedBy, approvedById, approvedAt }) {
@@ -375,6 +376,7 @@ function requestUpdate(entry, version, actor, ocFolio, status, previous) {
 }
 
 const normalizeCatalogKey = value => upper(value).normalize('NFD').replace(/\p{Diacritic}/gu, '');
+const normalizedTaxId = value => upper(value).replace(/[^A-Z0-9]/g, '');
 
 function catalogPart(rows, sku, required = true) {
   const headerIndex = rows.findIndex(row => normalizeCatalogKey(row[0]) === 'SKU' && normalizeCatalogKey(row[5]) === 'STOCK');
@@ -748,6 +750,75 @@ async function saveOrder(body, session, sheets, tx) {
   return tx.commit(writes, { folio, total: money(total), version: tx.version }, guards);
 }
 
+function matchInvoice(record, body) {
+  const differences = [];
+  const currency = upper(field(body.currency, 3, 'moneda', true));
+  const tax = decimal(body.tax, 2, 'impuesto de la factura');
+  if (currency !== record.issuer.currency) differences.push('La moneda difiere de la OC.');
+  if (tax !== decimal(record.tax, 2, 'impuesto de la OC')) differences.push(record.issuer.taxLabel + ' difiere de la OC.');
+  if (!Array.isArray(body.lines) || body.lines.length > 100) error(400, 'Ingresa las partidas de la factura.');
+  const expected = new Map(record.lines.map(line => [line.id, line]));
+  const matched = new Map();
+  const receiptIds = new Set();
+  if (expected.size !== record.lines.length) error(409, 'La OC contiene partidas duplicadas.');
+  for (const item of body.lines) {
+    const id = field(item?.lineId, 120, 'partida de factura', true);
+    const line = expected.get(id);
+    if (!line || matched.has(id)) error(409, 'La factura contiene una partida duplicada o ajena a la OC.');
+    const qty = decimal(item.quantity, 3, 'cantidad facturada', true);
+    const price = decimal(item.unitPrice, 2, 'precio facturado');
+    const ordered = decimal(line.quantity, 3, 'cantidad ordenada', true);
+    const received = decimal(line.received, 3, 'cantidad recibida', true);
+    let supported = 0n;
+    const ids = [];
+    const receiptEvidence = [];
+    const references = new Set();
+    for (const receipt of line.receipts) {
+      const reference = upper(receipt.reference);
+      if (!trim(receipt.id) || !reference || receiptIds.has(receipt.id) || references.has(reference)
+          || !trim(receipt.actorId) || receipt.actorId === record.approvedById || !Number.isFinite(Date.parse(receipt.at))) {
+        error(409, 'Partida ' + line.number + ': las remisiones requieren conciliación.');
+      }
+      receiptIds.add(receipt.id);
+      references.add(reference);
+      ids.push(receipt.id);
+      const receiptQuantity = decimal(receipt.quantity, 3, 'cantidad de la remisión', true);
+      supported += receiptQuantity;
+      receiptEvidence.push(hash([receipt.id, trim(receipt.reference), receipt.actorId, receipt.at, quantity(receiptQuantity)]));
+    }
+    if (qty !== ordered || qty !== received || qty !== supported) {
+      differences.push('Partida ' + line.number + ': cantidad facturada ' + quantity(qty) + ', OC ' + quantity(ordered)
+        + ', recibida ' + quantity(received) + ', con remisión ' + quantity(supported) + '.');
+    }
+    if (price !== decimal(line.unitPrice, 2, 'precio de la OC')) {
+      differences.push('Partida ' + line.number + ': precio facturado ' + money(price) + ', OC ' + line.unitPrice + '.');
+    }
+    matched.set(id, { lineId: id, quantity: quantity(qty), unitPrice: money(price), receiptIds: ids, receiptEvidence });
+  }
+  if (matched.size !== expected.size) differences.push('Faltan partidas de la OC en la factura.');
+  if (differences.length) error(409, differences.slice(0, 8).join(' ') + (differences.length > 8 ? ' Revisa las demás partidas.' : ''));
+  return { tax: money(tax), lines: record.lines.map(line => matched.get(line.id)) };
+}
+
+function invoiceMatchesCurrent(record) {
+  const invoice = record.invoice;
+  if (!invoice?.match || !record.issuer || !trim(invoice.matchReviewedById) || !Number.isFinite(Date.parse(invoice.matchReviewedAt))) return false;
+  if (invoice.matchReviewedById === record.approvedById
+      || record.lines.some(line => line.receipts.some(receipt => receipt.actorId === invoice.matchReviewedById))) return false;
+  try {
+    if (decimal(invoice.amount, 2, 'factura registrada') !== decimal(record.total, 2, 'total de la OC')) return false;
+    const checked = matchInvoice(record, { ...invoice.match, currency: invoice.currency });
+    const saved = new Map(invoice.match.lines.map(line => [line.lineId, line.receiptEvidence]));
+    return checked.lines.every(line => {
+      const evidence = saved.get(line.lineId);
+      return Array.isArray(evidence) && evidence.length === line.receiptEvidence.length
+        && line.receiptEvidence.every(digest => evidence.includes(digest));
+    });
+  } catch {
+    return false;
+  }
+}
+
 async function changeOrder(action, body, session, sheets, tx) {
   const lookup = field(body.folio, 90, 'folio', true);
   const [orderRows, lineRows, requestRows] = await readTables(
@@ -813,25 +884,40 @@ async function changeOrder(action, body, session, sheets, tx) {
       error(409, 'El importe debe coincidir con el total de la OC. Concilia las diferencias antes de registrar.');
     }
     const column = invoice ? 23 : 24;
-    if (invoice ? record.invoice : record.payment) error(409, 'Esta orden ya tiene un registro de conciliación.');
+    const previousInvoice = invoice && !record.invoiceReconciled ? record.invoice : null;
+    if (invoice ? record.invoiceReconciled : record.payment) error(409, 'Esta orden ya tiene un registro de conciliación.');
+    if (previousInvoice && (upper(previousInvoice.reference) !== upper(reference) || previousInvoice.currency !== record.issuer.currency
+        || decimal(previousInvoice.amount, 2, 'factura registrada') !== amount)) {
+      error(409, 'Concilia la factura registrada conservando su referencia, importe y moneda.');
+    }
     if (!invoice && !record.invoice) error(409, 'Vincula primero la factura conciliada.');
-    if (!invoice && record.invoice.actorId === session.userId) error(403, 'El pago requiere una cuenta distinta de quien registró la factura.');
+    if (!invoice && [record.invoice.actorId, record.invoice.matchReviewedById].includes(session.userId)) {
+      error(403, 'El pago requiere una cuenta distinta de quien registró o verificó la factura.');
+    }
+    if (!invoice && !record.invoiceReconciled) error(409, 'Contabilidad debe verificar las partidas y remisiones vigentes de la factura antes del pago.');
+    const match = invoice ? matchInvoice(record, body) : undefined;
     const identity = [record.issuer.id, invoice ? upper(record.vendorRfc || record.vendorName) : '', upper(reference)];
-    guards.push((invoice ? 'oc-invoice:' : 'oc-payment:') + hash(identity));
+    guards.push(previousInvoice ? 'oc-invoice-match:' + hash([...identity, record.version])
+      : (invoice ? 'oc-invoice:' : 'oc-payment:') + hash(identity));
     const existing = entries(orderRows).some(({ row }) => {
       if (row === header.row || !row[column] || issuerSnapshot(row)?.id !== record.issuer.id) return false;
       if (invoice && upper(row[3] || row[2]) !== identity[1]) return false;
       return upper(recordedDocument(row[column])?.reference) === identity[2];
     });
     if (existing) error(409, 'Esta referencia ya está vinculada a otra orden.');
+    const at = timestamp().iso;
+    if (previousInvoice?.match) {
+      writes.push(auditRow(session, tx.operationId, 'Conciliación anterior de factura', folio, JSON.stringify(previousInvoice)));
+    }
     values[column] = JSON.stringify({
       reference, amount: money(amount), currency: record.issuer.currency,
-      at: timestamp().iso, by: session.userName, actorId: session.userId,
-      ...(!invoice ? { invoiceReference: record.invoice.reference } : {}),
+      at, by: session.userName, actorId: session.userId,
+      ...previousInvoice,
+      ...(invoice ? { match, matchReviewedById: session.userId, matchReviewedAt: at } : { invoiceReference: record.invoice.reference }),
     });
     if (!invoice) values[11] = 'Pagada';
     detail = reference + ' · ' + record.issuer.currency + ' ' + money(amount);
-    auditAction = invoice ? 'Factura de OC conciliada' : 'Pago de OC conciliado';
+    auditAction = previousInvoice ? 'Factura de OC verificada nuevamente' : invoice ? 'Factura de OC conciliada' : 'Pago de OC conciliado';
   } else {
     if (panama && record.approvedById === session.userId) error(403, 'La recepción requiere una cuenta distinta de quien aprobó la OC.');
     if (!['Aprobada', 'Recibida parcial', 'Pagada'].includes(record.status) || !record.approvedById
@@ -1024,6 +1110,7 @@ async function saveExpense(body, session, sheets, tx, evidenceStorage) {
   let ot = field(expense.ot_id, 90, 'orden de trabajo');
   if (panama && type === 'Servicio' && ot) {
     if (!invoice) error(400, 'Indica la factura del servicio vinculado a la OT.');
+    if (!normalizedTaxId(rfc)) error(400, 'Indica el registro fiscal del proveedor del servicio.');
     const order = resolveCostOrder(await sheets.read('ORDENES_TRABAJO'), ot, session);
     if (allocations.length !== 1 || allocations[0].unit !== order.unit) {
       error(409, 'Asigna el servicio únicamente a la unidad de la OT.');
@@ -1051,6 +1138,13 @@ function parseHttpsUrl(value) {
   }
 }
 
+function sameExpenseDocument(a, b) {
+  if (!upper(a[6]) || upper(a[6]) !== upper(b[6]) || upper(a[21]) !== upper(b[21])) return false;
+  const aId = normalizedTaxId(a[5]);
+  const bId = normalizedTaxId(b[5]);
+  return aId && bId ? aId === bId : normalizeCatalogKey(a[4]).replace(/\s+/g, ' ') === normalizeCatalogKey(b[4]).replace(/\s+/g, ' ');
+}
+
 async function changeExpense(action, body, session, sheets, tx) {
   const id = field(body.id, 100, 'gasto', true);
   const rows = entries(await sheets.read(PURCHASE_TABS.expenses));
@@ -1073,6 +1167,17 @@ async function changeExpense(action, body, session, sheets, tx) {
     if (row[16] !== 'Pendiente' || !row[21] || !row[22]) error(409, 'El gasto requiere ajuste documentado con Contabilidad.');
     if (!review && row[18] !== session.userId) error(403, 'Solo quien capturó el gasto pendiente puede anularlo.');
   }
+  const documentGuards = [];
+  if (panama && review && status === 'Aprobado' && affected.some(({ row }) => row[3] === 'Servicio' && trim(row[11]))) {
+    const row = entry.row;
+    if (affected.length !== 1 || !group || !normalizedTaxId(row[5]) || !trim(row[6])) {
+      error(409, 'Concilia la factura, el proveedor y la unidad del servicio vinculado.');
+    }
+    if (rows.some(other => other.index !== entry.index && other.row[16] === 'Aprobado' && sameExpenseDocument(row, other.row))) {
+      error(409, 'La factura ya figura en otro gasto aprobado.');
+    }
+    documentGuards.push('pa-service-invoice:' + hash([upper(row[21]), normalizedTaxId(row[5]), upper(row[6])]));
+  }
   const reason = field(body.reason, 350, 'motivo', review);
   const now = timestamp();
   const ids = affected.map(({ row }) => row[0]);
@@ -1085,15 +1190,16 @@ async function changeExpense(action, body, session, sheets, tx) {
     auditRow(session, tx.operationId, review ? 'Gasto ' + status.toLowerCase() : 'Gasto eliminado',
       group || id, (review ? 'Pendiente → ' + status + ' · ' + reason : affected.length + ' unidad(es)')),
   ], { id, status, ...(review ? { ids } : { removed: ids }) },
-  affected.map(({ row }) => 'gst:' + row[0] + ':' + hash(row)));
+  [...documentGuards, ...affected.map(({ row }) => 'gst:' + row[0] + ':' + hash(row))]);
 }
 
 function resolveCostOrder(orders, value, session) {
   const requested = upper(field(value, 90, 'orden de trabajo', true));
   const matches = entries(orders).filter(({ row }) => upper(row[1]) === requested || upper(row[25]) === requested);
+  const isVisible = row => /^OT-/.test(row[1] ?? '') && trim(row[3]) && upper(row[3]) !== 'FLOTA' && canUseUnit(session, row[3]);
+  if (!matches.some(({ row }) => isVisible(row))) error(404, 'Orden de trabajo no encontrada.');
   if (matches.length > 1) error(409, 'El folio de OT requiere conciliación.');
-  const row = matches[0]?.row;
-  if (!/^OT-/.test(row?.[1] ?? '') || !trim(row[3]) || upper(row[3]) === 'FLOTA') error(404, 'Orden de trabajo no encontrada.');
+  const { row } = matches[0];
   return { row, ot: upper(row[1]), unit: requireUnit(session, row[3]), folio: trim(row[25]) || row[1] };
 }
 
@@ -1124,7 +1230,15 @@ function addInventoryCosts(rows, { ot, unit, folio }, add, flag) {
   const ledger = entries(rows).map(({ row }) => row);
   const matches = new Set([ot, upper(folio)]);
   const idCount = new Map();
-  for (const row of ledger) idCount.set(trim(row[0]), (idCount.get(trim(row[0])) ?? 0) + 1);
+  const linkedReturns = new Map();
+  for (const row of ledger) {
+    idCount.set(trim(row[0]), (idCount.get(trim(row[0])) ?? 0) + 1);
+    if (row[2] !== 'Devolución' || !trim(row[14])) continue;
+    const original = trim(row[14]);
+    const linked = linkedReturns.get(original) ?? [];
+    linked.push(row);
+    linkedReturns.set(original, linked);
+  }
   const movements = ledger.filter(row => matches.has(upper(row[8])) && ['Salida', 'Devolución'].includes(row[2]));
   const returns = movements.filter(row => row[2] === 'Devolución');
   const used = new Set();
@@ -1142,7 +1256,7 @@ function addInventoryCosts(rows, { ot, unit, folio }, add, flag) {
       flag('parts', 'Hay salidas sin valuación o vínculo verificable.');
       continue;
     }
-    const linked = returns.filter(row => trim(row[14]) === id);
+    const linked = linkedReturns.get(id) ?? [];
     const adjustments = [];
     let returned = 0n, reversal = 0n;
     try {
@@ -1150,7 +1264,8 @@ function addInventoryCosts(rows, { ot, unit, folio }, add, flag) {
         used.add(row);
         const credit = recordedInventoryValue(row[15]);
         const returnId = trim(row[0]);
-        if (upper(row[5]) !== unit || upper(row[3]) !== upper(issue[3]) || !returnId || idCount.get(returnId) !== 1 || !trim(row[9])
+        if (!matches.has(upper(row[8])) || upper(row[5]) !== unit || upper(row[3]) !== upper(issue[3])
+            || !returnId || idCount.get(returnId) !== 1 || !trim(row[9])
             || !credit || credit.unitCost !== value.unitCost || credit.currency !== value.currency || credit.reference !== value.reference
             || !/^(?:-\d+\.\d{2}|0\.00)$/.test(credit.delta)) throw new Error();
         const qty = decimal(row[4], 3, 'devolución', true);
@@ -1173,8 +1288,6 @@ function addInventoryCosts(rows, { ot, unit, folio }, add, flag) {
 function addServiceCosts(rows, { ot, unit, folio }, add, flag) {
   const active = entries(rows).map(({ row }) => row).filter(row => !['Eliminado', 'Rechazado'].includes(row[16]));
   const approved = active.filter(row => row[16] === 'Aprobado');
-  const docKey = row => JSON.stringify([upper(row[21]), upper(row[5] || row[4]), upper(row[6])]);
-  const documents = new Map();
   const groups = new Map();
   const ids = new Map();
   for (const row of active) {
@@ -1183,18 +1296,13 @@ function addServiceCosts(rows, { ot, unit, folio }, add, flag) {
     groups.set(group, [...(groups.get(group) ?? []), row]);
     ids.set(id, (ids.get(id) ?? 0) + 1);
   }
-  for (const row of approved) {
-    const key = docKey(row);
-    const group = trim(row[17]);
-    if (documents.has(key) && documents.get(key) !== group) documents.set(key, null);
-    else if (!documents.has(key)) documents.set(key, group);
-  }
   for (const row of active.filter(row => row[3] === 'Servicio' && [ot, upper(folio)].includes(upper(row[11])))) {
     try {
       const group = trim(row[17]);
       const id = trim(row[0]);
       if (upper(row[10]) !== unit || row[16] !== 'Aprobado' || !group || !id || ids.get(id) !== 1 || groups.get(group)?.length !== 1
-          || documents.get(docKey(row)) !== group || !trim(row[4]) || !trim(row[6]) || !trim(row[21]) || !trim(row[24])
+          || approved.some(other => other !== row && trim(other[17]) !== group && sameExpenseDocument(row, other))
+          || !trim(row[4]) || !normalizedTaxId(row[5]) || !trim(row[6]) || !trim(row[21]) || !trim(row[24])
           || !trim(row[18]) || !trim(row[25]) || row[18] === row[25] || !Number.isFinite(Date.parse(row[26]))
           || !['USD', 'PAB'].includes(row[22])) throw new Error();
       const amount = decimal(row[9], 2, 'importe de factura', true);

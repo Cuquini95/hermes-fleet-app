@@ -1277,6 +1277,53 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       }
     }));
 
+    const browserAccounting = loadAccounts.find(account => account.membership.can_record_purchase_invoices === true);
+    await record('MÓVIL-CONCILIACIÓN-OC-RECEPCIÓN-FACTURA', () => inRole('gerencia', 390, async page => {
+      const folio = 'OC-CRUCE-QA';
+      const head = Array(28).fill('');
+      Object.assign(head, { 0: folio, 1: '14/11/2026', 2: 'Proveedor conciliación QA', 3: 'RUC-CRUCE-QA', 5: 'DZ203',
+        6: '20.00', 7: '1.40', 8: '0.00', 9: '0.00', 10: '21.40', 11: 'Recibida', 13: 'Compras QA',
+        15: 'version-cruce-qa', 16: JSON.stringify({ id: 'TP_PA_QA', name: 'Trans Plus Panamá QA', currency: 'USD', taxLabel: 'ITBMS', template: 'transplus' }),
+        17: 'buyer-qa', 18: '2026-11-14T14:00:00Z', 25: '0.00', 27: '3909' });
+      const lineId = folio + '-L1';
+      const receipts = [1, 2].map(n => ({ id: 'REM-CRUCE-' + n, quantity: '1', reference: 'Remisión ' + n,
+        actorId: 'warehouse-qa', by: 'Almacén QA', at: '2026-11-14T16:00:00Z' }));
+      const before = [sheet.read(tabs.purchases), sheet.read(tabs.lines)];
+      sheet.seed(tabs.purchases, [...before[0], head]);
+      sheet.seed(tabs.lines, [...before[1], [folio, '1', 'Filtro conciliación QA', '2', '10.00', '20.00',
+        lineId, '', '', 'FILTRO-QA', '2', JSON.stringify(receipts)]]);
+      try {
+        await page.goto(`${origin}/admin/ordenes-compra`, { waitUntil: 'domcontentloaded' });
+        const card = page.locator('article').filter({ hasText: 'Proveedor conciliación QA' });
+        await card.getByRole('button', { name: 'Vincular factura' }).tap();
+        await card.getByLabel('Folio de factura').fill('FACT-CRUCE-QA');
+        await card.getByLabel('Total de factura').fill('21.40');
+        await card.getByLabel('Moneda de factura').selectOption('PAB');
+        await card.getByLabel('ITBMS de factura').fill('0');
+        await card.getByLabel('Cantidad facturada').fill('1');
+        await card.getByLabel('Precio unitario facturado').fill('20');
+        await card.getByRole('button', { name: 'Confirmar registro' }).tap();
+        await visible(page.getByText(/moneda.*ITBMS.*cantidad.*precio/i));
+        assert.equal(sheet.read(tabs.purchases).find(row => row[0] === folio)[23], '');
+        await card.getByLabel('Moneda de factura').selectOption('USD');
+        await card.getByLabel('ITBMS de factura').fill('1.40');
+        await card.getByLabel('Cantidad facturada').fill('2');
+        await card.getByLabel('Precio unitario facturado').fill('10');
+        await card.getByRole('button', { name: 'Confirmar registro' }).tap();
+        await visible(card.getByText(/Partidas y remisiones conciliadas/));
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await visible(card.getByText(/Factura FACT-CRUCE-QA.*Partidas y remisiones conciliadas/));
+        const match = JSON.parse(sheet.read(tabs.purchases).find(row => row[0] === folio)[23]).match;
+        assert.deepEqual(match.lines[0].receiptIds, ['REM-CRUCE-1', 'REM-CRUCE-2']);
+        await noHorizontalOverflow(page, 390);
+        await shot(page, 'oc-factura-conciliada-390.png');
+        return { rejectedSameTotal: true, differences: ['moneda', 'ITBMS', 'cantidad', 'precio'], receipts: 2, persistedAfterReload: true };
+      } finally {
+        sheet.seed(tabs.purchases, before[0]);
+        sheet.seed(tabs.lines, before[1]);
+      }
+    }, browserAccounting));
+
     await record('MÓVIL-GASTOS-RECIBO-REPARTO', () => inRole('jefe_taller', 390, async page => {
       await page.goto(`${origin}/gastos`, { waitUntil: 'domcontentloaded' });
       await clickByName(page, 'Nuevo');

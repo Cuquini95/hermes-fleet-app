@@ -70,6 +70,10 @@ export interface PurchaseReconciliation {
   by: string;
   actorId: string;
   invoiceReference?: string;
+  match?: {
+    tax: string;
+    lines: { lineId: string; quantity: string; unitPrice: string; receiptIds: string[]; receiptEvidence: string[] }[];
+  };
 }
 
 export interface PurchaseOrder {
@@ -98,6 +102,7 @@ export interface PurchaseOrder {
   requestedBy: string;
   approvalReason?: string;
   invoice?: PurchaseReconciliation | null;
+  invoiceReconciled?: boolean;
   payment?: PurchaseReconciliation | null;
   version: string;
   lines: PurchaseLine[];

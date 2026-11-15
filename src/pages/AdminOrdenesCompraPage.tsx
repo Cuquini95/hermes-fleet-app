@@ -85,7 +85,8 @@ export default function AdminOrdenesCompraPage() {
   const [decision, setDecision] = useState<{ folio: string; status: 'Aprobada' | 'Rechazada' }>();
   const [reason, setReason] = useState('');
   const [reconciliation, setReconciliation] = useState<{ folio: string; action: 'order-invoice' | 'order-payment' }>();
-  const [document, setDocument] = useState({ reference: '', amount: '' });
+  const [document, setDocument] = useState({ reference: '', amount: '', currency: '', tax: '' });
+  const [invoiceLines, setInvoiceLines] = useState<Record<string, { quantity: string; unitPrice: string }>>({});
   const locked = useRef(false);
   const converted = useRef('');
   const form = useRef<HTMLFormElement>(null);
@@ -231,12 +232,17 @@ export default function AdminOrdenesCompraPage() {
   }
 
   function openReconciliation(order: PurchaseOrder, action: 'order-invoice' | 'order-payment') {
-    setDocument({ reference: '', amount: '' });
+    setDocument({ reference: action === 'order-invoice' ? order.invoice?.reference ?? '' : '', amount: '', currency: '', tax: '' });
+    setInvoiceLines({});
+    setError('');
     setReconciliation({ folio: order.folio, action });
   }
 
   function reconcileOrder(order: PurchaseOrder, action: 'order-invoice' | 'order-payment') {
-    return run(action, { folio: order.folio, version: order.version, ...document }, (reply) => {
+    const fields = { reference: document.reference, amount: document.amount };
+    const invoice = action === 'order-invoice' ? { currency: document.currency, tax: document.tax,
+      lines: order.lines.map(line => ({ lineId: line.id, ...invoiceLines[line.id] })) } : {};
+    return run(action, { folio: order.folio, version: order.version, ...fields, ...invoice }, (reply) => {
       setReconciliation(undefined);
       setMessage((reply.number || reply.folio) + (action === 'order-invoice' ? ' · factura conciliada' : ' · pago conciliado'));
     });
@@ -403,9 +409,9 @@ export default function AdminOrdenesCompraPage() {
               )}
               {!isPanama && data.canApprove && isApprovalRecorded(order) && order.status !== 'Pagada' && <button type="button" className={button} disabled={saving} onClick={() => void changeStatus(order, 'Pagada')}>Marcar pagada</button>}
               {isApprovalRecorded(order) && <button type="button" className={button} disabled={saving} onClick={() => setReceiving(receiving === order.folio ? '' : order.folio)}>{isPanama ? 'Ver recepciones' : 'Recepciones'}</button>}
-              {data.canRecordInvoice && order.status === 'Recibida' && !order.invoice && <button type="button" className={button} disabled={saving}
-                onClick={() => openReconciliation(order, 'order-invoice')}>Vincular factura</button>}
-              {data.canRecordPayment && order.status === 'Recibida' && order.invoice && !order.payment && <button type="button" className={button} disabled={saving}
+              {data.canRecordInvoice && order.status === 'Recibida' && !order.invoiceReconciled && <button type="button" className={button} disabled={saving}
+                onClick={() => openReconciliation(order, 'order-invoice')}>{order.invoice ? 'Verificar factura' : 'Vincular factura'}</button>}
+              {data.canRecordPayment && order.status === 'Recibida' && order.invoiceReconciled && !order.payment && <button type="button" className={button} disabled={saving}
                 onClick={() => openReconciliation(order, 'order-payment')}>Registrar pago conciliado</button>}
               {['Borrador', 'Rechazada'].includes(order.status) && <button type="button" className={button} disabled={saving} onClick={() => setConfirmDelete(order.folio)}>Eliminar orden</button>}
             </div>
@@ -413,7 +419,9 @@ export default function AdminOrdenesCompraPage() {
               <p className="text-xs text-gray-600">Selecciona el proveedor del catálogo en el borrador antes de aprobar.</p>
             )}
             {order.approvalReason && <p className="break-words text-sm text-gray-600">Decisión · {order.approvalReason}</p>}
-            {order.invoice && <p className="break-words text-sm text-gray-600">Factura {order.invoice.reference} · {order.invoice.by}</p>}
+            {order.invoice && <p className="break-words text-sm text-gray-600">Factura {order.invoice.reference} · {order.invoice.by}
+              {order.invoiceReconciled ? ' · Partidas y remisiones conciliadas' : order.status === 'Recibida' ? ' · Pendiente de verificar partidas' : ''}
+            </p>}
             {order.payment && <p className="break-words text-sm text-gray-600">Pago conciliado {order.payment.reference} · {order.payment.by}</p>}
             {decision?.folio === order.folio && (
               <form className="space-y-2 rounded-lg bg-slate-50 p-3" onSubmit={(event) => {
@@ -436,9 +444,39 @@ export default function AdminOrdenesCompraPage() {
                 <label className="block text-sm">{reconciliation.action === 'order-invoice' ? 'Folio de factura' : 'Referencia de pago'}
                   <input className={input} maxLength={160} required value={document.reference} onChange={(event) => setDocument({ ...document, reference: event.target.value })} />
                 </label>
-                <label className="block text-sm">Importe confirmado ({order.issuer?.currency})
+                <label className="block text-sm">{reconciliation.action === 'order-invoice' ? 'Total de factura' : 'Importe confirmado (' + order.issuer?.currency + ')'}
                   <input className={input} inputMode="decimal" type="number" min="0.01" step="0.01" required value={document.amount} onChange={(event) => setDocument({ ...document, amount: event.target.value })} />
                 </label>
+                {reconciliation.action === 'order-invoice' && <>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <label className="block text-sm">Moneda de factura
+                      <select className={input} required value={document.currency} onChange={event => setDocument({ ...document, currency: event.target.value })}>
+                        <option value="">Selecciona</option><option>USD</option><option>PAB</option>
+                      </select>
+                    </label>
+                    <label className="block text-sm">{order.issuer?.taxLabel ?? 'Impuesto'} de factura
+                      <input className={input} type="number" inputMode="decimal" min="0" step="0.01" required value={document.tax}
+                        onChange={event => setDocument({ ...document, tax: event.target.value })} />
+                    </label>
+                  </div>
+                  {order.lines.map(line => {
+                    const captured = invoiceLines[line.id] ?? { quantity: '', unitPrice: '' };
+                    return <fieldset className="min-w-0 rounded-lg border border-slate-300 p-2" key={line.id}>
+                      <legend className="max-w-full break-words px-1 text-sm font-semibold">Partida {line.number} · {line.description}</legend>
+                      <p className="mb-2 text-xs text-slate-700">OC {line.quantity} · Recibido {line.received} · Precio OC {displayMoney(line.unitPrice, order.issuer?.currency)}</p>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <label className="block text-sm">Cantidad facturada
+                          <input className={input} type="number" inputMode="decimal" min="0.001" step="0.001" required value={captured.quantity}
+                            onChange={event => setInvoiceLines({ ...invoiceLines, [line.id]: { ...captured, quantity: event.target.value } })} />
+                        </label>
+                        <label className="block text-sm">Precio unitario facturado
+                          <input className={input} type="number" inputMode="decimal" min="0" step="0.01" required value={captured.unitPrice}
+                            onChange={event => setInvoiceLines({ ...invoiceLines, [line.id]: { ...captured, unitPrice: event.target.value } })} />
+                        </label>
+                      </div>
+                    </fieldset>;
+                  })}
+                </>}
                 <button type="submit" className={primary} disabled={saving || !document.reference.trim()}>Confirmar registro</button>
                 <button type="button" className={button + ' ml-2'} onClick={() => setReconciliation(undefined)}>Cancelar</button>
               </form>
