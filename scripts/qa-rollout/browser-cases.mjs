@@ -427,7 +427,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
           await part.getByText(/FAC-QA/).scrollIntoViewIfNeeded();
           await shot(page, 'valorizacion-factura-360.png');
           return { folio: id, acceptedHours: 8, valuedPeriodHours: 95, adjustmentHours: -5, invoice: 'FAC-QA', currency: 'USD', width: 360 };
-        }, firstAccount('gerencia'));
+        });
       } finally { sheet.seed(tab, prior); }
     });
 
@@ -500,7 +500,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await section.scrollIntoViewIfNeeded();
       await shot(page, 'telematica-mixta-360.png');
       return { unitHours: 'DZ203', unitDistance: 'DZ205', normalizedHours: 800, backedUpKm: 170, width: 360 };
-    }, firstAccount('operador')));
+    }));
 
     await record('MÓVIL-CAMPO-CONFIRMACIÓN', () => inRole('operador', 390, async page => {
       const fuelTab = 'Combustible';
@@ -1382,7 +1382,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
           await link.waitFor({ state: 'hidden' });
           return { folio: 'OT-0892', owner: 'Mecánico QA', dueAtHours: 1500, preservedDuringReadFailure: true,
             closedAfterSourceConfirmation: true, width: 360 };
-        }, firstAccount('gerencia'));
+        });
       } finally {
         sheet.setUnavailable([tabs.orders], false);
         sheet.seed(tabs.orders, prior);
