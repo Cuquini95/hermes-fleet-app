@@ -318,7 +318,9 @@ export default function AdminOrdenesCompraPage() {
               <select className={input} value="" onChange={(event) => {
                 const selected = candidateLines.find((line) => line.id === event.target.value);
                 if (!selected) return;
-                const prior = draft.lines.length === 1 && !draft.lines[0]?.description ? [] : draft.lines;
+                const first = draft.lines[0];
+                const emptyLine = !first?.description.trim() && !first?.partNumber.trim();
+                const prior = draft.lines.length === 1 && emptyLine ? [] : draft.lines;
                 setField('lines', [...prior, linkedLine(selected)]);
               }}>
                 <option value="">Seleccionar partida</option>
@@ -337,6 +339,13 @@ export default function AdminOrdenesCompraPage() {
                 <label className="block text-sm">Descripción
                   <input aria-label={'Descripción ' + (index + 1)} required className={input} readOnly={Boolean(line.requestLineId)} value={line.description} onChange={(event) => updateLine(line.key, { description: event.target.value })} />
                 </label>
+                {isPanama && (
+                  <label className="block text-sm">N.º de parte
+                    <input aria-label={'N.º de parte ' + (index + 1)} maxLength={120} className={input}
+                      readOnly={Boolean(line.requestLineId)} autoCapitalize="off" spellCheck={false}
+                      value={line.partNumber} onChange={(event) => updateLine(line.key, { partNumber: event.target.value })} />
+                  </label>
+                )}
                 <div className="grid grid-cols-2 gap-2">
                   <label className="text-sm">Cantidad
                     <input aria-label={'Cantidad ' + (index + 1)} type="number" min="0.001" max={maxAward(line)} step="0.001" required className={input} readOnly={!isPanama && Boolean(line.requestLineId)} value={line.quantity} onChange={(event) => updateLine(line.key, { quantity: event.target.value })} />

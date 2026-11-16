@@ -1512,6 +1512,11 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await page.getByText('MANUAL-UI-QA', { exact: true }).locator('xpath=../..').getByRole('link', { name: 'Convertir a OC', exact: true }).tap();
         const form = page.locator('form').first();
         await form.getByLabel('Vincular partida del pedido').selectOption(lines.catalog[15]);
+        for (const [index, expected] of ['MANUAL-UI-QA', 'QA-002'].entries()) {
+          const number = form.getByLabel('N.º de parte ' + (index + 1), { exact: true });
+          assert.equal(await number.inputValue(), expected);
+          assert.equal(await number.isEditable(), false);
+        }
         await form.getByLabel('Proveedor', { exact: true }).selectOption({ label: 'Proveedor QA' });
         await form.getByLabel('Cantidad 1', { exact: true }).fill('1');
         await form.getByLabel('ITBMS según documento').fill('0');
@@ -1555,10 +1560,12 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await form.getByLabel('Unidad', { exact: true }).fill('DZ203');
       await form.getByLabel('Fecha de la orden').fill('2026-11-12');
       await form.getByLabel('Fecha de entrega').fill('2026-11-14');
-      const parts = [['Filtro OC móvil QA', '2', '123.45'], ['Sello OC móvil QA', '3', '45.67'], ['Tornillo OC móvil QA', '5', '9.89']];
-      for (const [index, [name, quantity, price]] of parts.entries()) {
+      const parts = [['Filtro OC móvil QA', '2', '123.45', '000708-1H-QA'], ['Sello OC móvil QA', '3', '45.67', ''],
+        ['Tornillo OC móvil QA', '5', '9.89', 'QA-003-OC']];
+      for (const [index, [name, quantity, price, partNumber]] of parts.entries()) {
         if (index) await form.getByRole('button', { name: 'Agregar partida', exact: true }).click();
         await form.getByLabel(`Descripción ${index + 1}`, { exact: true }).fill(name);
+        if (partNumber) await form.getByLabel(`N.º de parte ${index + 1}`, { exact: true }).fill(partNumber);
         await form.getByLabel(`Cantidad ${index + 1}`, { exact: true }).fill(quantity);
         await form.getByLabel(`Precio unitario ${index + 1}`, { exact: true }).fill(price);
       }
@@ -1576,6 +1583,18 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       assert.match(number, /^3\d{3}$/);
       const card = page.locator('article').filter({ has: page.getByRole('heading', { name: number, exact: true }) });
       await visible(card.getByText(/· Borrador ·/));
+      assert.deepEqual(sheet.read(tabs.lines).filter(row => row[0] === folio).map(row => row[9]), parts.map(line => line[3]));
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await card.getByRole('button', { name: 'Editar', exact: true }).tap();
+      const editablePart = form.getByLabel('N.º de parte 1', { exact: true });
+      assert.equal(await editablePart.inputValue(), parts[0][3]);
+      assert.equal(await form.getByLabel('N.º de parte 2', { exact: true }).inputValue(), '');
+      const updatedPart = '000708-1H-QA-R';
+      await editablePart.fill(updatedPart);
+      await form.getByRole('button', { name: 'Guardar orden', exact: true }).tap();
+      await waitUntil(() => sheet.read(tabs.lines).find(row => row[0] === folio && row[1] === '1')?.[9] === updatedPart,
+        'No se guardó el número de parte editado');
+      await form.getByRole('button', { name: 'Cancelar edición' }).waitFor({ state: 'hidden' });
       await card.getByRole('link', { name: 'Ver / Imprimir', exact: true }).tap();
       await visible(page.locator('.po-document'));
       assert.equal(await page.getByRole('img', { name: /Firma de QA gerencia/i }).count(), 0);
@@ -1610,6 +1629,10 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       assert.match(rendered, /14[/-]11[/-]2026|2026-11-14/);
       assert.match(rendered, /QA gerencia/);
       await visible(document.getByText('Firma autorizada', { exact: true }));
+      for (const [index, expected] of [updatedPart, '—', parts[2][3]].entries()) {
+        const line = document.getByRole('row').filter({ hasText: parts[index][0] });
+        assert.equal(await line.getByRole('cell').nth(2).innerText(), expected);
+      }
       await document.getByRole('img', { name: /Firma de QA gerencia/i }).evaluate(img => img.decode());
       await noHorizontalOverflow(page, 390);
       const artifact = 'Hermes_OC_QA.pdf';
@@ -1620,11 +1643,15 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       assert.match(printed, /FIRMA AUTORIZADA/i);
       assert.match(execFileSync('pdfimages', ['-list', pdfPath], { encoding: 'utf8' }), /image\s+360\s+116\b/);
       assert(printed.includes(number) && printed.includes(parts[2][0]));
+      const printedTable = execFileSync('pdftotext', ['-layout', pdfPath, '-'], { encoding: 'utf8' });
+      const firstPrintedLine = printedTable.split('\n').find(line => line.includes(parts[0][0]));
+      assert(firstPrintedLine?.includes(updatedPart), 'El PDF no imprimió el número editado en la partida');
+      assert(printedTable.split('\n').find(line => line.includes(parts[2][0]))?.includes(parts[2][3]));
       assert(!printed.includes(folio));
       assert.match(execFileSync('pdfinfo', [pdfPath], { encoding: 'utf8' }), /^Pages:\s+1$/m);
       await page.goto(`${origin}/admin/ordenes-compra/${folio}`, { waitUntil: 'domcontentloaded' });
       await visible(page.getByRole('heading', { name: new RegExp(number) }));
-      return { folio, number, unit: 'DZ203', amount: 497.95, artifact, pages: 1, signaturePrinted: true };
+      return { folio, number, unit: 'DZ203', amount: 497.95, artifact, pages: 1, signaturePrinted: true, partNumbersPrinted: [updatedPart, parts[2][3]], optionalPartNumber: true };
     }, browserBuyer));
 
     await record('MÓVIL-COMPRAS-RECEPCIONES-PARCIALES', () => inRole('jefe_taller', 390, async page => {
