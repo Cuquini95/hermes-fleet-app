@@ -947,3 +947,74 @@ test('Taller puede revisar las horas reales del mecánico después de guardar la
   assert.equal(JSON.parse(row[20]).laborHours, 2.25);
   assert.match(body.history.find(item => item[2] === 'entrega_tecnica')[4], /2.25 h de trabajo/);
 });
+
+test('garantías por OT: vigencia a la fecha de la avería, reclamo con evidencia, dictamen y recuperación conciliada', async () => {
+  const { request, sheets, attach } = fixture();
+  const order = acceptedComponentOrder('OT-WARRANTY', 'OT-0191');
+  order[2] = '15/11/2026';
+  const failure = Object.assign(Array(17).fill(''), { 0: '15/11/2026', 2: 'CA20', 13: 'OT-WARRANTY',
+    16: JSON.stringify({ stopped: true, startedAt: '2026-11-15T04:55:00.000Z' }) });
+  sheets.seed('Averias', [failure]);
+  sheets.seed('ORDENES_TRABAJO', [order, acceptedComponentOrder('OT-OTHER', 'OT-0192', 'EX401')]);
+  const send = (actor, fields) => request('warranties', actor, { mutationId: randomUUID(), otId: 'OT-WARRANTY', ...fields });
+  const view = actor => request('warranties', actor, undefined, { otId: 'OT-WARRANTY' });
+  const coverage = { action: 'coverage', supplier: 'Proveedor QA', subject: 'Bomba hidráulica',
+    warrantyRef: 'GAR-123', starts: '2026-09-01', ends: '2026-11-14' };
+  assert.deepEqual((await view(coordinator)).body.cases, []);
+  assert.equal((await view(coordinator)).body.date, '2026-11-14');
+  assert.equal((await view(coordinator)).body.source, 'stop');
+  assert.equal((await send(mechanic, coverage)).status, 403);
+  assert.equal((await send(workshop, { ...coverage, ends: '2026-02-30' })).status, 400);
+  const initial = await send(workshop, coverage);
+  assert.equal(initial.status, 200);
+  const caseId = initial.body.caseId;
+  assert.equal((await send(workshop, { ...coverage, warrantyRef: 'gar-123' })).status, 409);
+  const expired = await send(workshop, { ...coverage, warrantyRef: 'GAR-124', ends: '2026-11-13' });
+  assert.equal(expired.status, 200);
+  assert.deepEqual((await view(coordinator)).body.cases.map(entry => entry.applicability).sort(), ['outside-period', 'within-period']);
+  assert.equal((await send(workshop, { action: 'claim', caseId: expired.body.caseId, reference: 'R-2' })).status, 409);
+  const exceptionId = randomUUID();
+  const exceptionProof = attach('warranty', exceptionId, workshop, 'CA20', 'OT-WARRANTY');
+  assert.equal((await send(workshop, { action: 'claim', caseId: expired.body.caseId, reference: 'R-2',
+    exception: 'Proveedor autorizó extensión en carta EXT-QA', attachments: [exceptionProof], mutationId: exceptionId })).status, 200);
+
+  const mutationId = randomUUID();
+  const evidence = attach('warranty', mutationId, coordinator, 'CA20', 'OT-WARRANTY');
+  const claim = { action: 'claim', caseId, reference: 'R-1', mutationId, attachments: [evidence] };
+  assert.equal((await send(coordinator, { ...claim, attachments: [] })).status, 400);
+  assert.equal((await send(coordinator, { ...claim, attachments: [attach('warranty', mutationId, coordinator, 'CA20', 'OT-OTHER')] })).status, 400);
+  assert.equal((await send(coordinator, claim)).status, 200);
+  assert.equal((await send(coordinator, claim)).body.replayed, true);
+  assert.equal((await send({ ...coordinator, assignedUnits: ['EX401'] }, claim)).status, 403);
+  assert.equal((await send(manager, { action: 'recovery', caseId, reference: 'REC-1', amount: '200', currency: 'USD' })).status, 409);
+  assert.equal((await send(workshop, { action: 'decision', caseId, outcome: 'partial', reference: 'DICT-1', notes: 'Reconocimiento parcial' })).status, 200);
+  const recovery = { action: 'recovery', caseId, reference: 'REC-1', amount: '200.25', currency: 'USD' };
+  assert.equal((await send(workshop, recovery)).status, 403);
+  assert.equal((await send(manager, { ...recovery, amount: '200.251' })).status, 400);
+  assert.equal((await send(manager, recovery)).status, 200);
+  assert.equal((await send(manager, recovery)).status, 409);
+  assert.equal((await send(manager, { ...recovery, reference: 'REC-2', amount: '0.05' })).status, 200);
+  const record = (await view(manager)).body.cases.find(entry => entry.id === caseId);
+  assert.deepEqual(record.claim.attachments, [evidence]);
+  assert.equal(record.decision.reference, 'DICT-1');
+  assert.deepEqual(record.totals, [{ currency: 'USD', cents: 20030 }]);
+  assert.equal((await view(coordinator)).body.cases.find(entry => entry.id === caseId).totals, undefined);
+  assert.equal((await view(mechanic)).status, 403);
+  assert.equal((await request('warranties', manager, undefined, { otId: 'OT-OTHER' })).status, 403);
+  assert(!((await request('orders', manager)).body.history.some(row => row[2] === 'garantia_ot')));
+});
+
+test('no se duplican las coberturas si dos sesiones registran la misma OT al mismo tiempo', async () => {
+  const { request, sheets, interrupt } = fixture();
+  sheets.seed('ORDENES_TRABAJO', [acceptedComponentOrder('OT-WARRANTY', 'OT-0191')]);
+  const operation = { action: 'coverage', otId: 'OT-WARRANTY', supplier: 'Proveedor QA', subject: 'Bomba',
+    warrantyRef: 'GAR-194', starts: '2026-09-01', ends: '2026-11-30' };
+  let concurrent;
+  interrupt(async () => { concurrent = await request('warranties', workshop, { ...operation, mutationId: randomUUID() }); });
+  const result = await request('warranties', manager, { ...operation, mutationId: randomUUID() });
+  assert.equal(concurrent.status, 200);
+  assert.equal(result.status, 409);
+  const cases = (await request('warranties', manager, undefined, { otId: 'OT-WARRANTY' })).body.cases;
+  assert.equal(cases.length, 1);
+  assert.equal(cases[0].applicability, 'unknown-date');
+});

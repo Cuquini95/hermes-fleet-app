@@ -1173,6 +1173,122 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       } finally { sheet.seed(tab, previous); }
     });
 
+    if (withGateway) await record('MÓVIL-GARANTÍAS-Y-RECLAMOS', async () => {
+      const otId = 'OT-GARANTIA-QA';
+      const folio = 'OT-0891';
+      const orders = sheet.read(tabs.orders);
+      const logs = sheet.read(tabs.warranties);
+      const row = Object.assign(Array(26).fill(''), { 1: otId, 2: '14/11/2026', 3: 'DZ203', 4: 'Avería',
+        5: 'Prueba de garantía', 7: 'MEDIA', 9: 'Completado', 18: 'garantia-version-qa', 25: folio });
+      sheet.seed(tabs.orders, [...orders, row]);
+      let claimLink;
+      let recoveryLink;
+      const caseBox = page => page.locator('details').filter({ has: page.getByText('Garantías y reclamos', { exact: true }) });
+      async function visit(page) {
+        await page.goto(`${origin}/workorders/${folio}`, { waitUntil: 'domcontentloaded' });
+        await dismissPrivacy(page);
+        await visible(page.getByRole('heading', { name: folio, exact: true }));
+        const box = caseBox(page);
+        await box.locator('summary').click();
+        return box;
+      }
+
+      try {
+        await inRole('coordinador', 360, async page => {
+          const box = await visit(page);
+          await clickByName(page, 'Agregar cobertura');
+          let form = box.getByRole('form', { name: 'Agregar cobertura' });
+          await form.getByLabel('Proveedor').fill('Proveedor QA');
+          await form.getByLabel('Componente o equipo').fill('Bomba hidráulica');
+          await form.getByLabel('Documento de garantía').fill('FACT-QA-38');
+          await form.getByLabel('Inicio de vigencia').fill('2026-08-01');
+          await form.getByLabel('Fin de vigencia').fill('2026-07-14');
+          await form.getByRole('button', { name: 'Guardar', exact: true }).click();
+          await visible(box.getByText('El fin de la garantía debe ser igual o posterior al inicio'));
+          assert.equal(await form.getByLabel('Proveedor').inputValue(), 'Proveedor QA');
+          await form.getByLabel('Fin de vigencia').fill('2026-11-14');
+          await form.getByRole('button', { name: 'Guardar', exact: true }).click();
+          await visible(box.getByText(/Dentro de vigencia/));
+
+          await clickByName(page, 'Registrar reclamo');
+          form = box.getByRole('form', { name: 'Registrar reclamo' });
+          await form.getByLabel('Folio del reclamo').fill('REC-QA-38');
+          await form.getByLabel('Evidencia (foto o PDF)').setInputFiles({ name: 'bomba.png', mimeType: 'image/png', buffer: photoPng });
+          sheet.failNext({ matches: writes => writes.some(write => write.tab === tabs.warranties), when: 'after' });
+          await form.getByRole('button', { name: 'Guardar', exact: true }).click();
+          await visible(box.getByRole('button', { name: 'Reintentar guardado' }));
+          assert.equal(sheet.read(tabs.warranties).filter(log => log[1] === otId).length, 2, 'El reclamo debe quedar confirmado en el registro');
+          await page.reload({ waitUntil: 'domcontentloaded' });
+          try {
+            await visible(box.getByText('Reclamo REC-QA-38', { exact: true }));
+          } catch (error) {
+            const diagnosis = await box.innerText({ timeout: 2000 }).catch(() => '');
+            throw new Error(`${error.message} · Garantías: ${diagnosis}`);
+          }
+          const evidence = box.getByRole('link', { name: 'Ver evidencia 1' });
+          claimLink = origin + await evidence.getAttribute('href');
+          const attachment = await page.request.get(claimLink);
+          assert.equal(attachment.status(), 200);
+          assert.deepEqual(await attachment.body(), photoPng);
+
+          await clickByName(page, 'Registrar dictamen');
+          form = box.getByRole('form', { name: 'Registrar dictamen' });
+          await form.getByLabel('Referencia del dictamen').fill('DICT-QA-38');
+          await form.getByLabel('Resultado del dictamen').selectOption('partial');
+          await form.getByRole('button', { name: 'Guardar', exact: true }).click();
+          await visible(box.getByText('Aprobado parcialmente · Dictamen DICT-QA-38', { exact: true }));
+          assert.equal(await box.getByRole('button', { name: 'Registrar recuperación' }).count(), 0);
+          await noHorizontalOverflow(page, 360);
+        }, firstAccount('coordinador'));
+
+        await inRole('gerencia', 360, async page => {
+          const box = await visit(page);
+          await clickByName(page, 'Registrar recuperación');
+          const form = box.getByRole('form', { name: 'Registrar recuperación' });
+          await form.getByLabel('Comprobante de recuperación').fill('NC-QA-38');
+          await form.getByLabel('Monto recuperado').fill('125.25');
+          await form.getByLabel('Moneda').selectOption('USD');
+          const { jsPDF } = await import('jspdf');
+          const pdf = new jsPDF();
+          pdf.text('NC-QA-38', 15, 20);
+          const proof = Buffer.from(pdf.output('arraybuffer'));
+          await form.getByLabel('Evidencia (foto o PDF)').setInputFiles({ name: 'comprobante.pdf', mimeType: 'application/pdf', buffer: proof });
+          await form.getByRole('button', { name: 'Guardar', exact: true }).click();
+          await visible(box.getByText('Monto recuperado', { exact: true }));
+          await visible(box.getByText(/^USD\s+125\.25$/));
+          const receiptLink = box.getByRole('link', { name: 'Ver evidencia 1' }).last();
+          recoveryLink = origin + await receiptLink.getAttribute('href');
+          const receipt = await page.request.get(recoveryLink);
+          assert.equal(receipt.status(), 200);
+          assert.equal(receipt.headers()['content-type'], 'application/pdf');
+          assert.deepEqual(await receipt.body(), proof);
+          await noHorizontalOverflow(page, 360);
+          await box.getByText('Monto recuperado', { exact: true }).scrollIntoViewIfNeeded();
+          await shot(page, 'garantias-360.png');
+        }, firstAccount('gerencia'));
+
+        await inRole('coordinador', 360, async page => {
+          const box = await visit(page);
+          await visible(box.getByText('Recuperación registrada por Gerencia'));
+          assert.equal(await box.getByText(/125[.,]25/).count(), 0);
+          assert.equal((await page.request.get(recoveryLink)).status(), 404);
+          const raw = await page.request.get(origin + '/hermes-api/api/sheets/read?tab=OT_STATUS_LOG');
+          assert.equal(raw.status(), 200);
+          assert(!(await raw.text()).includes('NC-QA-38'));
+          const privateLedger = await page.request.get(origin + '/hermes-api/api/sheets/read?tab=HERMES_PA_GARANTIAS');
+          assert.equal(privateLedger.status(), 403);
+        }, firstAccount('coordinador'));
+
+        const events = sheet.read(tabs.warranties).filter(log => log[1] === otId && log[2] === 'garantia_ot');
+        assert.deepEqual(events.map(log => JSON.parse(log[4]).action), ['coverage', 'claim', 'decision', 'recovery']);
+        return { folio, width: 360, recovered: 'USD 125.25', calendarCoverage: true, privateEvidence: true,
+          recoveryRestricted: true, retryDidNotDuplicate: true, events: events.length };
+      } finally {
+        sheet.seed(tabs.orders, orders);
+        sheet.seed(tabs.warranties, logs);
+      }
+    });
+
     if (!withPurchasing) return [...external];
     const browserBuyer = loadAccounts.find(account => account.membership.can_approve_purchases === true);
     const browserWarehouse = loadAccounts.find(account => account.membership.can_receive_purchases === true);

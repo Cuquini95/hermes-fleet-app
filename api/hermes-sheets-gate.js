@@ -60,7 +60,7 @@ const APPEND = new Map([
 ]);
 
 const PANAMA_OPERATION_GROUPS = new Map([
-  ['taller', ['api/workshop/report', 'api/workshop/transition', 'api/workshop/returns', 'api/workshop/componentinterventions']],
+  ['taller', ['api/workshop/report', 'api/workshop/transition', 'api/workshop/returns', 'api/workshop/componentinterventions', 'api/workshop/warranties']],
   ['inspecciones', ['api/workshop/dvir', 'api/workshop/sticker', 'api/workshop/stickerreview']],
   ['pm', ['api/workshop/pm', 'api/workshop/schedule', 'api/workshop/pmbatchcheck', 'api/workshop/pmbatch']],
   ['turnos', ['api/panama/turnos/entregar', 'api/panama/turnos/revisar']],
@@ -81,6 +81,7 @@ const operationGroup = new Map([...PANAMA_OPERATION_GROUPS].flatMap(([group, rou
 const relatedPause = new Map([
   ['api/workshop/tires', `api/sheets/append:${TIRE_TAB}`],
   ['api/workshop/componentinterventions', 'api/workshop/transition'],
+  ['api/workshop/warranties', 'api/workshop/transition'],
   ['api/workshop/pmbatch', 'api/workshop/pm'], ['api/workshop/pmbatchcheck', 'api/workshop/pm'],
   ['api/purchasing/inventory-reservation', 'api/purchasing/inventory-move'],
   ['api/purchasing/order-dispatch', 'api/purchasing/order-receive'],
@@ -259,7 +260,7 @@ export function createHermesGateway({
         && (!permittedGroups || permittedGroups.has('despacho'));
       if (path === 'api/evidence') {
         return await dispatchEvidence({ req, res, session, sheets,
-          canUpload: domainPath => enablePanamaOperations && writeEnabled && !pausedOperations.has(domainPath)
+          canUpload: domainPath => enablePanamaOperations && writeEnabled && !pausedOperations.has(domainPath) && !pausedOperations.has(relatedPause.get(domainPath))
             && (!permittedGroups || permittedGroups.has(operationGroup.get(domainPath))) });
       }
       if (path === 'api/panama/capacidades') {

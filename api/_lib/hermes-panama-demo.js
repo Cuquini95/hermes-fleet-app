@@ -1,6 +1,8 @@
 import { identityConfig, identityRequest } from './hermes-identity.js';
 import { canonicalTab, PANAMA_READINESS_TAB } from './hermes-google-sheets.js';
 
+import { WARRANTY_TAB } from './hermes-panama-warranties.js';
+
 const route = '/rest/v1/hermes_preview_operations';
 const workspace = 'panama-demo';
 const date = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Panama', day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -15,7 +17,7 @@ function initialData() {
     ['3', 'QA-DZ205', 'Volteo de prueba', 'Mack', 'Granite', '2022', 'SERIE-QA-03', 'Frente de prueba', 'Operativo', '390'],
   ];
   const tables = Object.fromEntries([
-    'OT_STATUS_LOG', '14 Inspecciones', 'Inspeccion_Stickers', 'Inspeccion_Hallazgos', '04B Registro Horómetros',
+    'OT_STATUS_LOG', WARRANTY_TAB, '14 Inspecciones', 'Inspeccion_Stickers', 'Inspeccion_Hallazgos', '04B Registro Horómetros',
     '05 Historial PM', 'Ordenes Mantenimiento', 'WORKSHOP_SCHEDULE', 'Reporte_Fletes_Transporte', 'Reporte_Viajes_Peña',
     'Incidentes', 'Turnos', '13 Neumáticos', '02 Gastos', '10 Control Cambios', 'Activos', 'HERMES_PA_TURNOS', 'HERMES_PA_DESPACHO',
   ].map(tab => [tab, []]));
@@ -68,7 +70,7 @@ export function createPanamaDemoSheets(request = options => identityRequest(iden
     if (!Object.hasOwn(tables, tab) && tab === 'Movimientos Repuestos PA') {
       tables[tab] = [['ID', 'FECHA_UTC', 'TIPO', 'SKU', 'CANTIDAD', 'UNIDAD', 'OC', 'PARTIDA', 'OT', 'REFERENCIA', 'ACTOR', 'ACTOR_ID', 'EXISTENCIA', 'MEDIDA']];
     }
-    if (['HERMES_PA_DESPACHO', PANAMA_READINESS_TAB].includes(tab) && !Object.hasOwn(tables, tab)) tables[tab] = [];
+    if (['HERMES_PA_DESPACHO', PANAMA_READINESS_TAB, WARRANTY_TAB].includes(tab) && !Object.hasOwn(tables, tab)) tables[tab] = [];
     if (!Object.hasOwn(tables, tab)) throw fail(503, 'La tabla de prueba no está disponible.');
     if (change.append) {
       tables[tab].push(...change.append);

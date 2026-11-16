@@ -2,13 +2,15 @@ import { createHash } from 'node:crypto';
 import { STICKER_INSPECTION_TEMPLATES, stickerTemplateForEquipment } from '../../src/data/sticker-inspection-templates.js';
 import { activeFailureUnits, buildDispatchReadinessMap } from '../../src/lib/dispatch-readiness.js';
 import { PANAMA_PROJECT } from './hermes-panama.js';
-import { reconcilePanamaWorkshop } from './hermes-panama-workshop.js';
+import { panamaWorkshopDate, panamaWorkshopFailureOrder, reconcilePanamaWorkshop } from './hermes-panama-workshop.js';
 import { HermesSheetError, PANAMA_READINESS_TAB } from './hermes-google-sheets.js';
 import { isEvidenceError, verifyEvidence } from './hermes-evidence.js';
 import { evaluatePmTriggers, pmLevelKey } from './hermes-pm-triggers.js';
 import { buildPanamaDowntime, downtimeInstant, downtimeShiftStarts, downtimeWindow, isReportedStop } from './hermes-panama-downtime.js';
 import { COMPONENT_INTERVENTION, canonicalComponent, componentActions, componentCatalog, componentHourTicks,
   componentInterventionHistory, componentPositionKey, overlappingPositions } from './hermes-panama-components.js';
+
+import { WARRANTY_EVENT, WARRANTY_TAB, warrantyCases, warrantyEvents, warrantyReaders, warrantyWriters } from './hermes-panama-warranties.js';
 
 const TAB = {
   inventory: '01 Inventario', orders: 'ORDENES_TRABAJO', history: 'OT_STATUS_LOG', failures: 'Averias',
@@ -1184,7 +1186,7 @@ async function listComponentInterventions(context) {
 
 async function registerComponentIntervention(context) {
   const { body, session, sheets } = context;
-  const { row, index, otId, effective } = context.componentOrder;
+  const { row, index, otId, effective } = context.linkedOrder;
   if (sheets.nativeOperations && body.expectedVersion != null) {
     assert(body.expectedVersion === orderVersion(row), 409, 'La orden cambió. Actualiza antes de guardar.');
   }
@@ -1238,10 +1240,103 @@ async function registerComponentIntervention(context) {
   return commit(context, writes, { intervention: event }, orderWriteGuard(row), undefined, componentGuard);
 }
 
+async function readWarrantyInputs(sheets, { row, otId }) {
+  const tabs = [WARRANTY_TAB, TAB.failures];
+  const [logs, failures] = await (sheets.readMany?.(tabs) ?? Promise.all(tabs.map(tab => sheets.read(tab))));
+  const unit = row[3].trim().toUpperCase();
+  const linked = failures.filter(failure => failure[2]?.trim().toUpperCase() === unit && panamaWorkshopFailureOrder(failure) === otId);
+  const report = linked.length === 1 ? linked[0] : undefined;
+  const stop = storedObject(report?.[16]);
+  const datedStop = stop?.stopped === true && Number.isFinite(downtimeInstant(stop.startedAt))
+    ? panamaWorkshopDate(stop.startedAt) : null;
+  const datedReport = panamaWorkshopDate(report?.[0]);
+  const datedOrder = panamaWorkshopDate(row[2]);
+  const date = datedStop || datedReport || datedOrder;
+  const source = datedStop ? 'stop' : datedReport ? 'report' : datedOrder ? 'order' : null;
+  return { date, source, events: warrantyEvents(logs, otId) };
+}
+
+async function listWarranties(context) {
+  const { session, sheets, query } = context;
+  assert(warrantyReaders.has(session.role), 403, 'Tu rol no puede consultar garantías');
+  const order = await getOrder(context, query?.otId);
+  const { events, date, source } = await readWarrantyInputs(sheets, order);
+  return {
+    date, source, version: orderVersion(order.row), cases: warrantyCases(events, date, session.role === 'gerencia'),
+    confirmedRequests: events.filter(event => event.actorId === session.userId).map(event => event.requestId),
+  };
+}
+
+async function registerWarranty(context) {
+  const { body, sheets, session, linkedOrder } = context;
+  const { row, index, otId } = linkedOrder;
+  const { action } = body;
+  assert(['coverage', 'claim', 'decision', 'recovery'].includes(action), 400, 'Selecciona una acción de garantía');
+  assert(action !== 'recovery' || session.role === 'gerencia', 403, 'Gerencia registra los montos recuperados');
+  const { events, date } = await readWarrantyInputs(sheets, linkedOrder);
+  const replayed = await sheets.replay({ key: context.key, fingerprint: context.fingerprint });
+  if (replayed) return { status: 200, body: { ...replayed, replayed: true } };
+  if (sheets.nativeOperations && body.expectedVersion != null) {
+    assert(body.expectedVersion === orderVersion(row), 409, 'La orden cambió. Actualiza antes de guardar.');
+  }
+  const cases = warrantyCases(events, date, true);
+  let caseId = body.caseId;
+  const existing = cases.find(entry => entry.id === caseId);
+  const equivalent = (first, second) => first.toLocaleUpperCase('es-PA') === second.toLocaleUpperCase('es-PA');
+  let details;
+  if (action === 'coverage') {
+    const supplier = text(body.supplier, 'Proveedor', 140, true);
+    const subject = text(body.subject, 'Componente o equipo', 140, true);
+    const warrantyRef = text(body.warrantyRef, 'Documento de garantía', 180, true);
+    const starts = isoDate(body.starts);
+    const ends = isoDate(body.ends);
+    assert(ends >= starts, 400, 'El fin de la garantía debe ser igual o posterior al inicio');
+    assert(!cases.some(entry => equivalent(entry.coverage.supplier, supplier) && equivalent(entry.coverage.subject, subject)
+      && equivalent(entry.coverage.warrantyRef, warrantyRef)), 409, 'Esta cobertura ya está registrada en la OT');
+    caseId = 'GAR-' + digest(context.key).slice(0, 16).toUpperCase();
+    details = { supplier, subject, warrantyRef, starts, ends };
+  } else {
+    assert(existing, 404, 'Cobertura no encontrada en esta OT');
+    const reference = text(body.reference, 'Referencia', 180, true);
+    details = { reference };
+    if (action === 'claim') {
+      assert(!existing.claim, 409, 'Esta cobertura ya tiene un reclamo');
+      if (existing.applicability !== 'within-period') {
+        const exception = text(body.exception, 'Respaldo de la excepción', 300);
+        assert(exception, 409, 'Indica el respaldo del proveedor para reclamar una cobertura sin vigencia comprobada');
+        details.exception = exception;
+      }
+    } else if (action === 'decision') {
+      assert(existing.claim && !existing.decision, 409, 'La cobertura requiere un reclamo sin dictamen');
+      assert(['approved', 'partial', 'rejected'].includes(body.outcome), 400, 'Selecciona el resultado del dictamen');
+      details.outcome = body.outcome;
+    } else {
+      assert(existing.decision && existing.decision.outcome !== 'rejected', 409, 'La recuperación requiere un dictamen favorable');
+      assert(!existing.recoveries.some(record => equivalent(record.reference, reference)), 409, 'El comprobante ya está registrado en este reclamo');
+      assert(['USD', 'PAB'].includes(body.currency), 400, 'Selecciona la moneda del comprobante');
+      const amount = typeof body.amount === 'number' ? String(body.amount) : body.amount;
+      assert(typeof amount === 'string' && /^\d{1,9}(?:\.\d{1,2})?$/.test(amount) && Number(amount) > 0,
+        400, 'Indica un monto positivo con hasta dos decimales');
+      const [whole, fraction = ''] = amount.split('.');
+      details = { reference, cents: Number(whole) * 100 + Number(fraction.padEnd(2, '0')), currency: body.currency };
+    }
+  }
+  const notes = text(body.notes, 'Observaciones', 1000);
+  const unit = row[3].trim().toUpperCase();
+  const attachments = await attachmentUrls(context, body.attachments, 'warranty', unit, '', otId);
+  assert(attachments.length <= 4 && (action !== 'claim' || attachments.length), 400, 'Adjunta evidencia del reclamo. Máximo cuatro archivos por registro');
+  const event = { caseId, action, ...details, notes, attachments, requestId: context.mutationId };
+  return commit(context, [
+    { tab: WARRANTY_TAB, append: [historyRow(context, otId, WARRANTY_EVENT, caseId, JSON.stringify(event))] },
+    { tab: TAB.orders, row: index, col: 18, values: [nextOrderVersion(context)] },
+  ], { caseId }, orderWriteGuard(row));
+}
+
 const MUTATIONS = {
   report: [report, ROLES, true], dvir: [dvir, INSPECT, true], transition: [transition, ORDER_READ, false],
   pm: [pm, ASSIGN, true], pmbatch: [pmBatch, ASSIGN, false], schedule: [schedule, ASSIGN, false],
   sticker: [sticker, ROLES, true], stickerreview: [stickerReview, SUPERVISE, false],
+  warranties: [registerWarranty, warrantyWriters, false],
   returns: [operationalReturn, OPERATIONS, false], componentinterventions: [registerComponentIntervention, CLOSE, false],
 };
 
@@ -1250,7 +1345,7 @@ export async function dispatchWorkshop(input) {
   const endpoint = path?.match(/^api\/workshop\/([a-z]+)$/)?.[1];
   try {
     assert(session?.userId && session.userName && ROLES.has(session.role), 401, 'Sesión inválida');
-    if (['returns', 'pmchecklist', 'pmtemplate', 'pmtriggers', 'schedulecheck', 'pmbatch', 'pmbatchcheck', 'downtime', 'componentinterventions'].includes(endpoint)) {
+    if (['returns', 'pmchecklist', 'pmtemplate', 'pmtriggers', 'schedulecheck', 'pmbatch', 'pmbatchcheck', 'downtime', 'componentinterventions', 'warranties'].includes(endpoint)) {
       assert(isPanama(input), 404, 'Acción de taller no disponible');
     }
     if (method === 'POST' && endpoint === 'pmbatchcheck') {
@@ -1274,6 +1369,9 @@ export async function dispatchWorkshop(input) {
     }
     if (method === 'GET' && endpoint === 'downtime') {
       return { status: 200, body: await downtimeReport(input) };
+    }
+    if (method === 'GET' && endpoint === 'warranties') {
+      return { status: 200, body: await listWarranties(input) };
     }
     if (method === 'GET' && endpoint === 'componentinterventions') {
       return { status: 200, body: await listComponentInterventions(input) };
@@ -1336,12 +1434,12 @@ export async function dispatchWorkshop(input) {
     const fingerprint = digest(operation);
     if (create) requireUnit(session, body.unit);
     if (endpoint === 'pmbatch') batchUnits(session, body.items);
-    const componentOrder = endpoint === 'componentinterventions' ? await getOrder({ ...input, body: undefined }, body.otId) : undefined;
+    const linkedOrder = ['componentinterventions', 'warranties'].includes(endpoint) ? await getOrder({ ...input, body: undefined }, body.otId) : undefined;
     const prior = await sheets.replay({ key, fingerprint });
     if (prior) return { status: 200, body: { ...(endpoint === 'pmbatch' ? await pmBatchFolios(input, prior) : prior), replayed: true } };
     const date = new Date();
     const local = dateFormatter.format(date).split('-').reverse().join('/');
-    return await handler({ ...input, key, mutationId, fingerprint, create, componentOrder, now: date.toISOString(), date: local,
+    return await handler({ ...input, key, mutationId, fingerprint, create, linkedOrder, now: date.toISOString(), date: local,
       time: timeFormatter.format(date), otId: `OT-${digest(key).slice(0, 16).toUpperCase()}` });
   } catch (error) {
     const status = Number(error?.status ?? error?.statusCode);

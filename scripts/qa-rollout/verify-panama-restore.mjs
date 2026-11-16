@@ -18,6 +18,7 @@ const migration = async file => db.exec(await readFile(new URL(`../../supabase/m
 const orders = 'ORDENES_TRABAJO';
 const purchases = 'Órdenes de Compra';
 const lines = 'OC_Lineas';
+const warrantyTab = 'HERMES_PA_GARANTIAS';
 const operatorId = '00000000-0000-4000-8000-000000000001';
 const evidenceId = '1'.repeat(64);
 const attachment = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2n2IAAAAASUVORK5CYII=', 'base64');
@@ -161,6 +162,22 @@ try {
     values ($1,$2,'order',$2,0,array['QA-DZ203'],'OT-HIST-QA',false,'image/png',$3,$4,true)`,
   [evidenceId, operatorId, attachment.length, sha(attachment)]);
 
+  await migration('20261116012000_hermes_panama_warranty_evidence.sql');
+  const warrantyEvidenceId = '2'.repeat(64);
+  const addWarrantyEvidence = (recordId, slot) => db.query(`insert into public.hermes_panama_evidence
+    (id,actor_id,kind,operation_id,slot,units,record_id,preview_demo,mime_type,byte_size,sha256,ready)
+    values ($1,$2,'warranty',$2,$3,array['QA-DZ203'],$4,false,'application/pdf',30,$5,true)`,
+    [warrantyEvidenceId, operatorId, slot, recordId, sha(attachment)]);
+  await assert.rejects(() => addWarrantyEvidence('', 0), { code: '23514' });
+  await assert.rejects(() => addWarrantyEvidence('OT-HIST-QA', 4), { code: '23514' });
+  await addWarrantyEvidence('OT-HIST-QA', 0);
+  await save(db, 'warranty-qa', [{ tab: warrantyTab, append: [['2026-11-15T08:00:00.000Z', 'OT-HIST-QA',
+    'garantia_ot', 'GAR-QA', JSON.stringify({ caseId: 'GAR-QA', action: 'coverage', attachments: ['/hermes-api/api/evidence?id=' + warrantyEvidenceId] }),
+    'Gerencia QA', 'gerencia', operatorId]] }], { caseId: 'GAR-QA' });
+  const warrantyRows = await rows(db, warrantyTab);
+  assert.equal(warrantyRows.length, 2);
+  assert.equal((await rows(db, 'OT_STATUS_LOG')).length, 1);
+
   const backup = await db.dumpDataDir('gzip');
   const attachmentArchive = JSON.stringify({ id: evidenceId, bytes: attachment.toString('base64') });
   const began = performance.now();
@@ -177,11 +194,14 @@ try {
   await create(restored, 3);
   assert.equal((await rows(restored, orders)).at(-1)[25], 'OT-0103');
   assert.equal((await rows(restored, purchases)).at(-1)[27], '3004');
+  const [warranty] = (await restored.query('select kind, record_id, mime_type, ready from public.hermes_panama_evidence where id=$1', [warrantyEvidenceId])).rows;
+  assert.deepEqual(warranty, { kind: 'warranty', record_id: 'OT-HIST-QA', mime_type: 'application/pdf', ready: true });
+  assert.deepEqual(await rows(restored, warrantyTab), warrantyRows);
   const batchFolios = await verifyPmBatch(restored);
   const warehouseReserve = await verifyWarehouseReserve(restored);
   console.log(JSON.stringify({ environment: 'Postgres aislado / adjunto archivado sintético',
     restoredInMs: Math.round(performance.now() - began), concurrentCreations: 2, folios: 'OT-0100..0103 / OC 3001..3004',
-    batchFolios, warehouseReserve, retained: ['OT y evidencia', 'aprobación de OC', 'recepción y saldo', 'comprobante de reintento'] }));
+    batchFolios, warehouseReserve, retained: ['OT y evidencia', 'aprobación de OC', 'recepción y saldo', 'comprobante de reintento', 'garantía y evidencia privada'] }));
 } catch (error) {
   console.error(error.message, error.code ?? '');
   process.exitCode = 1;

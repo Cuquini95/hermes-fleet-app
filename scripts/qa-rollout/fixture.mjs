@@ -25,7 +25,7 @@ export const fixturePassword = 'HermesSyntheticTestOnly!2026';
 export const photoPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg==', 'base64');
 
 export const tabs = {
-  fleet: '01 Inventario', failure: 'Averías', orders: 'ORDENES_TRABAJO', history: 'OT_STATUS_LOG',
+  fleet: '01 Inventario', failure: 'Averías', orders: 'ORDENES_TRABAJO', history: 'OT_STATUS_LOG', warranties: 'HERMES_PA_GARANTIAS',
   dvir: '14 Inspecciones', sticker: 'Inspeccion_Stickers', findings: 'Inspeccion_Hallazgos',
   pm: 'Ordenes Mantenimiento', pmHistory: '05 Historial PM', schedule: 'WORKSHOP_SCHEDULE',
   requests: 'Cotizaciones_Pendientes', purchases: 'Órdenes de Compra', lines: 'OC_Lineas',
@@ -56,6 +56,7 @@ function fixtureRows() {
       ['11/11/2026','14:15:00','DZ203','Llanta','Réplica sintética de incidente de llanta','ALTA','QA operador','','','Abierta','','','','OT-0004',''],
     ]],
     [tabs.history, [['TIMESTAMP','OT_ID','FIELD','OLD_VALUE','NEW_VALUE','CHANGED_BY','ROLE']]],
+    [tabs.warranties, [['TIMESTAMP','OT_ID','FIELD','CASE','EVENT','ACTOR','ROLE','ACTOR_ID']]],
     [tabs.schedule, [['ID','FECHA','OT_ID','UNIDAD','MECANICO','HORAS','NOTAS']]],
     [tabs.dvir, [['Fecha','Hora','Unidad','Tipo','Horometro','Operador','Resultado']]],
     [tabs.sticker, [['Fecha','Unidad','Tipo','Estado']]],
