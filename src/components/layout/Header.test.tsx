@@ -120,8 +120,9 @@ describe('Header — goBack falls back to roleHome when history is shallow', () 
     expect(source).toContain('navigate(-1)');
   });
 
-  it('source falls back to navigate(roleHome, { replace: true }) when no history', () => {
-    expect(source).toContain('navigate(roleHome, { replace: true })');
+  it('source falls back to the session home, including filters, when no history', () => {
+    expect(source).toContain('useAuthStore(sessionHome)');
+    expect(source).toContain('navigate(home, { replace: true })');
   });
 
   // Replicate goBack logic in isolation

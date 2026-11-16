@@ -245,7 +245,10 @@ export default function PedidosPage() {
         <ShoppingCart size={24} color="#162252" />
         <h1 className="text-xl font-bold text-text">Pedidos de Refacciones</h1>
       </div>
-      {isPanama && isGerencia && <Link to="/admin/ordenes-compra" className="mb-4 inline-flex min-h-11 items-center rounded-lg border border-slate-400 bg-white px-4 text-sm font-semibold text-[#162252]">Órdenes de compra</Link>}
+      {isPanama && isGerencia && <div className="mb-4 flex flex-wrap gap-2">
+        <Link to="/panama/comparar-cotizaciones" className="inline-flex min-h-11 items-center rounded-lg bg-[#162252] px-4 text-sm font-semibold text-white">Comparar cotizaciones</Link>
+        <Link to="/admin/ordenes-compra" className="inline-flex min-h-11 items-center rounded-lg border border-slate-400 bg-white px-4 text-sm font-semibold text-[#162252]">Órdenes de compra</Link>
+      </div>}
       {canReceive && <Link to="/panama/recepciones" className="mb-4 inline-flex min-h-11 items-center rounded-lg border border-slate-400 bg-white px-4 text-sm font-semibold text-[#162252]">Recepciones de compras</Link>}
 
       {/* ── Tabs ── */}
@@ -916,6 +919,7 @@ function PedidoRowCard({
 
         {updateError && <p role="alert" className="mb-2 text-xs text-red-700">{updateError}</p>}
         {row.ot && <p className="text-sm font-medium">OT {row.ot}</p>}
+        {row.requiredDate && <p className="text-sm">Fecha requerida {row.requiredDate}{row.equipmentSerial && ` · Serie ${row.equipmentSerial}`}</p>}
         {row.allocationReview && <p role="alert" className="text-sm text-amber-800">Saldo por conciliar con las órdenes vinculadas.</p>}
         {row.unallocatedQuantity !== undefined && <p className="py-2 text-sm text-text">
           Asignado {row.allocatedQuantity} · Recibido {row.receivedQuantity} · Saldo por asignar {row.unallocatedQuantity}
@@ -932,6 +936,10 @@ function PedidoRowCard({
             Ver OC {row.ocNumber || row.ocFolio}
           </Link>
         ) : <p className="py-2 text-sm text-text-secondary">OC {row.ocNumber || row.ocFolio}</p>)}
+        {showOrigin && isGerencia && canAwardRequest(row) && (
+          <Link className="mb-2 flex min-h-11 items-center justify-center rounded-lg border border-slate-400 px-3 py-2 text-center text-sm font-semibold text-[#162252]"
+            to={`/panama/comparar-cotizaciones?partida=${encodeURIComponent(row.id)}`}>Comparar cotizaciones</Link>
+        )}
         {isGerencia && canAwardRequest(row) && (
           <Link className="block rounded-lg bg-slate-900 px-3 py-2 mb-2 text-center text-sm font-semibold text-white" to={`/admin/ordenes-compra?partida=${encodeURIComponent(row.id)}`}>
             {row.allocations?.length ? 'Crear OC por el saldo' : 'Convertir a OC'}

@@ -51,11 +51,11 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
   const browserAccounts = new Map(Object.keys(roles).map(role => [role, loadAccounts.filter(account => account.membership.role === role).slice(1)]));
   const shot = (page, filename) => page.screenshot({ path: resolve(out, filename) });
 
-  async function inRole(role, width, check, account = browserAccounts.get(role).shift(), entryPath = '') {
+  async function inRole(role, width, check, account = browserAccounts.get(role).shift(), entryPath = '', useActualHome = false) {
     assert(account, `Falta una identidad de navegador para ${role}`);
     const context = await browser.newContext({
       viewport: { width, height: width === 360 ? 640 : 844 }, isMobile: true, hasTouch: true,
-      serviceWorkers: 'block', acceptDownloads: true, timezoneId: 'America/Mexico_City', locale: 'es-MX',
+      serviceWorkers: 'block', acceptDownloads: true, timezoneId: 'America/Panama', locale: 'es-PA',
       ignoreHTTPSErrors: true,
     });
     try {
@@ -76,7 +76,14 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         clickByName(page, 'Ingresar'),
       ]);
       assert.equal(login.status(), 200, `El inicio de sesión de ${role} devolvió un error`);
-      await page.waitForURL(origin + (entryPath || roles[role]), { waitUntil: 'domcontentloaded' });
+      if (entryPath) {
+        await page.waitForURL(origin + entryPath, { waitUntil: 'domcontentloaded' });
+      } else {
+        await page.waitForURL(url => url.origin === origin && url.pathname !== '/login', { waitUntil: 'domcontentloaded' });
+        if (!useActualHome && page.url() !== origin + roles[role]) {
+          await page.goto(origin + roles[role], { waitUntil: 'domcontentloaded' });
+        }
+      }
       await visible(page.getByRole('navigation', { name: 'Navegación principal' }));
       const consent = page.getByRole('button', { name: 'Aceptar y continuar', exact: true });
       await consent.click();
@@ -1400,6 +1407,157 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     if (!withPurchasing) return [...external];
     const browserBuyer = loadAccounts.find(account => account.membership.can_approve_purchases === true);
     const browserWarehouse = loadAccounts.find(account => account.membership.can_receive_purchases === true);
+    const browserAccounting = loadAccounts.find(account => account.membership.can_record_purchase_invoices === true);
+    const browserTreasury = loadAccounts.find(account => account.membership.can_record_purchase_payments === true);
+
+    await record('MÓVIL-COMPRAS-BANDEJAS-POR-PUESTO', async () => {
+      const positions = [
+        [browserBuyer, 'gerencia', '/pedidos', 'Pedidos de Refacciones'],
+        [browserWarehouse, 'jefe_taller', '/panama/recepciones', 'Recepciones de compras'],
+        [browserAccounting, 'gerencia', '/panama/cuentas-por-pagar?bandeja=conciliar#facturas', 'Cuentas por pagar'],
+        [browserTreasury, 'gerencia', '/panama/cuentas-por-pagar?bandeja=pagar#facturas', 'Cuentas por pagar'],
+      ];
+      const results = [];
+      for (const [index, [account, role, path, heading]] of positions.entries()) {
+        const width = index % 2 === 0 ? 360 : 390;
+        await inRole(role, width, async page => {
+          assert.equal(page.url(), origin + path);
+          await visible(page.getByRole('heading', { name: heading, exact: true }));
+          if (account === browserBuyer) {
+            const main = page.getByRole('main');
+            await visible(main.getByRole('link', { name: 'Comparar cotizaciones', exact: true }).first());
+            await visible(main.getByRole('link', { name: 'Órdenes de compra', exact: true }));
+          }
+          if (account === browserWarehouse) {
+            assert.equal(await page.getByRole('button', { name: 'Por recibir', exact: true }).getAttribute('aria-pressed'), 'true');
+          }
+          if (account === browserAccounting) await visible(page.getByRole('heading', { name: 'Por conciliar', exact: true }));
+          if (account === browserTreasury) {
+            await visible(page.getByRole('heading', { name: 'Por pagar', exact: true }));
+            assert.equal(await page.getByRole('combobox', { name: 'Estado' }).inputValue(), 'open');
+          }
+          await noHorizontalOverflow(page, width);
+          results.push({ path, width });
+        }, account, '', true);
+      }
+      return { results };
+    });
+
+    await record('MÓVIL-OT-RESERVA Y COTIZACIÓN A OC', async () => {
+      const ot = 'OT-COMPRA-PILOTO-QA';
+      const item = 'Filtro crítico para OT QA';
+      const availablePart = 'QA-OT-RESERVA';
+      const warehouse = 'Almacén de prueba';
+      const date = days => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+      const requiredDate = date(2);
+      const movementsTab = 'Movimientos Repuestos PA';
+      const snapshots = new Map([tabs.orders, tabs.requests, tabs.parts, tabs.changes, movementsTab]
+        .map(tab => [tab, sheet.read(tab)]));
+      const width = 390;
+      const time = {};
+      try {
+        sheet.seed(tabs.orders, [...snapshots.get(tabs.orders),
+          ['M-QA', ot, '12/11/2026', 'DZ203', 'Mecánica', 'Compra desde avería QA', 'CRITICA', 'CRITICA', '', 'En Reparación']]);
+        const catalog = snapshots.get(tabs.parts).map(row => [...row]);
+        catalog[4][14] = 'Almacén';
+        const stockRow = [...catalog.find(row => row[0] === 'QA-001')];
+        stockRow[0] = availablePart;
+        stockRow[2] = 'OEM-OT-RESERVA';
+        stockRow[14] = warehouse;
+        catalog.push(stockRow);
+        sheet.seed(tabs.parts, catalog);
+        const openPart = async (page, part) => {
+          await page.goto(origin + '/workorders/' + ot, { waitUntil: 'domcontentloaded' });
+          await clickByName(page, 'Pedir repuestos para esta OT');
+          await visible(page.getByText(/Serie QA-DZ203/));
+          await page.getByLabel('Número de parte o SKU').fill(part);
+          await clickByName(page, 'Consultar existencias');
+        };
+        await inRole('jefe_taller', width, async page => {
+          const started = Date.now();
+          await openPart(page, availablePart);
+          await visible(page.getByText('Libre', { exact: true }));
+          await visible(page.getByText('Reservado', { exact: true }));
+          await visible(page.getByText('En tránsito', { exact: true }));
+          await page.getByLabel('Cantidad requerida').fill('2');
+          await page.getByLabel('Fecha requerida').fill(requiredDate);
+          await page.getByLabel('Referencia de reserva').fill('RESERVA-PILOTO-QA');
+          await clickByName(page, 'Reservar para la OT');
+          await visible(page.getByText(new RegExp('2 reservado para ' + ot)));
+          const movements = sheet.read(movementsTab);
+          assert.equal(movements.filter(row => row.includes(ot) && row.some(value => value.includes('RESERVA-PILOTO-QA'))).length, 1);
+          assert.deepEqual(sheet.read(tabs.requests), snapshots.get(tabs.requests));
+          await noHorizontalOverflow(page, width);
+          await shot(page, 'compra-ot-reserva-390.png');
+          time.reserva = Date.now() - started;
+        }, browserWarehouse);
+        await inRole('jefe_taller', 360, async page => {
+          const started = Date.now();
+          await openPart(page, 'QA-FILTRO-PEDIR');
+          await visible(page.getByText('No hay existencias compatibles verificadas para este número de parte.'));
+          await page.getByLabel('Cantidad requerida').fill('1');
+          await page.getByLabel('Fecha requerida').fill(requiredDate);
+          await page.getByLabel('Descripción del repuesto').fill(item);
+          await clickByName(page, 'Enviar pedido a Compras');
+          await visible(page.getByText(/Pedido PED-.*enviado a Compras/));
+          await noHorizontalOverflow(page, 360);
+          time.pedido = Date.now() - started;
+        }, loadAccounts.find(account => account.membership.role === 'jefe_taller' && !account.membership.can_receive_purchases));
+        const request = sheet.read(tabs.requests).find(row => row[2] === item);
+        assert(request, 'Falta el pedido persistido desde la OT');
+        await inRole('gerencia', width, async page => {
+          const started = Date.now();
+          const row = page.getByRole('listitem').filter({ hasText: item });
+          await visible(row.getByText('OT ' + ot, { exact: true }));
+          await visible(row.getByText(/Serie QA-DZ203/));
+          await row.getByRole('link', { name: 'Comparar cotizaciones', exact: true }).tap();
+          await page.waitForURL(new RegExp(origin.replaceAll('.', '\\.') + '/panama/comparar-cotizaciones\\?partida='));
+          const forms = [page.getByRole('group', { name: 'Cotización 1', exact: true }), page.getByRole('group', { name: 'Cotización 2', exact: true })];
+          for (const [index, group] of forms.entries()) {
+            await group.getByRole('combobox', { name: 'Proveedor', exact: true }).selectOption({ label: index === 0 ? 'Proveedor QA · QAT000000000' : 'Segundo proveedor QA · QAT000000002' });
+            await group.getByLabel('Referencia', { exact: true }).fill('COT-QA-' + (index + 1));
+            await group.getByLabel('Cantidad ofrecida', { exact: true }).fill('1');
+            await group.getByLabel('Precio unitario', { exact: true }).fill(index === 0 ? '100.00' : '125.00');
+            await group.getByLabel('Flete total', { exact: true }).fill('0.00');
+            await group.getByLabel('Entrega prometida', { exact: true }).fill(date(index === 0 ? 5 : 2));
+            await group.getByLabel('Garantía', { exact: true }).fill('90 días');
+            await group.getByRole('combobox', { name: 'Compatibilidad', exact: true }).selectOption('confirmed');
+            await group.getByLabel('Respaldo de compatibilidad').fill('Verificado con serie QA-DZ203');
+          }
+          await visible(forms[0].getByText('Menor costo puesto en obra', { exact: true }));
+          await page.getByLabel(/Costo por hora/).fill('100.00');
+          await page.getByLabel('Horas de paro por día de atraso').fill('10');
+          await page.getByLabel('Referencia del costo por hora').fill('Costo piloto QA · 100 USD/h');
+          await visible(forms[1].getByText('Menor costo con paro', { exact: true }));
+          await noHorizontalOverflow(page, width);
+          await shot(page, 'compra-ot-cotizaciones-390.png');
+          await page.reload({ waitUntil: 'domcontentloaded' });
+          await visible(forms[1].getByText('Menor costo con paro', { exact: true }));
+          await forms[1].getByRole('button', { name: 'Elegir cotización', exact: true }).tap();
+          await page.getByLabel('Motivo de selección').fill('Disponibilidad para evitar tres días adicionales de paro.');
+          await page.getByRole('link', { name: 'Preparar OC', exact: true }).tap();
+          await page.waitForURL(new RegExp('/admin/ordenes-compra\\?partida='));
+          const order = page.locator('form').first();
+          const selectedSupplier = order.getByLabel('Proveedor', { exact: true }).locator('option:checked');
+          await waitUntil(async () => (await selectedSupplier.textContent())?.trim() === 'Segundo proveedor QA',
+            'El borrador de la OC no recuperó el proveedor de la cotización.');
+          assert.equal(await order.getByLabel('Precio unitario 1', { exact: true }).inputValue(), '125.00');
+          assert.equal(await order.getByLabel('Fecha de entrega').inputValue(), requiredDate);
+          assert.equal(sheet.read(tabs.lines).some(line => line[2] === item), false);
+          time.cotizaciones = Date.now() - started;
+        }, browserBuyer, '', true);
+        return { ot, requiredDate, reservedWithoutPurchase: true, quoteDraftNotCommitted: true, automatedScenarioMs: time };
+      } finally {
+        for (const [tab, rows] of snapshots) {
+          if (tab === movementsTab && rows.length === 0) {
+            const [header] = sheet.read(tab);
+            if (header) sheet.seed(tab, [header]);
+          } else {
+            sheet.seed(tab, rows);
+          }
+        }
+      }
+    });
 
     await record('MÓVIL-PEDIDOS-AMBAS-FUENTES', () => inRole('gerencia', 390, async page => {
       const oldRows = sheet.read(tabs.requests);
@@ -1771,7 +1929,12 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await history.getByLabel('SKU del catálogo').fill('QA-001');
       await history.getByLabel('Cantidad', { exact: true }).fill('2');
       await history.getByLabel('Referencia del movimiento').fill('SALIDA-QA-MÓVIL');
-      await history.getByRole('button', { name: 'Registrar movimiento' }).tap();
+      const [movementResponse] = await Promise.all([
+        page.waitForResponse(response => response.request().method() === 'POST'
+          && response.url() === origin + '/hermes-api/api/purchasing/inventory-move'),
+        history.getByRole('button', { name: 'Registrar movimiento' }).tap(),
+      ]);
+      assert.equal(movementResponse.status(), 200, await movementResponse.text());
       await visible(history.getByText(/Costo OT.*25\.00.*VALUACIÓN-QA-01/));
       const original = sheet.read(movements).find(row => row[9] === 'SALIDA-QA-MÓVIL');
       assert.equal(stock(), before - 2);
@@ -2009,8 +2172,6 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       }
     }));
 
-    const browserAccounting = loadAccounts.find(account => account.membership.can_record_purchase_invoices === true);
-    const browserTreasury = loadAccounts.find(account => account.membership.can_record_purchase_payments === true);
     await record('MÓVIL-CUENTAS-POR-PAGAR-PARCIALES', async () => {
       const apPath = `${origin}/panama/cuentas-por-pagar`;
       const apiPath = `${origin}/hermes-api/api/purchasing/`;

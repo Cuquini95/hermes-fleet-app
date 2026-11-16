@@ -53,6 +53,8 @@ export function normalizeRosterProfile(row, project) {
   const demo = PREVIEW_EMAIL.test(row.email);
   if (demo && (process.env.VERCEL_ENV !== 'preview' || !panamaOnly || row.unit_scope !== 'assigned'
     || row.assigned_units.length === 0 || row.assigned_units.some(unit => !unit.startsWith('QA-')))) return null;
+  const canInvoice = demo ? row.email === 'hermes-pa-demo-p21@example.com' : row.can_record_purchase_invoices;
+  const canPay = demo ? row.email === 'hermes-pa-demo-p20@example.com' : row.can_record_purchase_payments;
   return {
     userId: row.user_id.toLowerCase(),
     userName: row.user_name.trim(),
@@ -64,10 +66,10 @@ export function normalizeRosterProfile(row, project) {
     allUnits: row.unit_scope === 'all',
     canApprovePurchases: row.role === 'gerencia' && row.can_approve_purchases === true,
     canReceivePurchases: panamaOnly && row.can_receive_purchases === true && row.can_approve_purchases !== true,
-    canRecordPurchaseInvoices: panamaOnly && row.role === 'gerencia' && row.can_record_purchase_invoices === true
-      && !row.can_approve_purchases && !row.can_receive_purchases && !row.can_record_purchase_payments,
-    canRecordPurchasePayments: panamaOnly && row.role === 'gerencia' && row.can_record_purchase_payments === true
-      && !row.can_approve_purchases && !row.can_receive_purchases && !row.can_record_purchase_invoices,
+    canRecordPurchaseInvoices: panamaOnly && row.role === 'gerencia' && canInvoice === true
+      && !row.can_approve_purchases && !row.can_receive_purchases && !canPay,
+    canRecordPurchasePayments: panamaOnly && row.role === 'gerencia' && canPay === true
+      && !row.can_approve_purchases && !row.can_receive_purchases && !canInvoice,
     canReviewPanamaHse: panamaOnly && ['supervisor', 'gerencia'].includes(row.role)
       && row.can_review_panama_hse === true,
     ...(demo ? { previewDemo: true } : {}),

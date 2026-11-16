@@ -30,8 +30,8 @@ function initialData() {
     Combustible: [['ID', 'FECHA', 'HORA', 'UNIDAD', 'OPERADOR', 'TIPO', 'LITROS'],
       ['FUEL-DEMO-001', today, '07:00:00', 'QA-EX401', 'Operador QA', 'Diésel', '120'],
       ['FUEL-DEMO-002', today, '07:15:00', 'QA-DZ205', 'Operador QA', 'Diésel', '180']],
-    '12 Inventario Rep.': [[], [], [], [], ['SKU', 'Descripción', 'OEM', 'Serie', 'Unidad', 'Stock', 'Mínimo', 'Precio', 'Ubicación', '', 'Equipo', '', '', 'Proveedor'],
-      ['QA-FILTRO-001', 'Filtro hidráulico de prueba', 'OEM-QA-001', '', 'pza', '8', '3', '75', 'Almacén de prueba', '', 'QA-DZ203', '', '', 'Proveedor de prueba']],
+    '12 Inventario Rep.': [[], [], [], [], ['SKU', 'Descripción', 'OEM', 'Serie', 'Unidad', 'Stock', 'Mínimo', 'Precio', 'Ubicación', '', 'Equipo', '', '', 'Proveedor', 'Almacén'],
+      ['QA-FILTRO-001', 'Filtro hidráulico de prueba', 'OEM-QA-001', '', 'pza', '8', '3', '75', 'Almacén de prueba', '', 'QA-DZ203', '', '', 'Proveedor de prueba', 'Almacén de prueba']],
     Cotizaciones_Pendientes: [['FECHA', 'PART_NUMBER', 'DESCRIPCION', 'EQUIPO', 'CANTIDAD']],
     Proveedores: [['Nombre', 'Identificación', 'Dirección', 'Ciudad', 'Estado', 'CP', 'Teléfono', 'Email', 'Contacto'],
       ['Proveedor de prueba', 'RUC-QA-001', 'Almacén de prueba', 'Panamá', '', '', '', '', '']],
@@ -55,7 +55,19 @@ export function createPanamaDemoSheets(request = options => identityRequest(iden
     const response = await request({ query: properties });
     if (!response.ok) throw fail(503, 'Fuente de prueba no disponible');
     const [row] = await response.json();
-    return row ?? { revision: null, data: initialData() };
+    const state = row ?? { revision: null, data: initialData() };
+    const tables = state.data.tables;
+    tables.HERMES_PA_FACTURAS_OC ??= [['ID', 'OC_ID', 'DETALLE_JSON']];
+    tables.HERMES_PA_PAGOS_FACTURA ??= [['ID', 'FACTURA_ID', 'DETALLE_JSON']];
+    const parts = tables['12 Inventario Rep.'];
+    const catalogHeader = parts?.[4];
+    if (catalogHeader?.[0] === 'SKU' && !catalogHeader.includes('Almacén')) {
+      const index = catalogHeader.length;
+      catalogHeader[index] = 'Almacén';
+      const seededPart = parts.find(part => part[0] === 'QA-FILTRO-001' && part[8] === 'Almacén de prueba');
+      if (seededPart) seededPart[index] = 'Almacén de prueba';
+    }
+    return state;
   }
 
   function receipt(data, key, fingerprint) {

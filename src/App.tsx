@@ -3,7 +3,7 @@ import { useEffect, lazy, Suspense } from 'react';
 import { useAuthStore } from './stores/auth-store';
 import { useWorkOrderStore } from './stores/workorder-store';
 import { flushQueue } from './lib/offline-queue';
-import { ROLE_HOME } from './types/roles';
+import { sessionHome } from './lib/purchasing-home';
 import type { AppRole } from './types/roles';
 import RequireRole from './components/auth/RequireRole';
 import SessionUnavailable from './components/auth/SessionUnavailable';
@@ -63,6 +63,7 @@ const MyReportsPage       = lazy(() => import('./pages/MyReportsPage'));
 const AdminActivosPage       = lazy(() => import('./pages/AdminActivosPage'));
 const AdminOrdenesCompraPage = lazy(() => import('./pages/AdminOrdenesCompraPage'));
 const CuentasPorPagarPage     = lazy(() => import('./pages/CuentasPorPagarPage'));
+const PanamaQuoteComparisonPage = lazy(() => import('./pages/PanamaQuoteComparisonPage'));
 const AdminProveedoresPage   = lazy(() => import('./pages/AdminProveedoresPage'));
 const OrdenCompraPrintPage   = lazy(() => import('./pages/OrdenCompraPrintPage'));
 
@@ -104,11 +105,12 @@ const CALENDAR_ACCESS: AppRole[] = ['jefe_taller', 'coordinador', 'supervisor', 
 function RootRedirect() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const role = useAuthStore((s) => s.role);
+  const home = useAuthStore(sessionHome);
   const sessionChecked = useAuthStore((s) => s.sessionChecked);
   const sessionUnavailable = useAuthStore((s) => s.sessionUnavailable);
   if (!sessionChecked) return <div role="status" className="flex min-h-screen items-center justify-center text-sm text-slate-500">Validando sesión…</div>;
   if (sessionUnavailable) return <SessionUnavailable />;
-  if (isAuthenticated && role) return <Navigate to={ROLE_HOME[role]} replace />;
+  if (isAuthenticated && role) return <Navigate to={home} replace />;
   return <Navigate to="/login" replace />;
 }
 
@@ -144,7 +146,6 @@ export default function App() {
       <Route path="/terms"   element={<S><TermsPage /></S>} />
       <Route path="/panama" element={<RequireRole roles={ALL}><PageBoundary role={role}><S><PanamaPage /></S></PageBoundary></RequireRole>} />
       <Route path="/panama/turnos" element={<RequireRole roles={['operador', 'supervisor', 'coordinador', 'gerencia']}><PageBoundary role={role}><S><PanamaShiftsPage /></S></PageBoundary></RequireRole>} />
-      <Route path="/panama/recepciones" element={<RequireRole roles={ALL}><PageBoundary role={role}><S><PanamaReceivingPage /></S></PageBoundary></RequireRole>} />
 
       {/* ── Chat — any authenticated user, no AppShell ─────────────────── */}
       <Route path="/chat" element={
@@ -184,6 +185,7 @@ export default function App() {
         <Route path="/diagrams"     element={<RequireRole roles={WORKSHOP}><PageBoundary role={role}><S><DiagramViewer /></S></PageBoundary></RequireRole>} />
 
         {/* Inventory & procurement */}
+        <Route path="/panama/recepciones" element={<RequireRole roles={ALL}><PageBoundary role={role}><S><PanamaReceivingPage /></S></PageBoundary></RequireRole>} />
         <Route path="/inventory"  element={<RequireRole roles={ADMIN}><PageBoundary role={role}><S><InventoryPage /></S></PageBoundary></RequireRole>} />
         <Route path="/pedidos"    element={<RequireRole roles={ADMIN}><PageBoundary role={role}><S><PedidosPage /></S></PageBoundary></RequireRole>} />
         <Route path="/neumaticos" element={<RequireRole roles={ADMIN}><PageBoundary role={role}><S><NeumaticosPage /></S></PageBoundary></RequireRole>} />
@@ -213,6 +215,7 @@ export default function App() {
         <Route path="/admin/activos"             element={<RequireRole roles={['gerencia']}><PageBoundary role={role}><S><AdminActivosPage /></S></PageBoundary></RequireRole>} />
         <Route path="/admin/ordenes-compra"      element={<RequireRole roles={['gerencia']}><PageBoundary role={role}><S><AdminOrdenesCompraPage /></S></PageBoundary></RequireRole>} />
         <Route path="/panama/cuentas-por-pagar"   element={<RequireRole roles={['gerencia']}><PageBoundary role={role}><S><CuentasPorPagarPage /></S></PageBoundary></RequireRole>} />
+        <Route path="/panama/comparar-cotizaciones" element={<RequireRole roles={['gerencia']}><PageBoundary role={role}><S><PanamaQuoteComparisonPage /></S></PageBoundary></RequireRole>} />
         <Route path="/admin/proveedores"         element={<RequireRole roles={['gerencia']}><PageBoundary role={role}><S><AdminProveedoresPage /></S></PageBoundary></RequireRole>} />
         <Route path="/admin/ordenes-compra/:ocId" element={<RequireRole roles={['gerencia']}><PageBoundary role={role}><S><OrdenCompraPrintPage /></S></PageBoundary></RequireRole>} />
       </Route>

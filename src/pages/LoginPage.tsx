@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import PasswordRecovery from '../components/auth/PasswordRecovery';
-import { ROLE_HOME } from '../types/roles';
+import { sessionHome } from '../lib/purchasing-home';
 import { useAuthStore } from '../stores/auth-store';
 
 const errorMessages = {
@@ -19,6 +19,7 @@ export default function LoginPage() {
   const loginFailure = useAuthStore((state) => state.loginFailure);
   const role = useAuthStore((state) => state.role);
   const authenticated = useAuthStore((state) => state.isAuthenticated);
+  const home = useAuthStore((state) => sessionHome(state, location.state?.returnTo));
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -29,11 +30,7 @@ export default function LoginPage() {
     setPending(false);
   }
 
-  if (authenticated && role) {
-    const target: unknown = location.state?.returnTo;
-    const internal = typeof target === 'string' && /^\/(?![/\\])[^\\\x00-\x20]*$/.test(target);
-    return <Navigate to={internal ? target : ROLE_HOME[role]} replace />;
-  }
+  if (authenticated && role) return <Navigate to={home} replace />;
 
   return (
     <main className="min-h-screen flex flex-col items-center bg-white px-4 py-10 text-navy">

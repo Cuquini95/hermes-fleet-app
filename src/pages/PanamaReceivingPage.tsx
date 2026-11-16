@@ -42,6 +42,7 @@ function ReceivingQueue({ userId }: { userId: string }) {
   const [pending, setPending] = useState(() => pendingWrite(operationKey));
   const [orders, setOrders] = useState<PurchaseReceivingOrder[]>([]);
   const [filter, setFilter] = useState('');
+  const [showReceived, setShowReceived] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [reload, setReload] = useState(0);
@@ -111,17 +112,27 @@ function ReceivingQueue({ userId }: { userId: string }) {
   }
 
   const search = filter.trim().toLocaleLowerCase('es-PA');
-  const visible = orders.filter((order) => [order.number ?? '', order.folio, order.unit, order.vendorName]
+  const visible = orders.filter((order) => (
+    showReceived
+      ? order.lines.some((line) => Number(line.received) > 0)
+      : order.lines.some((line) => pendingQuantity(line) > 0)
+  ) && [order.number ?? '', order.folio, order.unit, order.vendorName]
     .some((value) => value.toLocaleLowerCase('es-PA').includes(search)));
 
   return (
-    <main className="min-h-screen bg-slate-100 px-4 py-6 text-slate-900">
+    <div className="py-3 text-slate-900 sm:py-4">
       <div className="mx-auto max-w-3xl space-y-4">
         <header className="rounded-2xl bg-[#162252] p-4 text-white">
           <Link to="/panama" className="inline-flex min-h-11 items-center text-sm text-slate-200 underline underline-offset-4">Volver a Maestros TMF</Link>
           <h1 className="text-xl font-bold">Recepciones de compras</h1>
           <p className="mt-1 text-sm text-slate-200">TMF Minera Panamá · Almacén</p>
         </header>
+        <div role="group" aria-label="Bandejas de Almacén" className="flex flex-wrap gap-2">
+          <button type="button" className={showReceived ? button : primary}
+            aria-pressed={!showReceived} onClick={() => setShowReceived(false)}>Por recibir</button>
+          <button type="button" className={showReceived ? primary : button}
+            aria-pressed={showReceived} onClick={() => setShowReceived(true)}>Historial de recepciones</button>
+        </div>
         <div className="flex flex-wrap items-end gap-3">
           <label className="flex min-w-36 flex-1 flex-col gap-1 text-sm font-semibold">
             Buscar por folio, unidad o proveedor
@@ -137,7 +148,9 @@ function ReceivingQueue({ userId }: { userId: string }) {
         </div>}
         {loading && <p role="status" className="text-sm text-slate-600">Consultando órdenes aprobadas…</p>}
         {loadError && <p role="alert" className="text-sm text-red-700">{loadError}</p>}
-        {!loading && !loadError && visible.length === 0 && <p className="text-sm text-slate-600">{search ? 'Sin órdenes para esta búsqueda.' : 'Sin órdenes aprobadas en tu asignación.'}</p>}
+        {!loading && !loadError && visible.length === 0 && <p className="text-sm text-slate-600">{search
+          ? 'Sin órdenes para esta búsqueda.'
+          : showReceived ? 'No hay recepciones registradas en tu asignación.' : 'No tienes órdenes pendientes de recibir.'}</p>}
         {visible.map((order) => (
           <article className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4" key={order.folio}>
             <div className="flex flex-wrap items-start justify-between gap-2">
@@ -202,7 +215,7 @@ function ReceivingQueue({ userId }: { userId: string }) {
           </article>
         ))}
       </div>
-    </main>
+    </div>
   );
 }
 

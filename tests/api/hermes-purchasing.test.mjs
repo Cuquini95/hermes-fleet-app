@@ -243,6 +243,68 @@ test('reservas simultáneas no exceden el stock por almacén y la salida consume
   assert.deepEqual((await call('inventory-stock', null, restricted)).body.items, []);
 });
 
+test('la consulta desde una OT muestra serie y disponibilidad conciliada para su equipo', async () => {
+  const { sheets, call } = setup();
+  sheets.readMany = tabs => {
+    assert.ok(!tabs.includes('01 Inventario'), 'El maestro de equipos se consulta fuera del registro operativo');
+    return Promise.all(tabs.map(tab => sheets.read(tab)));
+  };
+  seedWarehouseCatalog(sheets);
+  const fleet = sheets.inspect('01 Inventario');
+  fleet[1][6] = 'SERIE-82136';
+  sheets.seed('01 Inventario', fleet);
+  const orderRows = sheets.inspect('ORDENES_TRABAJO');
+  orderRows[1][25] = 'OT-0142';
+  sheets.seed('ORDENES_TRABAJO', orderRows);
+  const query = { ot: 'OT-0142', partNumber: 'sku-qa' };
+  const read = (params = query, actor = warehouseLead) => call('ot-part', null, actor, params);
+  const details = await read({ ot: query.ot });
+  assert.equal(details.status, 200, JSON.stringify(details.body));
+  assert.deepEqual(details.body, { ot: 'OT-QA-01', folio: 'OT-0142', unit: 'QA-DZ203', serial: 'SERIE-82136' });
+  const before = await read();
+  assert.equal(before.status, 200);
+  assert.equal(before.body.partNumber, 'SKU-QA');
+  assert.deepEqual(before.body.items.map(item => [item.warehouse, item.available, item.reserved, item.inTransit]),
+    [['Patio A', '4', '0', '0'], ['Patio B', '10', '0', '0']]);
+  const reserve = { operationId: randomUUID(), kind: 'Reserva', ot: query.ot, partNumber: before.body.partNumber,
+    warehouse: 'Patio A', quantity: '2', reference: 'Reserva de prueba desde OT' };
+  const recorded = await call('inventory-reservation', reserve, warehouseLead);
+  assert.equal(recorded.status, 200, JSON.stringify(recorded.body));
+  assert.deepEqual((await call('inventory-reservation', reserve, warehouseLead)).body, recorded.body);
+  const [item] = (await read()).body.items;
+  assert.deepEqual([item.available, item.reserved, item.reservedForOt], ['2', '2', '2']);
+  assert.equal((await read({ ...query, partNumber: 'SKU-AUSENTE' })).body.match, 'unverified');
+  assert.equal((await read(query, { ...warehouseLead, allUnits: false, assignedUnits: ['QA-EX401'] })).status, 403);
+  assert.equal((await read(query, { ...warehouseLead, role: 'operador', canReceivePurchases: false })).status, 403);
+});
+
+test('pedido desde OT conserva fecha requerida y serie oficial aun tras perder la respuesta', async () => {
+  const { sheets, call } = setup();
+  const fleet = sheets.inspect('01 Inventario');
+  fleet[1][6] = 'SERIE-OFICIAL';
+  sheets.seed('01 Inventario', fleet);
+  const input = { operationId: randomUUID(), items: [{
+    equipment: 'QA-DZ203', ot: 'OT-QA-01', part_number: 'SKU-QA', description: 'Filtro desde OT',
+    quantity: '2', requiredDate: '2026-11-28', equipmentSerial: 'IGNORAR-SERIE-CLIENTE',
+  }] };
+  const variant = change => ({ operationId: randomUUID(), items: [{ ...input.items[0], ...change }] });
+  assert.equal((await call('request-submit', variant({ requiredDate: '2026-02-30' }), warehouseLead)).status, 400);
+  assert.equal((await call('request-submit', variant({ ot: '' }), warehouseLead)).status, 400);
+  assert.equal((await call('request-submit', variant({ equipment: 'QA-EX401' }), warehouseLead)).status, 404);
+  sheets.failNext('after');
+  assert.equal((await call('request-submit', input, warehouseLead)).status, 503);
+  const retry = await call('request-submit', input, warehouseLead);
+  assert.equal(retry.status, 200, JSON.stringify(retry.body));
+  const { items } = (await call('requests', null, warehouseLead)).body;
+  assert.deepEqual(items.map(item => [item.pedidoId, item.ot, item.equipo, item.requiredDate, item.equipmentSerial]), [
+    [retry.body.folio, 'OT-QA-01', 'QA-DZ203', '2026-11-28', 'SERIE-OFICIAL'],
+  ]);
+  const orders = sheets.inspect('ORDENES_TRABAJO');
+  orders[1][9] = 'Completado';
+  sheets.seed('ORDENES_TRABAJO', orders);
+  assert.equal((await call('request-submit', variant({ description: 'OT cerrada' }), warehouseLead)).status, 409);
+});
+
 test('solo un despacho confirmado entra en tránsito y su recepción parcial cuadra por partida y almacén', async () => {
   const { sheets, call, readOrder } = setup();
   seedWarehouseCatalog(sheets);

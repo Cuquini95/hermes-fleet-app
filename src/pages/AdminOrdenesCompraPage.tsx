@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { Plus, Printer, Trash2 } from 'lucide-react';
 import {
   canAwardRequest, displayMoney, formatPanamaReceiptDate, isApprovalRecorded, pendingQuantity, purchaseRead, purchaseRequests, purchaseWrite,
   type PurchaseOrder, type PurchaseOverview, type PurchaseRequestLine,
 } from '../lib/purchasing-api';
+import { validateQuoteOrderPrefill } from '../lib/panama-quote-comparison';
 import PurchaseSignaturePad from '../components/purchasing/PurchaseSignaturePad';
 import { useAuthStore } from '../stores/auth-store';
 
@@ -74,6 +75,9 @@ export default function AdminOrdenesCompraPage() {
   const requiresDocumentTax = isPanama && !previewDemo;
   const [params, setParams] = useSearchParams();
   const initialLine = params.get('partida') ?? '';
+  const location = useLocation();
+  const quoteState: unknown = location.state?.quoteOrder;
+  const quoteNavigation = isPanama && quoteState !== undefined ? location.key : '';
   const [data, setData] = useState<PurchaseOverview | null>(null);
   const [requests, setRequests] = useState<PurchaseRequestLine[]>([]);
   const [draft, setDraft] = useState<Draft>(blankDraft);
@@ -122,10 +126,23 @@ export default function AdminOrdenesCompraPage() {
 
   useEffect(() => {
     const selected = requests.find((line) => line.id === initialLine && canAwardRequest(line));
-    if (!selected || converted.current === initialLine) return;
-    converted.current = initialLine;
-    setDraft((old) => ({ ...blankDraft(old.entity), unit: selected.equipo || 'FLOTA', lines: [linkedLine(selected)] }));
-  }, [initialLine, requests]);
+    const convertedKey = initialLine + (quoteNavigation ? ':' + quoteNavigation : '');
+    if (!selected || !data || converted.current === convertedKey) return;
+    converted.current = convertedKey;
+    const quote = quoteNavigation ? validateQuoteOrderPrefill(quoteState, selected, data.issuers, data.vendors) : undefined;
+    if (quoteNavigation && !quote) setError('Cambió la partida o la cotización. Revisa el borrador antes de guardarlo.');
+    const line = linkedLine(selected);
+    setDraft((old) => ({
+      ...blankDraft(quote?.issuer.id ?? old.entity),
+      unit: selected.equipo || 'FLOTA',
+      lines: [quote ? { ...line, unitPrice: quote.unitPrice } : line],
+      ...(quote && {
+        vendor: vendorKey(quote.vendor.name, quote.vendor.rfc),
+        shipping: quote.shipping, other: quote.other, deliveryDate: quote.deliveryDate,
+        comments: `Cotización ${quote.reference} · ${quote.rationale}`,
+      }),
+    }));
+  }, [data, initialLine, quoteNavigation, quoteState, requests]);
 
   const issuer = data?.issuers.find((entry) => entry.id === draft.entity);
   const currency = issuer?.currency || 'USD';

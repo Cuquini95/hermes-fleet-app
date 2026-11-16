@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import type { LucideProps } from 'lucide-react';
 import { NAV_ICONS } from '../../lib/nav-icons';
+import { canOpenPanamaPayables, purchasingEntry } from '../../lib/purchasing-home';
 import { useAuthStore } from '../../stores/auth-store';
 import type { NavItem } from '../../types/roles';
 import { NAV_CONFIG } from '../../types/roles';
@@ -18,26 +19,31 @@ export default function BottomNav() {
   const location = useLocation();
   const role = useAuthStore((s) => s.role);
   const project = useAuthStore((s) => s.project);
-  const previewDemo = useAuthStore((s) => s.previewDemo);
-  const canReceive = useAuthStore((s) => s.canReceivePurchases && !s.canApprovePurchases);
+  const canOpenPayables = useAuthStore(canOpenPanamaPayables);
+  const entry = useAuthStore(purchasingEntry);
 
   if (!role) return null;
 
   const { visible, overflow } = NAV_CONFIG[role];
+  const [generalHome, ...otherItems] = visible;
   const purchasing: NavItem[] = [];
-  if (project === 'tmf-panama' && canReceive) {
-    purchasing.push({ id: 'recepciones', label: 'Recepciones', icon: 'Package', path: '/panama/recepciones' });
-  }
+  const receiving = entry?.id === 'recepciones';
+  const start = receiving && generalHome ? { ...generalHome, path: entry.path } : entry;
+  const visibleItems = start && entry?.id !== 'pedidos' ? [start, ...otherItems] : visible;
+  const previousStart = receiving && generalHome ? { ...generalHome, label: 'Inicio general' } : generalHome;
+  if (receiving) purchasing.push(entry);
   if (role === 'gerencia' && project === 'tmf-panama') {
     purchasing.push({ id: 'ordenes-compra', label: 'Órdenes de compra', icon: 'FileText', path: '/admin/ordenes-compra' });
-    if (!previewDemo) {
+    if (canOpenPayables) {
       purchasing.push({ id: 'cuentas-por-pagar', label: 'Cuentas por pagar', icon: 'Receipt', path: '/panama/cuentas-por-pagar' });
     }
   }
 
   const isActive = (item: NavItem) => {
     if (!item.path) return false;
-    return location.pathname.startsWith(item.path);
+    const [beforeHash = ''] = item.path.split('#', 1);
+    const [pathname = '', filter] = beforeHash.split('?', 2);
+    return location.pathname.startsWith(pathname) && (!filter || location.search === '?' + filter);
   };
 
   const handleItemClick = (item: NavItem) => {
@@ -56,7 +62,7 @@ export default function BottomNav() {
         className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around px-2 pb-safe"
         style={{ height: 64, backgroundColor: '#162252' }}
       >
-        {visible.map((item) => {
+        {visibleItems.map((item) => {
           const active = isActive(item);
           return (
             <button
@@ -91,7 +97,10 @@ export default function BottomNav() {
       <MoreTray
         open={showMoreTray}
         onClose={() => setShowMoreTray(false)}
-        items={[...purchasing, ...overflow, { id: 'tmf', label: 'Maestros TMF', icon: 'Table2', path: '/panama' }]}
+        items={[
+          ...purchasing, ...(visibleItems !== visible && previousStart ? [previousStart] : []), ...overflow,
+          { id: 'tmf', label: 'Maestros TMF', icon: 'Table2', path: '/panama' },
+        ]}
       />
     </>
   );

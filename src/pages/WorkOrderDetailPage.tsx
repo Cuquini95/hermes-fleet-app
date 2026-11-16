@@ -1,4 +1,5 @@
 import PanamaPartsMovements from '../components/workshop/PanamaPartsMovements';
+import PanamaWorkOrderPartRequest from '../components/workshop/PanamaWorkOrderPartRequest';
 /**
  * @fileoverview Monolithic by design (> 400 LOC).
  * Work-order detail: tasks, parts, signatures, photos in one timeline view.
@@ -375,8 +376,7 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
             : <p className="mt-2 text-sm text-text-secondary">OT anterior disponible para Taller y Coordinación.</p>)}
         </div>
 
-        {panamaWorkflow && role === 'jefe_taller' && <Link className="inline-flex min-h-11 items-center font-semibold underline"
-          to={`/pedidos?${new URLSearchParams({ ot: wo.ot_id })}`}>Pedir repuestos para esta OT</Link>}
+        {panamaWorkflow && wo.estado !== 'Completado' && <PanamaWorkOrderPartRequest ot={wo.ot_id} />}
         <PanamaPartsMovements ot={wo.ot_id} onMoved={() => setCostRevision(revision => revision + 1)} />
         {panamaWorkflow && <Link to={`/manuals?unit=${encodeURIComponent(wo.unidad)}`}
           className="inline-flex min-h-11 items-center text-sm font-semibold text-amber underline">

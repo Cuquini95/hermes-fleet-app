@@ -140,6 +140,8 @@ export interface PurchaseRequestLine {
   ocFolio: string;
   ocNumber?: string;
   ot?: string;
+  requiredDate?: string;
+  equipmentSerial?: string;
   allocationReview?: boolean;
   allocatedQuantity?: string;
   receivedQuantity?: string;
@@ -184,6 +186,19 @@ export interface WarehouseStock {
   inTransit: string | null;
   review?: string;
   reservations: { id: string; unit: string; ot: string; folio?: string; reference: string; remaining: string }[];
+}
+
+export type WorkOrderStock = Omit<WarehouseStock, 'reservations'> & { reservedForOt: string | null };
+
+export interface WorkOrderPartContext {
+  ot: string;
+  folio: string;
+  unit: string;
+  serial: string;
+  partNumber?: string;
+  match?: 'verified' | 'ambiguous' | 'unverified';
+  items?: WorkOrderStock[];
+  transitScoped?: boolean;
 }
 
 export type PurchaseReceivingOrder = Pick<PurchaseOrder, 'folio' | 'number' | 'unit' | 'vendorName' | 'deliveryDate' | 'receiptStatus' | 'version'> & {

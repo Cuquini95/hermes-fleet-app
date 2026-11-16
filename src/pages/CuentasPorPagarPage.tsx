@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import { mexicoDateInput } from '../lib/date-utils';
+import { canOpenPanamaPayables } from '../lib/purchasing-home';
 import { displayMoney, panamaApPendingKey, PurchaseApiError, purchaseRead, purchaseWrite, type PurchaseIssuer } from '../lib/purchasing-api';
 import { useAuthStore } from '../stores/auth-store';
 
@@ -130,15 +131,15 @@ function trackWrite(key: string, write?: PendingWrite) {
 }
 
 export default function CuentasPorPagarPage() {
-  const project = useAuthStore((state) => state.project);
-  const previewDemo = useAuthStore((state) => state.previewDemo);
+  const canOpen = useAuthStore(canOpenPanamaPayables);
   const userId = useAuthStore((state) => state.userId);
-  if (project !== 'tmf-panama' || previewDemo) return <Navigate to="/admin/ordenes-compra" replace />;
+  if (!canOpen) return <Navigate to="/admin/ordenes-compra" replace />;
   return <PayablesQueue key={userId} userId={userId} />;
 }
 
 function PayablesQueue({ userId }: { userId: string }) {
-  const { hash } = useLocation();
+  const { hash, search: locationSearch } = useLocation();
+  const queue = new URLSearchParams(locationSearch).get('bandeja');
   const showBalances = hash === '#saldos';
   const operationKey = panamaApPendingKey(userId);
   const [pending, setPending] = useState(() => trackedWrite(operationKey));
@@ -149,9 +150,12 @@ function PayablesQueue({ userId }: { userId: string }) {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [message, setMessage] = useState('');
-  const [active, setActive] = useState<{ type: 'invoice' } | { type: 'payment'; invoiceId: string }>();
+  const [active, setActive] = useState<{ type: 'invoice'; folio?: string } | { type: 'payment'; invoiceId: string }>();
   const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('all');
+  const [selectedStatus, setSelectedStatus] = useState<string>();
+  const reconciliationQueue = queue === 'conciliar' && data?.canRecordInvoice;
+  const paymentQueue = queue === 'pagar' && data?.canRecordPayment;
+  const status = selectedStatus ?? (paymentQueue ? 'open' : 'all');
   const writeLock = useRef(false);
 
   useEffect(() => {
@@ -176,6 +180,11 @@ function PayablesQueue({ userId }: { userId: string }) {
   function closeForm() {
     setActive(undefined);
     setSaveError('');
+  }
+
+  function startInvoice(folio?: string) {
+    setSaveError('');
+    setActive({ type: 'invoice', folio });
   }
 
   async function save(write: PendingWrite) {
@@ -214,13 +223,15 @@ function PayablesQueue({ userId }: { userId: string }) {
     const awaitingReceipt = order.lines.some(line => Number(line.received) < Number(line.ordered));
     const hasReceipt = order.lines.some(line => Number(line.received) > 0);
     const canInvoice = billableFolios.has(order.folio);
-    return awaitingReceipt || canInvoice ? [{ order, awaitingReceipt, hasReceipt, canInvoice }] : [];
+    return (reconciliationQueue ? canInvoice : awaitingReceipt || canInvoice)
+      ? [{ order, awaitingReceipt, hasReceipt, canInvoice }] : [];
   });
   const invoices = data?.invoices ?? [];
   const balances = supplierBalances(invoices, today);
   const query = search.trim().toLocaleLowerCase('es-PA');
   const visible = invoices.filter(invoice => {
     if (status === 'open' && invoice.status === 'Pagada') return false;
+    if (status === 'open' && paymentQueue && invoice.legacy) return false;
     if (status === 'overdue' && !isOverdue(invoice, today)) return false;
     if (status === 'paid' && invoice.status !== 'Pagada') return false;
     return [invoice.reference, invoice.vendorName, invoice.vendorTaxId, invoice.number, invoice.folio, invoice.entity, invoice.unit]
@@ -231,7 +242,10 @@ function PayablesQueue({ userId }: { userId: string }) {
     || left.reference.localeCompare(right.reference, 'es-PA'));
   const busy = loading || saving || Boolean(pending);
   const mayRetry = pending && (pending.action === 'ap-invoice' ? data?.canRecordInvoice : data?.canRecordPayment);
-  const showInvoiceForm = active?.type === 'invoice' && data?.canRecordInvoice;
+  const invoiceForm = active?.type === 'invoice' && data?.canRecordInvoice
+    ? <InvoiceForm key={active.folio ?? ''} initialFolio={active.folio} orders={orders} today={today} disabled={busy}
+        error={pending ? '' : saveError} onSave={save} onCancel={closeForm} />
+    : null;
   const activePayment = active?.type === 'payment' && data?.canRecordPayment
     ? visible.find(invoice => invoice.id === active.invoiceId && !invoice.legacy && invoice.status !== 'Pagada') : undefined;
 
@@ -241,8 +255,8 @@ function PayablesQueue({ userId }: { userId: string }) {
         <Link to="/admin/ordenes-compra" className="inline-flex min-h-11 items-center text-sm font-medium text-slate-200 underline underline-offset-4">Volver a Órdenes de Compra</Link>
         <h1 className="text-xl font-bold sm:text-2xl">Cuentas por pagar</h1>
         <nav aria-label="Cuentas por pagar" className="mt-3 flex flex-wrap gap-2 text-sm">
-          <Link className={sectionLink} to="#facturas" aria-current={showBalances ? undefined : 'page'}>Facturas</Link>
-          <Link className={sectionLink} to="#saldos" aria-current={showBalances ? 'page' : undefined}>Saldos por proveedor</Link>
+          <Link className={sectionLink} to={{ search: locationSearch, hash: '#facturas' }} aria-current={showBalances ? undefined : 'page'}>Facturas</Link>
+          <Link className={sectionLink} to={{ search: locationSearch, hash: '#saldos' }} aria-current={showBalances ? 'page' : undefined}>Saldos por proveedor</Link>
         </nav>
       </header>
 
@@ -262,10 +276,12 @@ function PayablesQueue({ userId }: { userId: string }) {
       {data && !data.canRecordInvoice && !data.canRecordPayment && <p className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
         <strong>Solo consulta.</strong> Contabilidad registra facturas y Tesorería registra pagos confirmados.
       </p>}
-      {!showBalances && pendingOrders.length > 0 && <section className={card + ' space-y-2'} aria-labelledby="titulo-ordenes-pendientes">
-        <h2 id="titulo-ordenes-pendientes" className="text-lg font-bold">Órdenes por procesar</h2>
-        <p className="text-sm text-slate-600">Almacén registra las recepciones. Contabilidad puede facturar las cantidades ya recibidas.</p>
-        <ul className="divide-y divide-slate-200">
+      {!showBalances && !paymentQueue && (reconciliationQueue || pendingOrders.length > 0) && <section className={card + ' space-y-2'} aria-labelledby="titulo-ordenes-pendientes">
+        <h2 id="titulo-ordenes-pendientes" className="text-lg font-bold">{reconciliationQueue ? 'Por conciliar' : 'Órdenes por procesar'}</h2>
+        {reconciliationQueue && invoiceForm}
+        {reconciliationQueue && pendingOrders.length === 0
+          && <p className="text-sm text-slate-600">No hay partidas recibidas pendientes de facturar.</p>}
+        {pendingOrders.length > 0 && <ul className="divide-y divide-slate-200">
           {pendingOrders.map(({ order, awaitingReceipt, hasReceipt, canInvoice }) => <li key={order.folio}
             className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2 text-sm">
             <div className="min-w-0 wrap-anywhere">
@@ -281,27 +297,28 @@ function PayablesQueue({ userId }: { userId: string }) {
               </span>}
               {canInvoice && <span className="rounded-md bg-emerald-100 px-2 py-1 font-medium text-emerald-950">Lista para facturar</span>}
             </div>
+            {reconciliationQueue && !invoiceForm && <button type="button" className={button} disabled={busy}
+              aria-label={'Registrar factura para OC ' + (order.number || order.folio)}
+              onClick={() => startInvoice(order.folio)}>Registrar factura</button>}
           </li>)}
-        </ul>
+        </ul>}
       </section>}
       {data && <>
         <section hidden={showBalances} aria-labelledby="titulo-facturas" className="min-w-0 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 id="titulo-facturas" className="text-lg font-bold">Facturas</h2>
-            {data.canRecordInvoice && active?.type !== 'invoice' && (
-              <button type="button" className={primary} disabled={busy} onClick={() => { setSaveError(''); setActive({ type: 'invoice' }); }}>Registrar factura</button>
+            <h2 id="titulo-facturas" className="text-lg font-bold">{paymentQueue ? 'Por pagar' : 'Facturas'}</h2>
+            {data.canRecordInvoice && !reconciliationQueue && active?.type !== 'invoice' && (
+              <button type="button" className={primary} disabled={busy} onClick={() => startInvoice()}>Registrar factura</button>
             )}
           </div>
-          {showInvoiceForm && (
-            <InvoiceForm orders={orders} today={today} disabled={busy} error={pending ? '' : saveError} onSave={save} onCancel={closeForm} />
-          )}
-          {saveError && !pending && !showInvoiceForm && !activePayment && <p role="alert" className="text-sm text-red-800">{saveError}</p>}
+          {!reconciliationQueue && invoiceForm}
+          {saveError && !pending && !invoiceForm && !activePayment && <p role="alert" className="text-sm text-red-800">{saveError}</p>}
           <div className="grid min-w-0 grid-cols-[minmax(0,3fr)_minmax(0,2fr)] gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
             <label className={label}>Buscar facturas
               <input type="search" className={input} value={search} onChange={event => setSearch(event.target.value)} />
             </label>
             <label className={label}>Estado
-              <select className={input} value={status} onChange={event => setStatus(event.target.value)}>
+              <select className={input} value={status} onChange={event => setSelectedStatus(event.target.value)}>
                 <option value="all">Todas</option><option value="open">Con saldo</option><option value="overdue">Vencidas</option><option value="paid">Pagadas</option>
               </select>
             </label>
@@ -400,12 +417,19 @@ function documentNumber(value: string, precision = 2) {
   return new RegExp(`^\\d{1,12}(?:\\.\\d{1,${precision}})?$`).test(normalized) ? normalized : '';
 }
 
-function InvoiceForm({ orders, today, disabled, error, onSave, onCancel }: FormActions & { orders: PayableOrder[]; today: string }) {
-  const [folio, setFolio] = useState('');
+function InvoiceForm({ initialFolio = '', orders, today, disabled, error, onSave, onCancel }: FormActions & {
+  initialFolio?: string; orders: PayableOrder[]; today: string;
+}) {
+  const [folio, setFolio] = useState(initialFolio);
   const [issueDate, setIssueDate] = useState('');
   const [validation, setValidation] = useState('');
+  const orderSelect = useRef<HTMLSelectElement>(null);
   const order = orders.find(entry => entry.folio === folio);
   const available = order?.lines.filter(line => Number(line.available) > 0) ?? [];
+
+  useEffect(() => {
+    if (initialFolio) orderSelect.current?.focus();
+  }, [initialFolio]);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     const get = captureFields(event);
@@ -464,7 +488,7 @@ function InvoiceForm({ orders, today, disabled, error, onSave, onCancel }: FormA
     <h3 className="font-bold">Factura de proveedor</h3>
     {orders.length ? <fieldset disabled={disabled} className="min-w-0 space-y-3">
       <label className={label}>Orden de compra
-        <select className={input} required value={order?.folio ?? ''} onChange={event => {
+        <select ref={orderSelect} className={input + ' scroll-mt-24'} required value={order?.folio ?? ''} onChange={event => {
           setFolio(event.target.value);
           setIssueDate('');
           setValidation('');

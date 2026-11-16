@@ -316,6 +316,8 @@ function requestRecord(row, index) {
     ocFolio: trim(row[16]), version: trim(row[17]) || 'legacy-' + hash(row).slice(0, 24),
     unitPrice: trim(row[21]),
     ...(trim(row[22]) && { ot: trim(row[22]) }),
+    ...(trim(row[23]) && { requiredDate: trim(row[23]) }),
+    ...(trim(row[24]) && { equipmentSerial: trim(row[24]) }),
   };
 }
 
@@ -852,8 +854,8 @@ function replenishmentOrders(orders, lines, history, part) {
   return { openOrders, issues };
 }
 
-async function inventoryByWarehouse(sheets, session, replenishmentQuery) {
-  const [catalog, movements, orders, lines, workOrders] = await readTables(sheets,
+async function inventoryByWarehouse(sheets, session, replenishmentQuery, snapshot) {
+  const [catalog, movements, orders, lines, workOrders, scopedFleet] = snapshot ?? await readTables(sheets,
     PURCHASE_TABS.catalog, PURCHASE_TABS.inventoryMovements, PURCHASE_TABS.orders, PURCHASE_TABS.lines, 'ORDENES_TRABAJO');
   const folios = new Map(entries(workOrders).filter(({ row }) => canUseUnit(session, row[3]) && /^OT-\d{4,15}$/.test(row[25] ?? ''))
     .map(({ row }) => [upper(row[1]), row[25]]));
@@ -878,7 +880,7 @@ async function inventoryByWarehouse(sheets, session, replenishmentQuery) {
   }
   const catalogParts = catalogStockRows(catalog);
   const visible = session.allUnits === true ? null : new Set(visiblePanamaParts(
-    catalogParts.map(part => part.row), await sheets.read('01 Inventario'), session,
+    catalogParts.map(part => part.row), scopedFleet ?? await sheets.read('01 Inventario'), session,
   ));
   const counts = new Map();
   for (const part of catalogParts) {
@@ -927,29 +929,85 @@ async function inventoryByWarehouse(sheets, session, replenishmentQuery) {
     ...replenishmentOrders(orders, lines, history, item) };
 }
 
+function workOrderEquipment(fleet, unit) {
+  const matches = fleet.filter(row => upper(row[1]) === unit);
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+async function readWorkOrderPart(sheets, session, query) {
+  const identifier = upper(field(query.ot, 90, 'OT', true));
+  const partNumber = upper(field(query.partNumber, 120, 'número de parte'));
+  const [snapshot, fleet] = await Promise.all([
+    partNumber
+      ? readTables(sheets, PURCHASE_TABS.catalog, PURCHASE_TABS.inventoryMovements, PURCHASE_TABS.orders, PURCHASE_TABS.lines, 'ORDENES_TRABAJO')
+      : readTables(sheets, 'ORDENES_TRABAJO'),
+    sheets.read('01 Inventario'),
+  ]);
+  const workOrders = snapshot.at(-1);
+  const { order, ot, unit } = stockOrder(workOrders, session, identifier);
+  const equipment = workOrderEquipment(fleet, unit);
+  const context = { ot, folio: trim(order.row[25]) || ot, unit, serial: trim(equipment?.[6]) };
+  if (!partNumber) return context;
+
+  const catalog = catalogStockRows(snapshot[0]);
+  const bySku = catalog.filter(({ row }) => upper(row[0]) === partNumber);
+  const candidates = bySku.length ? bySku : catalog.filter(({ row }) => upper(row[2]) === partNumber);
+  const compatible = candidates.filter(({ row }) => equipment && panamaPartCompatibility(row, equipment) === 'match');
+  const skus = new Set(compatible.map(({ row }) => upper(row[0])));
+  if (skus.size !== 1) return { ...context, match: skus.size > 1 ? 'ambiguous' : 'unverified', items: [] };
+  const [sku] = skus;
+  // Keep duplicate or contradictory catalog entries visible as unconfirmed stock.
+  const warehouses = new Set(compatible.map(({ row, warehouse }) => warehouseStockKey(row[0], warehouse)));
+  const balances = await inventoryByWarehouse(sheets, session, undefined, [...snapshot, fleet]);
+  const items = balances.items.filter(row => upper(row.partNumber) === sku && warehouses.has(warehouseStockKey(row.partNumber, row.warehouse)))
+    .map(({ reservations, ...row }) => ({
+      ...row, reservedForOt: row.reserved === null ? null : quantity(reservations
+        .filter(reservation => reservation.ot === ot && reservation.unit === unit)
+        .reduce((sum, reservation) => sum + decimal(reservation.remaining, 3, 'reserva de la OT'), 0n)),
+    }));
+  return { ...context, partNumber: trim(compatible[0].row[0]), match: 'verified', items, transitScoped: balances.transitScoped };
+}
+
 async function submitRequest(body, session, sheets, tx) {
   if (!Array.isArray(body.items) || body.items.length < 1 || body.items.length > 100) {
     error(400, 'Agrega entre 1 y 100 partidas al pedido.');
   }
   const now = timestamp();
   const folio = 'PED-' + hash(tx.key).slice(0, 18).toUpperCase();
-  const panamaCatalog = session.project === 'tmf-panama' && body.items.some(item => item?.isManual !== true);
-  const hasWorkOrder = session.project === 'tmf-panama' && body.items.some(item => item?.ot);
-  const [stock, fleet] = panamaCatalog
-    ? await Promise.all([sheets.read(PURCHASE_TABS.catalog), sheets.read('01 Inventario')])
-    : [[], []];
-  const workOrders = hasWorkOrder ? await sheets.read('ORDENES_TRABAJO') : [];
+  const panama = session.project === 'tmf-panama';
+  const panamaCatalog = panama && body.items.some(item => item?.isManual !== true);
+  const hasWorkOrder = panama && body.items.some(item => item?.ot);
+  const dated = panama && body.items.some(item => item?.requiredDate);
+  const [stock, fleet, workOrders] = await Promise.all([
+    panamaCatalog ? sheets.read(PURCHASE_TABS.catalog) : [],
+    panamaCatalog || dated ? sheets.read('01 Inventario') : [],
+    hasWorkOrder ? sheets.read('ORDENES_TRABAJO') : [],
+  ]);
+  const openOrders = new Map();
   const rows = body.items.map((item, index) => {
     const part = field(item.part_number, 120, 'número de parte', true);
     const description = field(item.description, 500, 'descripción', true);
     const qty = decimal(item.quantity, 3, 'pedido', true);
     const unitPrice = decimal(item.unit_price ?? 0, 2, 'precio unitario');
     const unit = requireUnit(session, field(item.equipment, 48, 'unidad', true));
-    const ot = session.project === 'tmf-panama' ? upper(field(item.ot, 90, 'orden de trabajo')) : '';
-    if (ot) {
-      const matches = entries(workOrders).filter(({ row }) => upper(row[1]) === ot);
-      if (matches.length !== 1 || !/^OT-[A-Z0-9_-]+$/.test(ot) || upper(matches[0].row[3]) !== unit) {
+    const identifier = panama ? upper(field(item.ot, 90, 'orden de trabajo')) : '';
+    const requiredDate = panama ? field(item.requiredDate, 10, 'fecha requerida') : '';
+    let ot = '';
+    let serial = '';
+    if (requiredDate) {
+      calendarDate(requiredDate, 'requerida', true);
+      if (!identifier) error(400, 'La fecha requerida se registra con una OT.');
+    }
+    if (identifier) {
+      const linked = stockOrder(workOrders, session, identifier);
+      ot = linked.ot;
+      if (!/^OT-[A-Z0-9_-]+$/.test(ot) || linked.unit !== unit) {
         error(404, 'La OT no está disponible para la unidad del pedido.');
+      }
+      if (requiredDate) {
+        requireOpenStockOrder(linked.order);
+        serial = trim(workOrderEquipment(fleet, unit)?.[6]);
+        openOrders.set(linked.order.index, linked.order);
       }
     }
     if (panamaCatalog && item.isManual !== true) {
@@ -968,13 +1026,16 @@ async function submitRequest(body, session, sheets, tx) {
       now.date, part, description, unit, quantity(qty), source, 'Pendiente', '', '', folio, now.time, session.userName,
       priority, field(item.notes, 1000, 'notas'), money(lineCost(qty, unitPrice)), folio + '-L' + (index + 1),
       '', tx.version, session.userId, '', now.iso, money(unitPrice), ...(ot ? [ot] : []),
+      ...(requiredDate ? [requiredDate, serial] : []),
     ];
   });
   await validateOperationalUnits(sheets, ...rows.map(row => row[3]));
+  const guarded = sheets.nativeOperations ? [...openOrders.values()] : [];
   return tx.commit([
     append(PURCHASE_TABS.requests, rows),
     auditRow(session, tx.operationId, 'Pedido creado', folio, rows.length + ' partidas'),
-  ], { folio, count: rows.length });
+    ...guarded.map(order => ({ tab: 'ORDENES_TRABAJO', row: order.index, col: 18, values: [tx.version] })),
+  ], { folio, count: rows.length }, guarded.map(order => orderWriteGuard(order.row)));
 }
 
 async function changeRequest(body, session, sheets, tx) {
@@ -2121,7 +2182,7 @@ async function readWorkOrderCost(sheets, session, identifier, laborValuations) {
 }
 
 const WRITES = new Set(['ap-invoice', 'ap-payment', 'request-submit', 'request-status', 'order-save', 'order-status', 'order-sign', 'order-receive', 'order-dispatch', 'order-invoice', 'order-payment', 'order-delete', 'inventory-move', 'inventory-reservation', 'expense-save', 'expense-delete', 'expense-review', 'expense-adjustment-propose', 'expense-adjustment-review']);
-const READS = new Set(['ap', 'orders', 'order', 'receiving', 'requests', 'expenses', 'inventory-movements', 'inventory-stock', 'inventory-replenishment', 'expense-options', 'workorder-cost', 'expense-adjustments']);
+const READS = new Set(['ap', 'orders', 'order', 'receiving', 'requests', 'expenses', 'inventory-movements', 'inventory-stock', 'inventory-replenishment', 'ot-part', 'expense-options', 'workorder-cost', 'expense-adjustments']);
 
 export async function dispatchPurchasing({ path, method, body = {}, query = {}, session, sheets, evidenceStorage, inventoryValuations, laborValuations }) {
   const action = path.replace(/^api\/purchasing\//, '');
@@ -2138,12 +2199,12 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
     const roleAllowed = action === 'receiving' ? warehouseAccess
       : action === 'order-receive' ? (panama ? warehouseAccess : session.role === 'gerencia')
       : ['inventory-move', 'inventory-reservation', 'order-dispatch'].includes(action) ? warehouseAccess
-      : ['inventory-movements', 'inventory-stock'].includes(action) ? panama && (warehouseAccess || REQUEST_ROLES.has(session.role))
+      : ['inventory-movements', 'inventory-stock', 'ot-part'].includes(action) ? panama && (warehouseAccess || REQUEST_ROLES.has(session.role))
       : action === 'inventory-replenishment' ? panama && session.allUnits === true && (warehouseAccess || session.role === 'gerencia')
       : action === 'workorder-cost' ? panama && session.role === 'gerencia'
-      : action === 'ap' ? panama && session.previewDemo !== true && session.role === 'gerencia'
-      : action === 'ap-invoice' ? invoiceAccess && session.previewDemo !== true
-      : action === 'ap-payment' ? paymentAccess && session.previewDemo !== true
+      : action === 'ap' ? panama && session.role === 'gerencia' && (session.previewDemo !== true || invoiceAccess || paymentAccess)
+      : action === 'ap-invoice' ? invoiceAccess
+      : action === 'ap-payment' ? paymentAccess
       : action === 'order-invoice' ? invoiceAccess
       : action === 'order-payment' ? paymentAccess
       : action === 'requests' ? REQUEST_ROLES.has(session.role)
@@ -2161,6 +2222,7 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
     if (action === 'workorder-cost') return ok(await readWorkOrderCost(sheets, session, query.ot, laborValuations));
     if (action === 'inventory-stock') return ok(await inventoryByWarehouse(sheets, session));
     if (action === 'inventory-replenishment') return ok(await inventoryByWarehouse(sheets, session, query));
+    if (action === 'ot-part') return ok(await readWorkOrderPart(sheets, session, query));
     if (action === 'inventory-movements') {
       const ot = upper(field(query.ot, 90, 'OT'));
       const [movements, workOrders] = await readTables(sheets, PURCHASE_TABS.inventoryMovements, 'ORDENES_TRABAJO');
