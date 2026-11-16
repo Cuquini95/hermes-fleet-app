@@ -1035,3 +1035,62 @@ test('AP concilia seis de diez unidades recibidas, conserva pagos parciales y ev
   assert.equal(ledger.length, 2);
   assert.ok(ledger.every(invoice => invoice.status === 'Pagada' && invoice.balance === '0.00'));
 });
+
+test('una firma registrada se archiva al aprobar y solo el aprobador puede aplicarla a una OC anterior', async () => {
+  const { call, sheets } = setup();
+  const owner = { ...manager, userId: randomUUID(), project: 'tmf-panama' };
+  const other = { ...owner, userId: randomUUID() };
+  const source = { folio: 'OC-FIRMA-ORIGEN-QA', approvedById: owner.userId, approvedAt: '2026-11-14T17:38:21.711Z' };
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+YRXsAAAAASUVORK5CYII=';
+  const signatures = [{ ...source, png }];
+  const row = (id, number, status = 'Borrador') => {
+    const values = Array(28).fill('');
+    Object.assign(values, { 0: id, 2: 'Proveedor QA', 5: 'QA-DZ203', 10: '107.00', 11: status,
+      15: 'signature-version', 16: JSON.stringify({ id: 'TP_PA', template: 'transplus', name: 'TRANSPLUS', currency: 'USD', taxLabel: 'ITBMS' }),
+      27: number });
+    if (status === 'Aprobada') Object.assign(values, { 13: owner.userName, 17: owner.userId, 18: '2026-11-16T13:07:57.862Z' });
+    return values;
+  };
+  const draft = row('OC-AUTO-FIRMA-QA', '3003');
+  const historical = row('OC-HIST-FIRMA-QA', '3002', 'Aprobada');
+  const otherDraft = row('OC-OTRO-APROBADOR', '3004');
+  const records = [draft, historical, otherDraft];
+  sheets.seed(TAB.orders, [['OC_ID'], ...records]);
+  sheets.seed(TAB.lines, [['OC_ID'], ...records.map(item => [item[0], '1', 'Parte QA', '1', '100', '100'])]);
+  sheets.registeredPurchaseSignatureSource = async id => id === owner.userId ? source : undefined;
+  sheets.readPurchaseSignature = async ({ folio, approvedById, approvedAt }) =>
+    signatures.find(item => item.folio === folio && item.approvedById === approvedById && item.approvedAt === approvedAt)?.png;
+  const commit = sheets.commit;
+  sheets.commit = async args => {
+    const saved = await commit(args);
+    if (args.purchaseSignature && !saved.replayed) signatures.push(args.purchaseSignature);
+    return saved;
+  };
+
+  assert.equal((await call('orders', null, owner)).body.usesRegisteredSignature, true);
+  assert.equal((await call('orders', null, other)).body.usesRegisteredSignature, undefined);
+  assert.equal((await call('order', null, owner, { folio: '3002' })).body.usesRegisteredSignature, true);
+  assert.equal((await call('order', null, other, { folio: '3002' })).body.usesRegisteredSignature, undefined);
+  const approve = {
+    operationId: randomUUID(), folio: draft[0], version: draft[15], status: 'Aprobada', reason: 'Soporte QA',
+  };
+  const [registered] = signatures.splice(0, 1);
+  const unavailable = await call('order-status', approve, owner);
+  assert.equal(unavailable.status, 503);
+  assert.equal(sheets.inspect(TAB.orders)[1][11], 'Borrador');
+  signatures.push(registered);
+  const signed = await call('order-status', { ...approve, signature: 'stale-client-value' }, owner);
+  assert.equal(signed.body.signed, true, JSON.stringify(signed));
+  assert.deepEqual(await call('order-status', { ...approve, signature: 'stale-client-value' }, owner), signed);
+  assert.equal((await call('order', null, owner, { folio: '3003' })).body.approvalSignature, png);
+  assert.equal(signatures.filter(item => item.folio === draft[0]).length, 1);
+
+  const retro = { operationId: randomUUID(), folio: historical[0], version: historical[15] };
+  assert.equal((await call('order-sign', retro, other)).status, 403);
+  assert.equal((await call('order-sign', retro, owner)).body.signed, true);
+  assert.deepEqual(sheets.inspect(TAB.orders)[2], historical);
+  assert.equal((await call('order', null, owner, { folio: '3002' })).body.approvalSignature, png);
+  const noProfile = await call('order-status', { ...approve, operationId: randomUUID(), folio: otherDraft[0] }, other);
+  assert.equal(noProfile.status, 200);
+  assert.equal((await call('order', null, other, { folio: '3004' })).body.approvalSignature, undefined);
+});

@@ -441,16 +441,17 @@ export default function AdminOrdenesCompraPage() {
             {decision?.folio === order.folio && (
               <form className="space-y-2 rounded-lg bg-slate-50 p-3" onSubmit={(event) => {
                 event.preventDefault();
-                const sign = decision.status === 'Aprobada' && !previewDemo && order.issuer?.template === 'transplus';
-                if (sign && !signature) return;
-                void changeStatus(order, decision.status, reason.trim(), sign ? signature : undefined);
+                const needsDrawing = decision.status === 'Aprobada' && !previewDemo && !data.usesRegisteredSignature
+                  && order.issuer?.template === 'transplus';
+                if (needsDrawing && !signature) return;
+                void changeStatus(order, decision.status, reason.trim(), needsDrawing ? signature : undefined);
               }}>
                 <label className="block text-sm">{decision.status === 'Aprobada' ? 'Soporte de la aprobación Q25' : 'Motivo del rechazo'}
                   <textarea className={input} maxLength={1000} required value={reason} onChange={(event) => setReason(event.target.value)} />
                 </label>
-                {decision.status === 'Aprobada' && !previewDemo && order.issuer?.template === 'transplus' && <PurchaseSignaturePad onChange={setSignature} />}
+                {decision.status === 'Aprobada' && !previewDemo && !data.usesRegisteredSignature && order.issuer?.template === 'transplus' && <PurchaseSignaturePad onChange={setSignature} />}
                 <button type="submit" className={primary}
-                  disabled={saving || !reason.trim() || (decision.status === 'Aprobada' && !previewDemo && order.issuer?.template === 'transplus' && !signature)}>
+                  disabled={saving || !reason.trim() || (decision.status === 'Aprobada' && !previewDemo && !data.usesRegisteredSignature && order.issuer?.template === 'transplus' && !signature)}>
                   {decision.status === 'Rechazada' ? 'Confirmar rechazo' : !previewDemo && order.issuer?.template === 'transplus' ? 'Aprobar y firmar' : 'Confirmar aprobación'}
                 </button>
                 <button type="button" className={button + ' ml-2'} onClick={() => setDecision(undefined)}>Cancelar</button>

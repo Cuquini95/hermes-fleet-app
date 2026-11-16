@@ -63,6 +63,16 @@ export function createPanamaOperationalStore({ request = database, readInventory
     return undefined;
   }
 
+  async function registeredPurchaseSignatureSource(approvedById) {
+    const response = await request('/rest/v1/hermes_panama_purchase_signature_profiles', {
+      query: { approver_id: 'eq.' + approvedById, select: 'source_folio,source_approved_at', limit: '1' },
+    });
+    if (!response.ok) throw unavailable();
+    const [profile] = await response.json();
+    if (!profile) return undefined;
+    return { folio: profile.source_folio, approvedById, approvedAt: profile.source_approved_at };
+  }
+
   async function withPurchaseNumber(result, includePurchaseNumber) {
     if (!includePurchaseNumber || !result?.folio) return result;
     const orders = await read('Órdenes de Compra').catch(() => []);
@@ -114,7 +124,7 @@ export function createPanamaOperationalStore({ request = database, readInventory
     }
   }
 
-  return { read, readMany, replay, commit, readPurchaseSignature, readWorkshopMasters: readPanamaWorkshopMasters, nativeOperations: true };
+  return { read, readMany, replay, commit, readPurchaseSignature, registeredPurchaseSignatureSource, readWorkshopMasters: readPanamaWorkshopMasters, nativeOperations: true };
 }
 
 export const panamaOperationalStore = createPanamaOperationalStore();

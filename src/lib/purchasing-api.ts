@@ -116,6 +116,7 @@ export interface PurchaseDocument {
   order: PurchaseOrder;
   approvalSignature?: string;
   canSign?: boolean;
+  usesRegisteredSignature?: boolean;
 }
 
 export interface PurchaseRequestLine {
@@ -157,6 +158,7 @@ export interface PurchaseOverview {
   issuers: PurchaseIssuer[];
   orphanFolios: string[];
   canApprove: boolean;
+  usesRegisteredSignature?: boolean;
   canRecordInvoice?: boolean;
   canRecordPayment?: boolean;
 }

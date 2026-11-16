@@ -105,6 +105,7 @@ export function makeSheetsFixture() {
   const tables = fixtureRows();
   const mutations = new Map();
   const purchaseSignatures = new Map();
+  const signatureProfiles = new Map();
   const signatureKey = ({ folio, approvedById, approvedAt }) => JSON.stringify([folio, approvedById, approvedAt]);
   const versions = new Set();
   const unavailable = new Set();
@@ -184,6 +185,12 @@ export function makeSheetsFixture() {
   return {
     read, commit, replay, commits,
     async readPurchaseSignature(order) { return purchaseSignatures.get(signatureKey(order)); },
+    async registeredPurchaseSignatureSource(id) { return clone(signatureProfiles.get(id)); },
+    registerPurchaseSignature(source) {
+      if (!purchaseSignatures.has(signatureKey(source))) throw new Error('Falta la firma que se registrará.');
+      signatureProfiles.set(source.approvedById, clone(source));
+    },
+    clearRegisteredPurchaseSignature(id) { signatureProfiles.delete(id); },
     async readWorkshopMasters() {
       return clone(workshopMasters ?? { failures: { records: [] }, orders: { records: [] } });
     },

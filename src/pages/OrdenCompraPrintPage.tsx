@@ -72,11 +72,13 @@ export default function OrdenCompraPrintPage() {
   }).format(new Date(order.approvedAt)) : '';
 
   async function signApproval() {
-    if (signing || !signature) return;
+    if (signing || (!purchase?.usesRegisteredSignature && !signature)) return;
     setSigning(true);
     setSignError('');
     try {
-      await purchaseWrite<{ signed: boolean }>('order-sign', { folio: order.folio, version: order.version, signature });
+      await purchaseWrite<{ signed: boolean }>('order-sign', {
+        folio: order.folio, version: order.version, ...(!purchase?.usesRegisteredSignature && { signature }),
+      });
       setSignature('');
       setAttempt(previous => previous + 1);
     } catch (cause) {
@@ -92,6 +94,12 @@ export default function OrdenCompraPrintPage() {
         <Link to="/admin/ordenes-compra" className="inline-flex items-center gap-1 text-sm font-semibold text-slate-700">
           <ArrowLeft size={16} aria-hidden /> Volver
         </Link>
+        {purchase.canSign && purchase.usesRegisteredSignature && (
+          <button type="button" disabled={signing} onClick={() => void signApproval()}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-800 disabled:opacity-50">
+            Aplicar mi firma
+          </button>
+        )}
         <button type="button" onClick={() => {
           const image = document.querySelector<HTMLImageElement>('.po-panama-signature img');
           if (image) void image.decode().then(() => window.print()).catch(() => setSignError('No se pudo cargar la firma. Actualiza antes de imprimir.'));
@@ -102,7 +110,7 @@ export default function OrdenCompraPrintPage() {
       </div>
 
       {signError && <p className="po-toolbar p-3 text-sm text-red-800" role="alert">{signError}</p>}
-      {purchase.canSign && (
+      {purchase.canSign && !purchase.usesRegisteredSignature && (
         <form className="po-toolbar space-y-2 px-4 py-3" onSubmit={event => {
           event.preventDefault();
           void signApproval();

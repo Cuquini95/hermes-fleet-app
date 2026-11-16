@@ -1416,6 +1416,18 @@ async function changeAp(action, body, session, sheets, tx) {
   { id, folio: order.folio, number: order.number, version: tx.version }, [orderGuard(order), guard]);
 }
 
+async function purchaseApprovalPng(sheets, session, submitted) {
+  const source = await sheets.registeredPurchaseSignatureSource?.(session.userId);
+  if (source) {
+    const png = await sheets.readPurchaseSignature?.(source);
+    if (!png) error(503, 'No se pudo recuperar tu firma registrada. Reintenta antes de aprobar.');
+    return png;
+  }
+  if (submitted === undefined) return undefined;
+  if (!isPurchaseSignature(submitted)) error(400, 'Dibuja tu firma para esta OC.');
+  return submitted;
+}
+
 async function changeOrder(action, body, session, sheets, tx) {
   const lookup = field(body.folio, 90, 'folio', true);
   const [orderRows, lineRows, requestRows] = await readTables(
@@ -1442,12 +1454,13 @@ async function changeOrder(action, body, session, sheets, tx) {
   if (action === 'order-sign') {
     if (!hasRecordedApproval(record) || record.issuer?.template !== 'transplus') error(409, 'La OC requiere una aprobación vigente.');
     if (record.approvedById !== session.userId) error(403, 'La firma corresponde a la cuenta que aprobó esta OC.');
-    if (!isPurchaseSignature(body.signature)) error(400, 'Dibuja tu firma para esta OC.');
     if (await sheets.readPurchaseSignature?.(record)) error(409, 'La OC ya tiene firma archivada.');
+    const png = await purchaseApprovalPng(sheets, session, body.signature);
+    if (!png) error(400, 'Esta cuenta requiere una firma para esta OC.');
     const { approvedById, approvedAt } = record;
     return tx.commit([auditRow(session, tx.operationId, 'OC firmada', folio, 'Firma de la aprobación del ' + approvedAt)],
       { folio, status: record.status, version: record.version, signed: true }, [],
-      { folio, approvedById, approvedAt, png: body.signature });
+      { folio, approvedById, approvedAt, png });
   }
 
   if (action === 'order-delete') {
@@ -1480,11 +1493,10 @@ async function changeOrder(action, body, session, sheets, tx) {
       values[13] = session.userName;
       values[17] = session.userId;
       values[18] = timestamp().iso;
-      if (body.signature !== undefined) {
-        if (!panama || session.previewDemo === true || record.issuer.template !== 'transplus') error(400, 'La firma no aplica a esta OC.');
-        if (!isPurchaseSignature(body.signature)) error(400, 'Dibuja tu firma para esta OC.');
-        purchaseSignature = { folio, approvedById: session.userId, approvedAt: values[18], png: body.signature };
-      }
+      const signatureApplies = panama && session.previewDemo !== true && record.issuer.template === 'transplus';
+      if (!signatureApplies && body.signature !== undefined) error(400, 'La firma no aplica a esta OC.');
+      const png = signatureApplies ? await purchaseApprovalPng(sheets, session, body.signature) : undefined;
+      if (png) purchaseSignature = { folio, approvedById: session.userId, approvedAt: values[18], png };
     }
     if (status === 'Pagada' && !record.approvedById) error(409, 'La orden requiere un aprobador registrado.');
     values[11] = status;
@@ -2210,7 +2222,10 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
           && hasRecordedApproval(record) ? await sheets.readPurchaseSignature?.(record) : undefined;
         const canSign = panama && session.previewDemo !== true && session.canApprovePurchases === true
           && record.issuer?.template === 'transplus' && hasRecordedApproval(record) && record.approvedById === session.userId;
-        return ok({ order: record, ...(approvalSignature && { approvalSignature }), ...(canSign && !approvalSignature && { canSign: true }) });
+        const awaitingSignature = canSign && !approvalSignature;
+        const usesRegisteredSignature = awaitingSignature && Boolean(await sheets.registeredPurchaseSignatureSource?.(session.userId));
+        return ok({ order: record, ...(approvalSignature && { approvalSignature }), ...(awaitingSignature && { canSign: true }),
+          ...(usesRegisteredSignature && { usesRegisteredSignature: true }) });
       }
       const rows = entries(orders).filter(({ row }) => trim(row[0]) && trim(row[11]) !== 'Eliminada');
       const linked = new Map();
@@ -2229,11 +2244,14 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
       const headerFolios = new Set(entries(orders).map(({ row }) => upper(row[0])).filter(Boolean));
       const orphanFolios = session.allUnits === true ? [...linked.keys()].filter((folio) => !headerFolios.has(folio)) : [];
       const vendors = entries(await sheets.read(PURCHASE_TABS.vendors)).map(({ row }) => vendorRecord(row)).filter((vendor) => vendor.name);
+      const usesRegisteredSignature = panama && session.previewDemo !== true && session.canApprovePurchases === true
+        && Boolean(await sheets.registeredPurchaseSignatureSource?.(session.userId));
       return ok({
         orders: rows.filter(({ row }) => canUseUnit(session, row[5]))
           .map(({ row }) => orderRecord(row, linked.get(upper(row[0])) || [])).reverse(),
         vendors, orphanFolios, issuers: configuredIssuers(session), canApprove: session.canApprovePurchases === true,
         canRecordInvoice: invoiceAccess, canRecordPayment: paymentAccess,
+        ...(usesRegisteredSignature && { usesRegisteredSignature: true }),
       });
     }
     tx = mutate(action, body, session, sheets);

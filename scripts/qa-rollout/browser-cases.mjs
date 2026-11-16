@@ -1655,6 +1655,68 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       return { folio, number, unit: 'DZ203', amount: 497.95, artifact, pages: 1, signaturePrinted: true, partNumbersPrinted: [updatedPart, parts[2][3]], optionalPartNumber: true };
     }, browserBuyer));
 
+    await record('MÓVIL-COMPRAS-FIRMA-REGISTRADA', () => inRole('gerencia', 390, async page => {
+      const api = origin + '/hermes-api/api/purchasing/';
+      const post = (action, data) => page.request.post(api + action, { data: { ...data, operationId: randomUUID() } });
+      const sourceRow = sheet.read(tabs.purchases).find(row => row[0] === purchaseFolio);
+      assert(sourceRow, 'Falta la firma de origen sintética');
+      const source = { folio: purchaseFolio, approvedById: sourceRow[17], approvedAt: sourceRow[18] };
+      const archivedSignature = await sheet.readPurchaseSignature(source);
+      assert(archivedSignature);
+      async function createDraft(description) {
+        const response = await post('order-save', { date: '2026-11-12', vendorName: 'Proveedor QA', vendorRfc: 'QAT000000000',
+          unit: 'DZ203', entity: 'TP_PA_QA', tax: '0', lines: [{ description, quantity: '1', unitPrice: '25' }] });
+        assert.equal(response.status(), 200, await response.text());
+        return response.json();
+      }
+      const historical = await createDraft('OC sin firma de origen QA');
+      const historicalApproval = await post('order-status', {
+        folio: historical.folio, version: historical.version, status: 'Aprobada', reason: 'Aprobación anterior QA',
+      });
+      assert.equal(historicalApproval.status(), 200, await historicalApproval.text());
+      assert.equal((await historicalApproval.json()).signed, undefined);
+      const draft = await createDraft('OC con firma registrada QA');
+      sheet.registerPurchaseSignature(source);
+      try {
+        await page.goto(origin + '/admin/ordenes-compra', { waitUntil: 'domcontentloaded' });
+        await dismissPrivacy(page);
+        const card = page.getByRole('article').filter({ has: page.getByRole('heading', { name: draft.number, exact: true }) });
+        await card.getByRole('button', { name: 'Aprobar', exact: true }).tap();
+        await card.getByLabel('Soporte de la aprobación Q25').fill('Firma automática QA');
+        assert.equal(await card.getByLabel('Área para dibujar la firma').count(), 0);
+        const [approval] = await Promise.all([
+          page.waitForResponse(response => response.url() === api + 'order-status' && response.request().method() === 'POST'),
+          card.getByRole('button', { name: 'Aprobar y firmar', exact: true }).tap(),
+        ]);
+        assert.equal(approval.status(), 200, await approval.text());
+        assert.equal(approval.request().postDataJSON().signature, undefined);
+        assert.equal((await approval.json()).signed, true);
+        await visible(card.getByText(/· Aprobada ·/));
+        await card.getByRole('link', { name: 'Ver / Imprimir', exact: true }).tap();
+        const archivedImage = page.locator('.po-panama-signature img');
+        await archivedImage.evaluate(image => image.decode());
+        assert.equal(await archivedImage.getAttribute('src'), 'data:image/png;base64,' + archivedSignature);
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await archivedImage.evaluate(image => image.decode());
+        const pdfPath = resolve(out, 'Hermes_OC_Firma_Registrada_QA.pdf');
+        await page.pdf({ path: pdfPath, preferCSSPageSize: true, printBackground: true });
+        assert.match(execFileSync('pdfimages', ['-list', pdfPath], { encoding: 'utf8' }), /image\s+360\s+116\b/);
+        assert.match(execFileSync('pdfinfo', [pdfPath], { encoding: 'utf8' }), /^Pages:\s+1$/m);
+
+        await page.goto(origin + '/admin/ordenes-compra/' + historical.number, { waitUntil: 'domcontentloaded' });
+        await visible(page.getByText('Firma pendiente', { exact: true }));
+        assert.equal(await page.getByLabel('Área para dibujar la firma').count(), 0);
+        const original = sheet.read(tabs.purchases).find(row => row[0] === historical.folio);
+        await page.locator('.po-toolbar').getByRole('button', { name: 'Aplicar mi firma', exact: true }).tap();
+        await archivedImage.evaluate(image => image.decode());
+        assert.equal(await archivedImage.getAttribute('src'), 'data:image/png;base64,' + archivedSignature);
+        assert.deepEqual(sheet.read(tabs.purchases).find(row => row[0] === historical.folio), original);
+        return { registeredSignaturePrinted: true, matchingArchive: true, withoutDrawing: true, historicalApprovalPreserved: true };
+      } finally {
+        sheet.clearRegisteredPurchaseSignature(source.approvedById);
+      }
+    }, browserBuyer));
+
     await record('MÓVIL-COMPRAS-RECEPCIONES-PARCIALES', () => inRole('jefe_taller', 390, async page => {
       assert(purchaseFolio, 'Falta la OC sintética creada en móvil');
       await page.goto(`${origin}/panama/recepciones`, { waitUntil: 'domcontentloaded' });

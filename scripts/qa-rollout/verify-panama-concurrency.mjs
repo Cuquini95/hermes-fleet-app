@@ -38,6 +38,13 @@ async function requestStore(path, { query, body }) {
     );
     return Response.json(rows);
   }
+  if (path.endsWith('/hermes_panama_purchase_signature_profiles')) {
+    const { rows } = await db.query(
+      'select source_folio, source_approved_at from public.hermes_panama_purchase_signature_profiles where approver_id=$1',
+      [query.approver_id.slice(3)],
+    );
+    return Response.json(rows);
+  }
   if (path.endsWith('/hermes_panama_commit_receipts')) {
     const { rows } = await db.query(
       'select fingerprint,result from public.hermes_panama_commit_receipts where operation_key=$1', [query.operation_key.slice(3)],
@@ -59,7 +66,8 @@ async function requestStore(path, { query, body }) {
 try {
   await db.exec('create role anon; create role authenticated; create role service_role bypassrls;');
   for (const migration of ['20261113204500_hermes_panama_operational_store.sql', '20261114181455_hermes_panama_purchase_numbers.sql',
-    '20261114231214_hermes_panama_work_order_numbers.sql']) {
+    '20261114231214_hermes_panama_work_order_numbers.sql', '20261114174000_hermes_panama_purchase_signatures.sql',
+    '20261116143000_hermes_panama_purchase_signature_profiles.sql']) {
     await db.exec(await readFile(new URL('../../supabase/migrations/' + migration, import.meta.url), 'utf8'));
   }
   report.postgres = (await db.query('show server_version')).rows[0].server_version;
