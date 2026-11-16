@@ -538,6 +538,7 @@ function ReceptionForm({ order, saving, readOnly, onReceive }: {
   return (
     <div className="space-y-3 rounded-lg border border-gray-200 p-3">
       <h4 className="text-sm font-semibold">Recepción por partida</h4>
+      {line && readOnly && <p className="text-sm text-gray-600">Almacén registra las entregas en Más → Recepciones.</p>}
       {order.lines.map((entry) => (
         <div key={entry.id} className="text-sm">
           <p>{entry.description} · Recibidas {entry.received} de {entry.quantity} · Pendientes {pendingQuantity(entry)}</p>

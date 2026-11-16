@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useLocation } from 'react-router-dom';
 import { mexicoDateInput } from '../lib/date-utils';
 import { displayMoney, panamaApPendingKey, PurchaseApiError, purchaseRead, purchaseWrite, type PurchaseIssuer } from '../lib/purchasing-api';
 import { useAuthStore } from '../stores/auth-store';
@@ -76,6 +76,7 @@ const input = 'mt-1 w-full min-w-0 rounded-lg border border-slate-400 bg-white p
 const label = 'block min-w-0 text-sm font-medium';
 const card = 'min-w-0 rounded-xl border border-slate-200 bg-white p-3 sm:p-4';
 const formFields = 'grid gap-3 sm:grid-cols-2';
+const sectionLink = 'inline-flex min-h-11 items-center rounded-lg px-3 font-medium text-slate-200 hover:bg-white/10 aria-[current=page]:bg-white aria-[current=page]:text-[#162252]';
 
 const amountForDisplay = (cents: bigint, currency: string) => displayMoney(Number(cents) / 100, currency);
 
@@ -137,6 +138,8 @@ export default function CuentasPorPagarPage() {
 }
 
 function PayablesQueue({ userId }: { userId: string }) {
+  const { hash } = useLocation();
+  const showBalances = hash === '#saldos';
   const operationKey = panamaApPendingKey(userId);
   const [pending, setPending] = useState(() => trackedWrite(operationKey));
   const [data, setData] = useState<Payables>();
@@ -237,9 +240,9 @@ function PayablesQueue({ userId }: { userId: string }) {
       <header className="rounded-xl bg-[#162252] p-4 text-white">
         <Link to="/admin/ordenes-compra" className="inline-flex min-h-11 items-center text-sm font-medium text-slate-200 underline underline-offset-4">Volver a Órdenes de Compra</Link>
         <h1 className="text-xl font-bold sm:text-2xl">Cuentas por pagar</h1>
-        <nav aria-label="Cuentas por pagar" className="mt-1 flex flex-wrap gap-x-4 text-sm">
-          <a className="inline-flex min-h-11 items-center underline underline-offset-4" href="#facturas">Facturas</a>
-          <a className="inline-flex min-h-11 items-center underline underline-offset-4" href="#saldos">Saldos por proveedor</a>
+        <nav aria-label="Cuentas por pagar" className="mt-3 flex flex-wrap gap-2 text-sm">
+          <Link className={sectionLink} to="#facturas" aria-current={showBalances ? undefined : 'page'}>Facturas</Link>
+          <Link className={sectionLink} to="#saldos" aria-current={showBalances ? 'page' : undefined}>Saldos por proveedor</Link>
         </nav>
       </header>
 
@@ -259,7 +262,7 @@ function PayablesQueue({ userId }: { userId: string }) {
       {data && !data.canRecordInvoice && !data.canRecordPayment && <p className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
         <strong>Solo consulta.</strong> Contabilidad registra facturas y Tesorería registra pagos confirmados.
       </p>}
-      {pendingOrders.length > 0 && <section className={card + ' space-y-2'} aria-labelledby="titulo-ordenes-pendientes">
+      {!showBalances && pendingOrders.length > 0 && <section className={card + ' space-y-2'} aria-labelledby="titulo-ordenes-pendientes">
         <h2 id="titulo-ordenes-pendientes" className="text-lg font-bold">Órdenes por procesar</h2>
         <p className="text-sm text-slate-600">Almacén registra las recepciones. Contabilidad puede facturar las cantidades ya recibidas.</p>
         <ul className="divide-y divide-slate-200">
@@ -281,8 +284,8 @@ function PayablesQueue({ userId }: { userId: string }) {
           </li>)}
         </ul>
       </section>}
-      {data && <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <section id="facturas" aria-labelledby="titulo-facturas" className="min-w-0 scroll-mt-24 space-y-3">
+      {data && <>
+        <section hidden={showBalances} aria-labelledby="titulo-facturas" className="min-w-0 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 id="titulo-facturas" className="text-lg font-bold">Facturas</h2>
             {data.canRecordInvoice && active?.type !== 'invoice' && (
@@ -353,7 +356,7 @@ function PayablesQueue({ userId }: { userId: string }) {
           })}
         </section>
 
-        <section id="saldos" aria-labelledby="titulo-saldos" className="min-w-0 scroll-mt-24 space-y-3">
+        <section hidden={!showBalances} aria-labelledby="titulo-saldos" className="min-w-0 space-y-3">
           <h2 id="titulo-saldos" className="flex min-h-11 items-center text-lg font-bold">Saldos por proveedor</h2>
           {balances.length === 0 && <p className="rounded-xl bg-white p-3 text-sm text-slate-600">No hay saldos abiertos.</p>}
           {balances.map(balance => <article className={card + ' space-y-2'} key={balance.key}>
@@ -366,7 +369,7 @@ function PayablesQueue({ userId }: { userId: string }) {
             </dl>
           </article>)}
         </section>
-      </div>}
+      </>}
     </div>
   );
 }

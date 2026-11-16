@@ -19,11 +19,15 @@ export default function BottomNav() {
   const role = useAuthStore((s) => s.role);
   const project = useAuthStore((s) => s.project);
   const previewDemo = useAuthStore((s) => s.previewDemo);
+  const canReceive = useAuthStore((s) => s.canReceivePurchases && !s.canApprovePurchases);
 
   if (!role) return null;
 
   const { visible, overflow } = NAV_CONFIG[role];
   const purchasing: NavItem[] = [];
+  if (project === 'tmf-panama' && canReceive) {
+    purchasing.push({ id: 'recepciones', label: 'Recepciones', icon: 'Package', path: '/panama/recepciones' });
+  }
   if (role === 'gerencia' && project === 'tmf-panama') {
     purchasing.push({ id: 'ordenes-compra', label: 'Órdenes de compra', icon: 'FileText', path: '/admin/ordenes-compra' });
     if (!previewDemo) {

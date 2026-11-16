@@ -51,7 +51,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
   const browserAccounts = new Map(Object.keys(roles).map(role => [role, loadAccounts.filter(account => account.membership.role === role).slice(1)]));
   const shot = (page, filename) => page.screenshot({ path: resolve(out, filename) });
 
-  async function inRole(role, width, check, account = browserAccounts.get(role).shift()) {
+  async function inRole(role, width, check, account = browserAccounts.get(role).shift(), entryPath = '') {
     assert(account, `Falta una identidad de navegador para ${role}`);
     const context = await browser.newContext({
       viewport: { width, height: width === 360 ? 640 : 844 }, isMobile: true, hasTouch: true,
@@ -68,7 +68,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await context.routeWebSocket('**/*', ws => ws.close());
       const page = await context.newPage();
       page.setDefaultTimeout(7000);
-      await page.goto(`${origin}/login`, { waitUntil: 'domcontentloaded' });
+      await page.goto(origin + (entryPath || '/login'), { waitUntil: 'domcontentloaded' });
       await page.getByLabel('Correo de trabajo').fill(account.user.email);
       await page.getByLabel('Contraseña', { exact: true }).fill(fixturePassword);
       const [login] = await Promise.all([
@@ -76,7 +76,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         clickByName(page, 'Ingresar'),
       ]);
       assert.equal(login.status(), 200, `El inicio de sesión de ${role} devolvió un error`);
-      await page.waitForURL(origin + roles[role], { waitUntil: 'domcontentloaded' });
+      await page.waitForURL(origin + (entryPath || roles[role]), { waitUntil: 'domcontentloaded' });
       await visible(page.getByRole('navigation', { name: 'Navegación principal' }));
       const consent = page.getByRole('button', { name: 'Aceptar y continuar', exact: true });
       await consent.click();
@@ -2033,6 +2033,8 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       const dueLabel = new RegExp(`${dueDate}|${day}[/-]${month}[/-]${year}`);
 
       const { folio, number } = await inRole('gerencia', 390, async page => {
+        await visible(page.getByRole('heading', { name: 'Saldos por proveedor', exact: true }));
+        assert.equal(await page.getByRole('heading', { name: 'Facturas', exact: true }).isVisible(), false);
         const saved = await post(page, 'order-save', {
           date: date(-70), deliveryDate: date(-35), vendorName: vendor, vendorRfc: 'QAT000000002', unit: 'DZ203',
           entity: 'TP_PA_QA', tax: '7.00', lines: [{ description: part, quantity: '10', unitPrice: '10.00' }],
@@ -2051,19 +2053,45 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await more.tap();
         await page.getByRole('button', { name: 'Cuentas por pagar', exact: true }).tap();
         await page.waitForURL(apPath);
-        await visible(page.getByRole('heading', { name: 'Facturas', exact: true }));
-        await visible(page.getByRole('heading', { name: 'Saldos por proveedor', exact: true }));
+        const invoicesHeading = page.getByRole('heading', { name: 'Facturas', exact: true });
+        const balancesHeading = page.getByRole('heading', { name: 'Saldos por proveedor', exact: true });
+        const invoicesLink = page.getByRole('link', { name: 'Facturas', exact: true });
+        const balancesLink = page.getByRole('link', { name: 'Saldos por proveedor', exact: true });
+        await visible(invoicesHeading);
+        assert.equal(await invoicesLink.getAttribute('aria-current'), 'page');
+        assert.equal(await balancesHeading.isVisible(), false);
+        await balancesLink.tap();
+        await page.waitForURL(apPath + '#saldos');
+        await visible(balancesHeading);
+        assert.equal(await balancesLink.getAttribute('aria-current'), 'page');
+        assert.equal(await invoicesHeading.isVisible(), false);
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await visible(balancesHeading);
+        assert.equal(await invoicesHeading.isVisible(), false);
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await invoicesLink.tap();
+        await page.waitForURL(apPath + '#facturas');
+        await visible(invoicesHeading);
+        assert.equal(await balancesHeading.isVisible(), false);
+        await balancesLink.click();
+        await visible(balancesHeading);
+        await page.goBack();
+        await visible(invoicesHeading);
         await visible(page.getByText('Solo consulta.', { exact: true }));
         const queue = page.getByRole('region', { name: 'Órdenes por procesar', exact: true });
         const approvedRow = queue.getByRole('listitem').filter({ has: page.getByRole('link', { name: 'OC ' + draft.number, exact: true }) });
         await visible(approvedRow.getByText('Por recibir', { exact: true }));
         assert.equal(await approvedRow.getByText('Lista para facturar', { exact: true }).count(), 0);
         assert.equal(await page.getByRole('button', { name: 'Registrar factura', exact: true }).count(), 0);
+        await more.tap();
+        assert.equal(await page.getByRole('button', { name: 'Recepciones', exact: true }).count(), 0);
         return draft;
-      }, browserBuyer);
+      }, browserBuyer, '/panama/cuentas-por-pagar#saldos');
 
       await inRole('jefe_taller', 390, async page => {
-        await page.goto(`${origin}/panama/recepciones`, { waitUntil: 'domcontentloaded' });
+        await page.getByRole('navigation', { name: 'Navegación principal' }).getByRole('button', { name: 'Más', exact: true }).tap();
+        await page.getByRole('button', { name: 'Recepciones', exact: true }).tap();
+        await page.waitForURL(origin + '/panama/recepciones');
         await page.getByRole('searchbox').fill(number);
         const order = page.getByRole('article').filter({ has: page.getByRole('heading', { name: number, exact: true }) });
         await order.getByRole('button', { name: 'Recibir partida' }).tap();
@@ -2153,13 +2181,18 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await field(card, 'Vence', dueLabel);
         await field(card, 'Pagado', /25[.,]00/);
         await field(card, 'Saldo', /39[.,]20/);
-        await field(balanceCard(page), 'Saldo abierto', /39[.,]20/);
-        await field(balanceCard(page), 'Saldo vencido', /39[.,]20/);
         const statusFilter = page.getByRole('combobox', { name: 'Estado', exact: true });
         await statusFilter.selectOption({ label: 'Pagadas' });
         await card.waitFor({ state: 'hidden' });
         await statusFilter.selectOption({ label: 'Vencidas' });
         await card.getByText('Pagos registrados (1)', { exact: true }).tap();
+        await visible(card.getByText(new RegExp(`^${bankReference} · `)));
+        await page.goto(apPath + '#saldos', { waitUntil: 'domcontentloaded' });
+        await visible(page.getByRole('heading', { name: 'Saldos por proveedor', exact: true }));
+        await field(balanceCard(page), 'Saldo abierto', /39[.,]20/);
+        await field(balanceCard(page), 'Saldo vencido', /39[.,]20/);
+        await page.getByRole('link', { name: 'Facturas', exact: true }).tap();
+        assert.equal(await statusFilter.inputValue(), 'overdue');
         await visible(card.getByText(new RegExp(`^${bankReference} · `)));
         const matchingInvoices = (await readAP(page)).invoices.filter(item => item.folio === folio);
         assert.equal(matchingInvoices.length, 1);
