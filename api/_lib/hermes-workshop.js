@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { STICKER_INSPECTION_TEMPLATES, stickerTemplateForEquipment } from '../../src/data/sticker-inspection-templates.js';
 import { activeFailureUnits, buildDispatchReadinessMap } from '../../src/lib/dispatch-readiness.js';
 import { PANAMA_PROJECT } from './hermes-panama.js';
+import { workshopExceptionRecords } from './hermes-panama-exceptions.js';
 import { panamaWorkshopDate, panamaWorkshopFailureOrder, reconcilePanamaWorkshop } from './hermes-panama-workshop.js';
 import { HermesSheetError, PANAMA_READINESS_TAB } from './hermes-google-sheets.js';
 import { isEvidenceError, verifyEvidence } from './hermes-evidence.js';
@@ -1345,7 +1346,7 @@ export async function dispatchWorkshop(input) {
   const endpoint = path?.match(/^api\/workshop\/([a-z]+)$/)?.[1];
   try {
     assert(session?.userId && session.userName && ROLES.has(session.role), 401, 'Sesión inválida');
-    if (['returns', 'pmchecklist', 'pmtemplate', 'pmtriggers', 'schedulecheck', 'pmbatch', 'pmbatchcheck', 'downtime', 'componentinterventions', 'warranties'].includes(endpoint)) {
+    if (['returns', 'pmchecklist', 'pmtemplate', 'pmtriggers', 'schedulecheck', 'pmbatch', 'pmbatchcheck', 'downtime', 'componentinterventions', 'warranties', 'exceptions'].includes(endpoint)) {
       assert(isPanama(input), 404, 'Acción de taller no disponible');
     }
     if (method === 'POST' && endpoint === 'pmbatchcheck') {
@@ -1363,6 +1364,19 @@ export async function dispatchWorkshop(input) {
     if (method === 'GET' && endpoint === 'schedulecheck') {
       assert(ASSIGN.has(session.role), 403, 'Tu rol no puede programar órdenes');
       return { status: 200, body: await scheduleCheck(input) };
+    }
+    if (method === 'GET' && endpoint === 'exceptions') {
+      assert(MANAGEMENT.has(session.role), 403, 'Consulta reservada a Taller y Operaciones');
+      const observedAt = (input.now ?? new Date()).toISOString();
+      const [orders, history] = sheets.nativeOperations
+        ? [await sheets.read(TAB.orders, { requireExisting: true }), []]
+        : await (sheets.readMany?.([TAB.orders, TAB.history]) ?? Promise.all([
+          sheets.read(TAB.orders, { requireExisting: true }), sheets.read(TAB.history, { requireExisting: true }),
+        ]));
+      const units = session.allUnits === true ? null : (session.assignedUnits ?? []).map(unit => unit.trim().toUpperCase());
+      const records = workshopExceptionRecords(orders, row => orderVisible(session, row), pendingOperationalReturn,
+        row => storedObject(row[WORKFLOW.pm])?.dueAt, history, value => historyTime(value, true));
+      return { status: 200, body: { observedAt, units, records } };
     }
     if (method === 'GET' && endpoint === 'readiness') {
       return { status: 200, body: await readinessSources(input) };

@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Activity, AlertTriangle, Fuel, Bell, RefreshCw, Package, ShoppingCart, Building2 } from 'lucide-react';
 import { useEquipmentList } from '../../hooks/useEquipmentList';
 import { useDashboardData } from '../../hooks/useDashboardData';
+import { usePanamaWorkshopExceptions } from '../../hooks/usePanamaWorkshopExceptions';
 import { useFleetDispatch, type WorkshopRecord } from '../../hooks/useFleetDispatch';
 import { dispatchAvailability } from '../../lib/availability';
 import { useEquipmentStore } from '../../stores/equipment-store';
@@ -19,6 +20,7 @@ import PullIndicator from '../ui/PullIndicator';
 import PanamaSourceRecords from '../workshop/PanamaSourceRecords';
 import PanamaWorkshopSummary from './PanamaWorkshopSummary';
 import PanamaFuelReconciliation from './PanamaFuelReconciliation';
+import { PanamaWorkshopExceptions } from './PanamaWorkshopExceptions';
 
 type Tab = 'general' | 'briefing' | 'pedidos' | 'datos';
 
@@ -38,6 +40,9 @@ export default function ExecutiveDashboard() {
   const role = useAuthStore((s) => s.role);
   const project = useAuthStore((s) => s.project);
   const demo = useAuthStore((s) => s.previewDemo);
+  const showWorkshopExceptions = project === 'tmf-panama' && (role === 'gerencia' || role === 'supervisor');
+  const exceptions = usePanamaWorkshopExceptions(showWorkshopExceptions);
+  const { refresh: refreshExceptions } = exceptions;
   const useWorkshopMaster = project === 'tmf-panama' && !demo;
   const data = useDashboardData(equipment, useWorkshopMaster, dispatch.workshop);
   const orderSection = dispatch.workshop?.orders;
@@ -56,8 +61,8 @@ export default function ExecutiveDashboard() {
     ? equipment.filter(unit => dispatch.operatingStatuses?.has(unit.unit_id)).length : 0;
   const refreshAll = useCallback(() => {
     refreshData();
-    return refreshDispatch();
-  }, [refreshData, refreshDispatch]);
+    return Promise.all([refreshDispatch(), refreshExceptions()]);
+  }, [refreshData, refreshDispatch, refreshExceptions]);
 
   const handleRefresh = useCallback(async () => {
     await refreshAll();
@@ -195,6 +200,7 @@ export default function ExecutiveDashboard() {
               <OrderList label="Prioridad pendiente de confirmar" records={ordersWithoutPriority} />
             </section>
           )}
+          {showWorkshopExceptions && <PanamaWorkshopExceptions {...exceptions} />}
           {useWorkshopMaster && <PanamaWorkshopSummary data={dispatch.workshop} loading={dispatch.loading} card />}
           {useWorkshopMaster && <PanamaFuelReconciliation data={data.fuelReconciliation} />}
           {project === 'tmf-panama' && !useWorkshopMaster && data.error && <PanamaSourceRecords source="orders" limit={3} />}

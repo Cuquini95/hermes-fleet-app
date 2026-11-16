@@ -1,10 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { purchaseRead, displayMoney } from '../../lib/purchasing-api';
+import { documentedRepairCost } from '../../lib/panama-repair-economics';
+import PanamaInterventionComparison from './PanamaInterventionComparison';
 
 const labels = { labor: 'Mano de obra', parts: 'Repuestos', returns: 'Devoluciones', services: 'Servicios externos' };
 type CostKind = keyof typeof labels;
 interface OrderCosts {
+  ot: string;
+  folio: string;
+  unit: string;
+  project: string;
   totals: (Record<CostKind, string> & { currency: string; amount: string })[];
   lines: { kind: CostKind; currency: string; amount: string; reference: string; sourceId: string; valuationReference?: string }[];
   pending: { kind: CostKind; reason: string }[];
@@ -54,6 +60,7 @@ export default function PanamaWorkOrderCost({ ot, folio, unit, revision }: { ot:
         </li>)}</ul>
       </details>}
     </>}
+    <PanamaInterventionComparison documentedCost={documentedRepairCost({ ot, folio, unit }, current?.data)} />
     <Link className="inline-flex min-h-11 items-center text-sm font-semibold underline" to={`/gastos/nuevo?${new URLSearchParams({ ot: folio, unit })}`}>
       Registrar factura de servicio
     </Link>

@@ -19,6 +19,7 @@ const orders = 'ORDENES_TRABAJO';
 const purchases = 'Órdenes de Compra';
 const lines = 'OC_Lineas';
 const warrantyTab = 'HERMES_PA_GARANTIAS';
+const odometerTab = 'HERMES_PA_ODOMETRO';
 const operatorId = '00000000-0000-4000-8000-000000000001';
 const evidenceId = '1'.repeat(64);
 const attachment = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2n2IAAAAASUVORK5CYII=', 'base64');
@@ -178,6 +179,11 @@ try {
   assert.equal(warrantyRows.length, 2);
   assert.equal((await rows(db, 'OT_STATUS_LOG')).length, 1);
 
+  await migration('20261116015100_hermes_panama_manual_odometer.sql');
+  const odometer = ['QA-DZ203', '2026-11-14T13:00:00Z', '170', 'Parte QA odómetro', '2026-11-14T14:00:00Z', operatorId];
+  await save(db, 'odometer-qa', [{ tab: odometerTab, append: [odometer] }], { value: '170', measure: 'km' });
+  assert.equal((await rows(db, '04B Registro Horómetros')).length, 1);
+
   const backup = await db.dumpDataDir('gzip');
   const attachmentArchive = JSON.stringify({ id: evidenceId, bytes: attachment.toString('base64') });
   const began = performance.now();
@@ -197,11 +203,12 @@ try {
   const [warranty] = (await restored.query('select kind, record_id, mime_type, ready from public.hermes_panama_evidence where id=$1', [warrantyEvidenceId])).rows;
   assert.deepEqual(warranty, { kind: 'warranty', record_id: 'OT-HIST-QA', mime_type: 'application/pdf', ready: true });
   assert.deepEqual(await rows(restored, warrantyTab), warrantyRows);
+  assert.deepEqual((await rows(restored, odometerTab)).at(-1), odometer);
   const batchFolios = await verifyPmBatch(restored);
   const warehouseReserve = await verifyWarehouseReserve(restored);
   console.log(JSON.stringify({ environment: 'Postgres aislado / adjunto archivado sintético',
     restoredInMs: Math.round(performance.now() - began), concurrentCreations: 2, folios: 'OT-0100..0103 / OC 3001..3004',
-    batchFolios, warehouseReserve, retained: ['OT y evidencia', 'aprobación de OC', 'recepción y saldo', 'comprobante de reintento', 'garantía y evidencia privada'] }));
+    batchFolios, warehouseReserve, retained: ['OT y evidencia', 'aprobación de OC', 'recepción y saldo', 'comprobante de reintento', 'garantía y evidencia privada', 'odómetro separado de horas'] }));
 } catch (error) {
   console.error(error.message, error.code ?? '');
   process.exitCode = 1;

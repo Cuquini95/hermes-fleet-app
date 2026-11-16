@@ -15,7 +15,7 @@ const input = (changes = {}) => ({
   support: 'Parte EX401-20261112-D', trips: '2', tonnes: '30.5', stops: 'Sin paradas', client: 'TMF QA', ...changes,
 });
 
-function isolatedGateway(readOfficialShifts) {
+function isolatedGateway(readOfficialShifts, readShiftBilling) {
   const tabs = new Map([['01 Inventario', [[], [], ['#', 'COD1'], ['1', 'EX401', '', '', '', '', '', '', 'Operativo'], ['2', 'EX405']]]]);
   const receipts = new Map();
   const guards = new Set();
@@ -46,13 +46,13 @@ function isolatedGateway(readOfficialShifts) {
       return { replayed: false, result };
     },
   };
-  const gateway = createHermesGateway({ sheets, writeEnabled: true, enablePanamaOperations: true, readOfficialShifts,
+  const gateway = createHermesGateway({ sheets, writeEnabled: true, enablePanamaOperations: true, readOfficialShifts, readShiftBilling,
     sessionReader: async req => req.session,
     listShiftOperators: async (_session, unit) => !unit || operator.assignedUnits.includes(unit) ? [operator] : [] });
-  async function request(endpoint, session, body, prefix = 'api/panama/turnos') {
+  async function request(endpoint, session, body, prefix = 'api/panama/turnos', query = {}) {
     const output = {};
     const res = { setHeader() {}, status(value) { output.status = value; return this; }, json(value) { output.body = value; return this; } };
-    await gateway({ query: { path: `${prefix}${endpoint ? '/' + endpoint : ''}` }, session, method: body ? 'POST' : 'GET', body }, res);
+    await gateway({ query: { ...query, path: `${prefix}${endpoint ? '/' + endpoint : ''}` }, session, method: body ? 'POST' : 'GET', body }, res);
     return output;
   }
   return { request, tabs, fail: value => { failCommit = value; }, interrupt: hook => { beforeCommit = hook; } };
@@ -229,4 +229,79 @@ test('despacho exige estado operativo conocido aunque la unidad exista en el mae
   const result = await request('despacho', supervisor, dispatch);
   assert.equal(result.status, 409);
   assert.match(result.body.error, /No hay estado operativo verificado/);
+});
+
+test('solo Gerencia con alcance abre el cruce financiero del folio aceptado y su versión', async () => {
+  const manager = account('gerencia', 'manager');
+  const calls = [];
+  const { request } = isolatedGateway(undefined, async record => {
+    calls.push(record);
+    return { status: 'linked', reference: 'Cruce autorizado QA' };
+  });
+  const { body: { record } } = await request('entregar', operator, input());
+  const consult = (session, parte = record.id) => request('valorizacion', session, undefined, 'api/panama/turnos', { parte });
+
+  assert.equal((await consult(manager)).status, 409);
+  assert.equal((await consult(operator)).status, 403);
+  assert.equal((await consult(coordinator)).status, 403);
+  assert.equal((await consult(account('gerencia', 'other', ['EX405']))).status, 404);
+  assert.equal((await consult(account('gerencia', 'manager-mx', ['EX401'], 'mexico'))).status, 403);
+  assert.equal((await consult(manager, ['wrong'])).status, 400);
+  assert.equal(calls.length, 0);
+
+  const { body: { record: accepted } } = await request('revisar', supervisor,
+    { mutationId: randomUUID(), id: record.id, version: record.version, action: 'accept' });
+  const result = await consult(manager);
+  assert.deepEqual(result, { status: 200, body: { status: 'linked', reference: 'Cruce autorizado QA' } });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].id, accepted.id);
+  assert.equal(calls[0].version, accepted.version);
+  assert.equal(calls[0].reviewedAt, accepted.reviewedAt);
+  const list = await request('', manager);
+  assert(!JSON.stringify(list.body).includes('Cruce autorizado QA'));
+  assert.equal(calls.length, 1);
+});
+
+test('el cruce financiero exige una asociación explícita y reconcilia horas, período y factura', async () => {
+  const { resolveShiftBilling } = await import('../../api/_lib/hermes-panama-shift-billing.js');
+  const part = { id: 'TPA-DEADBEEFDEADBEEFDEAD', version: 2, unit: 'EX401', date: '2026-11-12', reviewedAt: '2026-11-13T01:00:00.000Z' };
+  const bridge = { partId: part.id, version: part.version, unit: part.unit, reviewedAt: part.reviewedAt,
+    periodStart: '2026-11-01', periodEnd: '2026-11-15', documentLineId: 'DOC-QA-1', reference: 'Conciliación QA' };
+  const valuationHeader = ['Código','Fecha inicial','Fecha final','Horas reportadas','Ajuste','Horas a valorizar','Tarifa US$/h','Valor US$','Estado'];
+  const invoiceHeader = ['ID línea','Tipo','Fecha documento','Equipo','Inicio período','Fin período','Documento / factura referencia','Importe base USD','Verificación'];
+  const valuation = ['EX401','01-Nov-26','15-Nov-26','100.25','-5.25','95','$45.00','$4,275.00','Listo'];
+  const invoice = ['DOC-QA-1','Factura','15-Nov-26','EX401','01-Nov-26','15-Nov-26','FAC-QA','$4,250.00','Verificado'];
+  let sourceReads = 0;
+  const sources = { bridges: [bridge], readValuation: async () => { sourceReads++; return { rows: [valuationHeader, valuation] }; },
+    readInvoices: async () => { sourceReads++; return { rows: [invoiceHeader, invoice] }; } };
+
+  const unlinked = await resolveShiftBilling(part, { ...sources, bridges: [{ ...bridge, version: 1 }] });
+  assert.equal(unlinked.status, 'unlinked');
+  assert.equal(sourceReads, 0);
+  assert.equal((await resolveShiftBilling(part, { ...sources, bridges: [bridge, bridge] })).status, 'review');
+  assert.equal(sourceReads, 0);
+  const record = await resolveShiftBilling(part, sources);
+  assert.equal(record.status, 'linked');
+  assert.deepEqual(record.valuation, { periodStart: '2026-11-01', periodEnd: '2026-11-15', reportedHours: '100.25',
+    adjustmentHours: '-5.25', valuedHours: '95', rate: '45.00', total: '4275.00', currency: 'USD', status: 'Listo', reference: 'VALORIZACION · fila 4' });
+  assert.deepEqual(record.invoice, { id: 'DOC-QA-1', reference: 'FAC-QA', date: '2026-11-15', baseAmount: '4250.00',
+    currency: 'USD', verification: 'Verificado' });
+  assert.equal(record.reference, 'Conciliación QA');
+
+  const multiple = await resolveShiftBilling(part, { ...sources, readValuation: async () => ({ rows: [valuationHeader, valuation, valuation] }) });
+  assert.equal(multiple.status, 'review');
+  assert.equal(multiple.valuation, null);
+  const wrongInvoice = [...invoice]; wrongInvoice[3] = 'EX405';
+  const crossed = await resolveShiftBilling(part, { ...sources, readInvoices: async () => ({ rows: [invoiceHeader, wrongInvoice] }) });
+  assert.equal(crossed.status, 'linked');
+  assert.equal(crossed.invoiceStatus, 'review');
+  assert.equal(crossed.invoice, null);
+  const pending = await resolveShiftBilling(part, { ...sources, readInvoices: async () => ({ rows: [invoiceHeader] }) });
+  assert.equal(pending.invoiceStatus, 'missing');
+  assert.equal(pending.invoice, null);
+  const down = await resolveShiftBilling(part, { ...sources, readInvoices: async () => { throw Error('offline'); } });
+  assert.equal(down.invoiceStatus, 'unavailable');
+  assert.equal(down.valuation.total, record.valuation.total);
+  const badTotal = [...valuation]; badTotal[7] = '$4,200.00';
+  assert.equal((await resolveShiftBilling(part, { ...sources, readValuation: async () => ({ rows: [valuationHeader, badTotal] }) })).status, 'review');
 });

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, Navigate } from 'react-router-dom';
+import PanamaShiftBilling from '../components/dashboard/PanamaShiftBilling';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { mexicoDateInput } from '../lib/date-utils';
 import { downloadBlob } from '../lib/download-blob';
@@ -349,6 +350,9 @@ function ShiftQueue({ userId }: { userId: string }) {
                   new Blob([shiftHandoffCsv(record)], { type: 'text/csv;charset=utf-8' }),
                   `Hermes-valorizacion-${record.id}.csv`,
                 )}>Descargar parte para conciliación</button>
+              )}
+              {role === 'gerencia' && record.status === 'Aceptado por Supervisión' && record.reviewedAt && record.reviewedBy && (
+                <PanamaShiftBilling key={record.version} folio={record.id} hours={record.hours} />
               )}
               {record.history.length > 1 && <details className="text-sm text-slate-700">
                 <summary>Actividad del parte</summary>

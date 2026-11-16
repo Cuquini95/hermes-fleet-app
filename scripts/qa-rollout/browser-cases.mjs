@@ -400,6 +400,37 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       return { folio, hours: 8, scopes: ['operador', 'supervisor'], officialReconciliation: 'pendiente' };
     });
 
+    await record('MÓVIL-VALORIZACIÓN-TMF-A-FACTURA', async () => {
+      const tab = 'HERMES_PA_TURNOS';
+      const prior = sheet.read(tab);
+      const id = 'TPA-C4300000000000000001';
+      const author = firstAccount('operador');
+      const supervisor = firstAccount('supervisor');
+      const shift = [id, 'EX401', '2026-11-15', 'Día de prueba', 1, 'Pendiente de revisión', 100, 108, 8,
+        'Operativo', 'PARTE-QA-43', 1, 20, 'Sin paradas', 'Cliente QA', author.user.id, author.membership.user_name,
+        author.user.id, author.membership.user_name, '2026-11-15T15:00:00Z', 'deliver', ''];
+      const accepted = [...shift];
+      Object.assign(accepted, { 4: 2, 5: 'Aceptado por Supervisión', 17: supervisor.user.id, 18: supervisor.membership.user_name,
+        19: '2026-11-15T17:00:00Z', 20: 'accept' });
+      sheet.seed(tab, [...prior, shift, accepted]);
+      try {
+        return await inRole('gerencia', 360, async page => {
+          await page.goto(`${origin}/panama/turnos`, { waitUntil: 'domcontentloaded' });
+          const part = page.getByRole('article').filter({ hasText: id });
+          await visible(part.getByText(/8 h del turno/));
+          await part.getByRole('button', { name: 'Ver valorización y factura' }).click();
+          await visible(part.getByText('Horas a valorizar', { exact: true }));
+          await visible(part.getByText(/FAC-QA/));
+          await visible(part.getByText(/4[,.]?275[,.]00/).first());
+          await visible(part.getByText(/-5 h|−5 h/));
+          await noHorizontalOverflow(page, 360);
+          await part.getByText(/FAC-QA/).scrollIntoViewIfNeeded();
+          await shot(page, 'valorizacion-factura-360.png');
+          return { folio: id, acceptedHours: 8, valuedPeriodHours: 95, adjustmentHours: -5, invoice: 'FAC-QA', currency: 'USD', width: 360 };
+        }, firstAccount('gerencia'));
+      } finally { sheet.seed(tab, prior); }
+    });
+
     await record('MÓVIL-HORÓMETRO-CAMBIO-CON-CONTINUIDAD', async () => {
       const tab = '04B Registro Horómetros';
       sheet.seed(tab, [...sheet.read(tab), ['12/11/2026','07:00:00','DZ203','Caterpillar 745','QA','inicio','390']]);
@@ -443,6 +474,33 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       assert.deepEqual(rows.map(row => row[6]), ['390','2','4']);
       return { earlier: 390, replacementTotal: 397, updatedTotal: 399, invalidReadingRejected: true, officialCutVisible: true, reloaded: true };
     });
+
+    await record('MÓVIL-TELEMÁTICA-FLOTA-MIXTA', () => inRole('operador', 360, async page => {
+      await page.goto(`${origin}/horometro`, { waitUntil: 'domcontentloaded' });
+      await dismissPrivacy(page);
+      const selector = page.getByLabel('Unidad', { exact: true });
+      await selector.selectOption('DZ203');
+      const section = page.getByRole('region', { name: 'Lecturas por origen' });
+      await visible(section);
+      await visible(section.getByText(/800 h/).first());
+      await visible(section.getByText(/Telemática QA/).first());
+
+      await selector.selectOption('DZ205');
+      await visible(section.getByText(/160[,.]934 km/).first());
+      await visible(section.getByText(/Vencida/));
+      await clickByName(page, 'Registrar lectura en km');
+      const form = page.getByRole('button', { name: 'Guardar lectura en km' }).locator('xpath=ancestor::form[1]');
+      await form.getByLabel('Lectura (km)', { exact: true }).fill('170');
+      await form.getByLabel('Referencia del respaldo').fill('Parte manual QA-41');
+      await form.getByRole('button', { name: 'Guardar lectura en km' }).click();
+      await visible(section.getByText(/170 km/).first());
+      await visible(section.getByText(/Respaldo manual/));
+      await visible(section.getByText(/Parte manual QA-41/).first());
+      await noHorizontalOverflow(page, 360);
+      await section.scrollIntoViewIfNeeded();
+      await shot(page, 'telematica-mixta-360.png');
+      return { unitHours: 'DZ203', unitDistance: 'DZ205', normalizedHours: 800, backedUpKm: 170, width: 360 };
+    }, firstAccount('operador')));
 
     await record('MÓVIL-CAMPO-CONFIRMACIÓN', () => inRole('operador', 390, async page => {
       const fuelTab = 'Combustible';
@@ -1289,6 +1347,48 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       }
     });
 
+    await record('MÓVIL-TABLERO-EXCEPCIONES', async () => {
+      const prior = sheet.read(tabs.orders);
+      const id = 'OT-EXCEPTION-QA';
+      const row = Object.assign(Array(26).fill(''), { 1: id, 2: '14/11/2026', 3: 'DZ203', 4: 'PM', 5: 'Excepción sintética QA',
+        7: 'CRITICA', 8: 'Mecánico QA', 9: 'En Reparación', 23: JSON.stringify({ dueAt: 1500 }), 25: 'OT-0892' });
+      sheet.seed(tabs.orders, [...prior, row]);
+      try {
+        return await inRole('gerencia', 360, async page => {
+          await page.goto(`${origin}/dashboard`, { waitUntil: 'domcontentloaded' });
+          await dismissPrivacy(page);
+          const box = page.getByRole('region', { name: 'Excepciones de Taller' });
+          const link = box.getByRole('link', { name: /OT-0892/ });
+          const refresh = box.getByRole('button', { name: 'Actualizar excepciones' });
+          await visible(link);
+          assert.match(await link.getAttribute('href'), /^\/workorders\/OT-(?:EXCEPTION-QA|0892)$/);
+          await visible(box.getByText(/Mecánico QA/));
+          await visible(box.getByText(/1[,.]?500 h/));
+          await noHorizontalOverflow(page, 360);
+          await box.scrollIntoViewIfNeeded();
+          await shot(page, 'excepciones-360.png');
+
+          sheet.setUnavailable([tabs.orders], true);
+          const failed = page.waitForResponse(response => response.url().endsWith('/api/workshop/exceptions'));
+          await refresh.click();
+          assert.equal((await failed).status(), 503);
+          await visible(link);
+
+          sheet.setUnavailable([tabs.orders], false);
+          const closed = [...row];
+          closed[9] = 'Completado';
+          sheet.seed(tabs.orders, [...prior, closed]);
+          await refresh.click();
+          await link.waitFor({ state: 'hidden' });
+          return { folio: 'OT-0892', owner: 'Mecánico QA', dueAtHours: 1500, preservedDuringReadFailure: true,
+            closedAfterSourceConfirmation: true, width: 360 };
+        }, firstAccount('gerencia'));
+      } finally {
+        sheet.setUnavailable([tabs.orders], false);
+        sheet.seed(tabs.orders, prior);
+      }
+    });
+
     if (!withPurchasing) return [...external];
     const browserBuyer = loadAccounts.find(account => account.membership.can_approve_purchases === true);
     const browserWarehouse = loadAccounts.find(account => account.membership.can_receive_purchases === true);
@@ -1661,6 +1761,43 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       return { sku, warehouses: 2, physicalAfterReceipt: 12, reserved: 3, inTransit: 2, persistedAfterNavigation: true, recoveredAfterReload: true };
     }, browserWarehouse));
 
+    await record('MÓVIL-REPOSICIÓN-CRÍTICA', () => inRole('jefe_taller', 360, async page => {
+      const earlier = sheet.read(tabs.purchases);
+      const source = earlier.find(row => row[0] === 'OC-STOCK-QA');
+      assert(source, 'Ejecuta el caso de recepción parcial antes de calcular la reposición.');
+      const now = new Date();
+      const date = new Intl.DateTimeFormat('en-CA', {timeZone:'America/Panama', year:'numeric', month:'2-digit', day:'2-digit'});
+      const today = date.format(now);
+      const delivery = date.format(new Date(Number(now) + 2 * 86_400_000));
+      sheet.seed(tabs.purchases, earlier.map(row => row !== source ? row : Object.assign([...row], { 14: delivery.split('-').reverse().join('/') })));
+      try {
+        await page.goto(`${origin}/inventory`, { waitUntil: 'domcontentloaded' });
+        await dismissPrivacy(page);
+        const card = page.getByRole('article', { name: 'QA-BODEGA · Patio Sur', exact: true });
+        await card.getByText('Calcular reposición', { exact: true }).click();
+        const unit = card.getByLabel('Unidad', { exact: true });
+        if ((await unit.evaluate(node => node.tagName)) === 'SELECT') await unit.selectOption('DZ203');
+        else await unit.fill('DZ203');
+        await card.getByLabel('Vida restante', { exact: true }).fill('40');
+        await card.getByLabel('Medida de vida').selectOption('h');
+        await card.getByLabel(/Uso diario/).fill('10');
+        await card.getByLabel('Fecha de lectura', { exact: true }).fill(today);
+        await card.getByLabel('Respaldo de vida y uso').fill('Inspección y horómetro QA');
+        await card.getByLabel('Cantidad para el cambio').fill('16');
+        await card.getByLabel(/Plazo de proveedor/).fill('2');
+        await card.getByLabel('Respaldo del plazo').fill('Cotización sintética QA');
+        await card.getByRole('button', { name: 'Calcular', exact: true }).click();
+        const recommendation = card.getByText('Reposición adicional', { exact: true });
+        await visible(recommendation);
+        await visible(recommendation.locator('..').getByText(/^2(?:\s+pza)?$/));
+        await visible(card.getByText(/3999/).first());
+        await noHorizontalOverflow(page, 360);
+        await recommendation.scrollIntoViewIfNeeded();
+        await shot(page, 'reposicion-360.png');
+        return { sku: 'QA-BODEGA', warehouse: 'Patio Sur', available: 12, open: 3, required: 16, minimum: 1, suggested: 2, width: 360 };
+      } finally { sheet.seed(tabs.purchases, earlier); }
+    }, browserWarehouse));
+
     await record('MÓVIL-COSTO-REAL-OT', () => inRole('gerencia', 390, async page => {
       const ot = 'OT-COSTO-QA';
       const order = Array(26).fill('');
@@ -1695,6 +1832,74 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await page.waitForURL(`${origin}/gastos/nuevo?ot=OT-0910&unit=DZ203`);
         assert.equal(await page.getByLabel('OT relacionada (opcional)').inputValue(), 'OT-0910');
         return { folio: 'OT-0910', unit: 'DZ203', totals: { USD: '48.18', PAB: '53.50' }, separateCurrencies: true, serviceFormPrefilled: true };
+      } finally {
+        [tabs.orders, tabs.expenses, movements].forEach((tab, index) => sheet.seed(tab, before[index]));
+      }
+    }));
+
+    await record('MÓVIL-COMPARAR-INTERVENCIÓN', () => inRole('gerencia', 360, async page => {
+      const ot = 'OT-COSTO-QA';
+      const order = Array(26).fill('');
+      Object.assign(order, { 0: 'COSTO-QA', 1: ot, 2: '14/11/2026', 3: 'DZ203', 4: 'Mecánica', 5: 'Verificación de costo',
+        7: 'MEDIA', 9: 'Completado', 20: JSON.stringify({ userId: 'mechanic-cost-qa', userName: 'QA Mecánico',
+          functionalTest: 'Prueba conforme', submittedAt: '2026-11-14T15:00:00Z', laborHours: 2.5 }),
+        21: JSON.stringify({ userId: 'chief-cost-qa', userName: 'QA Taller', acceptedAt: '2026-11-14T16:00:00Z' }), 25: 'OT-0910' });
+      const movement = (id, kind, quantity, delta, original = '') => ['COSTO-' + id, '2026-11-14T14:00:00Z', kind,
+        'QA-001', quantity, 'DZ203', '', '', ot, id, 'QA Almacén', 'qa-warehouse', '7', 'pza', original,
+        JSON.stringify({ unitCost: '12.50', currency: 'USD', reference: 'VALUACIÓN-QA-01', delta })];
+      const service = Array(29).fill('');
+      Object.assign(service, { 0: 'GST-COSTO-QA-1', 3: 'Servicio', 4: 'Proveedor QA', 5: 'RUC-COSTO-QA', 6: 'FACT-COSTO-QA',
+        7: '50.00', 8: '3.50', 9: '53.50', 10: 'DZ203', 11: ot, 16: 'Aprobado', 17: 'GST-COSTO-QA', 18: 'expense-qa',
+        19: '53.50', 21: 'TP_PA_QA', 22: 'USD', 24: '14/11/2026', 25: 'accounting-qa', 26: '2026-11-14T17:00:00Z' });
+      const movements = 'Movimientos Repuestos PA';
+      const before = [sheet.read(tabs.orders), sheet.read(tabs.expenses), sheet.read(movements)];
+      sheet.seed(tabs.orders, [...before[0], order]);
+      sheet.seed(tabs.expenses, [...before[1], service]);
+      sheet.seed(movements, [...before[2], movement('SALIDA', 'Salida', '2', '25.00'), movement('DEV', 'Devolución', '1', '-12.50', 'COSTO-SALIDA')]);
+      try {
+        await page.goto(`${origin}/workorders/OT-0910`, { waitUntil: 'domcontentloaded' });
+        const card = page.getByRole('region', { name: 'Costo real de OT' });
+        await dismissPrivacy(page);
+        await visible(card.getByText(/Total documentado.*USD.*101\.68/));
+        await card.getByText('Reparar, reconstruir o reemplazar', { exact: true }).click();
+        const repair = card.getByRole('group', { name: 'Reparar', exact: true });
+        await repair.getByRole('button', { name: 'Usar total documentado de esta OT' }).click();
+        assert.equal(await repair.getByLabel('Desembolso estimado').inputValue(), '101.68');
+        assert.match(await repair.getByLabel('Fuente del desembolso').inputValue(), /FACT-COSTO-QA/);
+        await card.getByLabel('Estimar el efecto económico de parar').check();
+        const contribution = card.getByRole('group', { name: 'Contribución del equipo' });
+        await contribution.getByLabel('Moneda').selectOption('USD');
+        await contribution.getByLabel('Contribución neta por hora productiva').fill('22.50');
+        await contribution.getByLabel('Fuente de la contribución').fill('Corte QA contribución');
+        const samples = [
+          ['Reparar', '101.68', '500', '12', '10', '0.20', '225.00'],
+          ['Reconstruir', '2100.05', '1200', '20', '15.25', '1.75', '343.13'],
+          ['Reemplazar', '5000', '2000', '8', '0', '2.50', '0.00'],
+        ];
+        for (const [name, cash, life, down, lost] of samples) {
+          const group = card.getByRole('group', { name, exact: true });
+          if (name !== 'Reparar') {
+            await group.getByLabel('Moneda').selectOption('USD');
+            await group.getByLabel('Desembolso estimado').fill(cash);
+            await group.getByLabel('Fuente del desembolso').fill('Cotización QA ' + name);
+          }
+          await group.getByLabel('Vida útil (horas de operación)').fill(life);
+          await group.getByLabel('Fuente de vida útil').fill('Informe técnico QA ' + name);
+          await group.getByLabel('Parada estimada (horas)').fill(down);
+          await group.getByLabel('Fuente de la parada').fill('Programa QA ' + name);
+          await group.getByLabel('Horas productivas que se perderían').fill(lost);
+        }
+        await card.getByRole('button', { name: 'Comparar alternativas' }).click();
+        const results = card.getByRole('region', { name: 'Resultado de la comparación' });
+        for (const [name,,,,, cost, impact] of samples) {
+          const row = results.getByRole('article', { name, exact: true });
+          await visible(row.getByText('USD ' + cost + '/h', { exact: true }));
+          await visible(row.getByText('USD ' + impact, { exact: true }));
+        }
+        await noHorizontalOverflow(page, 360);
+        await results.getByRole('heading', { name: 'Menor desembolso por hora' }).scrollIntoViewIfNeeded();
+        await shot(page, 'comparar-intervencion-360.png');
+        return { folio: 'OT-0910', width: 360, documentedRepairCash: '101.68', perHour: ['0.20', '1.75', '2.50'], downtimeLoss: ['225.00', '343.13', '0.00'] };
       } finally {
         [tabs.orders, tabs.expenses, movements].forEach((tab, index) => sheet.seed(tab, before[index]));
       }

@@ -207,9 +207,21 @@ function reconcileAccepted(records, official) {
   });
 }
 
-export async function dispatchShifts({ path, method, body, session, sheets, listShiftOperators = async () => [], readOfficialShifts }) {
+export async function dispatchShifts({ path, method, body, query, session, sheets, listShiftOperators = async () => [], readOfficialShifts, readShiftBilling }) {
   requireValue(session.project === PANAMA_PROJECT && READ.has(session.role), 403, 'Relevo reservado a los roles autorizados de TMF Panamá.');
   if (path === 'api/panama/turnos/despacho') return dispatchAssignment({ method, body, session, sheets, listShiftOperators });
+  if (path === 'api/panama/turnos/valorizacion') {
+    requireValue(session.role === 'gerencia', 403, 'Valorización y facturas reservadas a Gerencia.');
+    requireValue(method === 'GET', 405, 'Método no permitido.');
+    const id = query?.parte;
+    requireValue(typeof id === 'string' && FOLIO.test(id), 400, 'Folio del parte inválido.');
+    const record = rowsToRecords(await sheets.read(PANAMA_SHIFT_TAB, { cached: true })).get(id);
+    requireValue(record && visible(session, record), 404, 'Parte no encontrado.');
+    requireValue(record.status === ACCEPTED && record.reviewedBy?.id && record.reviewedBy.id !== record.createdBy.id
+      && Number.isFinite(Date.parse(record.reviewedAt)) && Number.isSafeInteger(record.version), 409, 'Se requiere un parte aceptado por Supervisión.');
+    const result = await readShiftBilling?.(record);
+    return { status: 200, body: result ?? { status: 'unavailable', message: 'La consulta de valorización no está disponible.', valuation: null, invoice: null } };
+  }
   if (path === 'api/panama/turnos') {
     requireValue(method === 'GET', 405, 'Método no permitido.');
     const records = rowsToRecords(await sheets.read(PANAMA_SHIFT_TAB, { cached: true }));

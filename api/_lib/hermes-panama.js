@@ -1,6 +1,7 @@
 import { GoogleAuth } from 'google-auth-library';
 import { createHermesSheets } from './hermes-google-sheets.js';
 import { identityConfig, identityRequest } from './hermes-identity.js';
+import { resolveShiftBilling } from './hermes-panama-shift-billing.js';
 
 export const PANAMA_PROJECT = 'tmf-panama';
 const management = new Set(['jefe_taller', 'coordinador', 'supervisor', 'gerencia']);
@@ -70,6 +71,17 @@ export async function readOfficialPanamaShifts() {
     records: visibleRecords(rowsOf(source), { ...spec, limit: undefined }, { allUnits: true }),
     capturedAt: source.captured_at,
   };
+}
+
+const valuationSpec = { key: 'shiftValuation', env: 'HERMES_PANAMA_TMF_SHEET_ID', range: "'VALORIZACION'!A3:O" };
+const invoiceSpec = { key: 'shiftInvoice', env: 'HERMES_PANAMA_FINANCE_SHEET_ID', range: "'DOCUMENTOS COBRO'!A7:P" };
+
+export function readOfficialPanamaShiftBilling(part) {
+  const bridges = JSON.parse(process.env.HERMES_PANAMA_SHIFT_BILLING_LINKS_JSON || '[]');
+  const readWorkbook = async spec => ({ rows: await readSource(spec), workbookId: process.env[spec.env]?.trim() });
+  return resolveShiftBilling(part, {
+    bridges, readValuation: () => readWorkbook(valuationSpec), readInvoices: () => readWorkbook(invoiceSpec),
+  });
 }
 
 // Snapshots are read through the server identity and use the same scope

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { purchaseRead, purchaseWrite, type WarehouseStock } from '../../lib/purchasing-api';
 import { useAuthStore } from '../../stores/auth-store';
 import PanamaPartsMovements from './PanamaPartsMovements';
+import PanamaReplenishment from './PanamaReplenishment';
 
 type Selection = { key: string; kind: 'Reserva' | 'Liberación' | 'Salida'; reservation?: WarehouseStock['reservations'][number] };
 const cardKey = ({ warehouse, partNumber }: WarehouseStock) => JSON.stringify([warehouse, partNumber]);
@@ -21,6 +22,8 @@ function stockState(item: WarehouseStock) {
 
 export default function PanamaWarehouseStock() {
   const canReceive = useAuthStore(state => state.canReceivePurchases && !state.canApprovePurchases);
+  const canPlan = useAuthStore(state => state.allUnits && (state.role === 'gerencia'
+    || (state.canReceivePurchases && !state.canApprovePurchases)));
   const [items, setItems] = useState<WarehouseStock[]>([]);
   const [unmatched, setUnmatched] = useState(0);
   const [transitScoped, setTransitScoped] = useState(false);
@@ -145,6 +148,8 @@ export default function PanamaWarehouseStock() {
             </div>)}
           </dl>
           {item.review && <p className="text-sm text-critical">{item.review}</p>}
+          {canPlan && item.warehouse && item.available !== null && <PanamaReplenishment
+            partNumber={item.partNumber} warehouse={item.warehouse} measure={item.measure} />}
           {canReceive && !selection && item.warehouse && item.available !== null && Number(item.available) > 0
             && <div className="flex flex-wrap gap-2">
               <button type="button" className={button} onClick={() => start(item, 'Reserva')}>Reservar</button>

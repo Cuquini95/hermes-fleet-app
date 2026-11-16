@@ -57,6 +57,7 @@ function fixtureRows() {
     ]],
     [tabs.history, [['TIMESTAMP','OT_ID','FIELD','OLD_VALUE','NEW_VALUE','CHANGED_BY','ROLE']]],
     [tabs.warranties, [['TIMESTAMP','OT_ID','FIELD','CASE','EVENT','ACTOR','ROLE','ACTOR_ID']]],
+    ['HERMES_PA_ODOMETRO', [['UNIDAD','MEDIDO_EN','KILOMETROS','REFERENCIA','REGISTRADO_EN','AUTOR_ID']]],
     [tabs.schedule, [['ID','FECHA','OT_ID','UNIDAD','MECANICO','HORAS','NOTAS']]],
     [tabs.dvir, [['Fecha','Hora','Unidad','Tipo','Horometro','Operador','Resultado']]],
     [tabs.sticker, [['Fecha','Unidad','Tipo','Estado']]],
@@ -468,6 +469,35 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
     if (withGateway) {
       if (typeof gate.createHermesGateway !== 'function') throw new Error('La versión no exporta createHermesGateway');
       gateway = gate.createHermesGateway({ sheets: sheet, writeEnabled: true, panamaOnly: true, enablePanamaOperations: true, enablePanamaFuelCapture: true,
+        panamaTelematicsConfig: () => ({
+          sources: [{ key: 'qa-telemetry', label: 'Telemática QA', maxAgeHours: 24, units: { DZ203: ['h'], DZ205: ['km'] } }],
+          odometerUnits: ['DZ205'],
+        }),
+        readTelematicsCut: async () => {
+          const capturedAt = new Date(Date.now() - 10_000).toISOString();
+          return { capturedAt, readings: [
+            { project: 'tmf-panama', source: 'qa-telemetry', unit: 'DZ203', measure: 'min', value: 48000,
+              measuredAt: capturedAt, reference: 'QA-C41-H' },
+            { project: 'tmf-panama', source: 'qa-telemetry', unit: 'DZ205', measure: 'mi', value: 100,
+              measuredAt: new Date(Date.now() - 48 * 3_600_000).toISOString(), reference: 'QA-C41-KM' },
+          ] };
+        },
+        readShiftBilling: async record => {
+          const { resolveShiftBilling } = await moduleAt('api/_lib/hermes-panama-shift-billing.js');
+          const bridge = { partId: 'TPA-C4300000000000000001', version: 2, unit: 'EX401', reviewedAt: '2026-11-15T17:00:00Z',
+            periodStart: '2026-11-01', periodEnd: '2026-11-15', reference: 'Cruce aprobado QA', documentLineId: 'DOC-QA-1' };
+          return resolveShiftBilling(record, {
+            bridges: [bridge],
+            readValuation: async () => ({ rows: [
+              ['Código','Fecha inicial','Fecha final','Horas reportadas','Ajuste','Horas a valorizar','Tarifa US$/h','Valor US$','Estado'],
+              ['EX401','01-Nov-26','15-Nov-26','100','-5','95','$45.00','$4,275.00','Listo'],
+            ] }),
+            readInvoices: async () => ({ rows: [
+              ['ID línea','Tipo','Fecha documento','Equipo','Inicio período','Fin período','Documento / factura referencia','Importe base USD','Verificación'],
+              ['DOC-QA-1','Factura','15-Nov-26','EX401','01-Nov-26','15-Nov-26','FAC-QA','$4,275.00','Verificado'],
+            ] }),
+          });
+        },
         readPanama: async spec => {
           const rows = {
             maintenance: [

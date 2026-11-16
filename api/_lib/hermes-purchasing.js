@@ -767,7 +767,91 @@ function reconcileTransit(line, balance, folio, history) {
   if (movements.length !== expected) error(409, 'Hay movimientos de tránsito sin una guía conciliada.');
 }
 
-async function inventoryByWarehouse(sheets, session) {
+function orderDeliveryDate(value) {
+  const date = trim(value);
+  const parts = date.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  const iso = parts ? parts[3] + '-' + parts[2] + '-' + parts[1] : date;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return null;
+  const time = Date.parse(iso);
+  return Number.isFinite(time) && new Date(time).toISOString().slice(0, 10) === iso ? iso : null;
+}
+
+function replenishmentOrders(orders, lines, history, part) {
+  const sku = upper(part.partNumber);
+  const warehouse = upper(part.warehouse);
+  const headers = new Map();
+  for (const { row } of entries(orders)) {
+    const folio = upper(row[0]);
+    if (folio) headers.set(folio, headers.has(folio) ? null : row);
+  }
+  const relevant = entries(lines).filter(({ row }) => upper(row[9]) === sku);
+  const lineCounts = new Map();
+  for (const { row } of relevant) {
+    const key = orderLineKey(row[0], trim(row[6]) || trim(row[1]));
+    lineCounts.set(key, (lineCounts.get(key) ?? 0) + 1);
+  }
+  const openOrders = [], issues = [];
+  for (const { row } of relevant) {
+    const destination = upper(row[LINE_WAREHOUSE]);
+    if (destination && destination !== warehouse) continue;
+    const folio = trim(row[0]);
+    const header = headers.get(upper(folio));
+    const number = readPurchaseNumber(header);
+    const lineId = trim(row[6]) || folio + '-L' + trim(row[1]);
+    const issue = reason => issues.push({ folio, ...(number && { number }), lineId, reason });
+    if (!header) {
+      issue('Cabecera de la OC por conciliar');
+      continue;
+    }
+    const status = trim(header[11]);
+    if (['Borrador', 'Rechazada', 'Eliminada'].includes(status)) continue;
+    if (!trim(header[5]) || !hasRecordedApproval({
+      status, approvedBy: header[13], approvedById: header[17], approvedAt: header[18],
+    })) {
+      issue('Aprobación o estado de la OC por conciliar');
+      continue;
+    }
+    try {
+      if (lineCounts.get(orderLineKey(folio, trim(row[6]) || trim(row[1]))) !== 1) error(409, 'Partida duplicada');
+      const line = ocLine(row);
+      const ordered = decimal(line.quantity, 3, 'ordenado', true);
+      const received = decimal(row[10], 3, 'recibido');
+      const remaining = ordered - received;
+      if (remaining < 0n || (remaining > 0n && ['Recibida', 'Pagada'].includes(status))
+        || (received > 0n && status === 'Aprobada')) error(409, 'Estado y saldo incompatibles');
+      if (remaining === 0n) continue;
+      if (!destination) {
+        issue('Almacén de la partida por confirmar');
+        continue;
+      }
+      const balance = dispatchBalances(line);
+      reconcileTransit(line, balance, folio, history);
+      const receiptIds = new Set();
+      let posted = 0n;
+      for (const receipt of line.receipts) {
+        if (!receipt?.id || receiptIds.has(receipt.id) || !trim(receipt.reference)
+          || !Number.isFinite(Date.parse(receipt.at)) || upper(receipt.warehouse) !== warehouse
+          || receipt.stockDisposition !== 'posted') error(409, 'Recepción por conciliar');
+        const amount = decimal(receipt.quantity, 3, 'recepción', true);
+        const matches = history.filter(move => move[0] === receipt.id && move[2] === 'Recepción' && upper(move[3]) === sku
+          && upper(move[MOVEMENT_WAREHOUSE]) === warehouse && orderLineKey(move[6], move[7]) === orderLineKey(folio, lineId)
+          && decimal(move[4], 3, 'recepción de almacén', true) === amount);
+        if (matches.length !== 1) error(409, 'Recepción sin movimiento único');
+        receiptIds.add(receipt.id);
+        posted += amount;
+      }
+      if (posted !== received) error(409, 'Total recibido por conciliar');
+      const due = orderDeliveryDate(header[14]);
+      if (!due) issue('Fecha de entrega de la OC por confirmar');
+      openOrders.push({ folio, ...(number && { number }), lineId, remaining: quantity(remaining), inTransit: quantity(balance.inTransit), due });
+    } catch {
+      issue('Saldo o movimientos de la partida por conciliar');
+    }
+  }
+  return { openOrders, issues };
+}
+
+async function inventoryByWarehouse(sheets, session, replenishmentQuery) {
   const [catalog, movements, orders, lines, workOrders] = await readTables(sheets,
     PURCHASE_TABS.catalog, PURCHASE_TABS.inventoryMovements, PURCHASE_TABS.orders, PURCHASE_TABS.lines, 'ORDENES_TRABAJO');
   const folios = new Map(entries(workOrders).filter(({ row }) => canUseUnit(session, row[3]) && /^OT-\d{4,15}$/.test(row[25] ?? ''))
@@ -829,7 +913,17 @@ async function inventoryByWarehouse(sheets, session) {
   items.sort((a, b) => a.warehouse.localeCompare(b.warehouse) || a.partNumber.localeCompare(b.partNumber));
   const unmatchedDispatches = new Set([...invalidTransit, ...[...transit].filter(([, amount]) => amount > 0n).map(([key]) => key)]
     .filter(key => !seen.has(key))).size;
-  return { items, unmatchedDispatches, transitScoped: session.allUnits !== true };
+  if (!replenishmentQuery) return { items, unmatchedDispatches, transitScoped: session.allUnits !== true };
+  const partNumber = field(replenishmentQuery.partNumber, 100, 'SKU', true);
+  const warehouse = field(replenishmentQuery.warehouse, 120, 'almacén', true);
+  const unit = requireUnit(session, field(replenishmentQuery.unit, 48, 'unidad', true));
+  const item = items.find(stock => warehouseStockKey(stock.partNumber, stock.warehouse) === warehouseStockKey(partNumber, warehouse));
+  if (!item) error(404, 'El SKU no figura en ese almacén.');
+  assertCompatible(catalogPart(catalog, partNumber, true, warehouse), await sheets.read('01 Inventario'), unit);
+  const { physical, reserved, available, minimum, measure } = item;
+  const cut = timestamp();
+  return { stock: { physical, reserved, available, minimum, measure }, readAt: cut.iso, today: orderDeliveryDate(cut.date),
+    ...replenishmentOrders(orders, lines, history, item) };
 }
 
 async function submitRequest(body, session, sheets, tx) {
@@ -1712,7 +1806,7 @@ async function readWorkOrderCost(sheets, session, identifier, laborValuations) {
 }
 
 const WRITES = new Set(['request-submit', 'request-status', 'order-save', 'order-status', 'order-receive', 'order-dispatch', 'order-invoice', 'order-payment', 'order-delete', 'inventory-move', 'inventory-reservation', 'expense-save', 'expense-delete', 'expense-review']);
-const READS = new Set(['orders', 'order', 'receiving', 'requests', 'expenses', 'inventory-movements', 'inventory-stock', 'expense-options', 'workorder-cost']);
+const READS = new Set(['orders', 'order', 'receiving', 'requests', 'expenses', 'inventory-movements', 'inventory-stock', 'inventory-replenishment', 'expense-options', 'workorder-cost']);
 
 export async function dispatchPurchasing({ path, method, body = {}, query = {}, session, sheets, evidenceStorage, inventoryValuations, laborValuations }) {
   const action = path.replace(/^api\/purchasing\//, '');
@@ -1730,6 +1824,7 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
       : action === 'order-receive' ? (panama ? warehouseAccess : session.role === 'gerencia')
       : ['inventory-move', 'inventory-reservation', 'order-dispatch'].includes(action) ? warehouseAccess
       : ['inventory-movements', 'inventory-stock'].includes(action) ? panama && (warehouseAccess || REQUEST_ROLES.has(session.role))
+      : action === 'inventory-replenishment' ? panama && session.allUnits === true && (warehouseAccess || session.role === 'gerencia')
       : action === 'workorder-cost' ? panama && session.role === 'gerencia'
       : action === 'order-invoice' ? invoiceAccess
       : action === 'order-payment' ? paymentAccess
@@ -1742,6 +1837,7 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
     }
     if (action === 'workorder-cost') return ok(await readWorkOrderCost(sheets, session, query.ot, laborValuations));
     if (action === 'inventory-stock') return ok(await inventoryByWarehouse(sheets, session));
+    if (action === 'inventory-replenishment') return ok(await inventoryByWarehouse(sheets, session, query));
     if (action === 'inventory-movements') {
       const ot = upper(field(query.ot, 90, 'OT'));
       const [movements, workOrders] = await readTables(sheets, PURCHASE_TABS.inventoryMovements, 'ORDENES_TRABAJO');

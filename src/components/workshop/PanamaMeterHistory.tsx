@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { mexicoDateInput, mexicoTimeInput } from '../../lib/date-utils';
+import PanamaUnifiedMeters, { type UnifiedMeters } from './PanamaUnifiedMeters';
 
 interface MeterEntry {
   date: string;
@@ -19,6 +20,7 @@ interface MeterHistory {
     date: string; shift: string; reference: string; start: number; end: number;
   }[] };
   canReplace: boolean;
+  meters?: UnifiedMeters;
 }
 
 const reconciliationLabel = {
@@ -41,13 +43,15 @@ export default function PanamaMeterHistory({ unit, actorId, refresh }: { unit: s
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [revision, setRevision] = useState(0);
+  const [period, setPeriod] = useState('');
   const inFlight = useRef(false);
   const attempt = useRef<{ payload: string; id: string } | null>(null);
   const endpoint = '/hermes-api/api/panama/horometros';
 
   useEffect(() => {
     const abort = new AbortController();
-    void fetch(`${endpoint}?${new URLSearchParams({ unit })}`, { cache: 'no-store', signal: abort.signal })
+    const params = new URLSearchParams({ unit, ...(period && { period }) });
+    void fetch(`${endpoint}?${params}`, { cache: 'no-store', signal: abort.signal })
       .then(async response => {
         const result = await response.json().catch(() => null);
         if (!response.ok || !result) throw new Error(result?.error || 'No se pudo cargar el historial.');
@@ -57,7 +61,7 @@ export default function PanamaMeterHistory({ unit, actorId, refresh }: { unit: s
         if (!abort.signal.aborted) { setData(null); setLoadError(cause instanceof Error ? cause.message : 'No se pudo cargar el historial.'); }
       });
     return () => abort.abort();
-  }, [unit, refresh, revision]);
+  }, [unit, refresh, revision, period]);
 
   async function replace(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -122,6 +126,8 @@ export default function PanamaMeterHistory({ unit, actorId, refresh }: { unit: s
           </ul>
         </details>}
         {data.canReplace && !open && <button type="button" className="min-h-11 rounded-lg border border-border px-3 font-semibold" onClick={() => setOpen(true)}>Registrar cambio de medidor</button>}
+        {data.meters && <PanamaUnifiedMeters data={data.meters} endpoint={endpoint} unit={unit} actorId={actorId}
+          period={period} onPeriod={setPeriod} onSaved={() => setRevision(value => value + 1)} />}
       </>}
       {open && <form onSubmit={replace}>
         <fieldset disabled={saving} className="grid min-w-0 grid-cols-2 gap-2">

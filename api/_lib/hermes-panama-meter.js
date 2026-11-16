@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { HermesSheetError } from './hermes-google-sheets.js';
 import { hasIdentityUnit } from './hermes-identity.js';
 import { officialReading, officialShiftDate } from './hermes-shifts.js';
+import { automaticMeters, manualOdometerReading, meterDate, meterPeriod, numberReading, ODOMETER_TAB,
+  telematicsPolicy, unifiedMeters } from './hermes-panama-telematics.js';
 
 export const METER_TAB = '04B Registro Horómetros';
 const READ = new Set(['operador', 'supervisor', 'gerencia']);
@@ -89,15 +91,65 @@ async function officialFor(readOfficialShifts, unit) {
   }
 }
 
-export async function dispatchPanamaMeter({ method, query, body, session, sheets, readOfficialShifts, mayWrite }) {
+async function distanceFor(sheets, unit) {
+  const source = (await sheets.read(ODOMETER_TAB)).filter(row => unitCode(row[0]) === unit);
+  const readings = source.map(manualOdometerReading);
+  requireValue(readings.every(Boolean), 503, 'Hay lecturas de odómetro pendientes de conciliación.');
+  return readings;
+}
+
+async function appendOdometer({ body, session, sheets, unit, policy, now, mayWrite }) {
+  requireValue(mayWrite && policy.odometer.has(unit), 403, 'Captura de odómetro no habilitada para esta unidad.');
+  requireValue(!body.expectedUserId || body.expectedUserId === session.userId, 403, 'El registro pertenece a otra sesión.');
+  requireValue(typeof body.mutationId === 'string' && UUID.test(body.mutationId), 400, 'Identificador de operación inválido.');
+  const value = numberReading(body.value);
+  const reference = typeof body.reference === 'string' ? body.reference.trim() : '';
+  requireValue(typeof body.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.date)
+    && typeof body.time === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(body.time), 400, 'Indica fecha y hora válidas.');
+  const timestamp = Date.parse(body.date + 'T' + body.time + ':00-05:00');
+  requireValue(Number.isFinite(timestamp) && meterDate(timestamp) === body.date && timestamp <= now,
+    400, 'La fecha y hora de la lectura deben ser válidas y no futuras.');
+  requireValue(Number.isFinite(value) && reference && reference.length <= 160 && !/[\x00-\x1f]/.test(reference),
+    400, 'Indica los kilómetros y una referencia válida del respaldo.');
+  const key = 'panama:meter:odometer:' + session.userId + ':' + body.mutationId.toLowerCase();
+  const fingerprint = hash([unit, timestamp, value, reference]);
+  const previous = await sheets.replay({ key, fingerprint });
+  if (previous) return { status: 200, body: previous };
+  const [readings, inventory] = await Promise.all([distanceFor(sheets, unit), sheets.read('01 Inventario')]);
+  const replayed = await sheets.replay({ key, fingerprint });
+  if (replayed) return { status: 200, body: replayed };
+  requireValue(inventory.slice(3).filter(item => unitCode(item[1]) === unit).length === 1, 404, 'Unidad sin identificación única en el inventario TMF.');
+  requireValue(readings.every(prior => prior.timeOrder !== timestamp
+    && (prior.timeOrder < timestamp ? prior.value <= value : prior.value >= value)),
+  409, 'La lectura no concuerda con el historial de kilómetros. Verifica el odómetro con Supervisión.');
+  const result = { success: true, value, measure: 'km' };
+  const saved = await sheets.commit({ key, fingerprint, guard: 'panama:odometer:' + unit + ':' + readings.length,
+    writes: [{ tab: ODOMETER_TAB, append: [[unit, new Date(timestamp).toISOString(), String(value), reference, new Date(now).toISOString(), session.userId]] }], result });
+  return { status: saved.replayed ? 200 : 201, body: saved.result };
+}
+
+export async function dispatchPanamaMeter({ method, query, body, session, sheets, readOfficialShifts, mayWrite,
+  meterClock = Date.now, readTelematicsCut, telematicsConfig }) {
   requireValue(session.project === 'tmf-panama' && READ.has(session.role), 403, 'Consulta de horómetros no autorizada.');
   requireValue(method === 'GET' || method === 'POST', 405, 'Método no permitido.');
   const unit = unitCode(method === 'GET' ? query?.unit : body?.unit);
   requireValue(/^[A-Z0-9][A-Z0-9 _-]{0,39}$/.test(unit), 400, 'Unidad inválida.');
   requireValue(hasIdentityUnit(session, unit), 403, 'Unidad fuera de tu alcance.');
+  const now = meterClock();
+  const policy = telematicsPolicy(telematicsConfig?.());
+  const distanceConfigured = policy.odometer.has(unit);
+  if (method === 'POST' && body?.action === 'odometer') return appendOdometer({ body, session, sheets, unit, policy, now, mayWrite });
   if (method === 'GET') {
-    const [samples, official] = await Promise.all([unitSamples(sheets, unit), officialFor(readOfficialShifts, unit)]);
-    const history = timeline(samples).reverse().slice(0, 30).map(({ timestamp, offset, ...sample }) => {
+    const period = meterPeriod(query?.period, now);
+    requireValue(period, 400, 'Selecciona un período válido de Panamá.');
+    const [manualHoursResult, official, automatic, manualDistanceResult] = await Promise.all([
+      unitSamples(sheets, unit).then(timeline).then(readings => ({ readings, available: true }), () => ({ readings: [], available: false })),
+      officialFor(readOfficialShifts, unit),
+      automaticMeters(readTelematicsCut, policy.sources, unit, now),
+      distanceConfigured ? distanceFor(sheets, unit).then(readings => ({ readings, available: true }), () => ({ readings: [], available: false }))
+        : { readings: [], available: null },
+    ]);
+    const history = [...manualHoursResult.readings].reverse().slice(0, 30).map(({ timestamp, offset, ...sample }) => {
       const matches = official.shifts.filter(shift => shift.date === sample.date);
       const reading = sample.kind === 'inicio' ? matches[0]?.start : matches[0]?.end;
       const reconciliation = sample.kind === 'cambio' ? null : !official.available ? 'unavailable'
@@ -105,8 +157,11 @@ export async function dispatchPanamaMeter({ method, query, body, session, sheets
       return { ...sample, source: 'Hermes', reconciliation,
         ...(reconciliation === 'match' && { officialReference: matches[0].reference }) };
     });
-    return { status: 200, body: { history, official: { ...official, shifts: official.shifts.slice(0, 10) },
-      canReplace: mayWrite && REPLACE.has(session.role) && samples.length > 0 } };
+    const meters = unifiedMeters({ automatic, manualHours: manualHoursResult.readings, manualDistance: manualDistanceResult.readings,
+      manualHoursAvailable: manualHoursResult.available, manualDistanceAvailable: manualDistanceResult.available,
+      official, period, now, distanceConfigured, canCaptureDistance: mayWrite && distanceConfigured && manualDistanceResult.available });
+    return { status: 200, body: { history, official: { ...official, shifts: official.shifts.slice(0, 10) }, meters,
+      canReplace: mayWrite && REPLACE.has(session.role) && manualHoursResult.readings.length > 0 } };
   }
   requireValue(REPLACE.has(session.role), 403, 'El cambio de medidor debe registrarlo Supervisión o Gerencia.');
   requireValue(typeof body.mutationId === 'string' && UUID.test(body.mutationId), 400, 'Identificador de operación inválido.');

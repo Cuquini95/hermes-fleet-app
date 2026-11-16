@@ -883,3 +883,57 @@ test('cada devolución debita la salida elegida y revierte su valuación origina
   assert.equal(rows.find(item => item.id === second.body.id)?.returnable, '1.001');
   assert.equal(sheets.inspect(TAB.catalog)[1][5], '2.999');
 });
+
+test('C45: concilia una OC abierta por SKU y almacén sin duplicar tránsito ni recepción', async () => {
+  const { sheets, call, readOrder } = setup();
+  seedWarehouseCatalog(sheets);
+  const buyer = { ...manager, project: 'tmf-panama', previewDemo: true };
+  const created = await call('order-save', newOrder({ entity: 'TP_PA_DEMO', unit: 'QA-DZ203', deliveryDate: '2026-12-01',
+    lines: [{ partNumber: 'SKU-QA', description: 'Filtro QA', quantity: '5', unitPrice: '10' }] }), buyer);
+  assert.equal(created.status, 200);
+  const { folio, version } = created.body;
+  assert.equal((await call('order-status', { operationId: randomUUID(), folio, version, status: 'Aprobada', reason: 'QA' }, buyer)).status, 200);
+  const query = { partNumber: 'SKU-QA', unit: 'QA-DZ203', warehouse: 'Patio B' };
+  const read = (params = query, actor = warehouseLead) => call('inventory-replenishment', null, actor, params);
+  const unassigned = await read();
+  assert.equal(unassigned.status, 200);
+  assert.deepEqual(unassigned.body.issues.map(item => item.reason), ['Almacén de la partida por confirmar']);
+  const reserva = { operationId: randomUUID(), kind: 'Reserva', ot: 'OT-QA-01', quantity: '3',
+    warehouse: 'Patio B', partNumber: 'SKU-QA', reference: 'Reserva C45' };
+  assert.equal((await call('inventory-reservation', reserva, warehouseLead)).status, 200);
+  let order = await readOrder(folio, buyer);
+  const lineId = order.lines[0].id;
+  const shipped = await call('order-dispatch', { operationId: randomUUID(), folio, version: order.version, lineId,
+    quantity: '4', warehouse: 'Patio B', reference: 'Guía C45' }, warehouseLead);
+  assert.equal(shipped.status, 200);
+  order = await readOrder(folio, buyer);
+  const received = await call('order-receive', { operationId: randomUUID(), folio, version: order.version, lineId,
+    quantity: '2', reference: 'Remisión C45', dispatchId: shipped.body.dispatchId }, warehouseLead);
+  assert.equal(received.status, 200);
+  const response = await read();
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.stock, { physical: '12', reserved: '3', available: '9', minimum: '2', measure: 'pza' });
+  assert.deepEqual(response.body.openOrders, [{ folio, lineId, remaining: '3', inTransit: '2', due: '2026-12-01' }]);
+  assert.deepEqual(response.body.issues, []);
+  const other = await read({ ...query, warehouse: 'Patio A' });
+  assert.deepEqual(other.body.openOrders, []);
+  assert.deepEqual(other.body.issues, []);
+  const restricted = { ...warehouseLead, allUnits: false, assignedUnits: ['QA-DZ203'] };
+  assert.equal((await read(query, restricted)).status, 403);
+  assert.equal((await read(query, { ...buyer, project: 'mx' })).status, 403);
+  assert.equal((await read(query, { ...buyer, role: 'supervisor', canApprovePurchases: false })).status, 403);
+  assert.equal((await read({ ...query, warehouse: 'Inexistente' })).status, 404);
+  assert.equal((await read({ ...query, unit: 'QA-EX401' })).status, 409);
+
+  const headers = sheets.inspect(TAB.orders);
+  headers.find(row => row[0] === folio)[14] = '';
+  sheets.seed(TAB.orders, headers);
+  const undated = await read();
+  assert.equal(undated.body.openOrders[0].due, null);
+  assert.deepEqual(undated.body.issues.map(item => item.reason), ['Fecha de entrega de la OC por confirmar']);
+  const movements = sheets.inspect(TAB.inventoryMovements);
+  sheets.seed(TAB.inventoryMovements, movements.filter(row => row[2] !== 'Despacho'));
+  const mismatch = await read();
+  assert.deepEqual(mismatch.body.openOrders, []);
+  assert.deepEqual(mismatch.body.issues.map(item => item.reason), ['Saldo o movimientos de la partida por conciliar']);
+});

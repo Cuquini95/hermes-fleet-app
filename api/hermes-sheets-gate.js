@@ -5,10 +5,11 @@ import { checkEvidenceAvailability, dispatchEvidence } from './_lib/hermes-evide
 import { panamaOperationalStore } from './_lib/hermes-operational-store.js';
 import { rejectIfRateLimited } from './_lib/rate-limit.js';
 import meterHandler from './_lib/cmms-meter.js';
-import { dispatchPanama, PANAMA_PROJECT, readOfficialPanamaShifts, readPanamaForPmScheduling } from './_lib/hermes-panama.js';
+import { dispatchPanama, PANAMA_PROJECT, readOfficialPanamaShifts, readOfficialPanamaShiftBilling, readPanamaForPmScheduling } from './_lib/hermes-panama.js';
 import { createPanamaDemoSheets } from './_lib/hermes-panama-demo.js';
 import { technicalDocuments } from './_lib/hermes-technical-library.js';
 import { dispatchPanamaMeter, METER_TAB, validatePanamaMeterAppend } from './_lib/hermes-panama-meter.js';
+import { readPanamaTelematicsCut } from './_lib/hermes-panama-telematics.js';
 import { readPersonalHistory } from './_lib/hermes-profile.js';
 import { visiblePanamaParts } from './_lib/hermes-part-prices.js';
 import { COMPONENT_INTERVENTION } from './_lib/hermes-panama-components.js';
@@ -232,6 +233,10 @@ export function createHermesGateway({
   dispatchPurchasing = purchasing,
   readPanama,
   readOfficialShifts,
+  readShiftBilling,
+  readTelematicsCut = readPanamaTelematicsCut,
+  panamaTelematicsConfig = () => process.env.HERMES_PANAMA_TELEMATICS_SOURCES_JSON,
+  meterClock,
   probeEvidence = checkEvidenceAvailability,
   panamaTechnicalCatalog = () => process.env.HERMES_PANAMA_TECHNICAL_CATALOG_JSON,
   panamaOnly = false,
@@ -372,13 +377,14 @@ export function createHermesGateway({
       if (meterRoute) {
         const result = await dispatchPanamaMeter({ method: req.method, query: req.query, body: req.body, session, sheets,
           readOfficialShifts: demo ? undefined : readOfficialShifts,
+          readTelematicsCut: demo ? undefined : readTelematicsCut, telematicsConfig: demo ? undefined : panamaTelematicsConfig, meterClock,
           mayWrite: writeEnabled && !pausedOperations.has(path) && (!permittedGroups || permittedGroups.has('horometro')) });
         return res.status(result.status).json(result.body);
       }
       if (shiftRoute) {
-        const result = await shifts({ path, method: req.method, body: req.body ?? {}, session, sheets,
+        const result = await shifts({ path, method: req.method, body: req.body ?? {}, query: req.query, session, sheets,
           listShiftOperators: dispatchCapture ? listShiftOperators : undefined,
-          readOfficialShifts: demo ? undefined : readOfficialShifts });
+          readOfficialShifts: demo ? undefined : readOfficialShifts, readShiftBilling: demo ? undefined : readShiftBilling });
         if (path === 'api/panama/turnos/despacho' && req.method === 'GET') {
           return res.status(result.status).json({ ...result.body, captureAvailable: dispatchCapture });
         }
@@ -426,6 +432,7 @@ export default createHermesGateway({
   panamaOnly: true,
   enablePanamaOperations: true,
   readOfficialShifts: readOfficialPanamaShifts,
+  readShiftBilling: readOfficialPanamaShiftBilling,
   panamaWriteGroups: productionGroups,
   enablePanamaFuelCapture: process.env.HERMES_PANAMA_FUEL_CAPTURE !== 'false',
   writeEnabled: live && !readOnly,
