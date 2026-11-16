@@ -47,6 +47,16 @@ body {
   flex-direction: column;
 }
 
+@media (max-width: 639px) and (pointer: coarse) {
+  .app-shell[data-keyboard-open] [data-mobile-toolbar] {
+    visibility: hidden;
+  }
+
+  .app-shell :is(input, textarea, select) {
+    scroll-margin-block: 80px 1rem;
+  }
+}
+
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }

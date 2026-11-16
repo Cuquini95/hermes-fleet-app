@@ -5,6 +5,8 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 import { firstAccount, fixturePassword, loadAccounts, photoPng, roles, tabs } from './fixture.mjs';
+import { checkMobileRoleHomes } from './mobile-role-home-cases.mjs';
+import { checkShiftRegister } from './shift-register-browser.mjs';
 
 const roleMenus = {
   operador: ['Reportar', '/falla'], mecanico: ['Órdenes', '/workorders'],
@@ -68,9 +70,11 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await page.goto(`${origin}/login`, { waitUntil: 'domcontentloaded' });
       await page.getByLabel('Correo de trabajo').fill(account.user.email);
       await page.getByLabel('Contraseña', { exact: true }).fill(fixturePassword);
-      const login = page.waitForResponse(response => response.url() === `${origin}/api/auth/login` && response.request().method() === 'POST');
-      await clickByName(page, 'Ingresar');
-      assert.equal((await login).status(), 200, `El inicio de sesión de ${role} devolvió un error`);
+      const [login] = await Promise.all([
+        page.waitForResponse(response => response.url() === `${origin}/api/auth/login` && response.request().method() === 'POST'),
+        clickByName(page, 'Ingresar'),
+      ]);
+      assert.equal(login.status(), 200, `El inicio de sesión de ${role} devolvió un error`);
       await page.waitForURL(origin + roles[role], { waitUntil: 'domcontentloaded' });
       await visible(page.getByRole('navigation', { name: 'Navegación principal' }));
       const consent = page.getByRole('button', { name: 'Aceptar y continuar', exact: true });
@@ -399,6 +403,8 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       });
       return { folio, hours: 8, scopes: ['operador', 'supervisor'], officialReconciliation: 'pendiente' };
     });
+
+    await record('MÓVIL-TURNOS-CONCILIACIÓN-REGISTRO', () => checkShiftRegister({ fixture, inRole, noHorizontalOverflow, shot }));
 
     await record('MÓVIL-VALORIZACIÓN-TMF-A-FACTURA', async () => {
       const tab = 'HERMES_PA_TURNOS';
@@ -770,11 +776,12 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         assert.deepEqual(await evidence.body(), photoPng);
         await changeOrderStatus(page, 'Completado', pmMobileFolio);
         await visible(page.getByText(/Aceptación técnica de /));
+        await visible(page.getByRole('group', { name: 'Próximo servicio PM' }).getByText('Próximo servicio sin verificar', { exact: true }));
         await shot(page, 'pm-aceptado-390.png');
       });
       const history = sheet.read(tabs.pmHistory).find(row => row[1] === pmMobileFolio);
       assert.deepEqual([history?.[6], history?.[10]], ['1975', 'Completada']);
-      return { folio: pmMobileFolio, meter: history[6], synchronized: true, requiredTaskPhoto: true };
+      return { folio: pmMobileFolio, meter: history[6], synchronized: true, requiredTaskPhoto: true, unknownNextServiceVisible: true };
     });
 
     await record('MÓVIL-TALLER-CIERRE-ENTRE-ROLES', async () => {
@@ -2009,6 +2016,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await noHorizontalOverflow(page, 390);
       return { period: 'mes anterior', priorExpense: 116.29, artifact, excludesCurrentMonth: true };
     }));
+    await checkMobileRoleHomes({ fixture, record, inRole, shot });
     return [...external];
   } finally { await browser.close(); }
 }

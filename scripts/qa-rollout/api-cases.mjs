@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { exerciseConcurrentRoles, latencies } from './concurrency-cases.mjs';
 import { firstAccount, fixturePassword, loadAccounts, nonApprovingManager, photoPng, tabs } from './fixture.mjs';
 
 export function requester(origin) {
@@ -52,36 +53,43 @@ export async function checkLoad(fixture, record, withGateway) {
     const ordersExpected = ['coordinador', 'gerencia', 'jefe_taller', 'mecanico', 'supervisor'];
     let orderReads = 0;
     let inconsistentOrders = 0;
-    const cohort = count === 28 ? loadAccounts.slice(-28) : loadAccounts;
-    const attempts = await Promise.allSettled(cohort.map(async account => {
-      const start = performance.now();
-      const cookie = await loginAs(request, account);
-      const session = good(await request('/api/auth/session', { cookie }), 'Restaurar sesión');
-      assert.equal(session.userId, account.user.id);
-      assert.equal(session.role, account.membership.role);
-      if (withGateway) {
-        const fleet = good(await request('/hermes-api/api/sheets/read?tab=01%20Inventario', { cookie }), 'Primera consulta de inventario');
-        assert(Array.isArray(fleet.data) && fleet.data.some(row => row.includes('DZ203')), 'El inventario de prueba no llegó a la sesión');
-        if (!session.allUnits) assert(!fleet.data.some(row => row.includes('EX410')), 'Se mostró una unidad de prueba fuera del alcance');
-        if (ordersExpected.includes(session.role)) {
-          const orders = async () => good(await workshop(request, cookie)('orders'), 'Consulta concurrente de órdenes')
-            .orders.map(row => row[1]).sort();
-          const [first, second] = await Promise.all([orders(), orders()]);
-          orderReads += 2;
-          if (new Set(first).size !== first.length || JSON.stringify(first) !== JSON.stringify(second)) inconsistentOrders++;
+    const cohort = fixture.registerLoadAccounts(count);
+    try {
+      const attempts = await Promise.allSettled(cohort.map(async account => {
+        const start = performance.now();
+        const cookie = await loginAs(request, account);
+        const session = good(await request('/api/auth/session', { cookie }), 'Restaurar sesión');
+        assert.equal(session.userId, account.user.id);
+        assert.equal(session.role, account.membership.role);
+        if (withGateway) {
+          const fleet = good(await request('/hermes-api/api/sheets/read?tab=01%20Inventario', { cookie }), 'Primera consulta de inventario');
+          assert(Array.isArray(fleet.data) && fleet.data.some(row => row.includes('DZ203')), 'El inventario de prueba no llegó a la sesión');
+          if (!session.allUnits) assert(!fleet.data.some(row => row.includes('EX410')), 'Se mostró una unidad de prueba fuera del alcance');
+          if (ordersExpected.includes(session.role)) {
+            const orders = async () => good(await workshop(request, cookie)('orders'), 'Consulta concurrente de órdenes')
+              .orders.map(row => row[1]).sort();
+            const [first, second] = await Promise.all([orders(), orders()]);
+            orderReads += 2;
+            if (new Set(first).size !== first.length || JSON.stringify(first) !== JSON.stringify(second)) inconsistentOrders++;
+          }
         }
-      }
-      durations.push(performance.now() - start);
-      return session.userId;
-    }));
-    const errors = attempts.filter(outcome => outcome.status === 'rejected');
-    assert.equal(errors.length, 0, `${errors.length}/${count} sesiones fallaron: ${errors[0]?.reason?.message ?? ''}`);
-    assert.equal(inconsistentOrders, 0, 'Los folios deben permanecer estables entre lecturas concurrentes');
-    const actors = attempts.flatMap(outcome => outcome.status === 'fulfilled' ? [outcome.value] : []);
-    assert.equal(new Set(actors).size, count);
-    const sorted = durations.toSorted((a, b) => a - b);
-    return { sessions: actors.length, synthetic: true, firstInventory: withGateway, orderReads, inconsistentOrders, errors: errors.length,
-      p50Ms: Math.round(sorted[Math.ceil(count * .50) - 1]), p95Ms: Math.round(sorted[Math.ceil(count * .95) - 1]), maxMs: Math.round(sorted.at(-1)) };
+        durations.push(performance.now() - start);
+        return { ...session, cookie, account };
+      }));
+      const errors = attempts.filter(outcome => outcome.status === 'rejected');
+      assert.equal(errors.length, 0, `${errors.length}/${count} sesiones fallaron: ${errors[0]?.reason?.message ?? ''}`);
+      assert.equal(inconsistentOrders, 0, 'Los folios deben permanecer estables entre lecturas concurrentes');
+      const actors = attempts.flatMap(outcome => outcome.status === 'fulfilled' ? [outcome.value] : []);
+      assert.equal(new Set(actors.map(actor => actor.userId)).size, count);
+      const sheets = fixture.operationalSheets ?? fixture.sheet;
+      return { sessions: actors.length, synthetic: true, syntheticSessions: actors.length, realSessions: 0,
+        dependencies: { identity: 'fixture HTTPS loopback', gateway: withGateway ? 'Hermes real' : 'sin gateway',
+          operations: withGateway ? sheets.nativeOperations ? 'Postgres PGlite en memoria' : 'registro sintético en memoria' : 'sin escrituras',
+          externalNetwork: 'bloqueada' },
+        firstInventory: withGateway, orderReads, inconsistentOrders, errors: errors.length, peakIdentityRequests: fixture.peakLogins(),
+        ...latencies(durations),
+        ...(withGateway && { operations: await exerciseConcurrentRoles(fixture, request, actors) }) };
+    } finally { fixture.releaseLoadAccounts(cohort); }
   });
 }
 

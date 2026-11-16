@@ -4,6 +4,7 @@ import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { SkeletonList } from '../components/ui/Skeleton';
 import PanamaPmBatch from '../components/workshop/PanamaPmBatch';
+import PanamaPmNextService from '../components/workshop/PanamaPmNextService';
 import { PANAMA_PM_MASTER_URL, PANAMA_PM_REGISTER_URL, fetchPanamaMaintenance, type MaintenanceEntry, type PanamaMaintenance } from '../lib/panama-maintenance';
 import LegacyPMSchedulePage from './LegacyPMSchedulePage';
 
@@ -117,6 +118,7 @@ function PanamaPMSchedule({ userId, canSchedule }: { userId?: string; canSchedul
                   <Link to={`/workorders/${encodeURIComponent(row.folio)}`} className="font-semibold underline">{row.folio}</Link>
                   <span> · {row.unit} · {row.level} · {meter(row.meter)} · {row.performedOn}</span>
                   <p className="text-text-secondary">{row.reference} · Revisión: {row.reviewer || 'Responsable identificado'}</p>
+                  <PanamaPmNextService service={row.nextService} />
                 </li>)}
               </ul>}
         </section>

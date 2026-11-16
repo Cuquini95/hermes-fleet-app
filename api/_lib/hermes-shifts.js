@@ -182,11 +182,16 @@ export function officialShiftDate(value) {
 }
 
 const shiftKey = ({ unit, date, shift }) => JSON.stringify([canonical(unit), date, canonical(shift)]);
-export const officialReading = value => /^\d[\d,]*(?:\.\d+)?$/.test(String(value).trim()) ? Number(String(value).replaceAll(',', '')) : NaN;
+export const officialReading = value => /^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$/.test(String(value).trim())
+  ? Number(String(value).replaceAll(',', '')) : NaN;
+const roundedHours = value => Number(value.toFixed(3)) || 0;
+const sourceTime = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : undefined;
 
 function reconcileAccepted(records, official) {
-  const { records: shiftRows, capturedAt } = Array.isArray(official) ? { records: official } : official;
-  const cut = capturedAt ? { officialCut: capturedAt } : {};
+  const { records: shiftRows, capturedAt, readAt } = Array.isArray(official) ? { records: official } : official;
+  const officialCut = sourceTime(capturedAt);
+  const officialReadAt = sourceTime(readAt);
+  const source = officialCut ? { officialCut } : officialReadAt ? { officialReadAt } : {};
   const byShift = new Map();
   for (const row of shiftRows) {
     const key = shiftKey({ ...row, date: officialShiftDate(row.date) });
@@ -197,12 +202,32 @@ function reconcileAccepted(records, official) {
   return records.map(record => {
     if (record.status !== ACCEPTED) return record;
     const matches = byShift.get(shiftKey(record)) ?? [];
-    if (!matches.length) return capturedAt ? { ...record, ...cut, officialStatus: 'Sin coincidencia en el corte de REGISTRO' } : record;
-    if (matches.length > 1) return { ...record, ...cut, officialStatus: 'Duplicado en REGISTRO. Requiere revisión.' };
+    if (!matches.length) {
+      if (!officialCut && !officialReadAt) return record;
+      return { ...record, ...source, officialStatus: officialCut ? 'Sin coincidencia en el corte de REGISTRO' : 'Sin coincidencia en REGISTRO' };
+    }
+    if (matches.length > 1) return { ...record, ...source, officialStatus: 'Duplicado en REGISTRO. Requiere revisión.' };
     const [match] = matches;
-    const readingsMatch = officialReading(match.start) === record.initialHours && officialReading(match.end) === record.finalHours;
-    return { ...record, ...cut, officialReference: match.id, officialStatus: readingsMatch
-      ? (capturedAt ? 'Coincide con el corte de REGISTRO' : 'Lecturas conciliadas con REGISTRO')
+    const initial = officialReading(match.start);
+    const final = officialReading(match.end);
+    const reference = { ...record, ...source, officialReference: match.id };
+    if (![record.initialHours, record.finalHours, record.hours].every(Number.isFinite)) {
+      return { ...reference, officialStatus: 'Lecturas del parte inválidas. Requiere revisión.' };
+    }
+    if (!Number.isFinite(initial) || !Number.isFinite(final) || final < initial || roundedHours(final - initial) > 24) {
+      return { ...reference, officialStatus: 'Lecturas inválidas en REGISTRO. Requiere revisión.' };
+    }
+    const initialHours = roundedHours(initial);
+    const finalHours = roundedHours(final);
+    const hours = roundedHours(finalHours - initialHours);
+    const differences = {
+      initialHours: roundedHours(initialHours - record.initialHours),
+      finalHours: roundedHours(finalHours - record.finalHours),
+      hours: roundedHours(hours - record.hours),
+    };
+    return { ...reference, officialComparison: { initialHours, finalHours, hours, differences },
+      officialStatus: differences.initialHours === 0 && differences.finalHours === 0 && differences.hours === 0
+      ? (officialCut ? 'Coincide con el corte de REGISTRO' : 'Lecturas conciliadas con REGISTRO')
       : 'Lecturas distintas en REGISTRO. Requiere revisión.' };
   });
 }

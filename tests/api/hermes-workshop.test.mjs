@@ -591,6 +591,62 @@ test('el PM requiere el checklist de su modelo, horómetro y aceptación indepen
   assert.equal(history[14], supervisor.userId);
 });
 
+test('el cierre PM conserva la regla del próximo servicio y coteja el vencimiento por unidad y nivel', async () => {
+  const snapshots = { maintenance: '2026-11-15T11:00:00Z', maintenancePlan: '2026-11-15T11:00:00Z',
+    maintenanceAnchor: '2026-11-15T11:00:00Z' };
+  for (const [expected, reason, unavailableSection] of [
+    ['verified'], ['projected'], ['mismatch'], ['unavailable', 'source'],
+    ['unavailable', 'source', 'maintenancePlan'], ['unavailable', 'source', 'maintenanceAnchor'],
+    ['unavailable', 'plan'], ['unavailable', 'anchor'], ['unavailable', 'rule'],
+  ]) {
+    let atClose = false;
+    const setup = fixture([{ model: 'Cat 745', level: 'PM-250', reference: 'QA Cat 745 rev. 4', tasks: [{ id: 'oil', label: 'Lubricación' }] }], {
+      readPmSources: async () => {
+        if (atClose && reason === 'source' && !unavailableSection) throw new Error('Corte sin respuesta');
+        const sections = {
+          maintenance: [{ unit: 'CA20', next: atClose ? 'PM-500' : 'PM-250', due: !atClose ? '4,000' : expected === 'mismatch' ? '4,270' : '4,260',
+            hours: '4,010', reading: 'Actualizada', status: 'Al día',
+            last: atClose && expected !== 'projected' ? 'PM 250 a 4,010.0 h' : 'PM 500 a 3,760 h' }],
+          maintenancePlan: atClose && reason === 'plan' ? []
+            : [{ unit: 'CA20', active: 'Sí', approved: 'Sí', cycle: '250', level2: atClose && reason === 'rule' ? '480' : '500', level3: '1000' }],
+          maintenanceAnchor: atClose && reason === 'anchor' ? [] : [{ unit: 'CA20', anchor: '3,760' }],
+        };
+        if (atClose && unavailableSection) sections[unavailableSection] = null;
+        return { snapshots, sections };
+      },
+    });
+    const { request, sheets } = setup;
+    const { status, body: { otId } } = await request('pm', workshop, {
+      mutationId: randomUUID(), unit: 'CA20', level: 'PM-250', includedLevels: 'PM-250', hours: 2,
+      mechanicId: mechanic.userId, scheduledDate: '2026-11-15', parts: '', notes: '',
+    });
+    assert.equal(status, 201);
+    await transition(request, mechanic, otId, 'En Reparación');
+    assert.equal((await transition(request, mechanic, otId, 'Resuelta', {
+      ...executionProof, performedOn: '2026-11-15', meter: '4010', completedItems: ['oil'],
+    })).status, 200);
+    atClose = true;
+    assert.equal((await transition(request, supervisor, otId, 'Completado')).status, 200);
+    const [history] = await sheets.read('05 Historial PM');
+    const [scheduled] = await sheets.read('Ordenes Mantenimiento');
+    assert.deepEqual([history[6], history[10], history[13], history[17]], ['4010', 'Completada', '2026-11-15', 'QA Cat 745 rev. 4']);
+    const next = JSON.parse(history[18]);
+    assert.deepEqual(JSON.parse(scheduled[19]), next);
+    assert.equal(next.status, expected);
+    if (reason) assert.equal(next.reason, reason);
+    else {
+      assert.deepEqual([next.level, next.dueAt, next.cycle, next.anchor, next.planCut], ['PM-500', 4260, 250, 3760, snapshots.maintenancePlan]);
+      assert.deepEqual(next.intervals, [250, 500, 1000]);
+      if (expected === 'verified' || expected === 'mismatch') {
+        assert.deepEqual(next.official, { level: 'PM-500', dueAt: expected === 'verified' ? 4260 : 4270, cut: snapshots.maintenance });
+      } else assert.equal(next.official, undefined);
+    }
+    const detail = await request('pmchecklist', mechanic, undefined, { otId });
+    assert.deepEqual(detail.body.nextService, next);
+    assert.equal((await request('pmchecklist', secondMechanic, undefined, { otId })).status, 403);
+  }
+});
+
 test('un PM sin checklist autorizado puede programarse pero conserva explícitamente el bloqueo de entrega', async () => {
   const { request } = fixture();
   const { body: { otId } } = await request('pm', workshop, {

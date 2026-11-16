@@ -31,12 +31,14 @@ export default function MechanicPage() {
   return (
     <div className="flex flex-col">
       {/* Sub-tab navigation */}
-      <div className="flex gap-2 overflow-x-auto pb-1 pt-2 scrollbar-none">
+      <nav aria-label="Secciones de Taller" className="flex flex-wrap gap-2 pb-1 pt-2">
         {TABS.map((tab) => (
           <button
             key={tab.id}
+            type="button"
             onClick={() => setActiveTab(tab.id)}
-            className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+            aria-pressed={activeTab === tab.id}
+            className={`min-h-11 rounded-full px-3 py-2 text-sm font-medium transition-colors ${
               activeTab === tab.id
                 ? 'bg-amber text-white'
                 : 'bg-white text-text-secondary border border-border hover:border-amber'
@@ -45,7 +47,7 @@ export default function MechanicPage() {
             {tab.label}
           </button>
         ))}
-      </div>
+      </nav>
 
       {/* Tab content */}
       {activeTab === 'inicio' && <MechanicHome />}

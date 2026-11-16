@@ -70,7 +70,8 @@ const PANAMA_OPERATION_GROUPS = new Map([
     'api/purchasing/order-status', 'api/purchasing/order-delete']],
   ['recepcion', ['api/purchasing/order-receive', 'api/purchasing/order-dispatch', 'api/purchasing/inventory-move', 'api/purchasing/inventory-reservation']],
   ['finanzas', ['api/purchasing/order-invoice', 'api/purchasing/order-payment']],
-  ['gastos', ['api/purchasing/expense-save', 'api/purchasing/expense-delete', 'api/purchasing/expense-review']],
+  ['gastos', ['api/purchasing/expense-save', 'api/purchasing/expense-delete', 'api/purchasing/expense-review',
+    'api/purchasing/expense-adjustment-propose', 'api/purchasing/expense-adjustment-review']],
   ['horometro', [`api/sheets/append:${METER_TAB}`, 'api/panama/horometros']],
   ['combustible', ['api/sheets/append:Combustible']],
   ['fletes', ['api/sheets/append:Reporte_Fletes_Transporte']],
@@ -86,6 +87,8 @@ const relatedPause = new Map([
   ['api/workshop/pmbatch', 'api/workshop/pm'], ['api/workshop/pmbatchcheck', 'api/workshop/pm'],
   ['api/purchasing/inventory-reservation', 'api/purchasing/inventory-move'],
   ['api/purchasing/order-dispatch', 'api/purchasing/order-receive'],
+  ['api/purchasing/expense-adjustment-propose', 'api/purchasing/expense-save'],
+  ['api/purchasing/expense-adjustment-review', 'api/purchasing/expense-review'],
 ]);
 const liveGroups = 'taller,inspecciones,pm,turnos,compras,recepcion,finanzas,gastos,horometro,combustible,fletes,llantas,proveedores,activos';
 

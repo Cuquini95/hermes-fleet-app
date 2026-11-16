@@ -22,6 +22,8 @@ import PmTriggerList from '../components/workshop/PmTriggerList';
 import PanamaWorkOrderCost from '../components/workshop/PanamaWorkOrderCost';
 import OrderWarranties from '../components/workshop/OrderWarranties';
 import OrderComponentInterventions from '../components/workshop/ComponentInterventions';
+import PanamaPmNextService from '../components/workshop/PanamaPmNextService';
+import { parsePanamaPmNextService } from '../lib/panama-pm-next-service.js';
 
 const FIELD_LABELS: Record<StatusLogEntry['field'], string> = {
   estado: 'Estado',
@@ -130,7 +132,7 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
   const [meter, setMeter] = useState('');
   const [completedItems, setCompletedItems] = useState<string[]>([]);
   const [taskPhotos, setTaskPhotos] = useState<Record<string, File>>({});
-  const [pmState, setPmState] = useState<{ otId: string; definition?: PMChecklistDefinition; error?: string }>();
+  const [pmState, setPmState] = useState<{ otId: string; acceptedAt?: string; definition?: PMChecklistDefinition; error?: string }>();
   const uploadAttempt = useRef<{ actorId: string; otId: string; operationId: string; urls: Map<File, string> } | null>(null);
   const pmUpload = useRef<{ key: string; operationId: string; urls: Map<string, string> } | null>(null);
   const submitting = useRef(false);
@@ -147,15 +149,16 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
   const equipment = useEquipmentById(wo?.unidad ?? '');
   const panamaWorkflow = project === 'tmf-panama';
   const isPM = wo?.tipo_averia === 'PM';
+  const acceptedAt = wo?.technical?.acceptedAt;
 
   useEffect(() => {
     if (!otId || !isPM || !panamaWorkflow) return;
     let active = true;
     requestWorkshop<PMChecklistDefinition>(`pmchecklist?otId=${encodeURIComponent(otId)}`)
-      .then((definition) => { if (active) setPmState({ otId, definition }); })
-      .catch((err: unknown) => { if (active) setPmState({ otId, error: err instanceof Error ? err.message : 'Checklist no disponible' }); });
+      .then((definition) => { if (active) setPmState({ otId, acceptedAt, definition }); })
+      .catch((err: unknown) => { if (active) setPmState({ otId, acceptedAt, error: err instanceof Error ? err.message : 'Checklist no disponible' }); });
     return () => { active = false; };
-  }, [otId, isPM, panamaWorkflow, actorId]);
+  }, [otId, isPM, panamaWorkflow, actorId, acceptedAt]);
 
   useEffect(() => {
     if (!canEditField(role, 'mecanico_asignado')) return;
@@ -478,6 +481,14 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
           {wo.execution.laborHours != null && <p className="mt-1 text-sm text-text-secondary">{wo.execution.laborHours} h de trabajo registradas</p>}
           {wo.execution.performedOn && <p className="mt-1 text-sm text-text-secondary">Ejecución {wo.execution.performedOn} · {wo.execution.meter} h</p>}
           {wo.technical && <p className="mt-1 text-sm text-text-secondary">Aceptación técnica de {wo.technical.userName}.</p>}
+          {isPM && wo.estado === 'Completado' && wo.technical && (
+            <div className="mt-3 border-t border-border pt-3" role="group" aria-label="Próximo servicio PM">
+              {pmState?.otId !== otId || pmState?.acceptedAt !== acceptedAt
+                ? <p className="text-sm text-text-secondary">Consultando próximo servicio…</p>
+                : pmError ? <p className="text-sm text-amber-800">No se pudo consultar el próximo servicio registrado.</p>
+                  : <PanamaPmNextService service={parsePanamaPmNextService(pm?.nextService)} />}
+            </div>
+          )}
         </section>
       )}
 
@@ -518,7 +529,7 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
                   type="button"
                   disabled={editEstado === wo.estado || !!saving || (isSubmittingProof && !proofReady)}
                   onClick={() => handleSave('estado', editEstado)}
-                  className="px-4 py-2 bg-amber text-white rounded-xl text-sm font-medium disabled:opacity-40"
+                  className="min-h-11 px-4 py-2 bg-amber text-white rounded-xl text-sm font-medium disabled:opacity-40"
                 >
                   {saving === 'estado' ? '...' : 'Guardar'}
                 </button>

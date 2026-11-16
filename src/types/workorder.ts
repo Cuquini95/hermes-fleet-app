@@ -1,3 +1,5 @@
+import type { PanamaPmNextService } from '../lib/panama-pm-next-service.js';
+
 export type OTPriority = 'CRITICA' | 'ALTA' | 'MEDIA' | 'BAJA';
 export type OTEstado = 'Abierta' | 'En Espera de Asignación' | 'En Reparación' | 'Esperando Pieza' | 'Resuelta' | 'Completado';
 
@@ -43,6 +45,7 @@ export interface PMChecklistDefinition {
   initialMeter: string;
   dueAt?: number;
   checklist: PMChecklist | null;
+  nextService?: PanamaPmNextService;
   triggers?: PMTrigger[];
 }
 

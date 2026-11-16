@@ -5,6 +5,7 @@ import { orderWriteGuard } from './hermes-workshop.js';
 import { HermesSheetError } from './hermes-google-sheets.js';
 import { readPurchaseNumber } from './hermes-operational-store.js';
 import { panamaPartCompatibility, visiblePanamaParts } from './hermes-part-prices.js';
+import { EXPENSE_ADJUSTMENTS_TAB, projectExpenseAdjustments } from './hermes-panama-expense-adjustments.js';
 
 export const PURCHASE_TABS = Object.freeze({
   orders: 'Órdenes de Compra',
@@ -1591,6 +1592,73 @@ async function saveExpense(body, session, sheets, tx, evidenceStorage) {
   ], { folio, ids: rows.map((row) => row[0]) });
 }
 
+async function expenseAdjustment(action, params, session, sheets, tx) {
+  const expenseId = field(params.id, 100, 'gasto', true);
+  const [expenses, history] = await readTables(sheets, PURCHASE_TABS.expenses, EXPENSE_ADJUSTMENTS_TAB);
+  const matches = entries(expenses).filter(({ row }) => trim(row[0]) === expenseId);
+  if (!matches.length) error(404, 'Gasto no encontrado.');
+  if (matches.length !== 1) error(409, 'El folio de gasto requiere conciliación.');
+  const [{ row }] = matches;
+  const unit = requireUnit(session, field(row[10], 48, 'unidad del gasto', true));
+  if (tx) {
+    const saved = await tx.replay();
+    if (saved !== null) return ok(saved);
+  }
+  const cutoff = closedExpensePeriod();
+  const period = expenseMonth(row[24] || row[1]);
+  if (!cutoff || !/^\d{4}-(?:0[1-9]|1[0-2])$/.test(period) || period > cutoff) {
+    error(409, 'Contabilidad debe confirmar el cierre de este período.');
+  }
+  const currency = row[22];
+  if (row[16] !== 'Aprobado' || !trim(row[21]) || !['USD', 'PAB'].includes(currency) || !trim(row[18])) {
+    error(409, 'El ajuste requiere un gasto aprobado con entidad, moneda y autor conciliados.');
+  }
+  let originalAmount;
+  try {
+    const subtotal = decimal(row[7], 2, 'subtotal');
+    const tax = decimal(row[8], 2, 'impuesto');
+    const total = decimal(row[9], 2, 'importe original', true);
+    if (subtotal + tax !== total) throw new Error();
+    originalAmount = money(total);
+  } catch {
+    error(409, 'El importe original requiere conciliación.');
+  }
+  const scope = projectExpenseAdjustments(history, expenseId, originalAmount, row);
+  if (!scope) error(409, 'El original y la bitácora del ajuste requieren conciliación.');
+  const { items, pending, effectiveAmount, originalVersion, version } = scope;
+  const canPropose = row[18] === session.userId && !pending;
+  const canReview = pending !== null && canReviewPanamaExpense(session)
+    && pending.authorId !== session.userId && row[18] !== session.userId;
+  if (!tx) return ok({ expenseId, unit, period, currency, originalAmount, effectiveAmount, items, version, canPropose, canReview });
+
+  checkVersion(params, scope);
+  const actor = { id: session.userId, name: session.userName };
+  const at = timestamp().iso;
+  let id, event, kind, status;
+  if (action === 'expense-adjustment-propose') {
+    if (row[18] !== session.userId) error(403, 'Solo quien capturó este gasto puede proponer un ajuste.');
+    if (pending) error(409, 'Revisa el ajuste pendiente antes de registrar otro.');
+    const newAmount = money(decimal(params.amount, 2, 'importe ajustado'));
+    if (newAmount === effectiveAmount) error(400, 'El importe nuevo debe ser distinto del importe anterior.');
+    const reason = field(params.reason, 350, 'motivo del ajuste', true);
+    id = 'AJG-' + hash(tx.key).slice(0, 18).toUpperCase();
+    kind = 'propose';
+    status = 'Pendiente';
+    event = { originalVersion, actor, at, previousAmount: effectiveAmount, newAmount, reason };
+  } else {
+    id = field(params.adjustmentId, 40, 'ajuste', true);
+    if (!pending || pending.id !== id) error(409, 'El ajuste ya no está pendiente de revisión.');
+    if (!canReview) error(403, 'El ajuste requiere una revisión independiente de Contabilidad.');
+    status = params.status;
+    if (!['Aprobado', 'Rechazado'].includes(status)) error(400, 'Indica el resultado de la revisión.');
+    const reason = field(params.reason, 350, 'motivo de revisión', status === 'Rechazado');
+    kind = 'review';
+    event = { originalVersion, actor, at, status, reason };
+  }
+  return tx.commit([append(EXPENSE_ADJUSTMENTS_TAB, [[expenseId, id, kind, JSON.stringify(event)]])],
+    { adjustmentId: id, status }, ['gst-adjustment:' + version]);
+}
+
 function parseHttpsUrl(value) {
   try {
     const url = new URL(value);
@@ -1805,8 +1873,8 @@ async function readWorkOrderCost(sheets, session, identifier, laborValuations) {
     })) };
 }
 
-const WRITES = new Set(['request-submit', 'request-status', 'order-save', 'order-status', 'order-receive', 'order-dispatch', 'order-invoice', 'order-payment', 'order-delete', 'inventory-move', 'inventory-reservation', 'expense-save', 'expense-delete', 'expense-review']);
-const READS = new Set(['orders', 'order', 'receiving', 'requests', 'expenses', 'inventory-movements', 'inventory-stock', 'inventory-replenishment', 'expense-options', 'workorder-cost']);
+const WRITES = new Set(['request-submit', 'request-status', 'order-save', 'order-status', 'order-receive', 'order-dispatch', 'order-invoice', 'order-payment', 'order-delete', 'inventory-move', 'inventory-reservation', 'expense-save', 'expense-delete', 'expense-review', 'expense-adjustment-propose', 'expense-adjustment-review']);
+const READS = new Set(['orders', 'order', 'receiving', 'requests', 'expenses', 'inventory-movements', 'inventory-stock', 'inventory-replenishment', 'expense-options', 'workorder-cost', 'expense-adjustments']);
 
 export async function dispatchPurchasing({ path, method, body = {}, query = {}, session, sheets, evidenceStorage, inventoryValuations, laborValuations }) {
   const action = path.replace(/^api\/purchasing\//, '');
@@ -1831,6 +1899,8 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
       : action === 'requests' ? REQUEST_ROLES.has(session.role)
       : action === 'request-submit' ? session.role === 'jefe_taller'
       : action === 'expense-review' ? panama && canReviewPanamaExpense(session)
+      : action === 'expense-adjustment-review' ? panama && !session.previewDemo && canReviewPanamaExpense(session)
+      : ['expense-adjustments', 'expense-adjustment-propose'].includes(action) ? panama && !session.previewDemo && EXPENSE_ROLES.has(session.role)
       : action === 'expenses' || action.startsWith('expense-') ? EXPENSE_ROLES.has(session.role) : session.role === 'gerencia';
     if (!roleAllowed || (action === 'order-status' && session.canApprovePurchases !== true)) {
       error(403, 'Tu cuenta no tiene permiso para realizar esta acción.');
@@ -1886,6 +1956,7 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
       return ok({ items: items.map(item => ({ ...item, ocNumber: numbers.get(item.ocFolio) })) });
     }
     if (action === 'expense-options') return ok(expenseOptions(session));
+    if (action === 'expense-adjustments') return await expenseAdjustment(action, query, session, sheets);
     if (action === 'expenses') {
       const rows = entries(await sheets.read(PURCHASE_TABS.expenses));
       return ok({ rows: rows.filter(({ row }) => trim(row[0]) && canUseUnit(session, row[10])).map(({ row }) => row), ...expenseOptions(session) });
@@ -1926,6 +1997,9 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
     if (panama && ['order-receive', 'order-dispatch'].includes(action)) return await changeOrder(action, body, session, sheets, tx);
     if (action === 'inventory-move') return await moveInventory(body, session, sheets, tx, inventoryValuations);
     if (action === 'inventory-reservation') return await reserveInventory(body, session, sheets, tx);
+    if (['expense-adjustment-propose', 'expense-adjustment-review'].includes(action)) {
+      return await expenseAdjustment(action, body, session, sheets, tx);
+    }
     const previous = await tx.replay();
     if (previous !== null) return ok(previous);
     if (action === 'request-submit') return await submitRequest(body, session, sheets, tx);

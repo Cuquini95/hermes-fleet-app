@@ -7,6 +7,7 @@ import { panamaWorkshopDate, panamaWorkshopFailureOrder, reconcilePanamaWorkshop
 import { HermesSheetError, PANAMA_READINESS_TAB } from './hermes-google-sheets.js';
 import { isEvidenceError, verifyEvidence } from './hermes-evidence.js';
 import { evaluatePmTriggers, pmLevelKey } from './hermes-pm-triggers.js';
+import { nextPmAtAcceptance } from './hermes-panama-pm-next-service.js';
 import { buildPanamaDowntime, downtimeInstant, downtimeShiftStarts, downtimeWindow, isReportedStop } from './hermes-panama-downtime.js';
 import { COMPONENT_INTERVENTION, canonicalComponent, componentActions, componentCatalog, componentHourTicks,
   componentInterventionHistory, componentPositionKey, overlappingPositions } from './hermes-panama-components.js';
@@ -429,13 +430,16 @@ async function pmAcceptanceWrites(context, order, execution) {
     return { tab, statusCol, evidenceCol, row: linked.index };
   }));
   const pm = await pmDefinition(context, order);
-  const details = [execution.performedOn, context.session.userId, context.session.userName, context.now, pm.checklist.reference];
-  return targets.flatMap(({ tab, statusCol, evidenceCol, row }) => {
+  const nextService = await nextPmAtAcceptance(context.readPmSources, unit, pm.level, execution.meter);
+  const details = [execution.performedOn, context.session.userId, context.session.userName, context.now, pm.checklist.reference, JSON.stringify(nextService)];
+  const writes = targets.flatMap(({ tab, statusCol, evidenceCol, row }) => {
     const isSchedule = tab === TAB.schedule;
     const writes = [{ tab, row, col: statusCol, values: [isSchedule ? 'Completado' : 'Completada'] }];
     if (!isSchedule) writes.push({ tab, row, col: 6, values: [execution.meter] }, { tab, row, col: evidenceCol, values: details });
     return writes;
   });
+  writes.push({ tab: TAB.orders, row: order.index, col: WORKFLOW.pm, values: [JSON.stringify({ ...pm, nextService })] });
+  return writes;
 }
 
 async function transition(context) {

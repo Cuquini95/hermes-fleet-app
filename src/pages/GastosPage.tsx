@@ -22,6 +22,7 @@ import { useAuthStore } from '../stores/auth-store';
 import { useGastosStore, verifiedExpense } from '../stores/gastos-store';
 import type { GastoCompra, GastoTipo, VerifiedExpense } from '../stores/gastos-store';
 import MonthSelector from '../components/MonthSelector';
+import ExpenseAdjustments from '../components/ExpenseAdjustments';
 import { generateGastosPDF, type GastoReportData } from '../lib/gastos-pdf';
 import { downloadBlob } from '../lib/download-blob';
 import { isPrivateEvidenceUrl } from '../lib/evidence-link';
@@ -201,6 +202,7 @@ export default function GastosPage() {
   const role = useAuthStore((s) => s.role);
   const userName = useAuthStore((s) => s.userName);
   const userId = useAuthStore((s) => s.userId);
+  const adjustmentsAvailable = useAuthStore((s) => s.project === 'tmf-panama' && !s.previewDemo);
   const { gastos, loading, error, fetched, canReview, closedThrough, fetchGastos, deleteGasto, reviewGasto } = useGastosStore();
   const [reportGroup, setReportGroup] = useState('');
   const [review, setReview] = useState<{ gasto: GastoCompra; status: 'Aprobado' | 'Rechazado' } | null>(null);
@@ -580,14 +582,17 @@ export default function GastosPage() {
             <div className="text-center py-10 text-sm text-text-secondary">Sin gastos este mes</div>
           )}
           {monthly.slice().reverse().map((g) => (
-            <GastoRow
-              key={g.gasto_id}
-              gasto={g}
-              canDelete={canCreate && !periodClosed && g.status === 'Pendiente' && g.authorId === userId}
-              canReview={canReview && !periodClosed && g.status === 'Pendiente' && !!g.authorId && g.authorId !== userId}
-              onReview={(status) => { setReason(''); setReview({ gasto: g, status }); }}
-              onDelete={() => { void handleDelete(g); }}
-            />
+            <div className="space-y-2" key={g.gasto_id}>
+              <GastoRow
+                gasto={g}
+                canDelete={canCreate && !periodClosed && g.status === 'Pendiente' && g.authorId === userId}
+                canReview={canReview && !periodClosed && g.status === 'Pendiente' && !!g.authorId && g.authorId !== userId}
+                onReview={(status) => { setReason(''); setReview({ gasto: g, status }); }}
+                onDelete={() => { void handleDelete(g); }}
+              />
+              {adjustmentsAvailable && closedThrough && viewedPeriod <= closedThrough && g.status === 'Aprobado'
+                && g.authorId && verifiedExpense(g) && <ExpenseAdjustments expenseId={g.gasto_id} />}
+            </div>
           ))}
         </div>
       )}

@@ -280,12 +280,34 @@ async function loopbackCertificate() {
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
 
-export async function startFixture({ repoDirectory, distDirectory, listenPort = 0, withGateway = true }) {
+export async function startFixture({ repoDirectory, distDirectory, listenPort = 0, withGateway = true, createOperationalSheets }) {
   const sheet = makeSheetsFixture();
+  let officialShiftCut = { capturedAt: '2026-11-13T04:00:00Z', records: [
+    { unit: 'DZ203', id: 'REG-QA-HOROMETRO', date: '12-Nov-2026', shift: 'Día', start: '390', end: '397' },
+  ] };
   const directory = [...accounts, account(101, 'operador', 'otro-proyecto-qa'), nonApprovingManager];
   const identities = new Map(directory.map(item => [item.user.email, item]));
   const memberships = new Map(directory.map(item => [item.user.id, item.membership]));
   const sessions = new Map();
+  // Dedicated load accounts keep the web scenarios' login quotas untouched.
+  function registerLoadAccounts(count) {
+    return accounts.slice(-count).map((original, index) => {
+      const actor = account(1000 + count * 100 + index, original.membership.role);
+      for (const key of ['can_approve_purchases', 'can_receive_purchases', 'can_record_purchase_invoices',
+        'can_record_purchase_payments', 'can_review_panama_hse']) actor.membership[key] = original.membership[key];
+      identities.set(actor.user.email, actor);
+      memberships.set(actor.user.id, actor.membership);
+      return actor;
+    });
+  }
+  function releaseLoadAccounts(actors) {
+    const ids = new Set(actors.map(actor => actor.user.id));
+    for (const actor of actors) {
+      identities.delete(actor.user.email);
+      memberships.delete(actor.user.id);
+    }
+    for (const [hash, session] of sessions) if (ids.has(session.user_id)) sessions.delete(hash);
+  }
   const photos = new Map();
   const evidence = new Map();
   const alerts = [];
@@ -465,10 +487,11 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
       withGateway ? moduleAt('api/hermes-sheets-gate.js') : null,
       withGateway ? moduleAt('api/parts/import.js') : null,
     ]);
+    const operationalSheets = withGateway && createOperationalSheets ? await createOperationalSheets(sheet) : sheet;
     auth = { '/api/auth/login': login.default, '/api/auth/session': validate.default, '/api/auth/logout': logout.default };
     if (withGateway) {
       if (typeof gate.createHermesGateway !== 'function') throw new Error('La versión no exporta createHermesGateway');
-      gateway = gate.createHermesGateway({ sheets: sheet, writeEnabled: true, panamaOnly: true, enablePanamaOperations: true, enablePanamaFuelCapture: true,
+      gateway = gate.createHermesGateway({ sheets: operationalSheets, writeEnabled: true, panamaOnly: true, enablePanamaOperations: true, enablePanamaFuelCapture: true,
         panamaTelematicsConfig: () => ({
           sources: [{ key: 'qa-telemetry', label: 'Telemática QA', maxAgeHours: 24, units: { DZ203: ['h'], DZ205: ['km'] } }],
           odometerUnits: ['DZ205'],
@@ -515,9 +538,7 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
           const values = [columns.map(([, name]) => name), ...row.map(item => columns.map(([property]) => item[property] ?? ''))];
           return spec.key.startsWith('maintenance') ? values : { rows: values, captured_at: '2026-11-13T04:00:00Z' };
         },
-        readOfficialShifts: async () => ({ capturedAt: '2026-11-13T04:00:00Z', records: [
-          { unit: 'DZ203', id: 'REG-QA-HOROMETRO', date: '12-Nov-2026', shift: 'Día', start: '390', end: '397' },
-        ] }),
+        readOfficialShifts: async () => clone(officialShiftCut),
       });
       if (typeof parts.createPartsHandler === 'function') auth['/api/parts/import'] = parts.createPartsHandler({
         readRows: sheet.readRange, readFleet: () => sheet.read(tabs.fleet), panama: true,
@@ -525,7 +546,13 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
       });
     }
     return {
-      origin, repoDirectory, sheet, photos, alerts, errors, outboundBlocked, stop, peakLogins: () => peakLogins,
+      origin, repoDirectory, sheet, operationalSheets, photos, alerts, errors, outboundBlocked, stop, peakLogins: () => peakLogins,
+      registerLoadAccounts, releaseLoadAccounts,
+      setOfficialShiftCut(cut) {
+        const previous = officialShiftCut;
+        officialShiftCut = clone(cut);
+        return () => { officialShiftCut = previous; };
+      },
       buildEnv: { VITE_HERMES_API_URL: '/hermes-api', VITE_SENTRY_DSN: '' },
     };
   } catch (error) {

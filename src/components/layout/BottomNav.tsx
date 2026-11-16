@@ -39,6 +39,7 @@ export default function BottomNav() {
     <>
       <nav
         aria-label="Navegación principal"
+        data-mobile-toolbar
         className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around px-2 pb-safe"
         style={{ height: 64, backgroundColor: '#162252' }}
       >

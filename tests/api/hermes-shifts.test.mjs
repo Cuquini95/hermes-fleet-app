@@ -221,6 +221,90 @@ test('accepted shifts reconcile with the official TMF day and meter readings wit
   assert.match((await next()).officialStatus, /no disponible/);
 });
 
+test('Operador y Supervisión consultan los mismos tres folios y sus diferencias con el corte de REGISTRO', async () => {
+  const capturedAt = '2026-11-14T02:30:00.000Z';
+  const { request, tabs } = isolatedGateway(async () => ({ capturedAt, records: [
+    { id: 'REG-12-D', unit: 'EX401', date: '12-Nov-2026', shift: '  dia  ', start: '5,520.000', end: '5,528.000' },
+    { id: 'REG-13-D', unit: 'EX401', date: '13-Nov-2026', shift: 'Día', start: '5,530.025', end: '5,538.325' },
+    { id: 'REG-14-OTRA-UNIDAD', unit: 'EX405', date: '14-Nov-2026', shift: 'Día', start: '5540', end: '5548' },
+  ] }));
+  const parts = [
+    input(),
+    input({ date: '2026-11-13', initialHours: '5530', finalHours: '5538' }),
+    input({ date: '2026-11-14', initialHours: '5540', finalHours: '5548' }),
+  ];
+  const folios = [];
+  for (const part of parts) {
+    const { status, body: { record } } = await request('entregar', operator, part);
+    assert.equal(status, 201);
+    const accepted = await request('revisar', supervisor,
+      { mutationId: randomUUID(), id: record.id, version: record.version, action: 'accept' });
+    assert.equal(accepted.status, 200);
+    folios.push(record.id);
+  }
+  const operatorParts = (await request('', operator)).body.records;
+  const supervisorParts = (await request('', supervisor)).body.records;
+  assert.deepEqual(operatorParts, supervisorParts);
+  assert.deepEqual((await request('', account('operador', 'other'))).body.records, []);
+  const [match, mismatch, unmatched] = folios.map(id => operatorParts.find(part => part.id === id));
+  assert.deepEqual([match.officialCut, mismatch.officialCut, unmatched.officialCut], [capturedAt, capturedAt, capturedAt]);
+  assert.deepEqual([match.hours, mismatch.hours, unmatched.hours], [8, 8, 8]);
+  assert.equal(match.officialReference, 'REG-12-D');
+  assert.deepEqual(match.officialComparison, {
+    initialHours: 5520, finalHours: 5528, hours: 8, differences: { initialHours: 0, finalHours: 0, hours: 0 },
+  });
+  assert.equal(mismatch.officialReference, 'REG-13-D');
+  assert.deepEqual(mismatch.officialComparison, {
+    initialHours: 5530.025, finalHours: 5538.325, hours: 8.3,
+    differences: { initialHours: 0.025, finalHours: 0.325, hours: 0.3 },
+  });
+  assert.match(unmatched.officialStatus, /Sin coincidencia/);
+  assert.equal(unmatched.officialReference, undefined);
+  assert.equal(unmatched.officialComparison, undefined);
+  assert.equal(tabs.get('HERMES_PA_TURNOS').length, 6);
+});
+
+test('el relevo diferencia hora de consulta de un corte publicado y descarta lecturas inválidas', async () => {
+  const readAt = '2026-11-14T02:30:00.000Z';
+  let rows = [{ id: 'REG-D', unit: 'EX401', date: '12-Nov-2026', shift: 'Día', start: '5,52,0', end: '5528' }];
+  const { request } = isolatedGateway(async () => ({ readAt, records: rows }));
+  const { body: { record } } = await request('entregar', operator, input());
+  assert.equal((await request('revisar', supervisor, {
+    mutationId: randomUUID(), id: record.id, version: record.version, action: 'accept',
+  })).status, 200);
+  const read = async () => (await request('', operator)).body.records[0];
+  const invalid = await read();
+  assert.match(invalid.officialStatus, /Lecturas inválidas/);
+  assert.equal(invalid.officialComparison, undefined);
+  assert.equal(invalid.officialCut, undefined);
+  assert.equal(invalid.officialReadAt, readAt);
+
+  rows = [{ ...rows[0], start: '5521', end: '5529' }];
+  const sameHours = await read();
+  assert.match(sameHours.officialStatus, /Lecturas distintas/);
+  assert.deepEqual(sameHours.officialComparison.differences, { initialHours: 1, finalHours: 1, hours: 0 });
+
+  rows = [];
+  const missing = await read();
+  assert.match(missing.officialStatus, /Sin coincidencia/);
+  assert.equal(missing.officialReadAt, readAt);
+});
+
+test('un parte histórico con las mismas lecturas pero otro total conserva su diferencia', async () => {
+  const { request, tabs } = isolatedGateway(async () => ({
+    capturedAt: '2026-11-14T02:30:00.000Z',
+    records: [{ id: 'REG-D', unit: 'EX401', date: '12-Nov-2026', shift: 'Día', start: '5520', end: '5528' }],
+  }));
+  const { body: { record } } = await request('entregar', operator, input());
+  assert.equal((await request('revisar', supervisor, {
+    mutationId: randomUUID(), id: record.id, version: record.version, action: 'accept',
+  })).status, 200);
+  tabs.get('HERMES_PA_TURNOS').at(-1)[8] = '7.5';
+  const part = (await request('', operator)).body.records[0];
+  assert.deepEqual(part.officialComparison.differences, { initialHours: 0, finalHours: 0, hours: 0.5 });
+  assert.match(part.officialStatus, /Lecturas distintas/);
+});
+
 
 test('despacho exige estado operativo conocido aunque la unidad exista en el maestro', async () => {
   const { request, tabs } = isolatedGateway();

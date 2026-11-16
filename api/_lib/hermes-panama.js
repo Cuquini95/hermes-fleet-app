@@ -55,10 +55,15 @@ async function getRows(spec) {
 }
 
 const cachedRows = new Map();
+const shiftReadTimes = new WeakMap();
 function readSource(spec) {
   const previous = cachedRows.get(spec.key);
   if (previous && Date.now() < previous.expiresAt) return previous.promise;
-  const entry = { expiresAt: Date.now() + 30000, promise: getRows(spec) };
+  const promise = getRows(spec);
+  const entry = { expiresAt: Date.now() + 30000, promise: spec.key === 'shifts' ? promise.then(rows => {
+    shiftReadTimes.set(rows, new Date().toISOString());
+    return rows;
+  }) : promise };
   cachedRows.set(spec.key, entry);
   entry.promise.catch(() => { if (cachedRows.get(spec.key) === entry) cachedRows.delete(spec.key); });
   return entry.promise;
@@ -70,6 +75,7 @@ export async function readOfficialPanamaShifts() {
   return {
     records: visibleRecords(rowsOf(source), { ...spec, limit: undefined }, { allUnits: true }),
     capturedAt: source.captured_at,
+    readAt: shiftReadTimes.get(source),
   };
 }
 

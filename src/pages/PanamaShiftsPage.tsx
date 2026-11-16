@@ -10,10 +10,12 @@ import { useAuthStore } from '../stores/auth-store';
 type ShiftFields = Record<'unit' | 'date' | 'shift' | 'initialHours' | 'finalHours' | 'equipmentStatus' | 'support' | 'trips' | 'tonnes' | 'stops' | 'client', string>;
 type Actor = { id: string; name: string };
 type ShiftAction = 'deliver' | 'correct' | 'accept' | 'return';
-type ShiftPart = Omit<ShiftFields, 'initialHours' | 'finalHours' | 'trips' | 'tonnes'> & {
-  id: string; version: number; hours: number; initialHours: number; finalHours: number; trips: number; tonnes: number;
+type ShiftHours = { initialHours: number; finalHours: number; hours: number };
+type ShiftPart = Omit<ShiftFields, 'initialHours' | 'finalHours' | 'trips' | 'tonnes'> & ShiftHours & {
+  id: string; version: number; trips: number; tonnes: number;
   status: 'Pendiente de revisión' | 'Aceptado por Supervisión' | 'Devuelto';
-  officialStatus: string; officialReference?: string; officialCut?: string;
+  officialStatus: string; officialReference?: string; officialCut?: string; officialReadAt?: string;
+  officialComparison?: ShiftHours & { differences: ShiftHours };
   createdBy: Actor; createdAt: string; reviewedBy: Actor | null; reviewedAt: string | null; comment: string;
   history: { action: ShiftAction; actor: Actor; at: string; comment: string }[];
 };
@@ -28,7 +30,47 @@ const labelClass = 'flex min-w-0 flex-col gap-1 text-sm font-semibold';
 const buttonClass = 'inline-flex min-h-11 items-center justify-center rounded-lg border border-slate-400 bg-white px-4 py-2 text-sm font-semibold text-[#162252] disabled:opacity-50';
 const primaryClass = 'inline-flex min-h-11 items-center justify-center rounded-lg bg-[#162252] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50';
 const localTime = new Intl.DateTimeFormat('es-PA', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Panama' });
+const cutTime = new Intl.DateTimeFormat('es', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Panama' });
+const hourNumber = new Intl.NumberFormat('es-PA', { maximumFractionDigits: 3 });
+const hourDifference = new Intl.NumberFormat('es-PA', { maximumFractionDigits: 3, signDisplay: 'exceptZero' });
 const actionLabels: Record<ShiftAction, string> = { deliver: 'Entregó', correct: 'Corrigió', accept: 'Aceptó', return: 'Devolvió' };
+
+function ShiftRegisterComparison({ part }: { part: ShiftPart }) {
+  const official = part.officialComparison;
+  const provenance = part.officialCut
+    ? { label: 'Corte de REGISTRO', at: part.officialCut }
+    : part.officialReadAt ? { label: 'Consulta de REGISTRO', at: part.officialReadAt } : null;
+  return (
+    <section aria-label="Conciliación con REGISTRO" className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+      <h4 className="font-semibold">Conciliación con REGISTRO</h4>
+      <p className="break-words font-semibold text-amber-900">{part.officialStatus}{part.officialReference && ` · ${part.officialReference}`}</p>
+      {provenance && <p className="text-xs text-slate-700">
+        {provenance.label} · <time dateTime={provenance.at}>{cutTime.format(new Date(provenance.at))}</time> · Panamá
+      </p>}
+      <dl className="grid gap-2 text-slate-700 sm:grid-cols-3">
+        <div className="min-w-0">
+          <dt className="font-semibold">Parte aceptado en Hermes</dt>
+          <dd>{hourNumber.format(part.hours)} h del turno</dd>
+          <dd className="break-words text-xs">Horómetro {hourNumber.format(part.initialHours)} → {hourNumber.format(part.finalHours)} h</dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="font-semibold">REGISTRO TMF</dt>
+          {official ? <>
+            <dd>{hourNumber.format(official.hours)} h del turno en REGISTRO</dd>
+            <dd className="break-words text-xs">Horómetro {hourNumber.format(official.initialHours)} → {hourNumber.format(official.finalHours)} h</dd>
+          </> : <dd>Horas no disponibles</dd>}
+        </div>
+        <div className="min-w-0">
+          <dt className="font-semibold">Diferencia (REGISTRO menos Hermes)</dt>
+          {official ? <>
+            <dd>{hourDifference.format(official.differences.hours)} h de diferencia</dd>
+            <dd className="break-words text-xs">Inicial {hourDifference.format(official.differences.initialHours)} h · Final {hourDifference.format(official.differences.finalHours)} h</dd>
+          </> : <dd>Pendiente de conciliación</dd>}
+        </div>
+      </dl>
+    </section>
+  );
+}
 
 function emptyFields(): ShiftFields {
   return { unit: '', date: mexicoDateInput(), shift: '', initialHours: '', finalHours: '', equipmentStatus: '',
@@ -231,6 +273,7 @@ function ShiftQueue({ userId }: { userId: string }) {
       } else {
         setReturnPart(undefined);
         setComment('');
+        if (record.status === 'Aceptado por Supervisión') refresh();
       }
     } catch (cause) {
       if (cause instanceof ShiftRequestError && cause.status < 500 && ![408, 429].includes(cause.status)) {
@@ -334,7 +377,8 @@ function ShiftQueue({ userId }: { userId: string }) {
             <article key={record.id} className="min-w-0 space-y-2 rounded-xl border border-slate-200 bg-white p-4">
               <h3 className="font-bold text-[#162252]">{record.unit} · {record.date} · {record.shift}</h3>
               <p className="break-words text-sm font-semibold">{record.id} · {record.status}</p>
-              <p className="text-sm text-slate-700">{record.initialHours} → {record.finalHours} h · {record.hours} h del turno · {record.trips} viajes · {record.tonnes} t</p>
+              <p className="text-sm text-slate-700">{record.status !== 'Aceptado por Supervisión'
+                && `${record.initialHours} → ${record.finalHours} h · ${record.hours} h del turno · `}{record.trips} viajes · {record.tonnes} t</p>
               <dl className="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-2">
                 <div><dt className="font-semibold">Estado del equipo</dt><dd className="break-words">{record.equipmentStatus}</dd></div>
                 <div><dt className="font-semibold">Cliente</dt><dd className="break-words">{record.client}</dd></div>
@@ -343,8 +387,7 @@ function ShiftQueue({ userId }: { userId: string }) {
               </dl>
               <p className="text-sm text-slate-700">Entregó {record.createdBy.name} · {localTime.format(new Date(record.createdAt))}</p>
               {record.reviewedBy && record.reviewedAt && <p className="break-words text-sm text-slate-700">Revisó {record.reviewedBy.name} · {localTime.format(new Date(record.reviewedAt))}{record.comment ? ` · ${record.comment}` : ''}</p>}
-              <p className="break-words text-sm font-semibold text-amber-900">{record.officialStatus}{record.officialReference && ` · ${record.officialReference}`}</p>
-              {record.officialCut && <p className="text-xs text-slate-600">Corte de REGISTRO {localTime.format(new Date(record.officialCut))}</p>}
+              {record.status === 'Aceptado por Supervisión' && <ShiftRegisterComparison part={record} />}
               {(role === 'gerencia' || role === 'coordinador') && record.status === 'Aceptado por Supervisión' && record.reviewedAt && record.reviewedBy && (
                 <button type="button" className={buttonClass} onClick={() => downloadBlob(
                   new Blob([shiftHandoffCsv(record)], { type: 'text/csv;charset=utf-8' }),

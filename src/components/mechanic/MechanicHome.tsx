@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Wrench, Package, BookOpen, MessageCircle } from 'lucide-react';
 import { useWorkOrderStore } from '../../stores/workorder-store';
 import KPICard from '../ui/KPICard';
@@ -18,6 +18,7 @@ export default function MechanicHome() {
 
   return (
     <div className="flex flex-col py-4">
+      <h1 className="mb-3 text-xl font-bold text-text">Hoy en Taller</h1>
       {/* KPI strip */}
       <div className="flex gap-3 mb-2">
         <KPICard
@@ -40,11 +41,10 @@ export default function MechanicHome() {
         <div className="text-center py-8 text-text-secondary text-sm">Cargando…</div>
       ) : activeOTs.length > 0 ? (
         activeOTs.map((ot) => (
-          <OTCard
-            key={ot.ot_id}
-            workorder={ot}
-            onClick={() => navigate(`/workorders/${ot.ot_id}`)}
-          />
+          <Link key={ot.ot_id} to={`/workorders/${encodeURIComponent(ot.ot_id)}`}
+            className="block rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy">
+            <OTCard workorder={ot} />
+          </Link>
         ))
       ) : (
         <div className="bg-green-50 border border-success rounded-lg p-4 text-center">

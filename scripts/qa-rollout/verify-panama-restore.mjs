@@ -2,16 +2,24 @@
 // Run with an installed PGlite 0.5.16: HERMES_PGLITE_ENTRY=/absolute/path/to/dist/index.js node scripts/qa-rollout/verify-panama-restore.mjs
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { execFileSync } from 'node:child_process';
+import { readFile, readdir } from 'node:fs/promises';
+import { isAbsolute, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dispatchWorkshop } from '../../api/_lib/hermes-workshop.js';
+import { dispatchEvidence } from '../../api/_lib/hermes-evidence.js';
 import { createPanamaOperationalStore } from '../../api/_lib/hermes-operational-store.js';
 import { dispatchPurchasing, PURCHASE_TABS } from '../../api/_lib/hermes-purchasing.js';
+import * as alertDelivery from '../../api/_lib/hermes-panama-alert-delivery.js';
+import { exerciseAlertDelivery } from './alert-delivery-case.mjs';
 
 const entry = process.env.HERMES_PGLITE_ENTRY;
 if (!entry || !isAbsolute(entry)) throw new Error('Indica la ruta absoluta de PGlite en HERMES_PGLITE_ENTRY.');
 const { PGlite } = await import(pathToFileURL(entry).href);
+const previousRepo = process.env.HERMES_QA_PREVIOUS_REPO;
+if (previousRepo && !isAbsolute(previousRepo)) throw new Error('Indica la ruta absoluta del checkout anterior.');
+const repo = fileURLToPath(new URL('../../', import.meta.url));
+const gitHead = cwd => execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).trim();
 const db = new PGlite();
 let restored;
 const migration = async file => db.exec(await readFile(new URL(`../../supabase/migrations/${file}`, import.meta.url), 'utf8'));
@@ -21,11 +29,14 @@ const lines = 'OC_Lineas';
 const warrantyTab = 'HERMES_PA_GARANTIAS';
 const odometerTab = 'HERMES_PA_ODOMETRO';
 const operatorId = '00000000-0000-4000-8000-000000000001';
+const qaExpenseEnv = { HERMES_PANAMA_EXPENSE_CLOSED_THROUGH: '2026-10', HERMES_PANAMA_EXPENSE_REVIEWER_IDS: operatorId };
+const savedEnv = Object.fromEntries(Object.keys(qaExpenseEnv).map(key => [key, process.env[key]]));
 const evidenceId = '1'.repeat(64);
 const attachment = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2n2IAAAAASUVORK5CYII=', 'base64');
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const ot = id => ['', id, '2026-11-14', 'QA-DZ203', '', '', '', '', '', 'Abierta', `/hermes-api/api/evidence?id=${evidenceId}`];
-const oc = (id, state) => Object.assign(Array(14).fill(''), { 0: id, 1: '2026-11-14', 5: 'QA-DZ203', 11: state, 13: 'Gerencia QA' });
+const oc = (id, state) => Object.assign(Array(19).fill(''), { 0: id, 1: '2026-11-14', 5: 'QA-DZ203', 11: state,
+  13: 'Gerencia QA', 17: operatorId, 18: '2026-11-14T16:00:00Z' });
 
 async function rows(connection, table) {
   return (await connection.query('select rows from public.hermes_panama_operational_tables where name=$1', [table])).rows[0].rows;
@@ -38,8 +49,8 @@ async function save(connection, key, changes, outcome) {
   return response.rows[0].saved;
 }
 
-function storeOnMemoryDatabase(connection, units) {
-  return createPanamaOperationalStore({
+function storeOnMemoryDatabase(connection, units, createStore = createPanamaOperationalStore) {
+  return createStore({
     readInventory: async () => units.map((unit, index) => ['', unit, '', 'QA', String(index + 1)]),
     request: async (path, { query, body }) => {
       if (path.endsWith('/hermes_panama_operational_tables')) {
@@ -128,6 +139,136 @@ async function verifyWarehouseReserve(connection) {
   return { simultaneous: 2, reserved: '3', available: '1', replayed: true };
 }
 
+async function candidateAddedMigrations() {
+  if (!previousRepo) return [];
+  const old = new Set(await readdir(resolve(previousRepo, 'supabase/migrations')));
+  const now = await readdir(resolve(repo, 'supabase/migrations'));
+  const added = now.filter(name => /^\d{14}_.+\.sql$/.test(name) && !old.has(name)).sort();
+  for (const name of added) await migration(name);
+  return added;
+}
+
+async function checkPrivateAttachment(download, connection, sheets, session, archive) {
+  const res = {
+    headers: new Map(),
+    setHeader(key, value) { this.headers.set(key, value); },
+    status(code) { this.code = code; return this; },
+    send(bytes) { this.bytes = bytes; return this; },
+    json(payload) { this.payload = payload; return this; },
+  };
+  await download({
+    req: { method: 'GET', query: { id: archive.id }, headers: { 'sec-fetch-site': 'same-origin' } },
+    res, session, sheets,
+    storage: {
+      async find(id) {
+        const { rows: stored } = await connection.query('select * from public.hermes_panama_evidence where id=$1', [id]);
+        return stored[0];
+      },
+      async read() { return Buffer.from(archive.bytes, 'base64'); },
+    },
+  });
+  return res;
+}
+
+async function seedClosedAdjustment(connection) {
+  const id = 'GST-REVERSION-QA';
+  const unit = 'QA-DZ203';
+  const author = { userId: '00000000-0000-4000-8000-000000000002', userName: 'Captura QA', project: 'tmf-panama',
+    role: 'coordinador', assignedUnits: [unit] };
+  const reviewer = { ...author, userId: operatorId, userName: 'Contabilidad QA', role: 'gerencia' };
+  const original = Object.assign(Array(29).fill(''), { 0: id, 1: '15/10/2026', 3: 'Combustible', 4: 'Proveedor QA',
+    7: '100.00', 8: '7.00', 9: '107.00', 10: unit, 16: 'Aprobado', 17: 'GST-REVERSION-QA',
+    18: author.userId, 19: '107.00', 21: 'TP_PA', 22: 'USD', 24: '15/10/2026' });
+  await save(connection, 'expense-restore-qa', [{ tab: PURCHASE_TABS.expenses, append: [original] }], { id });
+  const sheets = storeOnMemoryDatabase(connection, [unit]);
+  const call = (action, session, body) => dispatchPurchasing({ path: 'api/purchasing/expense-' + action,
+    method: body ? 'POST' : 'GET', query: { id }, body, session, sheets });
+  const viewed = await call('adjustments', author);
+  assert.equal(viewed.status, 200);
+  const proposal = await call('adjustment-propose', author, { id, amount: '97.00', reason: 'Ajuste de prueba del período cerrado',
+    operationId: randomUUID(), version: viewed.body.version });
+  assert.equal(proposal.status, 200, JSON.stringify(proposal.body));
+  const pending = await call('adjustments', reviewer);
+  const approved = await call('adjustment-review', reviewer, { id, operationId: randomUUID(), version: pending.body.version,
+    adjustmentId: proposal.body.adjustmentId, status: 'Aprobado' });
+  assert.equal(approved.status, 200, JSON.stringify(approved.body));
+  return { id, author, reviewer, original };
+}
+
+async function verifyRollback(connection, archive, added, adjustment) {
+  if (!previousRepo) return null;
+  const previous = gitHead(previousRepo);
+  const candidate = gitHead(repo);
+  assert.notEqual(previous, candidate, 'El checkout anterior debe ser distinto de la candidata.');
+  for (const dir of [previousRepo, repo]) {
+    const changed = execFileSync('git', ['status', '--porcelain', '--untracked-files=normal'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(changed.trim(), '', 'Usa los dos checkouts sin cambios pendientes para acreditar la reversión.');
+  }
+  assert(added.length > 0, 'La reversión debe ensayarse con el esquema actualizado.');
+  const before = (await connection.query('select name, rows from public.hermes_panama_operational_tables order by name')).rows;
+  const loadPrevious = file => import(pathToFileURL(resolve(previousRepo, 'api/_lib', file)).href);
+  const started = performance.now();
+  const [{ dispatchWorkshop: oldWorkshop }, { dispatchPurchasing: oldPurchasing }, { dispatchEvidence: oldEvidence },
+    { createPanamaOperationalStore: oldStore }] = await Promise.all([
+    loadPrevious('hermes-workshop.js'), loadPrevious('hermes-purchasing.js'), loadPrevious('hermes-evidence.js'),
+    loadPrevious('hermes-operational-store.js'),
+  ]);
+  const unit = 'QA-DZ203';
+  const session = { userId: operatorId, userName: 'Gerencia QA', project: 'tmf-panama', role: 'gerencia', allUnits: true };
+  const oldSheets = storeOnMemoryDatabase(connection, [unit], oldStore);
+  const oldOrder = await oldWorkshop({ path: 'api/workshop/orders', method: 'GET', sheets: oldSheets, session });
+  assert.equal(oldOrder.status, 200);
+  assert(oldOrder.body.orders.some(row => row[1] === 'OT-HIST-QA' && row[25] === 'OT-0100' && row[10].endsWith(archive.id)));
+  const purchase = await oldPurchasing({ path: 'api/purchasing/order', method: 'GET', query: { folio: '3002' }, sheets: oldSheets, session });
+  assert.equal(purchase.status, 200, JSON.stringify(purchase.body));
+  assert.deepEqual([purchase.body.order.status, purchase.body.order.approvedById, purchase.body.order.receiptStatus,
+    purchase.body.order.lines[0].received, purchase.body.order.lines[0].receipts[0].reference],
+  ['Recibida parcial', operatorId, 'Recibida parcial', '2', 'Guía restaurada QA']);
+  const stock = await oldPurchasing({ path: 'api/purchasing/inventory-stock', method: 'GET', sheets: oldSheets, session });
+  assert.equal(stock.status, 200);
+  assert(stock.body.items.some(item => item.partNumber === 'RESERVA-QA' && item.available === '1' && item.reserved === '3'));
+  const evidence = await checkPrivateAttachment(oldEvidence, connection, oldSheets, session, archive);
+  assert.equal(evidence.code, 200, JSON.stringify(evidence.payload));
+  assert.equal(evidence.headers.get('Content-Type'), 'image/png');
+  assert.equal(sha(evidence.bytes), sha(attachment));
+  const forbiddenEdit = await oldPurchasing({ path: 'api/purchasing/expense-delete', method: 'POST',
+    body: { id: adjustment.id, operationId: randomUUID() }, sheets: oldSheets, session: adjustment.author });
+  assert.equal(forbiddenEdit.status, 409);
+  assert.match(forbiddenEdit.body.error, /período/);
+  assert.deepEqual((await rows(connection, PURCHASE_TABS.expenses)).find(row => row[0] === adjustment.id), adjustment.original);
+  const readyInMs = Math.round(performance.now() - started);
+
+  const body = { mutationId: randomUUID(), unit, type: 'Hidráulica', description: 'Avería QA durante la reversión',
+    canMove: true, stopped: false };
+  const report = (dispatch, sheets) => dispatch({ path: 'api/workshop/report', method: 'POST', body, sheets, session });
+  const written = await report(oldWorkshop, oldSheets);
+  assert.equal(written.status, 201, JSON.stringify(written.body));
+  const reapplied = storeOnMemoryDatabase(connection, [unit]);
+  const retry = await report(dispatchWorkshop, reapplied);
+  assert.equal(retry.status, 200, JSON.stringify(retry.body));
+  assert.equal(retry.body.otId, written.body.otId);
+  const matching = (await rows(connection, orders)).filter(row => row[1] === written.body.otId);
+  assert.equal(matching.length, 1);
+  assert.match(matching[0][25], /^OT-\d+$/);
+  const unchanged = ['HERMES_PA_GARANTIAS', 'HERMES_PA_ODOMETRO', 'HERMES_PA_AJUSTES_GASTOS', 'HERMES_PA_ENTREGA_ALERTAS'];
+  for (const stored of before.filter(row => unchanged.includes(row.name))) {
+    assert.deepEqual(await rows(connection, stored.name), stored.rows);
+  }
+  const newEvidence = await checkPrivateAttachment(dispatchEvidence, connection, reapplied, session, archive);
+  assert.equal(newEvidence.code, 200);
+  const adjusted = await dispatchPurchasing({ path: 'api/purchasing/expense-adjustments', method: 'GET', sheets: reapplied,
+    session: adjustment.reviewer, query: { id: adjustment.id } });
+  assert.equal(adjusted.status, 200);
+  assert.deepEqual([adjusted.body.originalAmount, adjusted.body.effectiveAmount], ['107.00', '97.00']);
+  return {
+    olderCodeRanOnRestoredSchema: true, previous, candidate, readyInMs, appliedMigrations: added,
+    compatible: ['Consulta de OT', 'Aprobación y recepción de OC', 'Saldo reservado y disponible', 'Descarga privada con integridad',
+      'Alta de avería con folio', 'Reintento del alta al volver a la candidata', 'Protección del gasto del período cerrado'],
+    retainedNewJournals: Object.fromEntries(before.filter(row => unchanged.includes(row.name)).map(row => [row.name, row.rows.length - 1])),
+    recoveryAfterReapply: 'El ajuste aprobado vuelve a estar disponible en la candidata',
+  };
+}
+
 try {
   await db.exec(`
     create role anon; create role authenticated; create role service_role bypassrls;
@@ -149,8 +290,10 @@ try {
 
   const create = (connection, n) => save(connection, `create-${n}`, [
     { tab: orders, append: [ot(`OT-NEW-QA-${n}`)] },
-    { tab: purchases, append: [oc(`OC-NEW-QA-${n}`, 'Aprobada')] },
-    { tab: lines, append: [[`OC-NEW-QA-${n}`, '1', 'Filtro QA', '4', '', '', 'LINE-QA', '', '', 'SKU-QA', '2', '[{"quantity":2}]']] },
+    { tab: purchases, append: [oc(`OC-NEW-QA-${n}`, 'Recibida parcial')] },
+    { tab: lines, append: [[`OC-NEW-QA-${n}`, '1', 'Filtro QA', '4', '', '', 'LINE-QA', '', '', 'SKU-QA', '2',
+      JSON.stringify([{ id: `RECEPCIÓN-QA-${n}`, quantity: '2', reference: 'Guía restaurada QA',
+        actorId: operatorId, by: 'Almacén QA', at: '2026-11-14T17:00:00Z' }])]] },
   ], { otId: `OT-NEW-QA-${n}`, folio: `OC-NEW-QA-${n}` });
   await Promise.all([create(db, 1), create(db, 2)]);
   const expected = Object.fromEntries(await Promise.all([orders, purchases, lines].map(async table => [table, await rows(db, table)])));
@@ -184,17 +327,34 @@ try {
   await save(db, 'odometer-qa', [{ tab: odometerTab, append: [odometer] }], { value: '170', measure: 'km' });
   assert.equal((await rows(db, '04B Registro Horómetros')).length, 1);
 
+  const added = await candidateAddedMigrations();
+  let adjustment;
+  let alertProof;
+  if (previousRepo) {
+    Object.assign(process.env, qaExpenseEnv);
+    adjustment = await seedClosedAdjustment(db);
+    alertProof = await exerciseAlertDelivery(alertDelivery, { sheets: storeOnMemoryDatabase(db, []) });
+  }
+  const warehouseReserve = await verifyWarehouseReserve(db);
+  // Reserving stock legitimately advances the linked OT version before the backup.
+  expected[orders] = await rows(db, orders);
+  const protectedTables = [PURCHASE_TABS.catalog, PURCHASE_TABS.inventoryMovements,
+    ...(previousRepo ? ['HERMES_PA_AJUSTES_GASTOS', 'HERMES_PA_ENTREGA_ALERTAS'] : [])];
+  const durableSnapshots = await Promise.all(protectedTables.map(async tab => [tab, await rows(db, tab)]));
   const backup = await db.dumpDataDir('gzip');
   const attachmentArchive = JSON.stringify({ id: evidenceId, bytes: attachment.toString('base64') });
   const began = performance.now();
   restored = await PGlite.create({ loadDataDir: backup });
-  for (const [table, contents] of Object.entries(expected)) assert.deepEqual(await rows(restored, table), contents);
+  for (const [table, contents] of [...Object.entries(expected), ...durableSnapshots]) {
+    assert.deepEqual(await rows(restored, table), contents, 'Restauración de ' + table);
+  }
   const record = (await restored.query('select id, record_id, sha256, ready from public.hermes_panama_evidence where id=$1', [evidenceId])).rows[0];
   const recoveredFile = JSON.parse(attachmentArchive);
   assert.equal(record.id, recoveredFile.id);
   assert.equal(record.record_id, 'OT-HIST-QA');
   assert.equal(record.sha256, sha(Buffer.from(recoveredFile.bytes, 'base64')));
   assert.equal(record.ready, true);
+  const restoreReadyInMs = Math.round(performance.now() - began);
   assert.equal((await create(restored, 1)).replayed, true);
   assert.deepEqual(await rows(restored, orders), expected[orders]);
   await create(restored, 3);
@@ -205,14 +365,20 @@ try {
   assert.deepEqual(await rows(restored, warrantyTab), warrantyRows);
   assert.deepEqual((await rows(restored, odometerTab)).at(-1), odometer);
   const batchFolios = await verifyPmBatch(restored);
-  const warehouseReserve = await verifyWarehouseReserve(restored);
+  const rollback = await verifyRollback(restored, recoveredFile, added, adjustment);
   console.log(JSON.stringify({ environment: 'Postgres aislado / adjunto archivado sintético',
-    restoredInMs: Math.round(performance.now() - began), concurrentCreations: 2, folios: 'OT-0100..0103 / OC 3001..3004',
-    batchFolios, warehouseReserve, retained: ['OT y evidencia', 'aprobación de OC', 'recepción y saldo', 'comprobante de reintento', 'garantía y evidencia privada', 'odómetro separado de horas'] }));
+    restoreReadyInMs, verificationInMs: Math.round(performance.now() - began), rollback, ...(alertProof && { alertProof }),
+    concurrentCreations: 2, folios: 'OT-0100..0103 / OC 3001..3004',
+    batchFolios, warehouseReserve, retained: ['OT y evidencia', 'aprobación de OC', 'recepción y saldo', 'comprobante de reintento', 'garantía y evidencia privada', 'odómetro separado de horas', 'stock y reservas',
+      ...(previousRepo ? ['ajustes autorizados', 'acuses y reintentos de alertas'] : [])] }));
 } catch (error) {
   console.error(error.message, error.code ?? '');
   process.exitCode = 1;
 } finally {
+  for (const [key, value] of Object.entries(savedEnv)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
   await restored?.close();
   await db.close();
 }
