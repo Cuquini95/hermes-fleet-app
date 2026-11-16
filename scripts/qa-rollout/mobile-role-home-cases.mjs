@@ -62,6 +62,10 @@ export async function checkMobileRoleHomes({ fixture, record, inRole, shot }) {
         await home.tap();
         await page.waitForURL('**/falla');
         await page.getByRole('heading', { name: /Reportar falla/i }).waitFor();
+        assert.equal(await page.getByLabel('OT anterior si la falla se repitió').isVisible(), false);
+        assert.equal(await page.getByLabel('Tiempo de paro estimado').isVisible(), false);
+        assert(await page.getByLabel('Cliente afectado').isVisible());
+        assert(await page.getByRole('button', { name: 'Agregar foto', exact: true }).isVisible());
         await page.getByLabel('Unidad', { exact: true }).selectOption('DZ203');
         await page.getByLabel('Tipo de Falla').selectOption({ label: 'Mecánica' });
         await page.getByRole('button', { name: 'Sí', exact: true }).tap();

@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import './index.css';
 import App from './App.tsx';
+import ErrorBoundary from './components/ErrorBoundary';
 
 // ── Sentry (optional — only initializes when VITE_SENTRY_DSN is set) ───────
 if (import.meta.env.VITE_SENTRY_DSN) {
@@ -19,8 +20,10 @@ if (import.meta.env.VITE_SENTRY_DSN) {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <BrowserRouter>
-      <App />
-    </BrowserRouter>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </ErrorBoundary>
   </StrictMode>,
 );

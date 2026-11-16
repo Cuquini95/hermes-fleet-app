@@ -103,6 +103,31 @@ describe('auth-store — server-backed session', () => {
     });
   });
 
+  it('ends a stalled startup check and allows a successful retry', async () => {
+    vi.useFakeTimers();
+    try {
+      const request = vi.fn()
+        .mockImplementationOnce((_: string, options?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+          options?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+        }))
+        .mockResolvedValueOnce(response(200, operatorProfile));
+      vi.stubGlobal('fetch', request);
+
+      const validation = useAuthStore.getState().validateSession();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(useAuthStore.getState()).toMatchObject({
+        sessionChecked: true, sessionUnavailable: true, isAuthenticated: false,
+      });
+      await validation;
+      await useAuthStore.getState().validateSession();
+      expect(useAuthStore.getState()).toMatchObject({
+        sessionChecked: true, sessionUnavailable: false, isAuthenticated: true,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('logs out server-side and clears local state', async () => {
     useAuthStore.setState({ role: 'operador', userName: 'Operador', isAuthenticated: true });
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(204)));

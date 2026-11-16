@@ -47,6 +47,8 @@ const cleared = {
   previewDemo: false,
 };
 
+const SESSION_CHECK_TIMEOUT_MS = 10_000;
+
 function validProfile(value: unknown): value is SessionProfile {
   if (!value || typeof value !== 'object') return false;
   const profile = value as Partial<SessionProfile>;
@@ -130,13 +132,17 @@ export const useAuthStore = create<AuthState>()((set) => ({
     let profile: unknown;
     let sessionUnavailable = false;
     set({ sessionChecked: false });
+    const controller = new AbortController();
+    const deadline = globalThis.setTimeout(() => controller.abort(), SESSION_CHECK_TIMEOUT_MS);
     try {
       const response = await fetch('/api/auth/session', {
         credentials: 'same-origin', headers: { Accept: 'application/json' },
+        signal: controller.signal,
       });
       if (response.ok) profile = await response.json();
       sessionUnavailable = response.status >= 500 || (response.ok && !validProfile(profile));
     } catch { sessionUnavailable = true; }
+    finally { globalThis.clearTimeout(deadline); }
     if (requestGeneration !== generation) return;
     bindDataSession(validProfile(profile) ? profile.userId : '');
     set(validProfile(profile) ? authenticatedProfile(profile) : { ...cleared, sessionChecked: true, sessionUnavailable });

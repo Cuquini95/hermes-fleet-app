@@ -145,7 +145,11 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     await selects.nth(0).selectOption(unit);
     await selects.nth(1).selectOption({ label: 'Mecánica' });
     await page.getByPlaceholder('Describe los síntomas observados...').fill(description);
-    if (previousOtId) await page.getByLabel('OT anterior si la falla se repitió').fill(previousOtId);
+    if (previousOtId) {
+      await page.locator('summary').filter({ hasText: 'Más detalles (opcional)' }).click();
+      await page.getByLabel('OT anterior si la falla se repitió').fill(previousOtId);
+      await page.getByLabel('Tiempo de paro estimado').selectOption('1-4 horas');
+    }
     await clickByName(page, 'No');
     if (stopStartedAt) await page.getByLabel('Inicio de parada · hora de Panamá').fill(stopStartedAt);
     if (withPhoto) {
@@ -157,6 +161,29 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
   }
 
   try {
+    await record('MÓVIL-LOGIN-RECUPERA-ARCHIVO', async () => {
+      const context = await browser.newContext({
+        viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
+        serviceWorkers: 'block', ignoreHTTPSErrors: true,
+      });
+      try {
+        const page = await context.newPage();
+        let interrupted = false;
+        await page.route(/\/assets\/LoginPage-[^/]+\.js$/, route => {
+          if (interrupted) return route.continue();
+          interrupted = true;
+          return route.abort('failed');
+        });
+        await page.goto(origin + '/login', { waitUntil: 'domcontentloaded' });
+        await waitUntil(() => interrupted, 'No se interrumpió el archivo de acceso');
+        const retry = page.getByRole('button', { name: 'Reintentar', exact: true });
+        await retry.waitFor({ state: 'visible', timeout: 7000 });
+        await retry.click();
+        await page.getByRole('button', { name: 'Ingresar', exact: true }).waitFor({ state: 'visible', timeout: 7000 });
+        return { width: 390, retryRestoredLogin: true };
+      } finally { await context.close(); }
+    });
+
     if (withGateway) await record('MÓVIL-DIÉSEL-MISMO-INTERVALO', () => inRole('gerencia', 390, async page => {
       const tab = 'Combustible';
       const prior = sheet.read(tab);
@@ -188,6 +215,26 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await noHorizontalOverflow(page, 390);
       return { allowedUnitPrefilled: true, externalUnitIgnored: true };
     }, loadAccounts[72]));
+
+    if (withGateway) await record('MÓVIL-FALLA-EQUIPOS-REINTENTO', () => inRole('operador', 360, async page => {
+      sheet.setUnavailable([tabs.fleet], true);
+      try {
+        await clickByName(page, 'Reportar falla');
+        const unit = page.getByLabel('Unidad', { exact: true });
+        const retry = page.getByRole('button', { name: 'Volver a cargar equipos', exact: true });
+        await retry.waitFor({ state: 'visible', timeout: 5000 });
+        assert(await unit.isDisabled());
+        const notes = page.getByLabel('Descripción', { exact: true });
+        await notes.fill('Observación conservada durante el reintento');
+        sheet.setUnavailable([tabs.fleet], false);
+        await retry.tap();
+        await unit.selectOption('DZ203');
+        assert.equal(await notes.inputValue(), 'Observación conservada durante el reintento');
+        assert.equal(await retry.count(), 0);
+        await noHorizontalOverflow(page, 360);
+        return { recoveryFromRosterFailure: true, keptDraft: true };
+      } finally { sheet.setUnavailable([tabs.fleet], false); }
+    }, loadAccounts[78]));
 
     if (withGateway) await record('MÓVIL-FLOTA-HISTORIAL-UNIDAD', () => inRole('gerencia', 390, async page => {
       const priorFailures = sheet.read(tabs.failure);
@@ -1063,6 +1110,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await visible(page.getByText(/OT creada/i));
         const row = sheet.read(tabs.orders).find(order => order[5] === description);
         assert.equal(row[24], original[1]);
+        assert.equal(sheet.read(tabs.failure).find(failure => failure[13] === row[1])?.[7], '1-4 horas');
         return row;
       });
       const second = loadAccounts.filter(account => account.membership.role === 'mecanico')[5];

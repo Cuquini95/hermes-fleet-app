@@ -9,6 +9,7 @@ import { WorkshopApiError } from '../lib/workshop-api';
 import { visibleWorkOrderFolio } from '../lib/purchasing-api';
 import { checkpointFallaClear, checkpointFallaDraft, clearFallaDraft, loadFallaDraft, saveFallaDraft, type FallaDraft } from '../lib/falla-draft';
 import { useAuthStore } from '../stores/auth-store';
+import { useEquipmentStore } from '../stores/equipment-store';
 import AutoPriorityIndicator from '../components/falla/AutoPriorityIndicator';
 import PhotoCapture from '../components/ui/PhotoCapture';
 import ConfirmModal from '../components/ui/ConfirmModal';
@@ -62,6 +63,11 @@ export default function FallaPage() {
 function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama: boolean; requestedUnit?: string }) {
   const navigate = useNavigate();
   const equipment = useEquipmentList();
+  const equipmentFetched = useEquipmentStore((state) => state.fetched);
+  const equipmentError = useEquipmentStore((state) => state.error);
+  const reloadEquipment = useEquipmentStore((state) => state.refetch);
+  const noEquipment = isPanama && equipment.length === 0;
+  const optionalDetails = useRef<HTMLDetailsElement>(null);
   const sending = useRef(false);
   const writes = useRef<Promise<unknown>>(Promise.resolve());
   const [saving, setSaving] = useState(false);
@@ -90,6 +96,9 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
         const restored = { ...emptyDraft, ...stored };
         currentDraft.current = restored;
         setDraft(restored);
+        if (optionalDetails.current && (restored.previousOtId || restored.downtime)) {
+          optionalDetails.current.open = true;
+        }
       }
     }).catch(() => {
       if (active) setDraftError(true);
@@ -214,6 +223,7 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
     const next = { ...emptyDraft, unidad: nextUnit };
     currentDraft.current = next;
     setDraft(next);
+    if (optionalDetails.current) optionalDetails.current.open = false;
     checkpointFallaClear(scope);
     const write = writes.current.then(() => clearFallaDraft(scope));
     writes.current = write.then(() => setDraftError(false), () => setDraftError(true));
@@ -223,6 +233,20 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
     setToastVisible(false);
     if (toastType === 'success') navigate(-1);
   }
+
+  const downtimeField = (
+    <div className="flex flex-col gap-1">
+      <label htmlFor="falla-downtime" className="text-sm font-medium text-text-secondary">{isPanama ? 'Tiempo de paro estimado' : 'Downtime estimado'}</label>
+      <select id="falla-downtime"
+        value={downtime}
+        onChange={(e) => void updateDraft({ downtime: e.target.value })}
+        className="w-full rounded-xl border border-border p-3 bg-white text-text"
+      >
+        <option value="">Seleccionar...</option>
+        {DOWNTIME_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+      </select>
+    </div>
+  );
 
   return (
     <div className="flex flex-col pb-4 animate-fade-up">
@@ -289,7 +313,7 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
           <label htmlFor="falla-unidad" className="text-sm font-medium text-text-secondary">Unidad</label>
           <select id="falla-unidad"
             value={unidad}
-            disabled={Boolean(qrConflict && unidad)}
+            disabled={noEquipment || Boolean(qrConflict && unidad)}
             onChange={(e) => void updateDraft({ unidad: e.target.value })}
             className="w-full rounded-xl border border-border p-3 bg-white text-text"
           >
@@ -300,6 +324,19 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
               </option>
             ))}
           </select>
+          {noEquipment && !reportPending && !saved && (
+            <div className="space-y-1">
+              <p role={equipmentError ? 'alert' : 'status'} className="text-sm text-text-secondary">
+                {equipmentError ? 'No se pudo cargar la lista de equipos.'
+                  : equipmentFetched ? 'No hay equipos disponibles para tu cuenta.' : 'Cargando equipos…'}
+              </p>
+              {equipmentError && (
+                <button type="button" onClick={() => void reloadEquipment()} className="min-h-12 text-sm font-semibold text-text underline">
+                  Volver a cargar equipos
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Tipo de falla */}
@@ -330,21 +367,6 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
             className="w-full rounded-xl border border-border p-3 text-sm text-text resize-none bg-white"
           />
         </div>
-
-        {isPanama && (
-          <div className="flex flex-col gap-1">
-            <label htmlFor="falla-ot-anterior" className="text-sm font-medium text-text-secondary">OT anterior si la falla se repitió</label>
-            <input
-              id="falla-ot-anterior"
-              type="text"
-              maxLength={90}
-              value={previousOtId}
-              onChange={(event) => void updateDraft({ previousOtId: event.target.value })}
-              placeholder="Folio de la OT cerrada (opcional)"
-              className="w-full rounded-xl border border-border bg-white p-3 text-sm text-text"
-            />
-          </div>
-        )}
 
         {/* Puede moverse */}
         <div className="flex flex-col gap-2">
@@ -425,22 +447,7 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
           />
         </div>
 
-        {/* Downtime estimado */}
-        <div className="flex flex-col gap-1">
-          <label htmlFor="falla-downtime" className="text-sm font-medium text-text-secondary">{isPanama ? 'Tiempo de paro estimado' : 'Downtime estimado'}</label>
-          <select id="falla-downtime"
-            value={downtime}
-            onChange={(e) => void updateDraft({ downtime: e.target.value })}
-            className="w-full rounded-xl border border-border p-3 bg-white text-text"
-          >
-            <option value="">Seleccionar...</option>
-            {DOWNTIME_OPTIONS.map((opt) => (
-              <option key={opt} value={opt}>
-                {opt}
-              </option>
-            ))}
-          </select>
-        </div>
+        {!isPanama && downtimeField}
 
         {/* Fotos */}
         <div className="flex flex-col gap-1">
@@ -452,6 +459,28 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
             multiple={true}
           />
         </div>
+        {isPanama && (
+          <details ref={optionalDetails} className="border-t border-border">
+            <summary className="min-h-12 cursor-pointer py-3 text-sm font-semibold text-text">
+              Más detalles (opcional)
+            </summary>
+            <div className="flex flex-col gap-3 pb-1">
+              <div className="flex flex-col gap-1">
+                <label htmlFor="falla-ot-anterior" className="text-sm font-medium text-text-secondary">OT anterior si la falla se repitió</label>
+                <input
+                  id="falla-ot-anterior"
+                  type="text"
+                  maxLength={90}
+                  value={previousOtId}
+                  onChange={(event) => void updateDraft({ previousOtId: event.target.value })}
+                  placeholder="Folio de la OT cerrada"
+                  className="w-full rounded-xl border border-border bg-white p-3 text-sm text-text"
+                />
+              </div>
+              {downtimeField}
+            </div>
+          </details>
+        )}
       </div>
 
       </fieldset>
