@@ -2046,6 +2046,10 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         assert.equal((await approved.json()).status, 'Aprobada');
         await page.goto(apPath, { waitUntil: 'domcontentloaded' });
         await visible(page.getByText('Solo consulta.', { exact: true }));
+        const queue = page.getByRole('region', { name: 'Órdenes por procesar', exact: true });
+        const approvedRow = queue.getByRole('listitem').filter({ has: page.getByRole('link', { name: 'OC ' + draft.number, exact: true }) });
+        await visible(approvedRow.getByText('Por recibir', { exact: true }));
+        assert.equal(await approvedRow.getByText('Lista para facturar', { exact: true }).count(), 0);
         assert.equal(await page.getByRole('button', { name: 'Registrar factura', exact: true }).count(), 0);
         return draft;
       }, browserBuyer);
@@ -2069,6 +2073,10 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await visible(page.getByRole('heading', { name: 'Cuentas por pagar', exact: true }));
         const order = (await readAP(page)).orders.find(item => item.folio === folio);
         assert.equal(order.status, 'Recibida parcial');
+        const queue = page.getByRole('region', { name: 'Órdenes por procesar', exact: true });
+        const receivedRow = queue.getByRole('listitem').filter({ has: page.getByRole('link', { name: 'OC ' + number, exact: true }) });
+        await visible(receivedRow.getByText('Recepción parcial', { exact: true }));
+        await visible(receivedRow.getByText('Lista para facturar', { exact: true }));
         const line = order.lines[0];
         assert.deepEqual([line.ordered, line.received, line.invoiced, line.available].map(Number), [10, 6, 0, 6]);
 

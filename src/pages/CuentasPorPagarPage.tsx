@@ -206,6 +206,13 @@ function PayablesQueue({ userId }: { userId: string }) {
   const today = mexicoDateInput();
   const orders = data?.orders.filter(order => !order.legacy && order.lines.some(line => Number(line.available) > 0)
     && (order.unbilledTotal === undefined || Number(order.unbilledTotal) > 0)) ?? [];
+  const billableFolios = new Set(orders.map(order => order.folio));
+  const pendingOrders = (data?.orders ?? []).filter(order => !order.legacy).flatMap(order => {
+    const awaitingReceipt = order.lines.some(line => Number(line.received) < Number(line.ordered));
+    const hasReceipt = order.lines.some(line => Number(line.received) > 0);
+    const canInvoice = billableFolios.has(order.folio);
+    return awaitingReceipt || canInvoice ? [{ order, awaitingReceipt, hasReceipt, canInvoice }] : [];
+  });
   const invoices = data?.invoices ?? [];
   const balances = supplierBalances(invoices, today);
   const query = search.trim().toLocaleLowerCase('es-PA');
@@ -252,6 +259,28 @@ function PayablesQueue({ userId }: { userId: string }) {
       {data && !data.canRecordInvoice && !data.canRecordPayment && <p className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
         <strong>Solo consulta.</strong> Contabilidad registra facturas y Tesorería registra pagos confirmados.
       </p>}
+      {pendingOrders.length > 0 && <section className={card + ' space-y-2'} aria-labelledby="titulo-ordenes-pendientes">
+        <h2 id="titulo-ordenes-pendientes" className="text-lg font-bold">Órdenes por procesar</h2>
+        <p className="text-sm text-slate-600">Almacén registra las recepciones. Contabilidad puede facturar las cantidades ya recibidas.</p>
+        <ul className="divide-y divide-slate-200">
+          {pendingOrders.map(({ order, awaitingReceipt, hasReceipt, canInvoice }) => <li key={order.folio}
+            className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2 text-sm">
+            <div className="min-w-0 wrap-anywhere">
+              <Link className="font-semibold text-[#162252] underline underline-offset-2"
+                to={'/admin/ordenes-compra/' + encodeURIComponent(order.number || order.folio)}>
+                OC {order.number || order.folio}
+              </Link>
+              <span className="ml-2 text-slate-600">{order.vendorName} · {order.unit}</span>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {awaitingReceipt && <span className="rounded-md bg-amber-100 px-2 py-1 font-medium text-amber-950">
+                {hasReceipt ? 'Recepción parcial' : 'Por recibir'}
+              </span>}
+              {canInvoice && <span className="rounded-md bg-emerald-100 px-2 py-1 font-medium text-emerald-950">Lista para facturar</span>}
+            </div>
+          </li>)}
+        </ul>
+      </section>}
       {data && <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <section id="facturas" aria-labelledby="titulo-facturas" className="min-w-0 scroll-mt-24 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
