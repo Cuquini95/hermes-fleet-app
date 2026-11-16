@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, Printer } from 'lucide-react';
-import { displayMoney, isApprovalRecorded, purchaseOrder, type PurchaseDocument } from '../lib/purchasing-api';
+import { displayMoney, isApprovalRecorded, purchaseOrder, purchaseWrite, type PurchaseDocument } from '../lib/purchasing-api';
 import { useAuthStore } from '../stores/auth-store';
 import PanamaPurchaseDocument from '../components/purchasing/PanamaPurchaseDocument';
+import PurchaseSignaturePad from '../components/purchasing/PurchaseSignaturePad';
 import './orden-compra-print.css';
 
 function dateLabel(value: string) {
@@ -16,6 +17,9 @@ export default function OrdenCompraPrintPage() {
   const [purchase, setPurchase] = useState<PurchaseDocument | null>(null);
   const [failure, setFailure] = useState('');
   const [attempt, setAttempt] = useState(0);
+  const [signature, setSignature] = useState('');
+  const [signing, setSigning] = useState(false);
+  const [signError, setSignError] = useState('');
 
   useEffect(() => {
     const controller = new AbortController();
@@ -67,16 +71,48 @@ export default function OrdenCompraPrintPage() {
     dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Panama',
   }).format(new Date(order.approvedAt)) : '';
 
+  async function signApproval() {
+    if (signing || !signature) return;
+    setSigning(true);
+    setSignError('');
+    try {
+      await purchaseWrite<{ signed: boolean }>('order-sign', { folio: order.folio, version: order.version, signature });
+      setSignature('');
+      setAttempt(previous => previous + 1);
+    } catch (cause) {
+      setSignError(cause instanceof Error ? cause.message : 'Reintenta para confirmar la firma.');
+    } finally {
+      setSigning(false);
+    }
+  }
+
   return (
     <>
       <div className="po-toolbar flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 py-3">
         <Link to="/admin/ordenes-compra" className="inline-flex items-center gap-1 text-sm font-semibold text-slate-700">
           <ArrowLeft size={16} aria-hidden /> Volver
         </Link>
-        <button type="button" onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white">
+        <button type="button" onClick={() => {
+          const image = document.querySelector<HTMLImageElement>('.po-panama-signature img');
+          if (image) void image.decode().then(() => window.print()).catch(() => setSignError('No se pudo cargar la firma. Actualiza antes de imprimir.'));
+          else window.print();
+        }} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white">
           <Printer size={16} aria-hidden /> Imprimir / Guardar como PDF
         </button>
       </div>
+
+      {signError && <p className="po-toolbar p-3 text-sm text-red-800" role="alert">{signError}</p>}
+      {purchase.canSign && (
+        <form className="po-toolbar space-y-2 px-4 py-3" onSubmit={event => {
+          event.preventDefault();
+          void signApproval();
+        }}>
+          <PurchaseSignaturePad key={order.folio} onChange={setSignature} />
+          <button type="submit" disabled={!signature || signing} className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
+            Firmar OC {order.number || order.folio}
+          </button>
+        </form>
+      )}
 
       {isPanama && issuer?.template === 'transplus' ? (
         <PanamaPurchaseDocument order={order} authorized={authorized} approvedAt={approvedAt}

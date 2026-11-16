@@ -115,6 +115,7 @@ export interface PurchaseOrder {
 export interface PurchaseDocument {
   order: PurchaseOrder;
   approvalSignature?: string;
+  canSign?: boolean;
 }
 
 export interface PurchaseRequestLine {

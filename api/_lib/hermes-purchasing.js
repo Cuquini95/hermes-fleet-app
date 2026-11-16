@@ -3,7 +3,7 @@ import { PANAMA_DEMO_ISSUER } from './hermes-panama-demo.js';
 import { isEvidenceError, verifyEvidence } from './hermes-evidence.js';
 import { orderWriteGuard } from './hermes-workshop.js';
 import { HermesSheetError } from './hermes-google-sheets.js';
-import { readPurchaseNumber } from './hermes-operational-store.js';
+import { isPurchaseSignature, readPurchaseNumber } from './hermes-operational-store.js';
 import { panamaPartCompatibility, visiblePanamaParts } from './hermes-part-prices.js';
 import { EXPENSE_ADJUSTMENTS_TAB, projectExpenseAdjustments } from './hermes-panama-expense-adjustments.js';
 
@@ -418,8 +418,8 @@ function mutate(action, body, session, sheets) {
     async replay() {
       return sheets.replay({ key, fingerprint, includePurchaseNumber });
     },
-    async commit(writes, result, guards = []) {
-      const committed = await sheets.commit({ key, fingerprint, guards: [...new Set(guards)], writes, result, includePurchaseNumber });
+    async commit(writes, result, guards = [], purchaseSignature) {
+      const committed = await sheets.commit({ key, fingerprint, guards: [...new Set(guards)], writes, result, includePurchaseNumber, purchaseSignature });
       return ok(committed.result);
     },
   };
@@ -1222,6 +1222,18 @@ async function changeOrder(action, body, session, sheets, tx) {
   const panama = session.project === 'tmf-panama';
   let detail = record.status;
   let auditAction;
+  let purchaseSignature;
+
+  if (action === 'order-sign') {
+    if (!hasRecordedApproval(record) || record.issuer?.template !== 'transplus') error(409, 'La OC requiere una aprobación vigente.');
+    if (record.approvedById !== session.userId) error(403, 'La firma corresponde a la cuenta que aprobó esta OC.');
+    if (!isPurchaseSignature(body.signature)) error(400, 'Dibuja tu firma para esta OC.');
+    if (await sheets.readPurchaseSignature?.(record)) error(409, 'La OC ya tiene firma archivada.');
+    const { approvedById, approvedAt } = record;
+    return tx.commit([auditRow(session, tx.operationId, 'OC firmada', folio, 'Firma de la aprobación del ' + approvedAt)],
+      { folio, status: record.status, version: record.version, signed: true }, [],
+      { folio, approvedById, approvedAt, png: body.signature });
+  }
 
   if (action === 'order-delete') {
     if (!['Borrador', 'Rechazada'].includes(record.status) || record.receiptStatus !== 'Pendiente') {
@@ -1253,6 +1265,11 @@ async function changeOrder(action, body, session, sheets, tx) {
       values[13] = session.userName;
       values[17] = session.userId;
       values[18] = timestamp().iso;
+      if (body.signature !== undefined) {
+        if (!panama || session.previewDemo === true || record.issuer.template !== 'transplus') error(400, 'La firma no aplica a esta OC.');
+        if (!isPurchaseSignature(body.signature)) error(400, 'Dibuja tu firma para esta OC.');
+        purchaseSignature = { folio, approvedById: session.userId, approvedAt: values[18], png: body.signature };
+      }
     }
     if (status === 'Pagada' && !record.approvedById) error(409, 'La orden requiere un aprobador registrado.');
     values[11] = status;
@@ -1457,7 +1474,7 @@ async function changeOrder(action, body, session, sheets, tx) {
   }
   writes.push(wholeRow(PURCHASE_TABS.orders, header.index, Array.from(values, (value) => value ?? '')));
   writes.push(auditRow(session, tx.operationId, auditAction || (action === 'order-receive' ? 'Recepción de partida' : 'Estado de OC ' + values[11]), folio, detail));
-  return tx.commit(writes, { folio, status: values[11], version: tx.version }, guards);
+  return tx.commit(writes, { folio, status: values[11], version: tx.version, ...(purchaseSignature && { signed: true }) }, guards, purchaseSignature);
 }
 
 function expenseItems(lines) {
@@ -1873,7 +1890,7 @@ async function readWorkOrderCost(sheets, session, identifier, laborValuations) {
     })) };
 }
 
-const WRITES = new Set(['request-submit', 'request-status', 'order-save', 'order-status', 'order-receive', 'order-dispatch', 'order-invoice', 'order-payment', 'order-delete', 'inventory-move', 'inventory-reservation', 'expense-save', 'expense-delete', 'expense-review', 'expense-adjustment-propose', 'expense-adjustment-review']);
+const WRITES = new Set(['request-submit', 'request-status', 'order-save', 'order-status', 'order-sign', 'order-receive', 'order-dispatch', 'order-invoice', 'order-payment', 'order-delete', 'inventory-move', 'inventory-reservation', 'expense-save', 'expense-delete', 'expense-review', 'expense-adjustment-propose', 'expense-adjustment-review']);
 const READS = new Set(['orders', 'order', 'receiving', 'requests', 'expenses', 'inventory-movements', 'inventory-stock', 'inventory-replenishment', 'expense-options', 'workorder-cost', 'expense-adjustments']);
 
 export async function dispatchPurchasing({ path, method, body = {}, query = {}, session, sheets, evidenceStorage, inventoryValuations, laborValuations }) {
@@ -1902,7 +1919,8 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
       : action === 'expense-adjustment-review' ? panama && !session.previewDemo && canReviewPanamaExpense(session)
       : ['expense-adjustments', 'expense-adjustment-propose'].includes(action) ? panama && !session.previewDemo && EXPENSE_ROLES.has(session.role)
       : action === 'expenses' || action.startsWith('expense-') ? EXPENSE_ROLES.has(session.role) : session.role === 'gerencia';
-    if (!roleAllowed || (action === 'order-status' && session.canApprovePurchases !== true)) {
+    if (!roleAllowed || (['order-status', 'order-sign'].includes(action) && session.canApprovePurchases !== true)
+      || (action === 'order-sign' && (!panama || session.previewDemo === true))) {
       error(403, 'Tu cuenta no tiene permiso para realizar esta acción.');
     }
     if (action === 'workorder-cost') return ok(await readWorkOrderCost(sheets, session, query.ot, laborValuations));
@@ -1967,7 +1985,9 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
         const { record } = orderLookup(field(query.folio, 90, 'folio', true), orders, lines, session);
         const approvalSignature = panama && session.previewDemo !== true && record.issuer?.template === 'transplus'
           && hasRecordedApproval(record) ? await sheets.readPurchaseSignature?.(record) : undefined;
-        return ok({ order: record, ...(approvalSignature && { approvalSignature }) });
+        const canSign = panama && session.previewDemo !== true && session.canApprovePurchases === true
+          && record.issuer?.template === 'transplus' && hasRecordedApproval(record) && record.approvedById === session.userId;
+        return ok({ order: record, ...(approvalSignature && { approvalSignature }), ...(canSign && !approvalSignature && { canSign: true }) });
       }
       const rows = entries(orders).filter(({ row }) => trim(row[0]) && trim(row[11]) !== 'Eliminada');
       const linked = new Map();

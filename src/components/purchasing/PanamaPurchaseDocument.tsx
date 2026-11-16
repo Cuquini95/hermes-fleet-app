@@ -99,7 +99,7 @@ export default function PanamaPurchaseDocument({ order, authorized, approvedAt, 
       <footer className="po-section po-panama-footer">
         <div className="po-panama-signature">
           {authorized && approvalSignature && <img src={`data:image/png;base64,${approvalSignature}`} alt={`Firma de ${order.approvedBy}`} />}
-          <p>Firma autorizada</p>
+          <p>{authorized && !approvalSignature ? 'Firma pendiente' : 'Firma autorizada'}</p>
         </div>
         <div className="po-panama-approval" data-testid="purchase-approval-provenance">
           {authorized ? (

@@ -937,3 +937,36 @@ test('C45: concilia una OC abierta por SKU y almacén sin duplicar tránsito ni 
   assert.deepEqual(mismatch.body.openOrders, []);
   assert.deepEqual(mismatch.body.issues.map(item => item.reason), ['Saldo o movimientos de la partida por conciliar']);
 });
+
+test('firma una OC aprobada solo con la cuenta que la aprobó y conserva la aprobación al reintentar', async () => {
+  const { call, sheets } = setup();
+  const buyer = { ...manager, userId: randomUUID(), project: 'tmf-panama' };
+  const other = { ...buyer, userId: randomUUID() };
+  const folio = 'OC-FIRMA-QA';
+  const approvedAt = '2026-11-16T13:07:57.862Z';
+  const header = Array(28).fill('');
+  Object.assign(header, { 0: folio, 2: 'Proveedor QA', 5: 'QA-DZ203', 10: '107.00', 11: 'Aprobada',
+    13: buyer.userName, 15: 'version-qa', 16: JSON.stringify({ id: 'TP_PA', template: 'transplus', name: 'TRANSPLUS', currency: 'USD', taxLabel: 'ITBMS' }),
+    17: buyer.userId, 18: approvedAt, 27: '3002' });
+  sheets.seed(TAB.orders, [['OC_ID'], header]);
+  sheets.seed(TAB.lines, [['OC_ID'], [folio, '1', 'Parte QA', '1', '100', '100']]);
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+YRXsAAAAASUVORK5CYII=';
+  const signatures = [];
+  const commit = sheets.commit;
+  sheets.commit = async (args) => {
+    const saved = await commit(args);
+    if (args.purchaseSignature && !saved.replayed) signatures.push(args.purchaseSignature);
+    return saved;
+  };
+  sheets.readPurchaseSignature = async ({ folio: id, approvedById, approvedAt: at }) =>
+    signatures.find(item => item.folio === id && item.approvedById === approvedById && item.approvedAt === at)?.png;
+  const input = { operationId: randomUUID(), folio, version: 'version-qa', signature: png };
+  assert.equal((await call('order-sign', input, other)).status, 403);
+  assert.equal((await call('order-sign', { ...input, signature: 'no-es-PNG' }, buyer)).status, 400);
+  const saved = await call('order-sign', input, buyer);
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  assert.deepEqual(await call('order-sign', input, buyer), saved);
+  assert.equal(signatures.length, 1);
+  assert.deepEqual(sheets.inspect(TAB.orders)[1], header);
+  assert.equal((await call('order', null, buyer, { folio: '3002' })).body.approvalSignature, png);
+});

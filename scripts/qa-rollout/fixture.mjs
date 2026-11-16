@@ -101,6 +101,8 @@ function columnNumber(letters) {
 export function makeSheetsFixture() {
   const tables = fixtureRows();
   const mutations = new Map();
+  const purchaseSignatures = new Map();
+  const signatureKey = ({ folio, approvedById, approvedAt }) => JSON.stringify([folio, approvedById, approvedAt]);
   const versions = new Set();
   const unavailable = new Set();
   const faults = [];
@@ -119,7 +121,7 @@ export function makeSheetsFixture() {
     return clone(prior.result);
   }
 
-  async function commit({ key, fingerprint, guard, guards, writes, result }) {
+  async function commit({ key, fingerprint, guard, guards, writes, result, purchaseSignature }) {
     if (mutations.has(key)) {
       const previous = replay({ key, fingerprint });
       commits.push({ key, replayed: true, rows: 0 });
@@ -129,7 +131,7 @@ export function makeSheetsFixture() {
     const fault = faultIndex >= 0 ? faults.splice(faultIndex, 1)[0] : null;
     if (fault?.delay) await wait(fault.delay);
     if (fault?.when === 'before') throw stateError(503, 'Persistencia de prueba no disponible');
-    if (mutations.has(key)) return commit({ key, fingerprint, guard, guards, writes, result });
+    if (mutations.has(key)) return commit({ key, fingerprint, guard, guards, writes, result, purchaseSignature });
     const keys = [guard, ...(guards ?? [])].filter(Boolean);
     if (keys.some(value => versions.has(value))) throw stateError(409, 'El registro de prueba fue actualizado');
     const draft = new Map();
@@ -157,6 +159,15 @@ export function makeSheetsFixture() {
       let lastNumber = Math.max(3000, ...purchaseRows.slice(1, firstNew).map(row => Number(row[27]) || 0));
       for (const row of purchaseRows.slice(firstNew)) row[27] = String(++lastNumber);
     }
+    if (purchaseSignature) {
+      const key = signatureKey(purchaseSignature);
+      if (purchaseSignatures.has(key)) throw stateError(409, 'La OC ya tiene firma archivada.');
+      const approved = (purchaseRows ?? tables.get(tabs.purchases)).find(row => row[0] === purchaseSignature.folio);
+      if (approved?.[17] !== purchaseSignature.approvedById || approved?.[18] !== purchaseSignature.approvedAt) {
+        throw stateError(409, 'La aprobación vigente no coincide con la firma.');
+      }
+      purchaseSignatures.set(key, purchaseSignature.png);
+    }
     for (const [tab, rows] of draft) tables.set(tab, rows);
     const number = purchaseRows?.find(row => row[0] === result.folio)?.[27];
     const reply = number ? { ...result, number } : result;
@@ -169,6 +180,7 @@ export function makeSheetsFixture() {
 
   return {
     read, commit, replay, commits,
+    async readPurchaseSignature(order) { return purchaseSignatures.get(signatureKey(order)); },
     async readWorkshopMasters() {
       return clone(workshopMasters ?? { failures: { records: [] }, orders: { records: [] } });
     },

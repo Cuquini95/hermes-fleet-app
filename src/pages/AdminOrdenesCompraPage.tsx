@@ -5,6 +5,7 @@ import {
   canAwardRequest, displayMoney, formatPanamaReceiptDate, isApprovalRecorded, pendingQuantity, purchaseRead, purchaseRequests, purchaseWrite,
   type PurchaseOrder, type PurchaseOverview, type PurchaseRequestLine,
 } from '../lib/purchasing-api';
+import PurchaseSignaturePad from '../components/purchasing/PurchaseSignaturePad';
 import { useAuthStore } from '../stores/auth-store';
 
 interface DraftLine {
@@ -84,6 +85,7 @@ export default function AdminOrdenesCompraPage() {
   const [confirmDelete, setConfirmDelete] = useState('');
   const [decision, setDecision] = useState<{ folio: string; status: 'Aprobada' | 'Rechazada' }>();
   const [reason, setReason] = useState('');
+  const [signature, setSignature] = useState('');
   const [reconciliation, setReconciliation] = useState<{ folio: string; action: 'order-invoice' | 'order-payment' }>();
   const [document, setDocument] = useState({ reference: '', amount: '', currency: '', tax: '' });
   const [invoiceLines, setInvoiceLines] = useState<Record<string, { quantity: string; unitPrice: string }>>({});
@@ -218,8 +220,8 @@ export default function AdminOrdenesCompraPage() {
     });
   }
 
-  function changeStatus(order: PurchaseOrder, status: string, reason?: string) {
-    return run('order-status', { folio: order.folio, version: order.version, status, reason }, (reply) => {
+  function changeStatus(order: PurchaseOrder, status: string, reason?: string, approvalSignature?: string) {
+    return run('order-status', { folio: order.folio, version: order.version, status, reason, ...(approvalSignature && { signature: approvalSignature }) }, (reply) => {
       setDecision(undefined);
       setMessage((reply.number || reply.folio) + ' · ' + status);
     });
@@ -228,6 +230,7 @@ export default function AdminOrdenesCompraPage() {
   function decide(order: PurchaseOrder, status: 'Aprobada' | 'Rechazada') {
     if (!isPanama) return void changeStatus(order, status);
     setReason('');
+    setSignature('');
     setDecision({ folio: order.folio, status });
   }
 
@@ -426,12 +429,18 @@ export default function AdminOrdenesCompraPage() {
             {decision?.folio === order.folio && (
               <form className="space-y-2 rounded-lg bg-slate-50 p-3" onSubmit={(event) => {
                 event.preventDefault();
-                void changeStatus(order, decision.status, reason.trim());
+                const sign = decision.status === 'Aprobada' && !previewDemo && order.issuer?.template === 'transplus';
+                if (sign && !signature) return;
+                void changeStatus(order, decision.status, reason.trim(), sign ? signature : undefined);
               }}>
                 <label className="block text-sm">{decision.status === 'Aprobada' ? 'Soporte de la aprobación Q25' : 'Motivo del rechazo'}
                   <textarea className={input} maxLength={1000} required value={reason} onChange={(event) => setReason(event.target.value)} />
                 </label>
-                <button type="submit" className={primary} disabled={saving || !reason.trim()}>Confirmar {decision.status === 'Aprobada' ? 'aprobación' : 'rechazo'}</button>
+                {decision.status === 'Aprobada' && !previewDemo && order.issuer?.template === 'transplus' && <PurchaseSignaturePad onChange={setSignature} />}
+                <button type="submit" className={primary}
+                  disabled={saving || !reason.trim() || (decision.status === 'Aprobada' && !previewDemo && order.issuer?.template === 'transplus' && !signature)}>
+                  {decision.status === 'Rechazada' ? 'Confirmar rechazo' : !previewDemo && order.issuer?.template === 'transplus' ? 'Aprobar y firmar' : 'Confirmar aprobación'}
+                </button>
                 <button type="button" className={button + ' ml-2'} onClick={() => setDecision(undefined)}>Cancelar</button>
               </form>
             )}
