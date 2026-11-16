@@ -44,6 +44,12 @@ const emptyDraft: FallaDraft = {
   ubicacion: '', downtime: '', previousOtId: '', photos: [], mutationId: '', pending: '',
 };
 
+function hasDraftCapture(draft: FallaDraft) {
+  return Boolean(draft.unidad || draft.tipoFalla || draft.descripcion || draft.puedeMoverse !== null
+    || draft.clienteAfectado || draft.ubicacion || draft.downtime || draft.previousOtId || draft.photos.length
+    || draft.stopped || draft.stopStartedAt || draft.mutationId || draft.pending);
+}
+
 export default function FallaPage() {
   const [params] = useSearchParams();
   const userId = useAuthStore((s) => s.userId);
@@ -63,9 +69,15 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
   const [ready, setReady] = useState(false);
   const [draftError, setDraftError] = useState(false);
   const [draft, setDraft] = useState<FallaDraft>(emptyDraft);
+  const [discardForUnit, setDiscardForUnit] = useState<string>();
   const currentDraft = useRef(draft);
   const [photos, setPhotos] = useState<PhotoItem[]>([]);
   const { unidad, tipoFalla, descripcion, puedeMoverse, clienteAfectado, ubicacion, downtime, previousOtId, pending } = draft;
+  const scannedUnit = ready && equipment.some(unit => unit.unit_id === requestedUnit) ? requestedUnit : undefined;
+  const hasCapture = hasDraftCapture(draft);
+  const reportPending = Boolean(draft.mutationId || pending);
+  const qrConflict = Boolean(scannedUnit && scannedUnit !== unidad && !saved && hasCapture);
+  const canDiscard = ready && !reportPending && !saved && hasCapture;
   const stopped = isPanama && (puedeMoverse === false || draft.stopped === true);
   const localStart = stopped && draft.stopStartedAt
     ? Date.parse(`${draft.stopStartedAt}:00-05:00`) : null;
@@ -88,16 +100,13 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
   }, [scope]);
 
   useEffect(() => {
-    if (!ready || !requestedUnit || !equipment.some(unit => unit.unit_id === requestedUnit)) return;
+    if (!scannedUnit) return;
     const current = currentDraft.current;
-    const hasExistingCapture = current.unidad || current.tipoFalla || current.descripcion || current.puedeMoverse !== null
-      || current.clienteAfectado || current.ubicacion || current.downtime || current.previousOtId || current.photos.length
-      || current.mutationId || current.pending;
-    if (hasExistingCapture) return;
-    const next = { ...current, unidad: requestedUnit };
+    if (hasDraftCapture(current)) return;
+    const next = { ...current, unidad: scannedUnit };
     currentDraft.current = next;
     setDraft(next);
-  }, [equipment, ready, requestedUnit]);
+  }, [scannedUnit]);
 
   useEffect(() => {
     const previews = draft.photos.map(file => ({ file, preview: URL.createObjectURL(file) }));
@@ -200,9 +209,11 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
     }
   }
 
-  function discardDraft() {
-    currentDraft.current = emptyDraft;
-    setDraft(emptyDraft);
+  function discardDraft(nextUnit = '') {
+    if (sending.current || saved || currentDraft.current.mutationId || currentDraft.current.pending) return;
+    const next = { ...emptyDraft, unidad: nextUnit };
+    currentDraft.current = next;
+    setDraft(next);
     checkpointFallaClear(scope);
     const write = writes.current.then(() => clearFallaDraft(scope));
     writes.current = write.then(() => setDraftError(false), () => setDraftError(true));
@@ -230,6 +241,17 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
         onCancel={() => setShowConfirm(false)}
       />
 
+      <ConfirmModal
+        open={Boolean(discardForUnit && discardForUnit === scannedUnit && qrConflict && canDiscard)}
+        title="Descartar borrador"
+        message={`Se borrarán las notas y fotos del borrador. Se abrirá un reporte para ${discardForUnit}.`}
+        onConfirm={() => {
+          if (scannedUnit && discardForUnit === scannedUnit) discardDraft(scannedUnit);
+          setDiscardForUnit(undefined);
+        }}
+        onCancel={() => setDiscardForUnit(undefined)}
+      />
+
       {/* Header */}
       <div className="flex items-center gap-3 mb-4">
         <button
@@ -243,7 +265,23 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
         <h1 className="text-xl font-bold text-text">Reportar falla</h1>
       </div>
 
-      <fieldset disabled={!ready || saving || !!pending || saved} className="min-w-0">
+      {qrConflict && (
+        <div className="mb-3 rounded-xl border border-amber/30 bg-amber/10 p-3 text-sm text-text">
+          <p role="alert">
+            <strong>QR para {scannedUnit}.</strong>{' '}
+            {unidad ? `El ${reportPending ? 'reporte pendiente' : 'borrador'} es para ${unidad}.` : 'Tu borrador aún no tiene unidad.'}
+            {reportPending && ' Termina este envío antes de usar el QR.'}
+          </p>
+          {canDiscard && (
+            <button type="button" onClick={() => setDiscardForUnit(scannedUnit)}
+              disabled={saving} className="mt-1 min-h-12 font-semibold underline">
+              Descartar borrador y usar {scannedUnit}
+            </button>
+          )}
+        </div>
+      )}
+
+      <fieldset disabled={!ready || saving || reportPending || saved} className="min-w-0">
       {/* Form card */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-border flex flex-col gap-4">
         {/* Unidad */}
@@ -251,6 +289,7 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
           <label htmlFor="falla-unidad" className="text-sm font-medium text-text-secondary">Unidad</label>
           <select id="falla-unidad"
             value={unidad}
+            disabled={Boolean(qrConflict && unidad)}
             onChange={(e) => void updateDraft({ unidad: e.target.value })}
             className="w-full rounded-xl border border-border p-3 bg-white text-text"
           >
@@ -416,8 +455,8 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
       </div>
 
       </fieldset>
-      {!pending && !saved && ready && (unidad || tipoFalla || descripcion || puedeMoverse !== null || clienteAfectado || ubicacion || downtime || previousOtId || photos.length > 0) && (
-        <button type="button" onClick={discardDraft} disabled={saving} className="mt-2 min-h-12 self-end px-2 text-sm font-semibold text-text-secondary underline">
+      {canDiscard && !qrConflict && (
+        <button type="button" onClick={() => discardDraft()} disabled={saving} className="mt-2 min-h-12 self-end px-2 text-sm font-semibold text-text-secondary underline">
           Descartar borrador
         </button>
       )}
@@ -435,12 +474,12 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
       {/* Submit */}
       <button
         type="button"
-        onClick={pending ? handleConfirm : handleSubmitIntent}
+        onClick={reportPending ? handleConfirm : handleSubmitIntent}
         disabled={!ready || !canSubmit || saving || saved}
         className="mt-4 w-full bg-[#9A5706] text-white rounded-xl py-4 font-semibold text-lg disabled:opacity-40 disabled:cursor-not-allowed transition-opacity btn-press"
         style={{ minHeight: 52 }}
       >
-        {saved ? 'Reporte guardado' : saving ? 'Guardando…' : pending ? 'Reintentar' : 'Enviar reporte'}
+        {saved ? 'Reporte guardado' : saving ? 'Guardando…' : reportPending ? 'Reintentar' : 'Enviar reporte'}
       </button>
     </div>
   );

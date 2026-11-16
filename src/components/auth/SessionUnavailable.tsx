@@ -1,7 +1,14 @@
+import { useEffect } from 'react';
 import { useAuthStore } from '../../stores/auth-store';
 
 export default function SessionUnavailable() {
   const validateSession = useAuthStore((s) => s.validateSession);
+  useEffect(() => {
+    const reconnect = () => { void validateSession(); };
+    window.addEventListener('online', reconnect);
+    return () => window.removeEventListener('online', reconnect);
+  }, [validateSession]);
+
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-4 px-5 text-center text-text">
       <h1 className="text-xl font-bold">Sesión pendiente de verificar</h1>

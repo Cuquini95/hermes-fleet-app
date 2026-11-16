@@ -101,9 +101,17 @@ export default function OrdenCompraPrintPage() {
           </button>
         )}
         <button type="button" onClick={() => {
-          const image = document.querySelector<HTMLImageElement>('.po-panama-signature img');
-          if (image) void image.decode().then(() => window.print()).catch(() => setSignError('No se pudo cargar la firma. Actualiza antes de imprimir.'));
-          else window.print();
+          const images = document.querySelectorAll<HTMLImageElement>('.po-panama-brand img, .po-panama-signature img');
+          if (images.length === 0) {
+            window.print();
+            return;
+          }
+          void Promise.all(Array.from(images, image => image.decode()))
+            .then(() => {
+              setSignError('');
+              window.print();
+            })
+            .catch(() => setSignError('No se pudo cargar el logo o la firma. Actualiza antes de imprimir.'));
         }} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white">
           <Printer size={16} aria-hidden /> Imprimir / Guardar como PDF
         </button>

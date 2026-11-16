@@ -1815,10 +1815,12 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       assert.match(rendered, /14[/-]11[/-]2026|2026-11-14/);
       assert.match(rendered, /QA gerencia/);
       await visible(document.getByText('Firma autorizada', { exact: true }));
+      await visible(document.getByText('Firma aprueba', { exact: true }));
       for (const [index, expected] of [updatedPart, '—', parts[2][3]].entries()) {
         const line = document.getByRole('row').filter({ hasText: parts[index][0] });
         assert.equal(await line.getByRole('cell').nth(2).innerText(), expected);
       }
+      await document.getByRole('img', { name: 'Trans Plus', exact: true }).evaluate(img => img.decode());
       await document.getByRole('img', { name: /Firma de QA gerencia/i }).evaluate(img => img.decode());
       await noHorizontalOverflow(page, 390);
       const artifact = 'Hermes_OC_QA.pdf';
@@ -1827,7 +1829,10 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       const printed = execFileSync('pdftotext', [pdfPath, '-'], { encoding: 'utf8' });
       assert.match(printed, /497[.,]95/);
       assert.match(printed, /FIRMA AUTORIZADA/i);
-      assert.match(execFileSync('pdfimages', ['-list', pdfPath], { encoding: 'utf8' }), /image\s+360\s+116\b/);
+      assert.match(printed, /FIRMA APRUEBA/i);
+      const printedImages = execFileSync('pdfimages', ['-list', pdfPath], { encoding: 'utf8' });
+      assert.match(printedImages, /image\s+217\s+150\b/);
+      assert.match(printedImages, /image\s+360\s+116\b/);
       assert(printed.includes(number) && printed.includes(parts[2][0]));
       const printedTable = execFileSync('pdftotext', ['-layout', pdfPath, '-'], { encoding: 'utf8' });
       const firstPrintedLine = printedTable.split('\n').find(line => line.includes(parts[0][0]));
@@ -1837,7 +1842,8 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       assert.match(execFileSync('pdfinfo', [pdfPath], { encoding: 'utf8' }), /^Pages:\s+1$/m);
       await page.goto(`${origin}/admin/ordenes-compra/${folio}`, { waitUntil: 'domcontentloaded' });
       await visible(page.getByRole('heading', { name: new RegExp(number) }));
-      return { folio, number, unit: 'DZ203', amount: 497.95, artifact, pages: 1, signaturePrinted: true, partNumbersPrinted: [updatedPart, parts[2][3]], optionalPartNumber: true };
+      return { folio, number, unit: 'DZ203', amount: 497.95, artifact, pages: 1, signaturePrinted: true,
+        officialLogoPrinted: true, signatureSlots: 2, partNumbersPrinted: [updatedPart, parts[2][3]], optionalPartNumber: true };
     }, browserBuyer));
 
     await record('MÓVIL-COMPRAS-FIRMA-REGISTRADA', () => inRole('gerencia', 390, async page => {

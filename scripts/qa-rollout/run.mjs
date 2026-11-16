@@ -10,6 +10,7 @@ import { checkAuth, checkLoad, checkPurchasing, checkWorkshop } from './api-case
 import { checkBrowser } from './browser-cases.mjs';
 import { startFixture } from './fixture.mjs';
 import { checkAlertDelivery } from './alert-delivery-case.mjs';
+import { checkOfflineRestart } from './offline-restart-case.mjs';
 
 const exec = promisify(execFile);
 const harnessDirectory = fileURLToPath(new URL('../../', import.meta.url));
@@ -89,7 +90,10 @@ try {
         });
         return { line: output.stdout.split('\n').filter(Boolean).at(-1) };
       });
-      if (built) await record('NAVEGADOR-ARRANQUE', async () => ({ browserEgressBlocked: await checkBrowser(fixture, record, out, { withGateway, withPurchasing }) }));
+      if (built) {
+        await record('NAVEGADOR-ARRANQUE', async () => ({ browserEgressBlocked: await checkBrowser(fixture, record, out, { withGateway, withPurchasing }) }));
+        if (withGateway) await record('MÓVIL-REINICIO-SIN-SEÑAL', () => checkOfflineRestart(fixture, out));
+      }
     }
     report.serverEgressBlocked = [...new Set(fixture.outboundBlocked)];
     report.fixtureErrors = fixture.errors;
