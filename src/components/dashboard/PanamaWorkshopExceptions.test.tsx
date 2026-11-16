@@ -25,5 +25,7 @@ it('muestra el folio que abre la OT de origen, los campos confirmados y las conf
   expect(html).toContain('Operaciones · persona sin confirmar');
   expect(html).toContain('Estado sin confirmar en la última consulta.');
   expect(html).toContain('Consulta sin confirmar. Se conservan los avisos previos.');
-  expect(html).not.toContain('Sin excepciones activas');
+  expect(html).not.toContain('Sin avisos de Taller.');
+  expect(html).not.toContain('OT de Hermes Panamá');
+  expect(html).toMatch(/<details[^>]*>.*Última consulta.*<time dateTime="2026-11-16T02:00:00Z"/);
 });

@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { useCartStore, type CartItem } from '../stores/cart-store';
-import { canAwardRequest, PurchaseApiError, purchaseRequests, purchaseWrite, type PurchaseRequestLine } from '../lib/purchasing-api';
+import { canAwardRequest, PurchaseApiError, purchaseRequests, purchaseWrite, visibleWorkOrderFolio, type PurchaseRequestLine } from '../lib/purchasing-api';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { useCatalogoStore } from '../stores/catalogo-store';
 import { masterPurchaseState, readPanamaPurchaseMaster, type MasterPurchase, type PurchaseMaster } from '../lib/panama-purchase-master';
@@ -464,7 +464,10 @@ export default function PedidosPage() {
           {loadingMaster && <p role="status" className="text-sm text-text-secondary">Consultando el Maestro de Compras…</p>}
           {loadingHistorial && hasRows && <p role="status" className="text-sm text-text-secondary">Consultando pedidos de Hermes…</p>}
           {master?.capturedAt && (
-            <p className="text-xs text-text-secondary">Corte del Maestro de Compras: {cutFormatter.format(new Date(master.capturedAt))} · hora de Panamá</p>
+            <details className="text-xs text-text-secondary">
+              <summary className="min-h-8 cursor-pointer py-2">Fuente y fecha</summary>
+              <p>Corte del Maestro de Compras: {cutFormatter.format(new Date(master.capturedAt))} · Panamá</p>
+            </details>
           )}
           {unknownMaster && (
             <p role="status" className="text-sm text-amber-900">Hay compras con estado sin verificar. Consúltalas en Historial.</p>
@@ -862,6 +865,9 @@ function PedidoRowCard({
   const urgCfg = (URGENCIA_CONFIG as Record<string, { color: string; bg: string }>)[row.urgencia] ?? URGENCIA_CONFIG.Normal;
   const sCfg = STATUS_STYLE[row.estado] ?? STATUS_STYLE.Pendiente ?? { color: '#000', bg: '#fff', border: '#ccc' };
   const nextStatus = STATUS_NEXT[row.estado] ?? null;
+  const publicOt = visibleWorkOrderFolio(row.ot ?? '');
+  const showAllocation = row.unallocatedQuantity !== undefined
+    && (!showOrigin || Number(row.allocatedQuantity) > 0 || Number(row.receivedQuantity) > 0 || row.allocationReview);
 
   async function handleAdvance() {
     if (!nextStatus || updateLock.current || row.ocFolio) return;
@@ -894,34 +900,43 @@ function PedidoRowCard({
         </span>
         <div className="flex flex-wrap justify-end gap-2">
           {showOrigin && <span className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-slate-700">Hermes</span>}
-          <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ color: urgCfg.color, backgroundColor: urgCfg.bg }}>
+          {(!showOrigin || row.urgencia !== 'Normal') && <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ color: urgCfg.color, backgroundColor: urgCfg.bg }}>
             {row.urgencia}
-          </span>
+          </span>}
         </div>
       </div>
 
       {/* Body */}
       <div className="p-4">
-        <div className="mb-2">
+        {showOrigin ? <div className="mb-2 space-y-1">
+          <p className="break-words font-semibold text-text">{row.descripcion}</p>
+          <p className="break-words text-sm text-text-secondary">
+            {[row.partNum, row.equipo, `Cantidad ${row.cantidad}`].filter(Boolean).join(' · ')}
+          </p>
+          <div className="flex flex-wrap items-center gap-x-3 text-sm">
+            {row.ot && <Link className="inline-flex min-h-11 items-center font-medium text-blue-800 underline"
+              to={'/workorders/' + encodeURIComponent(row.ot)}>{publicOt ?? 'Ver OT'}</Link>}
+            {row.requiredDate && <span>Fecha requerida {row.requiredDate}</span>}
+          </div>
+        </div> : <div className="mb-2">
           <p className="font-mono text-sm font-semibold text-amber">{row.partNum}</p>
           <p className="text-sm text-text font-medium">{row.descripcion}</p>
           <p className="text-xs text-text-secondary mt-0.5">
             {row.pedidoId} · {row.fecha} · {row.solicitante}
           </p>
-        </div>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-secondary mb-3">
+        </div>}
+        {!showOrigin && <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-secondary mb-3">
           {row.equipo && <span>📍 {row.equipo}</span>}
           <span>×{row.cantidad}</span>
           {row.total && <span className="font-semibold text-text">${row.total}</span>}
           {row.fuente && <span>{row.fuente}</span>}
-        </div>
-        {row.notas && <p className="text-xs text-text-secondary mb-3 italic">{row.notas}</p>}
+        </div>}
+        {!showOrigin && row.notas && <p className="text-xs text-text-secondary mb-3 italic">{row.notas}</p>}
 
         {updateError && <p role="alert" className="mb-2 text-xs text-red-700">{updateError}</p>}
-        {row.ot && <p className="text-sm font-medium">OT {row.ot}</p>}
-        {row.requiredDate && <p className="text-sm">Fecha requerida {row.requiredDate}{row.equipmentSerial && ` · Serie ${row.equipmentSerial}`}</p>}
+        {!showOrigin && row.ot && <p className="text-sm font-medium">OT {row.ot}</p>}
         {row.allocationReview && <p role="alert" className="text-sm text-amber-800">Saldo por conciliar con las órdenes vinculadas.</p>}
-        {row.unallocatedQuantity !== undefined && <p className="py-2 text-sm text-text">
+        {showAllocation && <p className="py-2 text-sm text-text">
           Asignado {row.allocatedQuantity} · Recibido {row.receivedQuantity} · Saldo por asignar {row.unallocatedQuantity}
         </p>}
         {row.allocations?.map(award => <div key={award.folio} className="my-1 rounded-lg border border-border p-2 text-sm">
@@ -975,6 +990,15 @@ function PedidoRowCard({
             Pedido completado
           </div>
         )}
+        {showOrigin && <details className="mt-2 space-y-1 break-words text-xs text-text-secondary">
+          <summary className="min-h-9 cursor-pointer py-2 font-semibold">Detalles del pedido</summary>
+          <p>{[row.pedidoId, row.fecha, row.solicitante].filter(Boolean).join(' · ')}</p>
+          {row.ot && !publicOt && <p>Referencia OT {row.ot}</p>}
+          {row.equipmentSerial && <p>Serie {row.equipmentSerial}</p>}
+          {row.fuente && <p>{row.fuente}</p>}
+          {row.total && Number(row.total) > 0 && <p>Monto ${row.total}</p>}
+          {row.notas && <p>{row.notas}</p>}
+        </details>}
       </div>
     </div>
   );
@@ -989,10 +1013,13 @@ function MasterPurchaseCard({ row }: { row: MasterPurchase }) {
       </div>
       <div className="space-y-1 break-words p-4 text-sm text-text">
         {row.description && <p className="font-medium">{row.description}</p>}
-        <p className="text-xs text-text-secondary">{row.unit} · Folio {row.id}</p>
-        {row.amount && <p className="text-xs">Monto: {row.amount}{row.currency && ` ${row.currency}`}</p>}
-        {row.order && <p className="text-xs">OC vinculada: {row.order}</p>}
-        {row.check && <p className="text-xs text-text-secondary">{row.check}</p>}
+        <p className="text-xs text-text-secondary">{row.unit}{row.order && ` · ${row.order}`}</p>
+        {row.amount && <p className="text-xs">Monto {row.amount}{row.currency && ` ${row.currency}`}</p>}
+        <details className="text-xs text-text-secondary">
+          <summary className="min-h-8 cursor-pointer py-2">Detalles</summary>
+          <p>Folio {row.id}</p>
+          {row.check && <p>{row.check}</p>}
+        </details>
       </div>
     </article>
   );

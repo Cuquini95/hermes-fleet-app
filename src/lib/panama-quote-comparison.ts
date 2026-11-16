@@ -123,6 +123,15 @@ export function quoteVendorKey(vendor: Pick<PurchaseVendor, 'name' | 'rfc'>) {
   return JSON.stringify([vendor.name, vendor.rfc]);
 }
 
+export function quoteVendorLabel(
+  vendor: Pick<PurchaseVendor, 'name' | 'rfc'>,
+  vendors: readonly Pick<PurchaseVendor, 'name' | 'rfc'>[],
+) {
+  const canonical = (name: string) => name.trim().toLocaleLowerCase('es-PA');
+  const sameName = vendors.some(other => canonical(other.name) === canonical(vendor.name) && other.rfc !== vendor.rfc);
+  return sameName ? `${vendor.name} · ${vendor.rfc || 'Sin identificación'}` : vendor.name;
+}
+
 export function validateQuoteOrderPrefill(value: unknown, request: PurchaseRequestLine, issuers: PurchaseIssuer[], vendors: PurchaseVendor[]) {
   if (!value || typeof value !== 'object') return undefined;
   const quote = value as Partial<QuoteOrderPrefill>;

@@ -183,10 +183,14 @@ function ReceivingQueue({ userId }: { userId: string }) {
                     </p>
                     {line.receipts.length > 0 && <ul className="space-y-1 rounded-lg bg-slate-50 p-2 text-sm text-slate-700">
                       {line.receipts.map((receipt) => <li key={receipt.id} className="break-words">
-                        {receipt.quantity} · {receipt.by} · <time dateTime={receipt.at}>{formatPanamaReceiptDate(receipt.at)}</time>
-                        {receipt.reference && ` · ${receipt.reference}`}
-                        {receipt.stockDisposition === 'posted' && ' · Inventario actualizado'}
-                        {receipt.stockDisposition === 'unregistered' && ' · SKU sin alta en inventario'}
+                        <details>
+                          <summary className="min-h-8 cursor-pointer py-1">
+                            {receipt.quantity} recibidas{receipt.reference && ` · ${receipt.reference}`}
+                            {receipt.stockDisposition === 'unregistered' && ' · SKU sin alta en inventario'}
+                          </summary>
+                          <p>{receipt.by} · <time dateTime={receipt.at}>{formatPanamaReceiptDate(receipt.at)}</time></p>
+                          {receipt.stockDisposition === 'posted' && <p>Inventario actualizado</p>}
+                        </details>
                       </li>)}
                     </ul>}
                     {shipments.length > 0 && <ul className="space-y-1 rounded-lg bg-slate-50 p-2 text-sm">

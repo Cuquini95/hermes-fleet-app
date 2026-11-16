@@ -15,12 +15,12 @@ const FILTER_OPTIONS: FilterKey[] = ['Todas', 'CRITICA', 'ALTA', 'MEDIA', 'Abier
 
 const FILTER_LABELS: Record<FilterKey, string> = {
   Todas: 'Todas',
-  CRITICA: 'Critica',
+  CRITICA: 'Crítica',
   ALTA: 'Alta',
   MEDIA: 'Media',
   Abierta: 'Abierta',
-  'En Reparación': 'En Reparación',
-  'Esperando Pieza': 'Esperando Pieza',
+  'En Reparación': 'En reparación',
+  'Esperando Pieza': 'Por repuesto',
   Resuelta: 'Resuelta',
   Completado: 'Cerradas',
 };
@@ -118,7 +118,7 @@ export default function WorkOrdersPage() {
         <EmptyState
           type="workorders"
           title="Sin órdenes"
-          description="No hay órdenes de trabajo de Hermes con este filtro"
+          description="Prueba otro filtro."
         />
       ) : (
         filtered.map((ot) => (

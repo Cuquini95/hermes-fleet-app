@@ -291,6 +291,11 @@ export function purchaseOrder(folio: string, signal?: AbortSignal) {
   return purchaseRead<PurchaseDocument>('order', { folio }, signal);
 }
 
+export function visibleWorkOrderFolio(value: string): string | undefined {
+  const folio = value.trim().toUpperCase();
+  return /^OT-\d{4,15}$/.test(folio) ? folio : undefined;
+}
+
 export function purchaseRequests(signal?: AbortSignal) {
   return purchaseRead<{ items: PurchaseRequestLine[] }>('requests', undefined, signal);
 }

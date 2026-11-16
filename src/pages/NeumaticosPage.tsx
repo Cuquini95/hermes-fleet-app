@@ -274,8 +274,6 @@ function LegacyTireInspection() {
           <h1 className="text-xl font-bold text-text">Reporte de Neumáticos</h1>
         </div>
 
-        <p className="text-sm text-text-secondary mb-4">Selecciona la unidad a inspeccionar</p>
-
         <div className="flex flex-col gap-2 mb-6">
           {wheeled.map((eq) => (
             <button
@@ -316,9 +314,6 @@ function LegacyTireInspection() {
               placeholder={String(equipment?.current_horometro ?? '')}
               className="w-full border border-border rounded-xl px-4 py-3 text-text bg-white"
             />
-            <p className="text-xs text-text-secondary mt-1">
-              Se registra como "Horómetro Actual" en el Sheet
-            </p>
           </div>
         )}
 
@@ -328,7 +323,7 @@ function LegacyTireInspection() {
           className="w-full py-3 rounded-xl font-semibold text-white"
           style={{ backgroundColor: selectedUnit ? '#162252' : '#9CA3AF' }}
         >
-          Continuar → {selectedUnit && `(${positions.length} posiciones)`}
+          {selectedUnit ? `Inspeccionar ${positions.length} posiciones` : 'Seleccionar equipo'}
         </button>
       </div>
     );
@@ -341,7 +336,7 @@ function LegacyTireInspection() {
         <CheckCircle2 size={64} color="#16A34A" />
         <h2 className="text-2xl font-bold text-text text-center">Reporte Completado</h2>
         <p className="text-text-secondary text-center">
-          {registradas.length} llanta{registradas.length !== 1 ? 's' : ''} guardada{registradas.length !== 1 ? 's' : ''} en el Sheet
+          {registradas.length} llanta{registradas.length !== 1 ? 's' : ''} registrada{registradas.length !== 1 ? 's' : ''}
         </p>
         <div className="w-full bg-white rounded-xl p-4 border border-border">
           {registradas.map((pos) => (
@@ -594,7 +589,6 @@ function LegacyTireInspection() {
                   onChange={(e) => setLlanta((f) => ({ ...f, presionRec: e.target.value }))}
                   className="w-full border border-border rounded-xl px-3 py-2.5 text-text bg-gray-50 text-sm"
                 />
-                <p className="text-xs text-text-secondary mt-0.5">Auto por tipo/posición</p>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-text-secondary mb-1">

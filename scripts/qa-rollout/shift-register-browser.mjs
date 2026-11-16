@@ -12,10 +12,10 @@ const cut = {
   ],
 };
 const cases = [
-  { day: '08', initialHours: '1010', finalHours: '1018', official: '8 h del turno en REGISTRO', delta: '0 h de diferencia',
-    status: 'Coincide con el corte de REGISTRO · REG-QA-PARTE-08' },
-  { day: '09', initialHours: '1020', finalHours: '1028', official: '7.5 h del turno en REGISTRO', delta: '-0.5 h de diferencia',
-    status: 'Lecturas distintas en REGISTRO. Requiere revisión. · REG-QA-PARTE-09' },
+  { day: '08', initialHours: '1010', finalHours: '1018', official: '8 h del turno', delta: '0 h',
+    status: 'Coincide con el corte de REGISTRO', reference: 'REG-QA-PARTE-08' },
+  { day: '09', initialHours: '1020', finalHours: '1028', official: '7.5 h del turno', delta: '-0.5 h',
+    status: 'Lecturas distintas en REGISTRO. Requiere revisión.', reference: 'REG-QA-PARTE-09' },
   { day: '10', initialHours: '1030', finalHours: '1038', official: 'Horas no disponibles', delta: 'Pendiente de conciliación',
     status: 'Sin coincidencia en el corte de REGISTRO' },
 ];
@@ -31,14 +31,32 @@ export async function checkShiftRegister({ fixture, inRole, noHorizontalOverflow
   async function verifyAfterReload(page, folios, width) {
     await page.reload({ waitUntil: 'domcontentloaded' });
     for (const [index, id] of folios.entries()) {
-      const { official, delta, status } = cases[index];
+      const { official, delta, status, reference } = cases[index];
       const card = part(page, id);
-      await card.getByText(`${id} · Aceptado por Supervisión`, { exact: true }).waitFor();
+      await card.getByText('Aceptado por Supervisión', { exact: true }).waitFor();
+      const details = card.getByText('Detalles del parte', { exact: true });
+      const idText = card.getByText(`Referencia ${id}`, { exact: true });
+      assert.equal(await idText.isVisible(), false);
+      await details.click();
+      await idText.waitFor();
+      await details.click();
       const comparison = card.getByRole('region', { name: 'Conciliación con REGISTRO' });
-      for (const value of [status, '8 h del turno', official, delta, 'Corte de REGISTRO · 11 oct 2026, 9:05 · Panamá']) {
+      for (const value of [status, 'Corte de REGISTRO · 11 oct 2026, 9:05 · Panamá']) {
         await comparison.getByText(value, { exact: true }).waitFor();
       }
+      for (const [label, value] of [['Hermes', '8 h del turno'], ['REGISTRO TMF', official], ['Diferencia (REGISTRO − Hermes)', delta]]) {
+        await comparison.locator('dl > div').filter({ has: page.getByText(label, { exact: true }) })
+          .getByText(value, { exact: true }).waitFor();
+      }
       assert.equal(await comparison.locator('time').getAttribute('datetime'), cut.capturedAt);
+      if (reference) {
+        const referenceDetails = comparison.getByText('Referencia en REGISTRO', { exact: true });
+        const referenceText = comparison.getByText(reference, { exact: true });
+        assert.equal(await referenceText.isVisible(), false);
+        await referenceDetails.click();
+        await referenceText.waitFor();
+        await referenceDetails.click();
+      }
     }
     await noHorizontalOverflow(page, width);
     await part(page, folios[1]).getByRole('region', { name: 'Conciliación con REGISTRO' }).scrollIntoViewIfNeeded();

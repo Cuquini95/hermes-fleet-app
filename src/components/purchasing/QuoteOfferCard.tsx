@@ -1,5 +1,5 @@
 import type { PurchaseVendor } from '../../lib/purchasing-api';
-import { quoteVendorKey, type ComparedOfferInput, type compareQuotes } from '../../lib/panama-quote-comparison';
+import { quoteVendorKey, quoteVendorLabel, type ComparedOfferInput, type compareQuotes } from '../../lib/panama-quote-comparison';
 
 export const quoteInput = 'mt-1 block min-h-11 w-full min-w-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-base text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700';
 export const quoteLabel = 'block min-w-0 text-sm font-medium text-slate-800';
@@ -41,9 +41,9 @@ export default function QuoteOfferCard(props: Props) {
         <label className={quoteLabel + ' col-span-2'}>
           Proveedor
           <select className={quoteInput} value={offer.vendor} onChange={event => onChange({ vendor: event.target.value })}>
-            <option value="">Seleccionar proveedor</option>
+            <option value="">Seleccionar</option>
             {vendors.map(vendor => <option key={quoteVendorKey(vendor)} value={quoteVendorKey(vendor)}>
-              {vendor.name}{vendor.rfc ? ` · ${vendor.rfc}` : ''}
+              {quoteVendorLabel(vendor, vendors)}
             </option>)}
           </select>
         </label>
@@ -73,18 +73,8 @@ export default function QuoteOfferCard(props: Props) {
             value={offer.freight} onChange={event => onChange({ freight: event.target.value })} />
         </label>
         <label className={quoteLabel + ' col-span-2 sm:col-span-1'}>
-          Otros cargos sin ITBMS
-          <input className={quoteInput} type="number" inputMode="decimal" min="0" step="0.01" placeholder="Opcional"
-            value={offer.other} onChange={event => onChange({ other: event.target.value })} />
-        </label>
-        <label className={quoteLabel + ' col-span-2 sm:col-span-1'}>
           Entrega prometida
           <input className={quoteInput} type="date" value={offer.promisedDate} onChange={event => onChange({ promisedDate: event.target.value })} />
-        </label>
-        <label className={quoteLabel + ' col-span-2'}>
-          Garantía
-          <input className={quoteInput} maxLength={140} value={offer.warranty} placeholder="Indica la cobertura ofrecida"
-            onChange={event => onChange({ warranty: event.target.value })} />
         </label>
         <label className={quoteLabel + ' col-span-2'}>
           Compatibilidad
@@ -98,20 +88,35 @@ export default function QuoteOfferCard(props: Props) {
         {offer.compatibility === 'confirmed' && (
           <label className={quoteLabel + ' col-span-2'}>
             Respaldo de compatibilidad
-            <input className={quoteInput} maxLength={200} value={offer.compatibilityEvidence} placeholder="Parte, modelo o serie que verificaste"
+            <input className={quoteInput} maxLength={200} value={offer.compatibilityEvidence} placeholder="Parte, modelo o serie"
               onChange={event => onChange({ compatibilityEvidence: event.target.value })} />
           </label>
         )}
+        <details className="col-span-2 text-sm text-slate-700">
+          <summary className="min-h-11 cursor-pointer py-2 font-semibold">Garantía y otros cargos</summary>
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+            <label className={quoteLabel}>
+              Garantía
+              <input className={quoteInput} maxLength={140} value={offer.warranty}
+                onChange={event => onChange({ warranty: event.target.value })} />
+            </label>
+            <label className={quoteLabel}>
+              Otros cargos sin ITBMS
+              <input className={quoteInput} type="number" inputMode="decimal" min="0" step="0.01"
+                value={offer.other} onChange={event => onChange({ other: event.target.value })} />
+            </label>
+          </div>
+        </details>
       </div>
-      <dl className="mt-4 grid min-w-0 grid-cols-2 gap-2 rounded-lg bg-slate-100 p-3 text-sm">
+      {(result.landedCents !== null || result.leadDays !== null) && <dl className="mt-4 grid min-w-0 grid-cols-2 gap-2 rounded-lg bg-slate-100 p-3 text-sm">
         <div><dt>Costo puesto en obra</dt><dd className="break-words font-bold">{amount(result.landedCents, offer.currency)}</dd></div>
-        <div><dt>Entrega desde hoy</dt><dd>{days(result.leadDays)}</dd></div>
+        <div><dt>Entrega en</dt><dd>{days(result.leadDays)}</dd></div>
         <div><dt>Atraso previsto</dt><dd>{days(result.delayDays)}</dd></div>
         <div><dt>Costo del paro</dt><dd className="break-words">{amount(result.downtimeCents, offer.currency)}</dd></div>
         {result.totalWithDowntimeCents !== null && (
           <div className="col-span-2"><dt>Costo con paro</dt><dd className="break-words font-bold">{amount(result.totalWithDowntimeCents, offer.currency)}</dd></div>
         )}
-      </dl>
+      </dl>}
       {cheapestLanded && <p className="mt-2 text-sm font-semibold text-emerald-800">Menor costo puesto en obra</p>}
       {cheapestWithDowntime && <p className="mt-2 text-sm font-semibold text-emerald-800">Menor costo con paro</p>}
       {(offer.vendor || offer.reference || offer.unitPrice) && result.issues.length > 0 && (

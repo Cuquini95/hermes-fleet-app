@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { compareQuotes, validateQuoteOrderPrefill, type ComparedOfferInput, type QuoteComparisonInput, type QuoteOrderPrefill } from './panama-quote-comparison';
+import { compareQuotes, quoteVendorLabel, validateQuoteOrderPrefill, type ComparedOfferInput, type QuoteComparisonInput, type QuoteOrderPrefill } from './panama-quote-comparison';
+import { visibleWorkOrderFolio } from './purchasing-api';
 import type { PurchaseIssuer, PurchaseRequestLine, PurchaseVendor } from './purchasing-api';
 
 const quote: ComparedOfferInput = {
@@ -15,6 +16,18 @@ const input: QuoteComparisonInput = {
 };
 
 describe('comparar cotizaciones Panamá', () => {
+  it('muestra el nombre del proveedor y usa la identificación solo para distinguir homónimos', () => {
+    const first = { name: 'Repuestos del Istmo', rfc: 'QAT000000002' };
+    const second = { name: 'REPUESTOS DEL ISTMO', rfc: 'QAT000000003' };
+    expect(quoteVendorLabel(first, [first])).toBe('Repuestos del Istmo');
+    expect(quoteVendorLabel(first, [first, second])).toBe('Repuestos del Istmo · QAT000000002');
+  });
+
+  it('muestra el folio público de la OT sin repetir el prefijo ni usar identificadores internos como título', () => {
+    expect(visibleWorkOrderFolio(' ot-3104 ')).toBe('OT-3104');
+    expect(visibleWorkOrderFolio('OT-COMPRA-PILOTO-QA')).toBeUndefined();
+    expect(visibleWorkOrderFolio('')).toBeUndefined();
+  });
   it('redondea la cantidad fraccionada y permite que el paro estimado cambie el orden', () => {
     const result = compareQuotes(input);
     expect(result.cheapestLanded).toEqual(['long']);

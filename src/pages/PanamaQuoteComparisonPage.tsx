@@ -4,7 +4,7 @@ import { z } from 'zod';
 import QuoteOfferCard, { quoteButton, quoteInput, quoteLabel, quotePrimary } from '../components/purchasing/QuoteOfferCard';
 import { mexicoDateInput } from '../lib/date-utils';
 import { compareQuotes, comparisonQuantity, quoteVendorKey, type ComparedOfferInput, type QuoteCurrency, type QuoteOrderPrefill } from '../lib/panama-quote-comparison';
-import { canAwardRequest, purchaseRead, purchaseRequests, type PurchaseOverview, type PurchaseRequestLine } from '../lib/purchasing-api';
+import { canAwardRequest, purchaseRead, purchaseRequests, visibleWorkOrderFolio, type PurchaseOverview, type PurchaseRequestLine } from '../lib/purchasing-api';
 import { useAuthStore } from '../stores/auth-store';
 
 const section = 'min-w-0 rounded-xl border border-slate-200 bg-white p-4';
@@ -66,6 +66,8 @@ function QuoteWorkspace({ userId }: { userId: string }) {
   }, [reload]);
 
   const selected = data?.requests.find(request => request.id === selectedId);
+  const labelOf = (request: PurchaseRequestLine) => [request.descripcion, request.equipo, visibleWorkOrderFolio(request.ot ?? '')].filter(Boolean).join(' · ');
+  const options = data?.requests.map(request => ({ request, label: labelOf(request) })) ?? [];
   return (
     <div className="mx-auto max-w-5xl space-y-4 pb-3 pt-3 sm:pt-4">
       <header className="rounded-xl bg-[#162252] p-4 text-white">
@@ -83,8 +85,8 @@ function QuoteWorkspace({ userId }: { userId: string }) {
             Partida del pedido
             <select className={quoteInput} value={selected?.id ?? ''} onChange={event => setParams(event.target.value ? { partida: event.target.value } : {})}>
               <option value="">Seleccionar partida</option>
-              {data.requests.map(request => <option key={request.id} value={request.id}>
-                {request.pedidoId} · {request.equipo} · {request.partNum} · {request.descripcion}
+              {options.map(({ request, label }) => <option key={request.id} value={request.id}>
+                {label}{options.some(other => other.request.id !== request.id && other.label === label) && ` · ${request.pedidoId}`}
               </option>)}
             </select>
           </label>
@@ -123,6 +125,7 @@ function QuoteDraft({ userId, request, sources }: { userId: string; request: Pur
   const selected = draft.offers.find(offer => offer.id === draft.selected);
   const selectedResult = comparison.offers.find(result => result.id === draft.selected);
   const vendor = selected && vendorByKey.get(selected.vendor);
+  const publicOt = visibleWorkOrderFolio(request.ot ?? '');
   const prefill: QuoteOrderPrefill | undefined = selected && selectedResult?.eligible && vendor && issuer && comparisonCurrency && draft.rationale.trim()
     ? {
       requestLineId: request.id, requestVersion: request.version, quantity, entityId: issuer.id, currency: comparisonCurrency,
@@ -147,16 +150,19 @@ function QuoteDraft({ userId, request, sources }: { userId: string; request: Pur
       <section className={section + ' space-y-3'} aria-label="Datos de la partida">
         <div>
           <h2 className="break-words font-bold">{request.descripcion}</h2>
-          <p className="break-words text-sm text-slate-700">{request.pedidoId} · {request.equipo} · N.º de parte {request.partNum} · Cantidad por comprar {quantity}</p>
-          <div className="flex flex-wrap gap-x-3 text-sm text-slate-700">
+          <p className="break-words text-sm text-slate-700">{[request.equipo, request.partNum, `Cantidad ${quantity}`].filter(Boolean).join(' · ')}</p>
+          <div className="flex flex-wrap items-center gap-x-3 text-sm text-slate-700">
             {request.ot && <Link className="inline-flex min-h-11 items-center font-semibold text-[#162252] underline"
-              to={'/workorders/' + encodeURIComponent(request.ot)}>OT {request.ot}</Link>}
-            {request.equipmentSerial && <span className="self-center">Serie {request.equipmentSerial}</span>}
+              to={'/workorders/' + encodeURIComponent(request.ot)}>{publicOt ?? 'Ver OT'}</Link>}
+            <details className="min-w-0">
+              <summary className="cursor-pointer py-2 font-semibold">Datos del pedido</summary>
+              <p className="break-words">{request.pedidoId}{request.equipmentSerial && ` · Serie ${request.equipmentSerial}`}</p>
+            </details>
           </div>
         </div>
         <div className="grid min-w-0 gap-3 sm:grid-cols-2">
           <label className={quoteLabel}>
-            Entidad y moneda de comparación
+            Entidad y moneda
             <select className={quoteInput} value={issuer?.id ?? ''} onChange={event => {
               const entityId = event.target.value;
               const nextCurrency = currency.safeParse(issuers.find(entity => entity.id === entityId)?.currency).data;
@@ -174,12 +180,12 @@ function QuoteDraft({ userId, request, sources }: { userId: string; request: Pur
             <input className={quoteInput} type="date" value={neededDate} readOnly={Boolean(request.requiredDate)} onChange={event => update({ neededDate: event.target.value })} />
           </label>
         </div>
-        <p className="text-sm text-slate-700">Compara la misma cantidad y moneda. El costo puesto en obra incluye precio, flete y otros cargos antes de ITBMS.</p>
+        <p className="text-xs text-slate-700">Costos antes de ITBMS.</p>
       </section>
       {comparisonCurrency && <>
-        <section className={section + ' space-y-3'} aria-label="Costo del paro">
-          <h2 className="font-bold">Costo del paro</h2>
-          <div className="grid min-w-0 grid-cols-2 gap-3">
+        <details className={section}>
+          <summary className="cursor-pointer font-bold">Costo del paro</summary>
+          <div className="mt-3 grid min-w-0 grid-cols-2 gap-3">
             <label className={quoteLabel}>
               Horas de paro por día de atraso
               <input className={quoteInput} type="number" inputMode="decimal" min="0.01" max="24" step="0.01"
@@ -205,12 +211,10 @@ function QuoteDraft({ userId, request, sources }: { userId: string; request: Pur
                 onChange={event => update({ downtime: { ...draft.downtime, source: event.target.value } })} />
             </label>
           </div>
-          <p className="text-sm text-slate-700">
-            {comparison.includesDowntime
-              ? `Proyección por día calendario de atraso con ${draft.downtime.basis === 'documented' ? 'costo documentado' : 'costo supuesto'}.`
-              : 'Para proyectar el paro, completa la fecha requerida, las horas por día y el costo por hora con su referencia.'}
-          </p>
-        </section>
+          {comparison.includesDowntime && <p className="mt-3 text-xs text-slate-700">
+            {draft.downtime.basis === 'documented' ? 'Costo documentado' : 'Costo supuesto'} por día de atraso.
+          </p>}
+        </details>
         <div className="grid min-w-0 gap-4 lg:grid-cols-2">
           {draft.offers.map((offer, index) => {
             const result = comparison.offers[index]!;
@@ -244,9 +248,8 @@ function QuoteDraft({ userId, request, sources }: { userId: string; request: Pur
             state={{ quoteOrder: prefill }}>Preparar OC</Link>}
         </section>
       )}
-      <p className="text-sm text-slate-700" role={storageError ? 'alert' : undefined}>
-        {storageError ? 'Este navegador no guardó el borrador.' : 'Las cotizaciones se guardan en el navegador de esta cuenta.'}
-      </p>
+      {storageError ? <p role="alert" className="text-sm text-amber-800">El navegador no guardó el borrador.</p>
+        : <p className="text-xs text-slate-600">Borrador local.</p>}
     </>
   );
 }

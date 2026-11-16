@@ -25,14 +25,16 @@ export default function BottomNav() {
   if (!role) return null;
 
   const { visible, overflow } = NAV_CONFIG[role];
+  const isPanama = project === 'tmf-panama';
   const [generalHome, ...otherItems] = visible;
   const purchasing: NavItem[] = [];
   const receiving = entry?.id === 'recepciones';
   const start = receiving && generalHome ? { ...generalHome, path: entry.path } : entry;
   const visibleItems = start && entry?.id !== 'pedidos' ? [start, ...otherItems] : visible;
-  const previousStart = receiving && generalHome ? { ...generalHome, label: 'Inicio general' } : generalHome;
+  const previousStart = generalHome && (receiving || (isPanama && generalHome.id === 'dashboard'))
+    ? { ...generalHome, label: 'Inicio general' } : generalHome;
   if (receiving) purchasing.push(entry);
-  if (role === 'gerencia' && project === 'tmf-panama') {
+  if (role === 'gerencia' && isPanama) {
     purchasing.push({ id: 'ordenes-compra', label: 'Órdenes de compra', icon: 'FileText', path: '/admin/ordenes-compra' });
     if (canOpenPayables) {
       purchasing.push({ id: 'cuentas-por-pagar', label: 'Cuentas por pagar', icon: 'Receipt', path: '/panama/cuentas-por-pagar' });
@@ -64,12 +66,13 @@ export default function BottomNav() {
       >
         {visibleItems.map((item) => {
           const active = isActive(item);
+          const label = isPanama && item.id === 'dashboard' ? 'Inicio' : item.label;
           return (
             <button
               key={item.id}
               onClick={() => handleItemClick(item)}
               className="flex flex-col items-center gap-1 flex-1 py-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white rounded"
-              aria-label={item.label}
+              aria-label={label}
               aria-current={active ? 'page' : undefined}
             >
               <LucideIcon
@@ -81,7 +84,7 @@ export default function BottomNav() {
                 className="text-xs leading-none"
                 style={{ color: active ? '#FFFFFF' : 'rgba(255,255,255,0.6)' }}
               >
-                {item.label}
+                {label}
               </span>
               {active && (
                 <span

@@ -65,19 +65,22 @@ export default function PanamaTechnicalLibrary({ kind }: { kind: TechnicalDocume
           Buscar
         </button>
       </form>
-      {state === 'loading' && <p role="status">Consultando biblioteca…</p>}
-      {state === 'unavailable' && <p role="alert">Biblioteca no disponible. Solicita el documento vigente a Taller.</p>}
-      {state === 'ready' && records.length === 0 && <p role="status">Sin documentos para esta búsqueda.</p>}
+      {state === 'loading' && <p role="status">Cargando…</p>}
+      {state === 'unavailable' && <p role="alert">Biblioteca no disponible. Consulta a Taller.</p>}
+      {state === 'ready' && records.length === 0 && <p role="status">Sin documentos.</p>}
       {state === 'ready' && records.length > 0 && (
         <ul className="space-y-2">
           {records.map(record => (
             <li key={record.url} className="rounded-xl border border-slate-200 bg-white p-3">
               <p className="font-semibold text-navy">{record.title}</p>
-              <p className="text-sm text-slate-600">{record.model} · {record.source}</p>
-              <p className="text-sm text-slate-600">{record.revision ? `Revisión ${record.revision}` : 'Revisión no registrada'}</p>
+              <p className="text-sm text-slate-600">{record.model}</p>
+              <details className="text-xs text-slate-600">
+                <summary className="min-h-11 cursor-pointer py-3 font-medium">Fuente y revisión</summary>
+                <p>{record.source} · {record.revision ? `Revisión ${record.revision}` : 'Sin revisión registrada'}</p>
+              </details>
               <a href={record.url} target="_blank" rel="noopener noreferrer"
                 className="inline-flex min-h-12 items-center gap-2 text-sm font-semibold text-blue-800 underline">
-                <ExternalLink size={16} aria-hidden="true" /> Abrir documento de {record.model}
+                <ExternalLink size={16} aria-hidden="true" /> Abrir {kind === 'manual' ? 'manual' : 'diagrama'}
               </a>
             </li>
           ))}

@@ -250,7 +250,7 @@ function StockCard({ alert }: { alert: StockCriticoAlert }) {
   );
 }
 
-function PmCard({ alert }: { alert: PmVencidoAlert }) {
+function PmCard({ alert, isPanama }: { alert: PmVencidoAlert; isPanama: boolean }) {
   const isOverdue = alert.horasVencido >= 0 || alert.status?.includes('VENCIDO') === true;
   return (
     <div className={`bg-white rounded-xl shadow-sm border border-border border-l-4 ${isOverdue ? 'border-l-critical' : 'border-l-amber'} p-4`}>
@@ -261,8 +261,13 @@ function PmCard({ alert }: { alert: PmVencidoAlert }) {
         </span>
       </div>
       <p className="text-sm text-text-secondary">{alert.tipoPm} · {alert.horasProximo.toLocaleString()} h</p>
-      {alert.status && <p className="text-xs text-text-secondary">PM FLOTA: {alert.status}</p>}
-      {alert.reconciliationPending && <p className="text-xs text-text-secondary">Cierre aceptado en Hermes, pendiente de conciliar con PM FLOTA.</p>}
+      {alert.status && (isPanama ? (
+        <details className="text-xs text-text-secondary">
+          <summary className="cursor-pointer">Dato de origen</summary>
+          <p>PM FLOTA · {alert.status}</p>
+        </details>
+      ) : <p className="text-xs text-text-secondary">PM FLOTA: {alert.status}</p>)}
+      {alert.reconciliationPending && <p className="text-xs text-text-secondary">Cierre aceptado en Hermes, por conciliar con PM FLOTA.</p>}
       <div className="flex items-center justify-between mt-2 text-sm">
         <span className="text-text-secondary font-mono">Actual: {alert.horasActuales.toLocaleString()} hrs</span>
         <span className={`font-bold ${isOverdue ? 'text-critical' : 'text-amber'}`}>
@@ -357,6 +362,7 @@ export default function AlertsPage() {
         <button
           type="button"
           onClick={() => navigate(-1)}
+          aria-label="Volver"
           className="p-2 rounded-xl bg-white border border-border shadow-sm"
         >
           <ArrowLeft size={20} className="text-text" />
@@ -383,7 +389,9 @@ export default function AlertsPage() {
       {/* Last refresh */}
       {lastRefresh && !loading && (
         <p className="text-xs text-text-secondary mb-4">
-          Actualizado: {lastRefresh.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          Actualizado · <time dateTime={lastRefresh.toISOString()}>{lastRefresh.toLocaleTimeString(isPanama ? 'es-PA' : 'es-MX', {
+            hour: '2-digit', minute: '2-digit', ...(isPanama ? { timeZone: 'America/Panama' } : { second: '2-digit' }),
+          })}</time>
         </p>
       )}
 
@@ -394,8 +402,13 @@ export default function AlertsPage() {
       {!loading && error && (
         <div className="bg-white rounded-xl p-6 shadow-sm border border-border text-center">
           <AlertTriangle size={32} className="text-critical mx-auto mb-3" />
-          <p className="text-sm font-semibold text-text mb-1">Error al cargar alertas</p>
-          <p className="text-xs text-text-secondary mb-4">{error}</p>
+          <p className="text-sm font-semibold text-text mb-1">No se pudieron cargar las alertas</p>
+          {isPanama ? (
+            <details className="mb-4 text-xs text-text-secondary">
+              <summary className="cursor-pointer">Detalle del error</summary>
+              <p className="break-words">{error}</p>
+            </details>
+          ) : <p className="text-xs text-text-secondary mb-4">{error}</p>}
           <button
             type="button"
             onClick={handleRetry}
@@ -408,9 +421,9 @@ export default function AlertsPage() {
 
       {!loading && !error && unverified && (
         <div role="alert" className="mb-4 rounded-xl border border-amber bg-amber-50 p-4 text-sm text-text">
-          <p className="font-semibold">Estado de mantenimiento sin verificar</p>
-          <p className="mt-1">PM FLOTA o Componentes tienen fuentes sin datos, lecturas o cierres pendientes de conciliar. Revisa las alertas disponibles.</p>
-          <Link to="/pm" className="mt-2 inline-flex min-h-11 items-center font-semibold underline">Abrir Programa de Mantenimiento</Link>
+          <p className="font-semibold">Mantenimiento por verificar</p>
+          <p className="mt-1">Faltan datos o conciliaciones de PM o componentes.</p>
+          <Link to="/pm" className="mt-2 inline-flex min-h-11 items-center font-semibold underline">Ver mantenimiento</Link>
         </div>
       )}
 
@@ -420,10 +433,10 @@ export default function AlertsPage() {
           <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center">
             <CheckCircle size={28} className="text-success" />
           </div>
-          <p className="text-base font-semibold text-text">Todo en orden ✓</p>
-          <p className="text-sm text-text-secondary text-center max-w-xs">
+          <p className="text-base font-semibold text-text">{isPanama ? 'Sin alertas' : 'Todo en orden ✓'}</p>
+          {!isPanama && <p className="text-sm text-text-secondary text-center max-w-xs">
             No hay fallas críticas, DVIR reprobados, stock bajo ni PMs vencidos en este momento.
-          </p>
+          </p>}
         </div>
       )}
 
@@ -432,10 +445,10 @@ export default function AlertsPage() {
         <div className="flex flex-col gap-6">
 
           {/* Fallas críticas sin OT */}
-          <section>
+          <section hidden={isPanama && data.fallas.length === 0}>
             <SectionHeader
               icon={<AlertTriangle size={16} />}
-              title="Fallas Críticas sin OT"
+              title={isPanama ? 'Fallas sin OT' : 'Fallas Críticas sin OT'}
               count={data.fallas.length}
               colorClass="text-critical"
             />
@@ -449,10 +462,10 @@ export default function AlertsPage() {
           </section>
 
           {/* DVIR reprobado sin seguimiento */}
-          <section>
+          <section hidden={isPanama && data.dvir.length === 0}>
             <SectionHeader
               icon={<ClipboardX size={16} />}
-              title="DVIR Reprobado sin seguimiento"
+              title={isPanama ? 'Inspecciones pendientes de atender' : 'DVIR Reprobado sin seguimiento'}
               count={data.dvir.length}
               colorClass="text-critical"
             />
@@ -466,10 +479,10 @@ export default function AlertsPage() {
           </section>
 
           {/* Stock crítico */}
-          <section>
+          <section hidden={isPanama && data.stock.length === 0}>
             <SectionHeader
               icon={<Package size={16} />}
-              title="Stock Crítico"
+              title={isPanama ? 'Stock bajo' : 'Stock Crítico'}
               count={data.stock.length}
               colorClass="text-amber"
             />
@@ -483,10 +496,10 @@ export default function AlertsPage() {
           </section>
 
           {/* PM vencido */}
-          <section>
+          <section hidden={isPanama && data.pm.length === 0}>
             <SectionHeader
               icon={<Wrench size={16} />}
-              title="PM Vencido / Próximo"
+              title={isPanama ? 'PM por atender' : 'PM Vencido / Próximo'}
               count={data.pm.length}
               colorClass="text-amber"
             />
@@ -494,7 +507,7 @@ export default function AlertsPage() {
               <p className="text-xs text-text-secondary pl-1">{unverified ? 'Sin PM verificables con las fuentes disponibles' : 'Sin alertas'}</p>
             ) : (
               <div className="flex flex-col gap-3">
-                {data.pm.map((a) => <PmCard key={a.id} alert={a} />)}
+                {data.pm.map((a) => <PmCard key={a.id} alert={a} isPanama={isPanama} />)}
               </div>
             )}
           </section>
@@ -507,7 +520,7 @@ export default function AlertsPage() {
                   <strong>{item.unit}</strong> · Críticos: {item.critical ?? 'sin dato'} · Próximos: {item.upcoming ?? 'sin dato'} · Sin dato: {item.noData ?? 'sin dato'}
                 </li>)}
               </ul>
-              <Link to="/panama" className="mt-2 inline-flex min-h-11 items-center text-sm font-semibold underline">Consultar maestros de componentes</Link>
+              <Link to="/panama" className="mt-2 inline-flex min-h-11 items-center text-sm font-semibold underline">Ver componentes</Link>
             </section>
           )}
         </div>

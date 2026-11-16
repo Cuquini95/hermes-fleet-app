@@ -1,12 +1,14 @@
 import { useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Wrench, Package, BookOpen, MessageCircle } from 'lucide-react';
+import { useAuthStore } from '../../stores/auth-store';
 import { useWorkOrderStore } from '../../stores/workorder-store';
 import KPICard from '../ui/KPICard';
 import OTCard from '../ui/OTCard';
 
 export default function MechanicHome() {
   const navigate = useNavigate();
+  const isPanama = useAuthStore((state) => state.project === 'tmf-panama');
   const { workorders, fetched, fetchWorkOrders, loading, error } = useWorkOrderStore();
 
   useEffect(() => {
@@ -24,19 +26,19 @@ export default function MechanicHome() {
         <KPICard
           icon={<Wrench size={20} />}
           value={error ? '—' : loading || !fetched ? '…' : activeOTs.length}
-          label="OTs Activas"
+          label={isPanama ? 'OT activas' : 'OTs Activas'}
           color="#2563EB"
         />
         <KPICard
           icon={<Package size={20} />}
           value={error ? '—' : loading || !fetched ? '…' : waitingParts}
-          label="Esperando Pieza"
+          label={isPanama ? 'Esperan repuesto' : 'Esperando Pieza'}
           color="#EA580C"
         />
       </div>
 
       {/* Mis Órdenes Activas */}
-      <h2 className="font-semibold text-lg text-text mt-6 mb-3">Órdenes Activas</h2>
+      <h2 className="font-semibold text-lg text-text mt-6 mb-3">{isPanama ? 'Órdenes' : 'Órdenes Activas'}</h2>
       {error ? <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p> : loading || !fetched ? (
         <div className="text-center py-8 text-text-secondary text-sm">Cargando…</div>
       ) : activeOTs.length > 0 ? (
@@ -48,33 +50,33 @@ export default function MechanicHome() {
         ))
       ) : (
         <div className="bg-green-50 border border-success rounded-lg p-4 text-center">
-          <p className="text-sm font-medium text-success">Sin órdenes activas ✓</p>
+          <p className="text-sm font-medium text-success">{isPanama ? 'Sin órdenes activas' : 'Sin órdenes activas ✓'}</p>
         </div>
       )}
 
       {/* Acciones Rápidas */}
-      <h2 className="font-semibold text-lg text-text mt-6 mb-3">Acciones Rápidas</h2>
-      <div className="flex gap-3">
+      {!isPanama && <h2 className="font-semibold text-lg text-text mt-6 mb-3">Acciones Rápidas</h2>}
+      <div className={isPanama ? 'mt-6 flex gap-3' : 'flex gap-3'}>
         <button
           onClick={() => navigate('/parts')}
           className="flex-1 bg-card rounded-xl p-4 text-center shadow-sm border border-border flex flex-col items-center gap-2 hover:bg-gray-50 transition-colors"
         >
           <Package size={24} className="text-amber" />
-          <span className="text-xs font-medium text-text">Buscar Parte</span>
+          <span className="text-xs font-medium text-text">{isPanama ? 'Buscar repuesto' : 'Buscar Parte'}</span>
         </button>
         <button
           onClick={() => navigate('/manuals')}
           className="flex-1 bg-card rounded-xl p-4 text-center shadow-sm border border-border flex flex-col items-center gap-2 hover:bg-gray-50 transition-colors"
         >
           <BookOpen size={24} className="text-amber" />
-          <span className="text-xs font-medium text-text">Manual Técnico</span>
+          <span className="text-xs font-medium text-text">{isPanama ? 'Manuales' : 'Manual Técnico'}</span>
         </button>
         <button
           onClick={() => navigate('/chat')}
           className="flex-1 bg-card rounded-xl p-4 text-center shadow-sm border border-border flex flex-col items-center gap-2 hover:bg-gray-50 transition-colors"
         >
           <MessageCircle size={24} className="text-amber" />
-          <span className="text-xs font-medium text-text">Preguntar a Hermes</span>
+          <span className="text-xs font-medium text-text">{isPanama ? 'Consultar a Hermes' : 'Preguntar a Hermes'}</span>
         </button>
       </div>
     </div>

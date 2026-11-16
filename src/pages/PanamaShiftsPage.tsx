@@ -43,31 +43,35 @@ function ShiftRegisterComparison({ part }: { part: ShiftPart }) {
   return (
     <section aria-label="Conciliación con REGISTRO" className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
       <h4 className="font-semibold">Conciliación con REGISTRO</h4>
-      <p className="break-words font-semibold text-amber-900">{part.officialStatus}{part.officialReference && ` · ${part.officialReference}`}</p>
+      <p className={`break-words font-semibold ${official && Object.values(official.differences).every(value => value === 0) ? 'text-emerald-900' : 'text-amber-900'}`}>{part.officialStatus}</p>
       {provenance && <p className="text-xs text-slate-700">
         {provenance.label} · <time dateTime={provenance.at}>{cutTime.format(new Date(provenance.at))}</time> · Panamá
       </p>}
       <dl className="grid gap-2 text-slate-700 sm:grid-cols-3">
         <div className="min-w-0">
-          <dt className="font-semibold">Parte aceptado en Hermes</dt>
+          <dt className="font-semibold">Hermes</dt>
           <dd>{hourNumber.format(part.hours)} h del turno</dd>
           <dd className="break-words text-xs">Horómetro {hourNumber.format(part.initialHours)} → {hourNumber.format(part.finalHours)} h</dd>
         </div>
         <div className="min-w-0">
           <dt className="font-semibold">REGISTRO TMF</dt>
           {official ? <>
-            <dd>{hourNumber.format(official.hours)} h del turno en REGISTRO</dd>
+            <dd>{hourNumber.format(official.hours)} h del turno</dd>
             <dd className="break-words text-xs">Horómetro {hourNumber.format(official.initialHours)} → {hourNumber.format(official.finalHours)} h</dd>
           </> : <dd>Horas no disponibles</dd>}
         </div>
         <div className="min-w-0">
-          <dt className="font-semibold">Diferencia (REGISTRO menos Hermes)</dt>
+          <dt className="font-semibold">Diferencia (REGISTRO − Hermes)</dt>
           {official ? <>
-            <dd>{hourDifference.format(official.differences.hours)} h de diferencia</dd>
+            <dd>{hourDifference.format(official.differences.hours)} h</dd>
             <dd className="break-words text-xs">Inicial {hourDifference.format(official.differences.initialHours)} h · Final {hourDifference.format(official.differences.finalHours)} h</dd>
           </> : <dd>Pendiente de conciliación</dd>}
         </div>
       </dl>
+      {part.officialReference && <details className="text-xs text-slate-700">
+        <summary className="min-h-11 cursor-pointer py-3">Referencia en REGISTRO</summary>
+        <p className="mt-1 break-words">{part.officialReference}</p>
+      </details>}
     </section>
   );
 }
@@ -160,8 +164,8 @@ function DispatchPanel({ userId, canAssign, units }: { userId: string; canAssign
       const { assignment } = await requestDispatch(data);
       setAssignments(current => [assignment, ...current.filter(item => item.id !== assignment.id)]);
       setMessage(assignment.readiness.level === 'ok'
-        ? `Asignación ${assignment.id} confirmada para ${assignment.operator.name}.`
-        : `Asignación ${assignment.id} guardada. El equipo tiene una restricción vigente.`);
+        ? `${assignment.unit} asignado a ${assignment.operator.name}.`
+        : 'Asignación guardada. Equipo con restricción.');
       setRetry(undefined);
       setFields(current => ({ ...current, operatorId: '', unit: '' }));
     } catch (cause) {
@@ -177,38 +181,42 @@ function DispatchPanel({ userId, canAssign, units }: { userId: string; canAssign
   const eligible = operators.filter(person => person.allUnits || person.assignedUnits.includes(fields.unit));
   return <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4" aria-labelledby="dispatch-heading">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <h2 id="dispatch-heading" className="text-lg font-bold">Asignaciones de despacho</h2>
-      <button type="button" className={buttonClass} disabled={loading || saving || !!retry}
-        onClick={() => { setLoading(true); setError(''); setReload(value => value + 1); }}>Actualizar asignaciones</button>
+      <h2 id="dispatch-heading" className="text-lg font-bold">Despacho</h2>
+      <button type="button" className={buttonClass} aria-label="Actualizar asignaciones" disabled={loading || saving || !!retry}
+        onClick={() => { setLoading(true); setError(''); setReload(value => value + 1); }}>Actualizar</button>
     </div>
     {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
     {message && <p role="status" className="text-sm text-emerald-900">{message}</p>}
     {captureAvailable === false && <p className="text-sm text-amber-800">Despacho pendiente de validar con HSE.</p>}
     {canAssign && captureAvailable && <form className="space-y-3" onSubmit={assign}>
       <fieldset disabled={loading || saving || !!retry} className="grid min-w-0 gap-3 sm:grid-cols-2">
-        <label className={labelClass}>Unidad para despacho<select className={inputClass} required {...bind('unit')}>
-          <option value="">Selecciona una unidad</option>
+        <label className={labelClass}>Equipo<select className={inputClass} required {...bind('unit')}>
+          <option value="">Selecciona equipo</option>
           {units.map(item => <option key={item.unit_id} value={item.unit_id}>{item.unit_id} · {item.model}</option>)}
         </select></label>
-        <label className={labelClass}>Operador para despacho<select className={inputClass} required {...bind('operatorId')}>
-          <option value="">Selecciona un operador habilitado</option>
+        <label className={labelClass}>Operador<select className={inputClass} required {...bind('operatorId')}>
+          <option value="">Selecciona operador</option>
           {eligible.map(person => <option key={person.userId} value={person.userId}>{person.userName}</option>)}
         </select></label>
-        <label className={labelClass}>Fecha de despacho<input className={inputClass} type="date" required {...bind('date')} /></label>
-        <label className={labelClass}>Turno de despacho<input className={inputClass} required maxLength={32} {...bind('shift')} /></label>
-        <label className={`${labelClass} sm:col-span-2`}>Sitio o frente<input className={inputClass} required maxLength={160} {...bind('site')} /></label>
+        <label className={labelClass}>Fecha<input className={inputClass} type="date" required {...bind('date')} /></label>
+        <label className={labelClass}>Turno<input aria-label="Turno de despacho" className={inputClass} required maxLength={32} {...bind('shift')} /></label>
+        <label className={`${labelClass} sm:col-span-2`}>Frente<input className={inputClass} required maxLength={160} {...bind('site')} /></label>
       </fieldset>
       <button type="submit" className={primaryClass} disabled={saving || loading || (!retry && !eligible.length)}>
-        {saving ? 'Confirmando despacho…' : retry ? 'Reintentar la misma asignación' : 'Confirmar asignación'}
+        {saving ? 'Guardando…' : retry ? 'Reintentar asignación' : 'Asignar equipo'}
       </button>
     </form>}
     {loading ? <p role="status" className="text-sm text-slate-600">Consultando asignaciones…</p>
-      : !assignments.length && !error && <p className="text-sm text-slate-600">Sin asignaciones en tu alcance.</p>}
+      : !assignments.length && !error && <p className="text-sm text-slate-600">Sin asignaciones para tu puesto.</p>}
     {assignments.map(item => <article key={item.id} className="space-y-1 rounded-lg border border-slate-200 p-3 text-sm">
       <h3 className="font-semibold">{item.unit} · {item.date} · {item.shift}</h3>
-      <p className="break-words">{item.id} · {item.site} · {item.operator.name}</p>
-      <p className="text-slate-700">Asignó {item.assignedBy.name} · {localTime.format(new Date(item.assignedAt))}</p>
+      <p className="break-words">{item.operator.name} · {item.site}</p>
       {item.readiness.level !== 'ok' && <p className="font-semibold text-red-800">No despachar. {item.readiness.reason}</p>}
+      <details className="text-slate-700">
+        <summary className="min-h-11 cursor-pointer py-3">Detalles</summary>
+        <p className="mt-1 break-words">Referencia {item.id}</p>
+        <p>Asignó {item.assignedBy.name} · {localTime.format(new Date(item.assignedAt))}</p>
+      </details>
     </article>)}
   </section>;
 }
@@ -266,7 +274,7 @@ function ShiftQueue({ userId }: { userId: string }) {
       const { record } = await requestShifts<{ record: ShiftPart }>(mutation);
       setRetry(undefined);
       setRecords(items => [record, ...items.filter(item => item.id !== record.id)]);
-      setMessage(`${record.id} · ${record.status}.`);
+      setMessage(`${record.unit} · ${record.status}.`);
       if (mutation.endpoint === 'entregar') {
         setFields(emptyFields());
         setCorrection(undefined);
@@ -282,7 +290,7 @@ function ShiftQueue({ userId }: { userId: string }) {
         if (cause.status === 409) refresh();
       } else {
         setRetry(mutation);
-        setError('El servidor no confirmó la operación. Reintenta el mismo envío para recuperar su comprobante.');
+        setError('Falta confirmar el envío. Reinténtalo para recuperar el comprobante.');
       }
     } finally {
       writeLock.current = false;
@@ -322,10 +330,9 @@ function ShiftQueue({ userId }: { userId: string }) {
         <header className="rounded-2xl bg-[#162252] p-4 text-white">
           <Link to="/panama" className="inline-flex min-h-11 items-center text-sm text-slate-200 underline underline-offset-4">Volver a Maestros TMF</Link>
           <h1 className="text-xl font-bold">Relevo de turno</h1>
-          <p className="mt-1 text-sm text-slate-200">TMF Minera Panamá · Parte de producción F07</p>
+          <p className="mt-1 text-sm text-slate-200">TMF Minera Panamá</p>
         </header>
 
-        <p className="rounded-xl border border-slate-200 bg-white p-4 text-sm">Supervisión revisa la entrega en Hermes. El controlador verifica una sola captura en REGISTRO TMF y conserva la referencia del parte.</p>
         <DispatchPanel userId={userId} canAssign={role === 'supervisor' || role === 'coordinador'} units={equipment} />
         {message && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm font-semibold text-emerald-900">{message}</p>}
         {error && <div className="rounded-xl bg-red-50 p-3 text-sm text-red-900">
@@ -334,7 +341,7 @@ function ShiftQueue({ userId }: { userId: string }) {
         </div>}
 
         {allowDelivery && <form ref={form} onSubmit={deliver} className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-lg font-bold">{correction ? `Corregir ${correction.id}` : 'Entregar parte'}</h2>
+          <h2 className="mb-3 text-lg font-bold">{correction ? `Corregir parte de ${correction.unit}` : 'Entregar parte'}</h2>
           <fieldset disabled={saving || !!retry} className="grid min-w-0 gap-3 sm:grid-cols-2">
             <div className={labelClass}>
               <label htmlFor="shift-unit">Unidad</label>
@@ -344,12 +351,12 @@ function ShiftQueue({ userId }: { userId: string }) {
               </select>
             </div>
             <label className={labelClass}>Fecha del turno<input className={inputClass} type="date" required readOnly={!!correction} {...bind('date')} /></label>
-            <label className={labelClass}>Turno<input className={inputClass} required maxLength={32} placeholder="Como figura en REGISTRO TMF" readOnly={!!correction} {...bind('shift')} /></label>
+            <label className={labelClass}>Turno<input className={inputClass} required maxLength={32} placeholder="Según REGISTRO TMF" readOnly={!!correction} {...bind('shift')} /></label>
             <label className={labelClass}>Estado del equipo<input className={inputClass} required maxLength={100} {...bind('equipmentStatus')} /></label>
             <label className={labelClass}>Horómetro inicial (h)<input className={inputClass} type="number" inputMode="decimal" required min="0" max="99999999.999" step="0.001" {...bind('initialHours')} /></label>
             <label className={labelClass}>Horómetro final (h)<input className={inputClass} type="number" inputMode="decimal" required min="0" max="99999999.999" step="0.001" {...bind('finalHours')} /></label>
             {invalidReading && <p role="alert" className="text-sm font-semibold text-red-800 sm:col-span-2">
-              {hours < 0 ? 'El horómetro final es inferior al inicial.' : 'La diferencia del horómetro supera 24 horas.'} Verifica la lectura en su origen.
+              {hours < 0 ? 'El horómetro final es inferior al inicial.' : 'El turno supera 24 h.'} Verifica las lecturas.
             </p>}
             <label className={labelClass}>Viajes<input className={inputClass} type="number" inputMode="numeric" required min="0" max="99999999" step="1" {...bind('trips')} /></label>
             <label className={labelClass}>Toneladas<input className={inputClass} type="number" inputMode="decimal" required min="0" max="99999999.999" step="0.001" {...bind('tonnes')} /></label>
@@ -376,17 +383,15 @@ function ShiftQueue({ userId }: { userId: string }) {
           {records.map(record => (
             <article key={record.id} className="min-w-0 space-y-2 rounded-xl border border-slate-200 bg-white p-4">
               <h3 className="font-bold text-[#162252]">{record.unit} · {record.date} · {record.shift}</h3>
-              <p className="break-words text-sm font-semibold">{record.id} · {record.status}</p>
+              <p className="break-words text-sm font-semibold">{record.status}</p>
               <p className="text-sm text-slate-700">{record.status !== 'Aceptado por Supervisión'
                 && `${record.initialHours} → ${record.finalHours} h · ${record.hours} h del turno · `}{record.trips} viajes · {record.tonnes} t</p>
               <dl className="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-2">
                 <div><dt className="font-semibold">Estado del equipo</dt><dd className="break-words">{record.equipmentStatus}</dd></div>
                 <div><dt className="font-semibold">Cliente</dt><dd className="break-words">{record.client}</dd></div>
-                <div><dt className="font-semibold">Soporte</dt><dd className="break-words">{record.support}</dd></div>
                 <div><dt className="font-semibold">Paradas</dt><dd className="break-words">{record.stops}</dd></div>
               </dl>
-              <p className="text-sm text-slate-700">Entregó {record.createdBy.name} · {localTime.format(new Date(record.createdAt))}</p>
-              {record.reviewedBy && record.reviewedAt && <p className="break-words text-sm text-slate-700">Revisó {record.reviewedBy.name} · {localTime.format(new Date(record.reviewedAt))}{record.comment ? ` · ${record.comment}` : ''}</p>}
+              {record.status === 'Devuelto' && record.comment && <p className="break-words text-sm text-amber-900">{record.comment}</p>}
               {record.status === 'Aceptado por Supervisión' && <ShiftRegisterComparison part={record} />}
               {(role === 'gerencia' || role === 'coordinador') && record.status === 'Aceptado por Supervisión' && record.reviewedAt && record.reviewedBy && (
                 <button type="button" className={buttonClass} onClick={() => downloadBlob(
@@ -397,12 +402,14 @@ function ShiftQueue({ userId }: { userId: string }) {
               {role === 'gerencia' && record.status === 'Aceptado por Supervisión' && record.reviewedAt && record.reviewedBy && (
                 <PanamaShiftBilling key={record.version} folio={record.id} hours={record.hours} />
               )}
-              {record.history.length > 1 && <details className="text-sm text-slate-700">
-                <summary>Actividad del parte</summary>
-                <ol className="mt-1 list-inside list-decimal space-y-1">
+              <details className="text-sm text-slate-700">
+                <summary className="min-h-11 cursor-pointer py-3">Detalles del parte</summary>
+                <p className="mt-1 break-words">Referencia {record.id}</p>
+                <p className="break-words">Soporte {record.support}</p>
+                <ul className="mt-1 space-y-1">
                   {record.history.map((entry, index) => <li key={index} className="break-words">{actionLabels[entry.action]} {entry.actor.name} · {localTime.format(new Date(entry.at))}{entry.comment ? ` · ${entry.comment}` : ''}</li>)}
-                </ol>
-              </details>}
+                </ul>
+              </details>
               {allowDelivery && record.createdBy.id === userId && record.status === 'Devuelto' && <button type="button" className={buttonClass} disabled={loading || saving || !!retry} onClick={() => edit(record)}>Corregir parte</button>}
               {role === 'supervisor' && record.createdBy.id !== userId && record.status === 'Pendiente de revisión' && (
                 returnPart === record.id ? <form className="space-y-2" onSubmit={event => { event.preventDefault(); review(record, 'return'); }}>

@@ -274,7 +274,7 @@ function PayablesQueue({ userId }: { userId: string }) {
         {mayRetry && <button type="button" className={button} onClick={() => void save(pending)} disabled={loading || saving}>Reintentar confirmación</button>}
       </div>}
       {data && !data.canRecordInvoice && !data.canRecordPayment && <p className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
-        <strong>Solo consulta.</strong> Contabilidad registra facturas y Tesorería registra pagos confirmados.
+        <strong>Solo consulta.</strong>
       </p>}
       {!showBalances && !paymentQueue && (reconciliationQueue || pendingOrders.length > 0) && <section className={card + ' space-y-2'} aria-labelledby="titulo-ordenes-pendientes">
         <h2 id="titulo-ordenes-pendientes" className="text-lg font-bold">{reconciliationQueue ? 'Por conciliar' : 'Órdenes por procesar'}</h2>
@@ -378,12 +378,15 @@ function PayablesQueue({ userId }: { userId: string }) {
           {balances.length === 0 && <p className="rounded-xl bg-white p-3 text-sm text-slate-600">No hay saldos abiertos.</p>}
           {balances.map(balance => <article className={card + ' space-y-2'} key={balance.key}>
             <h3 className="wrap-anywhere font-bold">{balance.vendor}</h3>
-            {balance.taxId && <p className="wrap-anywhere text-xs text-slate-600">RUC {balance.taxId}</p>}
             <p className="wrap-anywhere text-sm text-slate-700">{balance.entity} · {balance.currency} · {balance.count} {balance.count === 1 ? 'factura abierta' : 'facturas abiertas'}</p>
             <dl className="grid grid-cols-2 gap-2 text-sm">
               <div><dt className="text-slate-600">Saldo abierto</dt><dd className="wrap-anywhere font-bold">{amountForDisplay(balance.open, balance.currency)}</dd></div>
               <div><dt className="text-slate-600">Saldo vencido</dt><dd className={`wrap-anywhere font-semibold ${balance.overdue ? 'text-red-800' : ''}`}>{amountForDisplay(balance.overdue, balance.currency)}</dd></div>
             </dl>
+            {balance.taxId && <details className="wrap-anywhere text-xs text-slate-600">
+              <summary className="min-h-8 cursor-pointer py-2">Datos del proveedor</summary>
+              <p>RUC {balance.taxId}</p>
+            </details>}
           </article>)}
         </section>
       </>}

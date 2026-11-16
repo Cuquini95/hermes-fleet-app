@@ -462,10 +462,10 @@ function DataManager({ isPanama }: { isPanama: boolean }) {
       <div className="px-4 pt-4 pb-3 border-b border-[#E5E7EB]">
         <div className="flex items-center gap-2 mb-1">
           <Database size={20} className="text-[#162252]" />
-          <h1 className="text-xl font-bold tracking-tight">Gestor de Datos</h1>
+          <h1 className="text-xl font-bold tracking-tight">{isPanama ? 'Datos' : 'Gestor de Datos'}</h1>
         </div>
         <p className="text-xs text-[#6B7280]">
-          Consulta, filtra y exporta registros. Para corregir un registro, abre el módulo donde se capturó.
+          {isPanama ? 'Para corregir un registro, abre su módulo.' : 'Consulta, filtra y exporta registros. Para corregir un registro, abre el módulo donde se capturó.'}
         </p>
       </div>
 

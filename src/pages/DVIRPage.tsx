@@ -114,7 +114,7 @@ export default function DVIRPage() {
     setShowConfirm(false);
     mutationId.current ||= crypto.randomUUID();
     try {
-      const response = await saveWorkshopCapture<{ otId?: string; inspectionId: string; score: string }>({
+      const response = await saveWorkshopCapture<{ otId?: string }>({
         endpoint: 'dvir',
         mutationId: mutationId.current,
         input: {
@@ -129,9 +129,7 @@ export default function DVIRPage() {
       }
       setPending('');
       setSaved(true);
-      showToast(response.result.otId
-        ? `Inspección registrada. OT creada ${response.result.otId}`
-        : `Inspección registrada. ${response.result.inspectionId} (${response.result.score})`);
+      showToast(response.result.otId ? 'Inspección registrada. OT creada.' : 'Inspección registrada.');
     } catch (error) {
       if (error instanceof WorkshopApiError && [400, 413, 415].includes(error.status)) {
         mutationId.current = '';
@@ -175,7 +173,7 @@ export default function DVIRPage() {
         >
           <ArrowLeft size={20} className="text-text" />
         </button>
-        <h1 className="text-xl font-bold text-text">Checklist</h1>
+        <h1 className="text-xl font-bold text-text">Inspección</h1>
       </div>
 
       <fieldset disabled={saving || !!pending || saved} className="min-w-0">
@@ -282,13 +280,13 @@ export default function DVIRPage() {
 
       {/* Observations */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-border mt-2">
-        <label className="text-sm font-medium text-text-secondary block mb-2">
-          Observaciones generales
+        <label htmlFor="inspection-notes" className="text-sm font-medium text-text-secondary block mb-2">
+          Observaciones
         </label>
         <textarea
+          id="inspection-notes"
           value={observations}
           onChange={(e) => setObservations(e.target.value)}
-          placeholder="Observaciones adicionales..."
           rows={3}
           className="w-full rounded-xl border border-border p-3 text-sm text-text resize-none bg-white"
         />
@@ -312,7 +310,7 @@ export default function DVIRPage() {
         className="mt-4 w-full bg-amber text-white rounded-xl py-4 font-semibold text-lg disabled:opacity-40 disabled:cursor-not-allowed transition-opacity btn-press"
         style={{ minHeight: 52 }}
       >
-        {saving ? 'Guardando…' : pending ? 'Reintentar' : 'Enviar Inspección'}
+        {saved ? 'Inspección guardada' : saving ? 'Guardando…' : pending ? 'Reintentar' : 'Enviar Inspección'}
       </button>
     </div>
   );

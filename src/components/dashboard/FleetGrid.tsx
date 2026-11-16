@@ -38,9 +38,9 @@ export default function FleetGrid({ equipment, dispatch, operatingOnly = false, 
       {!operatingOnly && loading && !verified && !message && <p className="mb-2 text-sm text-text-secondary">Verificando bloqueos…</p>}
       {operatingOnly && operatingCheckedAt && Number.isFinite(Date.parse(operatingCheckedAt)) && (
         <p className="mb-2 text-xs text-text-secondary" role="status">
-          {verified ? 'Consulta de estado' : 'Última consulta de estado'} · {new Date(operatingCheckedAt).toLocaleString('es-PA', {
+          {verified ? 'Estado actualizado' : 'Última consulta'} · <time dateTime={operatingCheckedAt}>{new Date(operatingCheckedAt).toLocaleString('es-PA', {
             timeZone: 'America/Panama', dateStyle: 'short', timeStyle: 'short',
-          })} · Panamá
+          })}</time> · Panamá
         </p>
       )}
       <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">

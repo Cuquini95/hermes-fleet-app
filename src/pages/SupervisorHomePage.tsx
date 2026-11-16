@@ -30,6 +30,7 @@ const ACTION_CARDS: ActionCard[] = [
 export default function SupervisorHomePage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
+  const isPanama = useAuthStore((s) => s.project === 'tmf-panama');
   const fleet = useEquipmentList();
   const { effectiveEquipment: equipment, verified, message, loading, refresh } = useFleetDispatch(fleet);
   const equipmentFetched = useEquipmentStore((state) => state.fetched);
@@ -56,8 +57,8 @@ export default function SupervisorHomePage() {
     <div className="flex flex-col py-4 animate-fade-up">
       {/* Greeting */}
       <div className="mb-4">
-        <h1 className="text-2xl font-bold text-text">{greeting}, {userName}</h1>
-        <p className="text-text-secondary text-sm mt-0.5">Supervisor de Producción</p>
+        <h1 className="text-2xl font-bold text-text">{isPanama ? 'Supervisión' : `${greeting}, ${userName}`}</h1>
+        {!isPanama && <p className="text-text-secondary text-sm mt-0.5">Supervisor de Producción</p>}
       </div>
 
       {/* KPI grid 2x2 */}
@@ -90,7 +91,7 @@ export default function SupervisorHomePage() {
 
       {message && <p role="status" className="mb-3 text-sm text-text-secondary">{message}</p>}
       {!ready && !message && <p className="mb-3 text-sm text-text-secondary">Verificando disponibilidad…</p>}
-      <button type="button" disabled={loading} onClick={() => void refresh()} className="self-start mb-3 text-sm font-medium text-amber">Actualizar bloqueos</button>
+      <button type="button" disabled={loading} onClick={() => void refresh()} className="self-start mb-3 text-sm font-medium text-amber">{isPanama ? 'Actualizar flota' : 'Actualizar bloqueos'}</button>
 
       {/* Quick actions 2-column grid */}
       <div className="grid grid-cols-2 gap-3 mb-6">

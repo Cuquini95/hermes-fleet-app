@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth-store';
 import { mexicoDateInput } from '../lib/date-utils';
+import { visibleWorkOrderFolio } from '../lib/purchasing-api';
 import { PARTS_STATUS_LABELS, requestWorkshop, type ScheduleResources, type WorkshopMechanic } from '../lib/workshop-api';
 import { useWorkOrderStore } from '../stores/workorder-store';
 import CalendarGrid from '../components/calendar/CalendarGrid';
@@ -198,7 +199,9 @@ export default function CalendarPage() {
     });
   const mechanics = Array.from(new Set(['Sin asignar', ...roster.map((item) => item.userName), ...visibleEntries.map((entry) => entry.mecanico)]));
   const conflicts = buildConflicts(visibleEntries);
-  const folioFor = (id: string) => workorders.find(order => order.ot_id === id)?.folio ?? id;
+  const referenceFor = (id: string) => workorders.find(order => order.ot_id === id)?.folio ?? id;
+  const folioFor = (id: string) => panama ? visibleWorkOrderFolio(referenceFor(id)) : referenceFor(id);
+  const selectedFolio = selectedEntry && folioFor(selectedEntry.ot_id);
 
   function handleCellClick(mechanic: string, date: Date) {
     if (!canSchedule) return;
@@ -326,14 +329,14 @@ export default function CalendarPage() {
               return (
                 <section key={iso} className="rounded-xl border border-slate-200 bg-white p-3">
                   <h2 className="mb-2 text-sm font-semibold capitalize text-slate-700">
-                    <time dateTime={iso}>{date.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'short' })}</time>
+                    <time dateTime={iso}>{date.toLocaleDateString(panama ? 'es-PA' : 'es-MX', { weekday: 'long', day: 'numeric', month: 'short' })}</time>
                   </h2>
-                  {dayEntries.length === 0 ? <p className="text-xs text-slate-500">Sin órdenes programadas.</p> : (
+                  {dayEntries.length === 0 ? <p className="text-xs text-slate-500">Sin órdenes.</p> : (
                     <ul className="space-y-2">
                       {dayEntries.map((entry) => (
                         <li key={entry.ot_id}>
-                          <button type="button" onClick={() => setSelectedEntry(entry)} className="w-full rounded-lg bg-slate-100 p-2 text-left text-sm text-[#162252]">
-                            <span className="block font-semibold">{folioFor(entry.ot_id)} · {entry.unidad}</span>
+                          <button type="button" data-ot={referenceFor(entry.ot_id)} onClick={() => setSelectedEntry(entry)} className="w-full rounded-lg bg-slate-100 p-2 text-left text-sm text-[#162252]">
+                            <span className="block font-semibold">{[folioFor(entry.ot_id), entry.unidad].filter(Boolean).join(' · ')}</span>
                             <span className="block text-xs">{entry.mecanico} · {entry.horas_estimadas} h{entry.resources.shift && ` · ${entry.resources.shift}`}</span>
                           </button>
                         </li>
@@ -350,6 +353,7 @@ export default function CalendarPage() {
               mechanics={mechanics}
               entries={visibleEntries}
               workorders={workorders}
+              panama={panama}
               onCellClick={canSchedule ? handleCellClick : undefined}
               onCardClick={setSelectedEntry}
             />
@@ -363,7 +367,7 @@ export default function CalendarPage() {
           <div className="flex items-center gap-2 mb-2">
             <AlertTriangle size={16} className="text-red-500" />
             <h2 className="text-sm font-bold text-red-600">
-              Conflictos ({conflicts.length})
+              Sobrecargas ({conflicts.length})
             </h2>
           </div>
           <div className="space-y-2">
@@ -396,9 +400,10 @@ export default function CalendarPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-base font-bold text-[#162252]">{folioFor(selectedEntry.ot_id)}</h2>
+              <h2 className="text-base font-bold text-[#162252]">{selectedFolio || 'Orden de trabajo'}</h2>
               <button
                 type="button"
+                aria-label="Cerrar orden"
                 onClick={() => setSelectedEntry(null)}
                 className="p-1.5 rounded-full hover:bg-slate-100 text-slate-500"
               >
@@ -450,6 +455,10 @@ export default function CalendarPage() {
                 </div>
               )}
             </dl>
+            {!selectedFolio && <details className="mt-2 text-xs text-slate-500">
+              <summary className="min-h-11 cursor-pointer py-3 font-medium">Referencia de la OT</summary>
+              <p className="break-all">{referenceFor(selectedEntry.ot_id)}</p>
+            </details>}
             <button
               type="button"
               onClick={() => setSelectedEntry(null)}

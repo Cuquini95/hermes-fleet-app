@@ -14,8 +14,9 @@ export default function FleetPage() {
 
   const dispatch = useFleetDispatch(equipment);
   const role = useAuthStore((state) => state.role);
-  const panama = useAuthStore((state) => state.project === 'tmf-panama' && !state.previewDemo);
-  const operatingOnly = panama && !!dispatch.operatingStatuses;
+  const panama = useAuthStore((state) => state.project === 'tmf-panama');
+  const previewDemo = useAuthStore((state) => state.previewDemo);
+  const operatingOnly = panama && !previewDemo && !!dispatch.operatingStatuses;
   const equipmentError = useEquipmentStore((state) => state.error);
   const ready = useEquipmentStore((state) => state.fetched) && dispatch.verified && !dispatch.loading && !equipmentError;
   const refetch = useEquipmentStore((state) => state.refetch);
@@ -27,6 +28,7 @@ export default function FleetPage() {
         <button
           type="button"
           onClick={() => navigate(-1)}
+          aria-label="Volver"
           className="p-2 rounded-xl bg-white border border-border shadow-sm"
         >
           <ArrowLeft size={20} className="text-text" />
@@ -44,7 +46,7 @@ export default function FleetPage() {
       {equipmentError && <p role="alert" className="mb-3 text-sm text-critical">No se pudo cargar el inventario de equipos.</p>}
       {role === 'supervisor' && dispatch.pendingReturns.length > 0 && (
         <section aria-labelledby="returns-heading" className="mb-4 rounded-xl border border-border bg-white p-4">
-          <h2 id="returns-heading" className="text-sm font-semibold text-text">Entregas de Taller pendientes de Operaciones</h2>
+          <h2 id="returns-heading" className="text-sm font-semibold text-text">{panama ? 'Por recibir de Taller' : 'Entregas de Taller pendientes de Operaciones'}</h2>
           <ul className="mt-2 divide-y divide-border">
             {dispatch.pendingReturns.map(({ unit, otId }) => (
               <li key={otId} className="py-2">

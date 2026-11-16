@@ -15,22 +15,24 @@ import { mexicoDate } from '../lib/date-utils';
 
 interface ActionCard {
   label: string;
+  panamaLabel?: string;
   icon: React.ReactNode;
   path: string;
 }
 
 const ACTION_CARDS: ActionCard[] = [
   { label: 'Checklist', icon: <ClipboardCheck size={32} className="text-amber" />, path: '/dvir' },
-  { label: 'Reportar Falla', icon: <Camera size={32} className="text-amber" />, path: '/falla' },
-  { label: 'Diesel', icon: <Fuel size={32} className="text-amber" />, path: '/diesel' },
+  { label: 'Reportar Falla', panamaLabel: 'Reportar falla', icon: <Camera size={32} className="text-amber" />, path: '/falla' },
+  { label: 'Diesel', panamaLabel: 'Diésel', icon: <Fuel size={32} className="text-amber" />, path: '/diesel' },
   { label: 'Horómetro', icon: <Gauge size={32} className="text-amber" />, path: '/horometro' },
   { label: 'Fletes', icon: <MapPin size={32} className="text-amber" />, path: '/flete' },
-  { label: 'Mis Reportes', icon: <FileText size={32} className="text-amber" />, path: '/my-reports' },
+  { label: 'Mis Reportes', panamaLabel: 'Mis reportes', icon: <FileText size={32} className="text-amber" />, path: '/my-reports' },
 ];
 
 export default function OperatorHomePage() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
+  const isPanama = useAuthStore((s) => s.project === 'tmf-panama');
 
   const [dvirDone, setDvirDone] = useState<boolean | null>(null); // null = loading
   const [reportCount, setReportCount] = useState(0);
@@ -72,15 +74,15 @@ export default function OperatorHomePage() {
     <div className="flex flex-col py-4 animate-fade-up">
       {/* Greeting */}
       <div className="mb-4">
-        <h1 className="text-2xl font-bold text-text">{greeting}, {userName}</h1>
-        <p className="text-text-secondary text-sm mt-0.5">Operador</p>
+        <h1 className="text-2xl font-bold text-text">{isPanama ? 'Inicio' : `${greeting}, ${userName}`}</h1>
+        {!isPanama && <p className="text-text-secondary text-sm mt-0.5">Operador</p>}
       </div>
 
       {/* DVIR status — dynamic from Google Sheets */}
       {dvirDone === false && (
         <div className="bg-red-50 border-l-4 border-critical rounded-lg p-3 mb-4">
           <p className="text-sm font-medium text-critical">
-            ⚠️ Tu Checklist de hoy no ha sido completado
+            {isPanama ? 'Inspección pendiente hoy' : '⚠️ Tu Checklist de hoy no ha sido completado'}
           </p>
         </div>
       )}
@@ -88,14 +90,14 @@ export default function OperatorHomePage() {
         <div className="bg-green-50 border-l-4 border-success rounded-lg p-3 mb-4 flex items-center gap-2">
           <CheckCircle size={16} className="text-success shrink-0" />
           <p className="text-sm font-medium text-success">
-            Checklist completado hoy ✓
+            {isPanama ? 'Inspección completada hoy' : 'Checklist completado hoy ✓'}
           </p>
         </div>
       )}
 
       {/* Action grid 2x3 */}
       <div className="grid grid-cols-2 gap-3">
-        {ACTION_CARDS.map(({ label, icon, path }) => (
+        {ACTION_CARDS.map(({ label, panamaLabel, icon, path }) => (
           <button
             key={path}
             onClick={() => navigate(path)}
@@ -103,15 +105,15 @@ export default function OperatorHomePage() {
             style={{ minHeight: 100 }}
           >
             {icon}
-            <span className="text-sm font-medium text-center text-text">{label}</span>
+            <span className="text-sm font-medium text-center text-text">{isPanama ? panamaLabel ?? label : label}</span>
           </button>
         ))}
       </div>
 
       {/* Footer counter — dynamic */}
-      {reportCount > 0 && (
+      {reportCount > (isPanama ? 1 : 0) && (
         <p className="text-sm text-success text-center mt-4 font-medium">
-          Reportes hoy: {reportCount} ✓
+          {isPanama ? `${reportCount} inspecciones hoy` : `Reportes hoy: ${reportCount} ✓`}
         </p>
       )}
     </div>

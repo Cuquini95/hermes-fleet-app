@@ -21,15 +21,16 @@ export function PanamaWorkshopExceptions({ view, loading, unavailable, refresh }
         </button>
       </div>
       <div className="my-1 text-sm" role="status">
-        {loading && <p className="text-text-secondary">Consultando órdenes de trabajo…</p>}
+        {loading && <p className="text-text-secondary">Buscando avisos…</p>}
         {unavailable && <p className="text-amber-900">{view ? 'Consulta sin confirmar. Se conservan los avisos previos.' : 'Excepciones sin verificar.'}</p>}
-        {view?.unconfirmed && <p className="text-amber-900">Hay órdenes cuyo estado o prioridad requiere confirmación.</p>}
+        {view?.unconfirmed && <p className="text-amber-900">Hay órdenes por confirmar.</p>}
         {view && !view.alerts.length && !view.unconfirmed && !loading && !unavailable &&
-          <p className="text-text-secondary">Sin excepciones activas en las OT de Hermes.</p>}
+          <p className="text-text-secondary">Sin avisos de Taller.</p>}
       </div>
-      {view && <p className="text-xs text-text-secondary">
-        Última consulta confirmada: <time dateTime={view.observedAt}>{cutoff.format(new Date(view.observedAt))}</time> · Panamá
-      </p>}
+      {view && <details className="text-xs text-text-secondary">
+        <summary className="cursor-pointer">Última consulta</summary>
+        <p>Hermes · <time dateTime={view.observedAt}>{cutoff.format(new Date(view.observedAt))}</time> · Panamá</p>
+      </details>}
       {view && view.alerts.length > 0 && (
         <ul aria-label="Avisos de Taller" className="mt-3 grid gap-3 xl:grid-cols-2">
           {view.alerts.map(alert => (
@@ -42,7 +43,6 @@ export function PanamaWorkshopExceptions({ view, loading, unavailable, refresh }
               {alert.description && <p className="text-text-secondary">{alert.description}</p>}
               {alert.pendingConfirmation && <p className="text-amber-900">Estado sin confirmar en la última consulta.</p>}
               <dl className="mt-2 grid gap-1 text-xs sm:grid-cols-2">
-                <div><dt className="inline font-semibold">Fuente</dt> <dd className="inline text-text-secondary">OT de Hermes Panamá</dd></div>
                 <div><dt className="inline font-semibold">Responsable</dt> <dd className="inline text-text-secondary">
                   {alert.owner ?? (alert.kind === 'return' ? 'Operaciones · persona sin confirmar' : 'Sin confirmar')}
                 </dd></div>

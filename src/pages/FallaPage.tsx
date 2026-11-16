@@ -6,6 +6,7 @@ import { useEquipmentList } from '../hooks/useEquipmentList';
 import { calculatePriority } from '../lib/priority-calculator';
 import { saveWorkshopCapture } from '../lib/offline-queue';
 import { WorkshopApiError } from '../lib/workshop-api';
+import { visibleWorkOrderFolio } from '../lib/purchasing-api';
 import { checkpointFallaClear, checkpointFallaDraft, clearFallaDraft, loadFallaDraft, saveFallaDraft, type FallaDraft } from '../lib/falla-draft';
 import { useAuthStore } from '../stores/auth-store';
 import AutoPriorityIndicator from '../components/falla/AutoPriorityIndicator';
@@ -186,7 +187,8 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
       checkpointFallaClear(scope);
       const write = writes.current.then(() => clearFallaDraft(scope));
       writes.current = write.catch(() => setDraftError(true));
-      showToast(`OT creada. ${response.result.otId} disponible en Órdenes`);
+      const folio = visibleWorkOrderFolio(response.result.otId);
+      showToast(folio ? `OT creada · ${folio}` : 'OT creada.');
     } catch (error) {
       if (error instanceof WorkshopApiError && [400, 413, 415].includes(error.status)) {
         await updateDraft({ mutationId: '', reportedAt: undefined, pending: '' });
@@ -238,7 +240,7 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
         >
           <ArrowLeft size={20} className="text-text" />
         </button>
-        <h1 className="text-xl font-bold text-text">Reportar Falla</h1>
+        <h1 className="text-xl font-bold text-text">Reportar falla</h1>
       </div>
 
       <fieldset disabled={!ready || saving || !!pending || saved} className="min-w-0">
@@ -356,7 +358,7 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
               aria-invalid={!validStart} aria-describedby="falla-started-at-hint"
               className="w-full min-w-0 rounded-xl border border-border bg-white p-3 text-sm text-text" />
             <p id="falla-started-at-hint" className={`text-xs ${validStart ? 'text-text-secondary' : 'text-critical'}`}>
-              {validStart ? 'Si lo dejas vacío, se usará la hora en que confirmes el reporte.' : 'La hora de inicio debe ser anterior o igual a la hora actual.'}
+              {validStart ? 'Sin hora, se toma la del reporte.' : 'La hora de inicio no puede ser futura.'}
             </p>
           </div>
         )}
@@ -368,7 +370,6 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
             type="text"
             value={clienteAfectado}
             onChange={(e) => void updateDraft({ clienteAfectado: e.target.value })}
-            placeholder="Nombre del cliente afectado"
             className="w-full rounded-xl border border-border p-3 text-sm text-text bg-white"
           />
         </div>
@@ -422,7 +423,7 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
       )}
       {draftError && (
         <p role="alert" className="mt-3 text-sm text-critical">
-          No se pudo conservar el borrador en este dispositivo. Mantén la pantalla abierta hasta confirmar el reporte.
+          No se guardó el borrador. Mantén la pantalla abierta hasta confirmar el reporte.
         </p>
       )}
       {pending && !saved && (
@@ -439,7 +440,7 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
         className="mt-4 w-full bg-[#9A5706] text-white rounded-xl py-4 font-semibold text-lg disabled:opacity-40 disabled:cursor-not-allowed transition-opacity btn-press"
         style={{ minHeight: 52 }}
       >
-        {saving ? 'Guardando…' : pending ? 'Reintentar' : 'Enviar Reporte'}
+        {saved ? 'Reporte guardado' : saving ? 'Guardando…' : pending ? 'Reintentar' : 'Enviar reporte'}
       </button>
     </div>
   );

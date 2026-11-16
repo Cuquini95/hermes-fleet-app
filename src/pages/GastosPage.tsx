@@ -320,7 +320,7 @@ export default function GastosPage() {
     setReviewing(true);
     try {
       await reviewGasto(review.gasto.gasto_id, review.status, reason.trim());
-      setToast({ kind: 'success', message: 'Revisión registrada para el recibo y sus repartos.' });
+      setToast({ kind: 'success', message: 'Revisión guardada para todo el recibo.' });
       setReview(null);
       setReason('');
     } catch (cause) {
@@ -385,8 +385,10 @@ export default function GastosPage() {
       </div>
 
       {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
-      {periodClosed && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Período cerrado o pendiente de confirmar. Tramita correcciones con Contabilidad.</p>}
-      {unverifiedCount > 0 && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{unverifiedCount} registro(s) requieren conciliar importe, entidad o moneda. Total y PDF pendientes de verificar.</p>}
+      {periodClosed && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Período cerrado o sin confirmar. Correcciones con Contabilidad.</p>}
+      {unverifiedCount > 0 && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+        {unverifiedCount} {unverifiedCount === 1 ? 'gasto por conciliar' : 'gastos por conciliar'}. Revisa importe, entidad y moneda. Total y PDF por verificar.
+      </p>}
       {groups.length > 1 && (
         <label className="text-sm font-medium text-text">Entidad y moneda del reporte
           <select className="mt-1 block w-full rounded-lg border border-border p-2" value={activeGroup} onChange={(event) => setReportGroup(event.target.value)}>
@@ -397,7 +399,15 @@ export default function GastosPage() {
       )}
       {review && (
         <form aria-label="Revisar gasto" onSubmit={(event) => { void handleReview(event); }} className="rounded-lg border border-border bg-card p-4">
-          <p className="font-semibold">{review.status === 'Aprobado' ? 'Validar' : 'Rechazar'} recibo {review.gasto.receipt_group || review.gasto.gasto_id}</p>
+          <p className="font-semibold">{review.status === 'Aprobado' ? 'Validar recibo' : 'Rechazar recibo'}</p>
+          <p className="break-words text-sm text-text-secondary">
+            {review.gasto.proveedor || 'Proveedor sin nombre'} · {review.gasto.fecha}
+            {review.gasto.folio_factura && ` · Factura ${review.gasto.folio_factura}`}
+          </p>
+          <details className="text-xs text-text-secondary">
+            <summary className="min-h-11 cursor-pointer py-3">Referencia</summary>
+            <p className="break-words">{review.gasto.receipt_group || review.gasto.gasto_id}</p>
+          </details>
           <label className="mt-2 block text-sm">Motivo de la revisión
             <textarea required maxLength={350} value={reason} onChange={(event) => setReason(event.target.value)} className="mt-1 block w-full rounded border border-border p-2" />
           </label>
@@ -440,7 +450,7 @@ export default function GastosPage() {
           <p className="text-2xl font-bold text-text">
             {loading ? '…' : totalMes === null ? 'Sin verificar' : currency ? money(totalMes, currency) : totalMes}
           </p>
-          <p className="text-sm text-text-secondary">Gasto validado · {reported.length} repartos · {pendingCount} pendientes</p>
+          <p className="text-sm text-text-secondary">Gasto validado{pendingCount > 0 && ` · ${pendingCount} pendientes`}</p>
         </div>
       </div>
 
@@ -503,7 +513,7 @@ export default function GastosPage() {
           {unitData.length > 0 && totalMes !== null && (
             <div className="bg-white rounded-xl border border-border p-4 shadow-sm">
               <div className="flex items-center justify-between mb-3">
-                <p className="text-sm font-semibold text-text">Mapa de calor por Unidad</p>
+                <p className="text-sm font-semibold text-text">Gasto por equipo</p>
                 <div className="flex gap-1">
                   <button
                     type="button"

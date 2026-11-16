@@ -65,7 +65,7 @@ export async function checkMobileRoleHomes({ fixture, record, inRole, shot }) {
         await page.getByLabel('Unidad', { exact: true }).selectOption('DZ203');
         await page.getByLabel('Tipo de Falla').selectOption({ label: 'Mecánica' });
         await page.getByRole('button', { name: 'Sí', exact: true }).tap();
-        const description = 'QA inicio móvil operador ' + width;
+        const description = index === 0 ? 'Fuga de aceite en la bomba' : 'Testigo de presión encendido';
         const editor = page.getByLabel('Descripción', { exact: true });
         const viewportHeight = await editWithReducedViewport(page, width, editor, description);
         await shot(page, 'inicio-operador-teclado-' + width + '.png');
@@ -87,10 +87,12 @@ export async function checkMobileRoleHomes({ fixture, record, inRole, shot }) {
       await record('MÓVIL-INICIO-MECÁNICO-TECLADO-' + width, async () => {
         const account = qaAccounts('mecanico', index);
         const orderId = 'OT-QA-C15-' + width;
-        const description = 'QA inicio móvil técnico ' + width;
+        const folio = index === 0 ? 'OT-0141' : 'OT-0142';
+        const description = index === 0 ? 'Ajustar conexión hidráulica' : 'Revisar válvula de presión';
         const orders = sheet.read(tabs.orders);
         const order = ['inicial-qa-' + width, orderId, panamaDate(), 'DZ205', 'Avería', description,
           '', 'MEDIA', account.membership.user_name, 'En Reparación', '', '', '', '', '', '', '', account.user.id];
+        order[25] = folio;
         sheet.seed(tabs.orders, [...orders, order]);
         try {
           return await inRole('mecanico', width, async page => {
@@ -99,15 +101,17 @@ export async function checkMobileRoleHomes({ fixture, record, inRole, shot }) {
             const sections = page.getByRole('navigation', { name: 'Secciones de Taller' });
             assert(await sections.evaluate(section => section.scrollWidth <= section.clientWidth + 1),
               'Los accesos de Taller requieren desplazamiento lateral');
-            const open = page.getByRole('link', { name: new RegExp(orderId) });
+            const open = page.getByRole('link', { name: new RegExp(folio) });
             await tappable(open, width, 'La OT asignada debe estar al alcance desde el inicio');
             await open.tap();
             await page.waitForURL(url => url.pathname.endsWith('/workorders/' + orderId));
+            await page.getByRole('heading', { name: folio, exact: true }).waitFor();
+            assert.equal(await page.getByText(orderId, { exact: true }).count(), 0);
             const status = page.getByLabel('Estado', { exact: true });
             await status.selectOption({ label: 'Resuelta' });
             const checks = page.getByLabel('Resultado de la prueba funcional');
             await page.getByLabel('Horas reales de trabajo').fill('1.5');
-            const proof = 'Verificación funcional sintética ' + width;
+            const proof = 'Verifiqué presión y ausencia de fugas';
             const viewportHeight = await editWithReducedViewport(page, width, checks, proof);
             await shot(page, 'inicio-mecanico-teclado-' + width + '.png');
             const save = status.locator('..').getByRole('button', { name: 'Guardar', exact: true });
@@ -116,7 +120,7 @@ export async function checkMobileRoleHomes({ fixture, record, inRole, shot }) {
             await written(sheet, row => row[1] === orderId && row[9] === 'Resuelta');
             await page.getByText(proof, { exact: true }).waitFor();
             await page.setViewportSize(initial);
-            return { width, viewportWithKeyboard: viewportHeight, homeToTaskTaps: 1, folio: orderId, state: 'Resuelta',
+            return { width, viewportWithKeyboard: viewportHeight, homeToTaskTaps: 1, folio, state: 'Resuelta',
               keyboard: 'área visible reducida en Chromium con foco real en el campo', actionTappable: true };
           }, account);
         } finally { sheet.seed(tabs.orders, orders); }

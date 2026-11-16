@@ -5,9 +5,9 @@ import { sessionHome } from '../lib/purchasing-home';
 import { useAuthStore } from '../stores/auth-store';
 
 const errorMessages = {
-  credentials: 'Verifica tus datos o consulta al responsable para confirmar que tu cuenta esté habilitada.',
-  unavailable: 'El servicio de acceso no está disponible. Intenta de nuevo o contacta a TI si el problema continúa.',
-  'rate-limited': 'Se alcanzó el límite de intentos. Espera antes de volver a ingresar.',
+  credentials: 'Revisa tus datos o consulta a TI por el acceso.',
+  unavailable: 'Acceso no disponible. Reintenta o contacta a TI.',
+  'rate-limited': 'Demasiados intentos. Espera y vuelve a intentar.',
 };
 
 export default function LoginPage() {

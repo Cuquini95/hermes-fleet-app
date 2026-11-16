@@ -17,6 +17,7 @@ const roleMenus = {
 
 const clickByName = (page, name) => page.getByRole('button', { name, exact: typeof name === 'string' }).first().click();
 const visible = locator => locator.first().waitFor({ state: 'visible' });
+const orderHeading = folio => /^OT-\d{4,15}$/.test(folio) ? folio : 'Orden de trabajo';
 const sleep = ms => new Promise(ok => setTimeout(ok, ms));
 
 async function waitUntil(predicate, message) {
@@ -96,9 +97,9 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     await dismissPrivacy(page);
     await page.getByText(description, { exact: true }).first().click();
     await page.waitForURL(`${origin}/workorders/${encodeURIComponent(folio)}`);
-    await visible(page.getByRole('heading', { name: folio, exact: true }));
+    await visible(page.getByRole('heading', { name: orderHeading(folio), exact: true }));
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await visible(page.getByRole('heading', { name: folio, exact: true }));
+    await visible(page.getByRole('heading', { name: orderHeading(folio), exact: true }));
   }
 
   async function changeOrderStatus(page, target, folio, isPM = false, diagnosis) {
@@ -148,7 +149,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     await clickByName(page, 'No');
     if (stopStartedAt) await page.getByLabel('Inicio de parada · hora de Panamá').fill(stopStartedAt);
     if (withPhoto) {
-      await page.getByPlaceholder('Nombre del cliente afectado').fill('Cliente ficticio QA');
+      await page.getByLabel('Cliente afectado').fill('Cliente ficticio QA');
       await page.locator('input[type=file]').first().setInputFiles({ name: 'foto-sintetica.png', mimeType: 'image/png', buffer: photoPng });
     }
     await clickByName(page, /^Enviar reporte$/i);
@@ -332,11 +333,13 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await visible(page.getByText('No se pudieron consultar los pedidos de Hermes.', { exact: true }));
         await clickByName(page, 'Historial');
         await visible(page.getByText('Cotización del maestro QA', { exact: true }));
-        await visible(page.getByText(/Corte del/));
+        await page.getByText('Fuente y fecha', { exact: true }).click();
+        await visible(page.getByText(/Corte del Maestro de Compras/));
         assert.equal(await page.getByText('No hay pedidos registrados aún.').count(), 0);
         await noHorizontalOverflow(page, 390);
 
         await page.goto(`${origin}/workorders`);
+        await page.getByText('Referencia del maestro', { exact: true }).first().click();
         await visible(page.getByText('OT-TMF-QA', { exact: true }));
         await visible(page.getByText('Trabajo del maestro QA', { exact: true }));
         await noHorizontalOverflow(page, 390);
@@ -524,7 +527,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await page.locator('select').first().selectOption('EX401');
       await page.getByPlaceholder('0', { exact: true }).fill('125');
       await page.getByPlaceholder('Ej: 8450', { exact: true }).fill('5528');
-      await page.getByPlaceholder('Observaciones adicionales...').fill('COMBUSTIBLE-QA-ESPERA');
+      await page.getByLabel('Observaciones', { exact: true }).fill('COMBUSTIBLE-QA-ESPERA');
       await clickByName(page, 'Registrar Combustible');
       sheet.failNext({ matches: writes => writes.some(write => write.tab === fuelTab), delay: 1000 });
       await clickByName(page, 'Confirmar');
@@ -621,8 +624,8 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     for (const role of ['coordinador', 'jefe_taller']) {
       await record(`MÓVIL-RECARGA-${role}`, () => inRole(role, 390, async page => {
         assert(filed, 'Falta la OT sintética para confirmar el recorrido entre roles');
-        await visible(page.getByRole('heading', { name: role === 'coordinador' ? 'OTs Pendientes' : 'OTs por recibir', exact: true }));
-        await visible(page.getByText(filed.folio, { exact: true }));
+        await visible(page.getByRole('heading', { name: role === 'coordinador' ? 'OT pendientes' : 'OTs por recibir', exact: true }));
+        await visible(page.locator(`[data-ot="${filed.folio}"]`).or(page.getByText(filed.description, { exact: true })));
         await readOrder(page, filed.folio, filed.description);
         await noHorizontalOverflow(page, 390);
         await shot(page, `ot-${role}-390.png`);
@@ -654,9 +657,10 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await create();
       await visible(page.getByText('Ya existe una orden para este servicio.'));
       assert.equal(rows().length, 1);
-      await clickByName(page, `Abrir orden ${order[1]}`);
+      await clickByName(page, /^Abrir orden(?: |$)/);
       const reasons = page.getByRole('region', { name: 'Motivo del mantenimiento' });
       await visible(reasons.getByText(/390 h registradas/));
+      for (const detail of await reasons.locator('summary').all()) await detail.click();
       await visible(reasons.getByText(/Plan sintético QA rev1/).first());
       await noHorizontalOverflow(page, 360);
       return { folio: order[1], reasons: 3, duplicateSuppressed: true, persisted: true };
@@ -707,10 +711,11 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       assert.equal(sheet.read(tabs.pm).length, knownRows + 1);
       assert.equal(sheet.read(tabs.schedule).filter(row => row[2] === folio).length, 1);
       await page.waitForURL(`${origin}/calendar`);
-      await visible(page.getByRole('button', { name: new RegExp(folio) }));
+      const scheduledOrder = page.locator(`button[data-ot="${folio}"]:visible`);
+      await visible(scheduledOrder);
       await page.reload({ waitUntil: 'domcontentloaded' });
-      await visible(page.getByRole('button', { name: new RegExp(folio) }));
-      await page.getByRole('button', { name: new RegExp(folio) }).first().tap();
+      await visible(scheduledOrder);
+      await scheduledOrder.first().tap();
       await visible(page.getByText('Filtro QA', { exact: true }));
       assert.deepEqual(sheet.read(tabs.schedule).find(row => row[2] === folio).slice(11), ['Día', 'pending', 'Filtro QA']);
       sheet.seed(tabs.schedule, sheet.read(tabs.schedule).filter(row => row[0] !== 'qa-capacity'));
@@ -755,11 +760,12 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await page.getByRole('link', { name: 'Abrir calendario' }).click();
       await page.waitForURL(`${origin}/calendar?fecha=2026-12-06`);
       const scheduledDay = page.locator('section').filter({ has: page.locator('time[datetime="2026-12-06"]') });
-      for (const row of batch) await visible(scheduledDay.getByRole('button', { name: new RegExp(row[0]) }));
+      for (const row of batch) await visible(scheduledDay.locator(`button[data-ot="${row[0]}"]:visible`));
       for (const [index, row] of batch.entries()) {
         const otId = row[0];
         await page.goto(`${origin}/workorders/${otId}`, { waitUntil: 'domcontentloaded' });
         await visible(page.getByText(index ? /Vencimiento oficial: 1,500 h/ : /Vencimiento oficial: 440 h/));
+        await page.getByText('Datos del checklist', { exact: true }).click();
         await visible(page.getByText(index ? 'Checklist QA, articulado' : 'Checklist QA, volquete', { exact: true }));
       }
       return { units: batch.map(row => row[2]), folios: batch.map(row => row[0]), elapsedMs, recoveredAfterReload: true, distinctChecklists: true };
@@ -827,7 +833,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       }, tech);
       await inRole('jefe_taller', 390, async page => {
         await page.goto(path, { waitUntil: 'domcontentloaded' });
-        await visible(page.getByRole('heading', { name: folio, exact: true }));
+        await visible(page.getByRole('heading', { name: orderHeading(folio), exact: true }));
         await visible(page.getByText('50%', { exact: true }));
         await changeOrderStatus(page, 'Completado', folio);
       });
@@ -844,8 +850,8 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       sheet.nativeOperations = true;
       try { return await inRole('supervisor', 390, async page => {
         await page.goto(`${origin}/fleet`, { waitUntil: 'domcontentloaded' });
-        await page.getByRole('link', { name: `EX401 · ${folio}`, exact: true }).click();
-        await visible(page.getByRole('heading', { name: folio, exact: true }));
+        await page.locator(`a[href="/workorders/${encodeURIComponent(folio)}"]`).first().click();
+        await visible(page.getByRole('heading', { name: orderHeading(folio), exact: true }));
         await visible(page.getByText('Completado', { exact: true }));
         await page.getByLabel('Observación de Operaciones').fill('Recepción sintética por Operaciones');
         await clickByName(page, 'Confirmar retorno ahora');
@@ -865,7 +871,8 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
           }] } });
         });
         await page.getByRole('link', { name: 'Manuales de EX401' }).click();
-        await visible(page.getByText('Revisión R3', { exact: true }));
+        await page.getByText('Fuente y revisión', { exact: true }).first().click();
+        await visible(page.getByText('Catálogo QA · Revisión R3', { exact: true }));
         for (const destination of ['/fleet', '/dashboard']) {
           await page.goto(origin + destination, { waitUntil: 'domcontentloaded' });
           const tile = page.getByRole('button', { name: 'Ver detalle de EX401', exact: true });
@@ -951,7 +958,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await dismissPrivacy(page);
         const date = await todaySchedule(page, folio);
         await page.reload({ waitUntil: 'domcontentloaded' });
-        await visible(page.getByRole('button', { name: new RegExp(folio) }));
+        await visible(page.locator(`button[data-ot="${folio}"]:visible`));
         await noHorizontalOverflow(page, width);
         assert.equal(sheet.read(tabs.schedule).filter(item => item[2] === folio).length, 1);
         await shot(page, `calendario-${width}.png`);
@@ -983,7 +990,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         assert.equal(await ok.count(), 12);
         for (let index = 0; index < 12; index++) await (index === 2 ? fail : ok).nth(index).click();
         await page.getByPlaceholder('Describe el problema...').fill('Hallazgo de freno sintético');
-        await page.getByPlaceholder('Observaciones adicionales...').fill(note);
+        await page.getByLabel('Observaciones', { exact: true }).fill(note);
         await page.locator('input[type=file]:not([capture])').first().setInputFiles({ name: 'dvir-sintetico.png', mimeType: 'image/png', buffer: photoPng });
         await clickByName(page, 'Enviar Inspección');
         await clickByName(page, 'Confirmar');
@@ -1004,9 +1011,10 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         return { inspection: row[1], folio: row[25], ownerEvidence: true };
       });
       return inRole('coordinador', 390, async page => {
-        await visible(page.getByText(result.folio, { exact: true }));
-        await page.getByText(result.folio, { exact: true }).first().click();
-        await visible(page.getByRole('heading', { name: result.folio, exact: true }));
+        const card = page.locator(`[data-ot="${result.folio}"]`).first();
+        await visible(card);
+        await card.click();
+        await visible(page.getByRole('heading', { name: orderHeading(result.folio), exact: true }));
         return { ...result, visibleForCoordinator: true };
       });
     });
@@ -1014,7 +1022,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     await record('MÓVIL-STICKER-REVISIÓN', async () => {
       const folio = await inRole('operador', 360, async page => {
         await page.goto(`${origin}/sticker-inspection`, { waitUntil: 'domcontentloaded' });
-        await page.getByLabel('Unidad / NFC / QR').selectOption('EX401');
+        await page.getByLabel('Unidad', { exact: true }).selectOption('EX401');
         const equipmentType = page.getByLabel('Tipo de equipo');
         assert.equal(await equipmentType.inputValue(), 'tractor_oruga');
         assert.equal(await equipmentType.isEnabled(), false);
@@ -1033,7 +1041,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       return inRole('supervisor', 390, async page => {
         await page.goto(`${origin}/sticker-inspection`, { waitUntil: 'domcontentloaded' });
         await visible(page.getByRole('heading', { name: 'Inspecciones por revisar', exact: true }));
-        await page.locator('summary').filter({ hasText: folio }).tap();
+        await page.locator('details').filter({ hasText: `Folio ${folio}` }).locator('summary').first().tap();
         await clickByName(page, 'Aprobar revisión');
         await visible(page.getByRole('button', { name: 'Imprimir / guardar sticker', exact: true }));
         const approved = sheet.read(tabs.sticker).find(row => row[1] === folio);
@@ -1074,7 +1082,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await clickByName(page, 'Asignar');
         await waitUntil(() => sheet.read(tabs.orders).find(order => order[1] === recurrent[1] && order[17] === second.user.id), 'La OT nueva no cambió de técnico');
         await page.getByRole('link', { name: `Reincidencia de ${original[1]}`, exact: true }).tap();
-        await visible(page.getByRole('heading', { name: original[1], exact: true }));
+        await visible(page.getByRole('heading', { name: orderHeading(original[1]), exact: true }));
         await visible(page.getByText(filed.description, { exact: true }));
         await visible(page.getByText(/Manguera dañada en la OT original QA/));
         await visible(page.getByText(`Cierre ${original[14]}`, { exact: true }));
@@ -1136,7 +1144,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
           async function recordWork(index, action, meter, previous, retained) {
             await page.goto(`${origin}/workorders/${folios[index]}`, { waitUntil: 'domcontentloaded' });
             await dismissPrivacy(page);
-            await visible(page.getByRole('heading', { name: folios[index], exact: true }));
+            await visible(page.getByRole('heading', { name: orderHeading(folios[index]), exact: true }));
             const box = page.locator('details').filter({ has: page.getByText('Intervenciones de componentes', { exact: true }) });
             await box.locator('summary').click();
             await box.getByLabel('Tipo de intervención').selectOption(action);
@@ -1260,7 +1268,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       async function visit(page) {
         await page.goto(`${origin}/workorders/${folio}`, { waitUntil: 'domcontentloaded' });
         await dismissPrivacy(page);
-        await visible(page.getByRole('heading', { name: folio, exact: true }));
+        await visible(page.getByRole('heading', { name: orderHeading(folio), exact: true }));
         const box = caseBox(page);
         await box.locator('summary').click();
         return box;
@@ -1444,34 +1452,45 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     });
 
     await record('MÓVIL-OT-RESERVA Y COTIZACIÓN A OC', async () => {
-      const ot = 'OT-COMPRA-PILOTO-QA';
-      const item = 'Filtro crítico para OT QA';
-      const availablePart = 'QA-OT-RESERVA';
-      const warehouse = 'Almacén de prueba';
+      const ot = 'OT-3104';
+      const item = 'Filtro hidráulico';
+      const availablePart = 'HF-204';
+      const warehouse = 'Almacén Central';
+      const suppliers = ['Repuestos del Istmo', 'Suministros del Pacífico'];
       const date = days => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
       const requiredDate = date(2);
       const movementsTab = 'Movimientos Repuestos PA';
-      const snapshots = new Map([tabs.orders, tabs.requests, tabs.parts, tabs.changes, movementsTab]
+      const snapshots = new Map([tabs.orders, tabs.requests, tabs.parts, tabs.changes, tabs.providers, movementsTab]
         .map(tab => [tab, sheet.read(tab)]));
       const width = 390;
       const time = {};
       try {
         sheet.seed(tabs.orders, [...snapshots.get(tabs.orders),
-          ['M-QA', ot, '12/11/2026', 'DZ203', 'Mecánica', 'Compra desde avería QA', 'CRITICA', 'CRITICA', '', 'En Reparación']]);
+          ['M-1042', ot, '12/11/2026', 'DZ203', 'Mecánica', 'Falla hidráulica', 'CRITICA', 'CRITICA', '', 'En Reparación']]);
+        const vendors = snapshots.get(tabs.providers).map(row => [...row]);
+        vendors[1][0] = suppliers[0];
+        vendors[2][0] = suppliers[1];
+        sheet.seed(tabs.providers, vendors);
         const catalog = snapshots.get(tabs.parts).map(row => [...row]);
         catalog[4][14] = 'Almacén';
         const stockRow = [...catalog.find(row => row[0] === 'QA-001')];
         stockRow[0] = availablePart;
-        stockRow[2] = 'OEM-OT-RESERVA';
+        stockRow[1] = 'Filtro de presión';
+        stockRow[2] = 'OEM-HF-204';
         stockRow[14] = warehouse;
         catalog.push(stockRow);
         sheet.seed(tabs.parts, catalog);
         const openPart = async (page, part) => {
           await page.goto(origin + '/workorders/' + ot, { waitUntil: 'domcontentloaded' });
-          await clickByName(page, 'Pedir repuestos para esta OT');
-          await visible(page.getByText(/Serie QA-DZ203/));
+          await clickByName(page, 'Pedir repuestos');
+          const details = page.locator('section').filter({ has: page.getByRole('button', { name: 'Pedir repuestos', exact: true }) });
+          await visible(details.getByText(/Equipo DZ203/));
+          assert.equal(await details.getByText(/Serie QA-DZ203/).isVisible(), false);
+          await details.getByText('Datos de la OT', { exact: true }).click();
+          await visible(details.getByText(/Serie QA-DZ203/));
+          await details.getByText('Datos de la OT', { exact: true }).click();
           await page.getByLabel('Número de parte o SKU').fill(part);
-          await clickByName(page, 'Consultar existencias');
+          await clickByName(page, 'Ver existencias');
         };
         await inRole('jefe_taller', width, async page => {
           const started = Date.now();
@@ -1481,11 +1500,11 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
           await visible(page.getByText('En tránsito', { exact: true }));
           await page.getByLabel('Cantidad requerida').fill('2');
           await page.getByLabel('Fecha requerida').fill(requiredDate);
-          await page.getByLabel('Referencia de reserva').fill('RESERVA-PILOTO-QA');
+          await page.getByLabel('Referencia de reserva').fill('R-1042');
           await clickByName(page, 'Reservar para la OT');
-          await visible(page.getByText(new RegExp('2 reservado para ' + ot)));
+          await visible(page.getByText('2 reservadas en Almacén Central.', { exact: true }));
           const movements = sheet.read(movementsTab);
-          assert.equal(movements.filter(row => row.includes(ot) && row.some(value => value.includes('RESERVA-PILOTO-QA'))).length, 1);
+          assert.equal(movements.filter(row => row.includes(ot) && row.some(value => value.includes('R-1042'))).length, 1);
           assert.deepEqual(sheet.read(tabs.requests), snapshots.get(tabs.requests));
           await noHorizontalOverflow(page, width);
           await shot(page, 'compra-ot-reserva-390.png');
@@ -1493,13 +1512,13 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         }, browserWarehouse);
         await inRole('jefe_taller', 360, async page => {
           const started = Date.now();
-          await openPart(page, 'QA-FILTRO-PEDIR');
-          await visible(page.getByText('No hay existencias compatibles verificadas para este número de parte.'));
+          await openPart(page, 'HF-310');
+          await visible(page.getByText('Sin stock compatible verificado.'));
           await page.getByLabel('Cantidad requerida').fill('1');
           await page.getByLabel('Fecha requerida').fill(requiredDate);
           await page.getByLabel('Descripción del repuesto').fill(item);
           await clickByName(page, 'Enviar pedido a Compras');
-          await visible(page.getByText(/Pedido PED-.*enviado a Compras/));
+          await visible(page.getByText('Pedido enviado a Compras.', { exact: true }));
           await noHorizontalOverflow(page, 360);
           time.pedido = Date.now() - started;
         }, loadAccounts.find(account => account.membership.role === 'jefe_taller' && !account.membership.can_receive_purchases));
@@ -1507,24 +1526,30 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         assert(request, 'Falta el pedido persistido desde la OT');
         await inRole('gerencia', width, async page => {
           const started = Date.now();
-          const row = page.getByRole('listitem').filter({ hasText: item });
-          await visible(row.getByText('OT ' + ot, { exact: true }));
+          const row = page.getByRole('listitem').filter({ has: page.getByText(item, { exact: true }) });
+          await visible(row.getByRole('link', { name: ot, exact: true }));
+          assert.equal(await row.getByText(/Serie QA-DZ203/).isVisible(), false);
+          await row.getByText('Detalles del pedido', { exact: true }).click();
           await visible(row.getByText(/Serie QA-DZ203/));
           await row.getByRole('link', { name: 'Comparar cotizaciones', exact: true }).tap();
           await page.waitForURL(new RegExp(origin.replaceAll('.', '\\.') + '/panama/comparar-cotizaciones\\?partida='));
           const forms = [page.getByRole('group', { name: 'Cotización 1', exact: true }), page.getByRole('group', { name: 'Cotización 2', exact: true })];
           for (const [index, group] of forms.entries()) {
-            await group.getByRole('combobox', { name: 'Proveedor', exact: true }).selectOption({ label: index === 0 ? 'Proveedor QA · QAT000000000' : 'Segundo proveedor QA · QAT000000002' });
-            await group.getByLabel('Referencia', { exact: true }).fill('COT-QA-' + (index + 1));
+            const supplier = group.getByRole('combobox', { name: 'Proveedor', exact: true });
+            assert.ok((await supplier.locator('option').allTextContents()).every(label => !label.includes('QAT')));
+            await supplier.selectOption({ label: suppliers[index] });
+            await group.getByLabel('Referencia', { exact: true }).fill('COT-' + (1042 + index));
             await group.getByLabel('Cantidad ofrecida', { exact: true }).fill('1');
             await group.getByLabel('Precio unitario', { exact: true }).fill(index === 0 ? '100.00' : '125.00');
             await group.getByLabel('Flete total', { exact: true }).fill('0.00');
             await group.getByLabel('Entrega prometida', { exact: true }).fill(date(index === 0 ? 5 : 2));
+            await group.getByText('Garantía y otros cargos', { exact: true }).click();
             await group.getByLabel('Garantía', { exact: true }).fill('90 días');
             await group.getByRole('combobox', { name: 'Compatibilidad', exact: true }).selectOption('confirmed');
             await group.getByLabel('Respaldo de compatibilidad').fill('Verificado con serie QA-DZ203');
           }
           await visible(forms[0].getByText('Menor costo puesto en obra', { exact: true }));
+          await page.locator('summary').filter({ hasText: /^Costo del paro$/ }).click();
           await page.getByLabel(/Costo por hora/).fill('100.00');
           await page.getByLabel('Horas de paro por día de atraso').fill('10');
           await page.getByLabel('Referencia del costo por hora').fill('Costo piloto QA · 100 USD/h');
@@ -1539,7 +1564,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
           await page.waitForURL(new RegExp('/admin/ordenes-compra\\?partida='));
           const order = page.locator('form').first();
           const selectedSupplier = order.getByLabel('Proveedor', { exact: true }).locator('option:checked');
-          await waitUntil(async () => (await selectedSupplier.textContent())?.trim() === 'Segundo proveedor QA',
+          await waitUntil(async () => (await selectedSupplier.textContent())?.trim() === suppliers[1],
             'El borrador de la OC no recuperó el proveedor de la cotización.');
           assert.equal(await order.getByLabel('Precio unitario 1', { exact: true }).inputValue(), '125.00');
           assert.equal(await order.getByLabel('Fecha de entrega').inputValue(), requiredDate);
@@ -1668,7 +1693,9 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await page.locator('#main-content').getByRole('button', { name: 'Pedidos', exact: true }).first().tap();
         await page.waitForURL(`${origin}/pedidos`);
         await visible(page.getByRole('button', { name: 'Pedidos Pendientes', exact: true }));
-        await page.getByText('MANUAL-UI-QA', { exact: true }).locator('xpath=../..').getByRole('link', { name: 'Convertir a OC', exact: true }).tap();
+        const requestCard = page.getByText('Empaque manual desde móvil', { exact: true }).locator('xpath=../..');
+        await visible(requestCard.getByText('MANUAL-UI-QA · EX401 · Cantidad 3', { exact: true }));
+        await requestCard.getByRole('link', { name: 'Convertir a OC', exact: true }).tap();
         const form = page.locator('form').first();
         await form.getByLabel('Vincular partida del pedido').selectOption(lines.catalog[15]);
         for (const [index, expected] of ['MANUAL-UI-QA', 'QA-002'].entries()) {
@@ -1687,10 +1714,9 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await clickByName(page, 'Historial');
         const orderNumber = sheet.read(tabs.purchases).find(row => row[0] === folio)[27];
         assert.match(orderNumber, /^3\d{3}$/);
-        const requestCard = () => page.getByText('MANUAL-UI-QA', { exact: true }).locator('xpath=../..');
-        await visible(requestCard().getByRole('link', { name: `Ver OC ${orderNumber}`, exact: true }));
-        await visible(requestCard().getByText('Asignado 1 · Recibido 0 · Saldo por asignar 2'));
-        await requestCard().getByRole('link', { name: 'Crear OC por el saldo' }).tap();
+        await visible(requestCard.getByRole('link', { name: `Ver OC ${orderNumber}`, exact: true }));
+        await visible(requestCard.getByText('Asignado 1 · Recibido 0 · Saldo por asignar 2'));
+        await requestCard.getByRole('link', { name: 'Crear OC por el saldo' }).tap();
         const rest = page.locator('form').first();
         await rest.getByLabel('Proveedor', { exact: true }).selectOption({ label: 'Segundo proveedor QA' });
         assert.equal(await rest.getByLabel('Cantidad 1', { exact: true }).inputValue(), '2');
@@ -1701,8 +1727,8 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         assert.equal(second[12], pmMobileFolio);
         await page.goto(`${origin}/pedidos`, { waitUntil: 'domcontentloaded' });
         await clickByName(page, 'Historial');
-        await visible(requestCard().getByText('Asignado 3 · Recibido 0 · Saldo por asignar 0'));
-        assert.equal(await requestCard().getByRole('link', { name: /^Ver OC / }).count(), 2);
+        await visible(requestCard.getByText('Asignado 3 · Recibido 0 · Saldo por asignar 0'));
+        assert.equal(await requestCard.getByRole('link', { name: /^Ver OC / }).count(), 2);
         await noHorizontalOverflow(page, 390);
         await shot(page, 'pedido-vinculado-390.png');
         return { request: lines.manual[9], purchaseOrder: folio, lines: 2, historyLink: true, suppliers: 2, ot: pmMobileFolio, unallocated: 0 };
@@ -1764,7 +1790,8 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       const approveAndSign = card.getByRole('button', { name: 'Aprobar y firmar', exact: true });
       assert.equal(await approveAndSign.isEnabled(), false);
       const pad = card.getByLabel('Área para dibujar la firma');
-      await pad.scrollIntoViewIfNeeded();
+      await pad.evaluate(canvas => canvas.scrollIntoView({ block: 'center' }));
+      await pad.click({ trial: true, position: { x: 28, y: 57 } });
       const bounds = await pad.boundingBox();
       assert(bounds);
       await page.mouse.move(bounds.x + 28, bounds.y + 57);
@@ -1935,7 +1962,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         history.getByRole('button', { name: 'Registrar movimiento' }).tap(),
       ]);
       assert.equal(movementResponse.status(), 200, await movementResponse.text());
-      await visible(history.getByText(/Costo OT.*25\.00.*VALUACIÓN-QA-01/));
+      await visible(history.getByText(/Costo OT.*25\.00/));
       const original = sheet.read(movements).find(row => row[9] === 'SALIDA-QA-MÓVIL');
       assert.equal(stock(), before - 2);
       await history.getByLabel('Movimiento', { exact: true }).selectOption('Devolución');
@@ -1946,7 +1973,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       await visible(history.getByText('Salida original · SALIDA-QA-MÓVIL'));
       await visible(history.getByText('Saldo para devolución 1'));
       await page.reload({ waitUntil: 'domcontentloaded' });
-      await visible(history.getByText(/Costo OT.*12\.50.*VALUACIÓN-QA-01/));
+      await visible(history.getByText(/Costo OT.*12\.50/));
       const returned = sheet.read(movements).find(row => row[9] === 'DEV-QA-MÓVIL');
       assert.deepEqual([returned[14], JSON.parse(returned[15]).delta, stock()], [original[0], '-12.50', before - 1]);
       await noHorizontalOverflow(page, 390);

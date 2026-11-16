@@ -149,11 +149,19 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
         <div className="p-5">
           {isPanama && <Link to={`/falla?unit=${encodeURIComponent(unit.unit_id)}`}
             className="mb-4 inline-flex min-h-11 items-center rounded-lg border border-gray-200 px-3 text-sm font-semibold text-gray-900">
-            Reportar falla de este equipo
+            Reportar falla
           </Link>}
           {error && (
             <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 mb-4">
-              No se pudo cargar la información de averías: {error}
+              {isPanama ? (
+                <>
+                  <p>No se pudieron cargar las averías. Vuelve a abrir el equipo para reintentar.</p>
+                  <details className="mt-1 break-words text-xs">
+                    <summary className="cursor-pointer">Detalle del error</summary>
+                    <p>{error}</p>
+                  </details>
+                </>
+              ) : <>No se pudo cargar la información de averías: {error}</>}
             </div>
           )}
 
@@ -185,7 +193,7 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
             </div>
           )}
           {workshopIncomplete && (
-            <p className="mb-4 text-sm text-amber-800">Historial de Taller incompleto. Parte de la información no está disponible.</p>
+            <p className="mb-4 text-sm text-amber-800">{isPanama ? 'Historial de Taller incompleto.' : 'Historial de Taller incompleto. Parte de la información no está disponible.'}</p>
           )}
           <WorkshopHistory label="Averías en Taller" records={workshopFailures.filter(row => row.id || !averias?.length)}
             cut={workshop?.failures.capturedAt} linkedFailures={linkedFailures} />
@@ -201,9 +209,11 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
                   : 'Sin reporte de avería registrado'}</p>
                 {!operatingOnly && unit.status !== 'operativo' && dispatchReadiness?.source !== 'averia' && (
                   <p className="text-xs text-gray-500 mt-1">
-                    El estado en "01 Inventario" indica{' '}
-                    <strong>{(STATUS_LABEL[unit.status] ?? unit.status).toLowerCase()}</strong> pero
-                    no hay un registro asociado en la pestaña <code>Averías</code>.
+                    {isPanama ? <>Inventario · <strong>{STATUS_LABEL[unit.status] ?? unit.status}</strong></> : <>
+                      El estado en "01 Inventario" indica{' '}
+                      <strong>{(STATUS_LABEL[unit.status] ?? unit.status).toLowerCase()}</strong> pero
+                      no hay un registro asociado en la pestaña <code>Averías</code>.
+                    </>}
                   </p>
                 )}
               </div>
@@ -252,9 +262,10 @@ function WorkshopHistory({ label, records, cut, linkedFailures }: {
   return (
     <section aria-label={label} className="mb-4">
       <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-600">{label}</h3>
-      {cut && Number.isFinite(Date.parse(cut)) && <p className="mb-2 text-xs text-gray-600">
-        Corte del Maestro: {panamaCut.format(new Date(cut))} · Panamá
-      </p>}
+      {cut && Number.isFinite(Date.parse(cut)) && <details className="mb-2 text-xs text-gray-600">
+        <summary className="cursor-pointer">Corte del Maestro</summary>
+        <p><time dateTime={cut}>{panamaCut.format(new Date(cut))}</time> · Panamá</p>
+      </details>}
       <ul className="space-y-2">
         {records.map((record, index) => {
           const detail = linkedFailures?.get(record.order || record.id)

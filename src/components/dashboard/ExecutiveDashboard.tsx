@@ -39,11 +39,12 @@ export default function ExecutiveDashboard() {
   const dispatch = useFleetDispatch(equipment);
   const role = useAuthStore((s) => s.role);
   const project = useAuthStore((s) => s.project);
+  const isPanama = project === 'tmf-panama';
   const demo = useAuthStore((s) => s.previewDemo);
-  const showWorkshopExceptions = project === 'tmf-panama' && (role === 'gerencia' || role === 'supervisor');
+  const showWorkshopExceptions = isPanama && (role === 'gerencia' || role === 'supervisor');
   const exceptions = usePanamaWorkshopExceptions(showWorkshopExceptions);
   const { refresh: refreshExceptions } = exceptions;
-  const useWorkshopMaster = project === 'tmf-panama' && !demo;
+  const useWorkshopMaster = isPanama && !demo;
   const data = useDashboardData(equipment, useWorkshopMaster, dispatch.workshop);
   const orderSection = dispatch.workshop?.orders;
   const completeOrderSources = orderSection?.masterAvailable && orderSection.operationalAvailable;
@@ -101,7 +102,7 @@ export default function ExecutiveDashboard() {
             }`}
             style={activeTab === tab.id ? { backgroundColor: '#162252' } : undefined}
           >
-            {tab.label}
+            {isPanama && tab.id === 'general' ? 'Resumen' : tab.label}
           </button>
         ))}
         <button
@@ -117,7 +118,7 @@ export default function ExecutiveDashboard() {
       {/* General tab */}
       {activeTab === 'general' && (
         <div className="flex flex-col gap-4">
-          {project === 'tmf-panama' && (
+          {isPanama && (
             <div className="flex flex-wrap gap-2">
               <Link to="/falla" className="inline-flex min-h-11 items-center rounded-lg bg-[#162252] px-3 text-sm font-semibold text-white">
                 Reportar falla
@@ -185,11 +186,14 @@ export default function ExecutiveDashboard() {
           {useWorkshopMaster && showCriticalOrders && (
             <section id="ot-criticas-detalle" aria-label="Detalle de OT críticas"
               className="rounded-xl border border-border bg-card p-4">
-              <h3 className="text-sm font-semibold text-text">Detalle de OT críticas</h3>
+              <h3 className="text-sm font-semibold text-text">OT críticas</h3>
               {criticalCut && Number.isFinite(Date.parse(criticalCut)) && (
-                <p className="mt-1 text-xs text-text-secondary">Corte del Maestro: {new Date(criticalCut).toLocaleString('es-PA', {
-                  timeZone: 'America/Panama', dateStyle: 'medium', timeStyle: 'short',
-                })} · Panamá</p>
+                <details className="mt-1 text-xs text-text-secondary">
+                  <summary className="cursor-pointer">Corte del Maestro</summary>
+                  <p><time dateTime={criticalCut}>{new Date(criticalCut).toLocaleString('es-PA', {
+                    timeZone: 'America/Panama', dateStyle: 'medium', timeStyle: 'short',
+                  })}</time> · Panamá</p>
+                </details>
               )}
               {criticalCount === 0 && <p className="mt-2 text-sm text-text-secondary">No hay OT críticas abiertas.</p>}
               {!completeOrderSources && <p className="mt-2 text-sm text-amber-800">Falta confirmar una fuente de órdenes de trabajo.</p>}
@@ -203,7 +207,7 @@ export default function ExecutiveDashboard() {
           {showWorkshopExceptions && <PanamaWorkshopExceptions {...exceptions} />}
           {useWorkshopMaster && <PanamaWorkshopSummary data={dispatch.workshop} loading={dispatch.loading} card />}
           {useWorkshopMaster && <PanamaFuelReconciliation data={data.fuelReconciliation} />}
-          {project === 'tmf-panama' && !useWorkshopMaster && data.error && <PanamaSourceRecords source="orders" limit={3} />}
+          {isPanama && !useWorkshopMaster && data.error && <PanamaSourceRecords source="orders" limit={3} />}
 
           {/* Fleet grid */}
           <FleetGrid equipment={equipment} dispatch={dispatch} operatingOnly={useWorkshopMaster} />
@@ -214,15 +218,15 @@ export default function ExecutiveDashboard() {
           {/* Daily actions */}
           {!useWorkshopMaster && <AccionesDelDia exceptions={snapshot.exceptions} readiness={dispatch.readiness} verified={snapshot.pct !== null} />}
 
-          {role === 'gerencia' && project === 'tmf-panama' && <PanamaFinanceHandoff />}
+          {role === 'gerencia' && isPanama && <PanamaFinanceHandoff />}
 
           {/* Admin shortcuts (Gerencia only) */}
           {role === 'gerencia' && (
-            <div className="mt-2">
-              <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide mb-2">
+            <section aria-label="Administración" className="mt-2">
+              {!isPanama && <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide mb-2">
                 Admin
-              </p>
-              <div className="grid grid-cols-3 gap-3">
+              </p>}
+              <div className={isPanama ? 'grid gap-3 sm:grid-cols-3' : 'grid grid-cols-3 gap-3'}>
                 <Link
                   to="/admin/activos"
                   className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 hover:border-blue-400 transition-colors"
@@ -232,7 +236,7 @@ export default function ExecutiveDashboard() {
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-text">Activos</p>
-                    <p className="text-xs text-text-secondary truncate">Ciclo de vida</p>
+                    {!isPanama && <p className="text-xs text-text-secondary truncate">Ciclo de vida</p>}
                   </div>
                 </Link>
                 <Link
@@ -244,7 +248,7 @@ export default function ExecutiveDashboard() {
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-text">Proveedores</p>
-                    <p className="text-xs text-text-secondary truncate">Catálogo</p>
+                    {!isPanama && <p className="text-xs text-text-secondary truncate">Catálogo</p>}
                   </div>
                 </Link>
                 <Link
@@ -256,11 +260,11 @@ export default function ExecutiveDashboard() {
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-text">Órdenes de Compra</p>
-                    <p className="text-xs text-text-secondary truncate">Crear OC</p>
+                    {!isPanama && <p className="text-xs text-text-secondary truncate">Crear OC</p>}
                   </div>
                 </Link>
               </div>
-            </div>
+            </section>
           )}
 
         </div>

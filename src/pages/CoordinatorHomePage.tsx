@@ -89,8 +89,8 @@ export default function CoordinatorHomePage() {
       {/* Greeting */}
       <div className="flex items-start justify-between mb-4">
         <div>
-          <h1 className="text-2xl font-bold text-text">{greeting}, {userName}</h1>
-          <p className="text-text-secondary text-sm mt-0.5">Coordinador de Mantenimiento</p>
+          <h1 className="text-2xl font-bold text-text">{isPanama ? 'Mantenimiento' : `${greeting}, ${userName}`}</h1>
+          {!isPanama && <p className="text-text-secondary text-sm mt-0.5">Coordinador de Mantenimiento</p>}
         </div>
         <button
           onClick={() => { void fetchWorkOrders(); setMaintenanceRefresh(value => value + 1); }}
@@ -107,25 +107,25 @@ export default function CoordinatorHomePage() {
         <KPICard
           icon={<ClipboardList size={20} />}
           value={error ? '—' : loading || !fetched ? '…' : openOTs.length}
-          label="OTs Abiertas"
+          label={isPanama ? 'OT abiertas' : 'OTs Abiertas'}
           color="#2563EB"
         />
         <KPICard
           icon={<Flame size={20} />}
           value={error ? '—' : loading || !fetched ? '…' : criticalOTs.length}
-          label="OTs Críticas"
+          label={isPanama ? 'OT críticas' : 'OTs Críticas'}
           color="#DC2626"
         />
         <KPICard
           icon={<Timer size={20} />}
           value={pmProximos}
-          label={isPanama ? 'PM Próximos · Maestro' : 'PM Próximos'}
+          label={isPanama ? 'PM próximos' : 'PM Próximos'}
           color="#F59E0B"
         />
         <KPICard
           icon={<Archive size={20} />}
           value={stockCritico === null ? '…' : stockCritico}
-          label="Stock Crítico"
+          label={isPanama ? 'Stock crítico' : 'Stock Crítico'}
           color="#EA580C"
         />
       </div>
@@ -146,7 +146,7 @@ export default function CoordinatorHomePage() {
       </div>
 
       {/* OTs Pendientes */}
-      <h2 className="font-semibold text-text mt-2 mb-3">OTs Pendientes</h2>
+      <h2 className="font-semibold text-text mt-2 mb-3">{isPanama ? 'OT pendientes' : 'OTs Pendientes'}</h2>
       <div className="flex flex-col">
         {error ? <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p> : loading || !fetched ? (
           <div className="text-center py-6 text-text-secondary text-sm">Cargando…</div>
@@ -161,7 +161,7 @@ export default function CoordinatorHomePage() {
         ) : (
           <div className="bg-green-50 border border-success rounded-lg p-3">
             <p className="text-sm font-medium text-success text-center">
-              Sin órdenes pendientes ✓
+              {isPanama ? 'Sin órdenes pendientes' : 'Sin órdenes pendientes ✓'}
             </p>
           </div>
         )}

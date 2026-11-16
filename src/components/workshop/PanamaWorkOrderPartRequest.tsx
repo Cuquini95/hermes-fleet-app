@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { purchaseRead, purchaseWrite, type WorkOrderPartContext } from '../../lib/purchasing-api';
+import { purchaseRead, purchaseWrite, visibleWorkOrderFolio, type WorkOrderPartContext } from '../../lib/purchasing-api';
 import { useAuthStore } from '../../stores/auth-store';
 
 const field = 'mt-1 min-h-11 w-full min-w-0 rounded-lg border border-slate-400 bg-white p-2 text-base';
@@ -16,7 +16,7 @@ export default function PanamaWorkOrderPartRequest({ ot }: { ot: string }) {
   return (
     <section className="min-w-0 space-y-3 rounded-xl border border-slate-200 p-3">
       <button type="button" className={button} aria-expanded={expanded} onClick={() => setExpanded(open => !open)}>
-        {canRequest ? 'Pedir repuestos para esta OT' : 'Repuestos para esta OT'}
+        {canRequest ? 'Pedir repuestos' : 'Repuestos'}
       </button>
       {expanded && <PartForm ot={ot} canRequest={canRequest} canReserve={canReserve} />}
     </section>
@@ -35,7 +35,7 @@ function PartForm({ ot, canRequest, canReserve }: { ot: string; canRequest: bool
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState('');
+  const [status, setStatus] = useState<{ message: string; reference?: string }>();
   const [error, setError] = useState('');
   const [loadAttempt, setLoadAttempt] = useState(0);
   const running = useRef(false);
@@ -77,7 +77,7 @@ function PartForm({ ot, canRequest, canReserve }: { ot: string; canRequest: bool
   async function save(kind: 'purchase' | 'reservation') {
     if (running.current || !context || !match) return;
     if (kind === 'purchase' && (!canRequest || result?.match === 'ambiguous')) return;
-    setStatus('');
+    setStatus(undefined);
     setError('');
     const quantity = amount.trim().replace(',', '.');
     if (!requiredDate || !/^(?:0|[1-9]\d{0,11})(?:\.\d{1,3})?$/.test(quantity) || Number(quantity) <= 0) {
@@ -85,7 +85,7 @@ function PartForm({ ot, canRequest, canReserve }: { ot: string; canRequest: bool
       return;
     }
     if (kind === 'reservation' && (!selectedWarehouse || !reference.trim() || !result?.partNumber)) {
-      setError('Selecciona un almacén con saldo suficiente e indica la referencia de la reserva.');
+      setError('Elige un almacén con saldo y agrega la referencia.');
       return;
     }
     running.current = true;
@@ -96,7 +96,7 @@ function PartForm({ ot, canRequest, canReserve }: { ot: string; canRequest: bool
           kind: 'Reserva', ot: context.ot, partNumber: result.partNumber, warehouse: selectedWarehouse.warehouse,
           quantity, reference: `${reference.trim()} · Requerido ${requiredDate}`,
         });
-        setStatus(`${quantity} reservado para ${context.folio} en ${selectedWarehouse.warehouse}.`);
+        setStatus({ message: `${quantity} reservadas en ${selectedWarehouse.warehouse}.` });
         setReference('');
         await checkPart(partKey);
       } else {
@@ -106,7 +106,7 @@ function PartForm({ ot, canRequest, canReserve }: { ot: string; canRequest: bool
             description: description.trim(), quantity, requiredDate, isManual: result?.match !== 'verified',
           }],
         });
-        setStatus(`Pedido ${response.folio} enviado a Compras.`);
+        setStatus({ message: 'Pedido enviado a Compras.', reference: response.folio });
         setPart('');
         setDescription('');
         setChecked(undefined);
@@ -114,7 +114,7 @@ function PartForm({ ot, canRequest, canReserve }: { ot: string; canRequest: bool
         setReference('');
       }
     } catch (cause) {
-      setError(describeError(cause, 'No se pudo confirmar la operación. Reintenta con los mismos datos.'));
+      setError(describeError(cause, 'Sin confirmar. Reintenta con los mismos datos.'));
     } finally {
       running.current = false;
       setSaving(false);
@@ -125,22 +125,30 @@ function PartForm({ ot, canRequest, canReserve }: { ot: string; canRequest: bool
     event.preventDefault();
     if (!partKey || saving) return;
     setWarehouse('');
-    setStatus('');
+    setStatus(undefined);
     setError('');
     void checkPart(partKey, true);
   }
 
-  if (loading) return <p role="status" className="text-sm">Verificando la OT…</p>;
+  if (loading) return <p role="status" className="text-sm">Cargando OT…</p>;
   if (!context) return <div className="space-y-2">
     <p role="alert" className="text-sm text-red-800">{error}</p>
     <button className={button} type="button" onClick={() => { setLoading(true); setError(''); setLoadAttempt(value => value + 1); }}>
-      Reintentar consulta
+      Reintentar
     </button>
   </div>;
 
+  const folio = visibleWorkOrderFolio(context.folio);
   return (
     <div className="space-y-3">
-      <p className="break-words text-sm font-semibold">OT {context.folio} · Equipo {context.unit} · Serie {context.serial || 'Por verificar'}</p>
+      <div>
+        <p className="break-words text-sm font-semibold">Equipo {context.unit}{folio && ` · ${folio}`}</p>
+        <details className="mt-1 text-xs text-slate-600">
+          <summary className="min-h-11 cursor-pointer py-3 font-medium">Datos de la OT</summary>
+          {!folio && <p className="break-words">Referencia {context.folio}</p>}
+          <p className="break-words">Serie {context.serial || 'por verificar'}</p>
+        </details>
+      </div>
       <form onSubmit={search} className="flex flex-wrap items-end gap-2">
         <label className="min-w-40 flex-1 text-sm">Número de parte o SKU
           <input className={field} required maxLength={120} value={part} disabled={saving} onChange={event => {
@@ -148,21 +156,22 @@ function PartForm({ ot, canRequest, canReserve }: { ot: string; canRequest: bool
             setChecking(false);
             setPart(event.target.value);
             setDescription('');
-            setStatus('');
+            setStatus(undefined);
             setError('');
           }} />
         </label>
-        <button type="submit" className={button} disabled={checking || saving}>Consultar existencias</button>
+        <button type="submit" className={button} disabled={checking || saving}>Ver existencias</button>
       </form>
       {checking && <p role="status" className="text-sm">Consultando existencias…</p>}
       {match && !checking && <div className="space-y-3">
-        {!result && <p className="text-sm text-amber-900">Existencias por verificar. La fuente no respondió.</p>}
+        {!result && <p className="text-sm text-amber-900">Existencias sin verificar. Reintenta.</p>}
         {result?.match !== 'verified' && result && <p className="text-sm text-amber-900">
-          {result.match === 'ambiguous' ? 'Hay varios SKU compatibles. Consulta por SKU para confirmar existencias.' : 'No hay existencias compatibles verificadas para este número de parte.'}
+          {result.match === 'ambiguous' ? 'Hay varias piezas compatibles. Busca por SKU.' : 'Sin stock compatible verificado.'}
         </p>}
         {result?.match === 'verified' && <ul className="space-y-2" aria-label="Existencias por almacén">
           {result.items?.map(item => <li key={item.warehouse} className="space-y-1 rounded-lg bg-slate-50 p-2 text-sm">
-            <p className="break-words font-semibold">{item.warehouse || 'Almacén por confirmar'} · {item.partNumber}{item.measure && ` · ${item.measure}`}</p>
+            <p className="break-words font-semibold">{item.warehouse || 'Almacén por confirmar'}{item.measure && ` · ${item.measure}`}</p>
+            {item.partNumber.toUpperCase() !== partKey && <p className="break-words text-xs text-slate-600">SKU {item.partNumber}</p>}
             <dl className="grid grid-cols-2 gap-2 min-[430px]:grid-cols-4">
               {[
                 ['Libre', item.available], ['Reservado', item.reserved],
@@ -198,11 +207,17 @@ function PartForm({ ot, canRequest, canReserve }: { ot: string; canRequest: bool
               </label>
               <button className={button} type="button" onClick={() => void save('reservation')}>Reservar para la OT</button>
             </fieldset>
-            : <p className="text-sm">Almacén puede reservar el repuesto para esta OT.</p>)}
+            : <p className="text-sm">Almacén puede reservarlo.</p>)}
           {canRequest && <button type="submit" className={primary} disabled={saving || result?.match === 'ambiguous'}>Enviar pedido a Compras</button>}
         </form>
       </div>}
-      {status && <p role="status" className="break-words text-sm font-semibold text-emerald-800">{status}</p>}
+      {status && <div>
+        <p role="status" className="break-words text-sm font-semibold text-emerald-800">{status.message}</p>
+        {status.reference && <details className="mt-1 break-words text-xs text-slate-600">
+          <summary className="min-h-11 cursor-pointer py-3 font-medium">Referencia del pedido</summary>
+          <p>{status.reference}</p>
+        </details>}
+      </div>}
       {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
       {canRequest && <Link className="inline-flex min-h-11 items-center text-sm font-semibold underline"
         to={`/pedidos?${new URLSearchParams({ ot: context.ot })}`}>Abrir carrito de pedidos</Link>}

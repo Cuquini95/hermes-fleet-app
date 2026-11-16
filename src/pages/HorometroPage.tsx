@@ -201,11 +201,11 @@ export default function HorometroPage() {
         >
           <ArrowLeft size={20} className="text-text" />
         </button>
-        <h1 className="text-xl font-bold text-text">Registro Horómetro</h1>
+        <h1 className="text-xl font-bold text-text">{isPanama ? 'Horómetro' : 'Registro Horómetro'}</h1>
       </div>
 
       {isPanama && <p className="mb-4 rounded-xl border border-border bg-white p-3 text-sm text-text-secondary">
-        Registra una lectura excepcional cuando falte en el origen automático. Para entregar lecturas y producción al cierre, abre{' '}
+        Registra la lectura si falta la automática. Para cerrar el turno, usa{' '}
         <Link to="/panama/turnos" className="font-semibold text-primary underline">Relevo de turno</Link>.
       </p>}
 

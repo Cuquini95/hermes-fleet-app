@@ -17,10 +17,11 @@ export default function PmTriggerList({ rules }: { rules: PMTrigger[] }) {
             ? `${rule.actual} / vence ${rule.threshold}`
             : `${rule.actual ?? '—'} críticos / umbral ${rule.threshold}`}
       </span>}
-      {rule.source && <span className="block text-xs text-text-secondary">
-        {rule.source}{rule.reference && ` · ${rule.reference}`}
-        {rule.cut && Number.isFinite(Date.parse(rule.cut)) && ` · Corte ${cutDate.format(new Date(rule.cut))} Panamá`}
-      </span>}
+      {rule.source && <details className="text-xs text-text-secondary">
+        <summary className="min-h-11 cursor-pointer py-3">Fuente de {labels[rule.kind].toLowerCase()}</summary>
+        <p>{rule.source}{rule.reference && ` · ${rule.reference}`}
+          {rule.cut && Number.isFinite(Date.parse(rule.cut)) && ` · Corte ${cutDate.format(new Date(rule.cut))} Panamá`}</p>
+      </details>}
     </li>)}
   </ul>;
 }

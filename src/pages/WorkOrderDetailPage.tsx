@@ -25,6 +25,7 @@ import OrderWarranties from '../components/workshop/OrderWarranties';
 import OrderComponentInterventions from '../components/workshop/ComponentInterventions';
 import PanamaPmNextService from '../components/workshop/PanamaPmNextService';
 import { parsePanamaPmNextService } from '../lib/panama-pm-next-service.js';
+import { visibleWorkOrderFolio } from '../lib/purchasing-api';
 
 const FIELD_LABELS: Record<StatusLogEntry['field'], string> = {
   estado: 'Estado',
@@ -50,8 +51,10 @@ function canEditField(role: string | null, field: OTStatusField): boolean {
   return (['mecanico_asignado', 'costo_estimado', 'prioridad'].includes(field) ? ASSIGN : UPDATE).includes(role);
 }
 
-function StatusPillRow({ current }: { current: OTEstado }) {
-  const allStatuses: OTEstado[] = [current === 'En Espera de Asignación' ? current : 'Abierta', 'En Reparación', 'Esperando Pieza', 'Resuelta', 'Completado'];
+function StatusPillRow({ current, compact }: { current: OTEstado; compact: boolean }) {
+  const allStatuses: OTEstado[] = compact ? [current] : [
+    current === 'En Espera de Asignación' ? current : 'Abierta', 'En Reparación', 'Esperando Pieza', 'Resuelta', 'Completado',
+  ];
   const currentIdx = allStatuses.indexOf(current);
 
   return (
@@ -274,7 +277,7 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
           <h1 className="text-xl font-bold text-text">{error ? 'Taller no disponible' : 'OT no encontrada'}</h1>
         </div>
         <div className="bg-white rounded-xl p-6 shadow-sm border border-border text-center">
-          <p className="text-text-secondary">{error ?? `La orden ${otId} no está disponible en esta sesión.`}</p>
+          <p className="text-text-secondary">{error ?? 'Esta orden no está disponible para tu cuenta.'}</p>
           <button type="button" onClick={() => void fetchWorkOrders()} className="mt-3 text-sm font-medium text-amber">Actualizar</button>
         </div>
       </div>
@@ -299,6 +302,7 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
       && (task.evidence !== 'photo' || Object.hasOwn(taskPhotos, task.id)))));
   const unitMechanics = mechanics.filter((mechanic) => mechanicCoversUnit(mechanic, wo.unidad));
   const photos = photoUrls(wo.foto_url);
+  const folio = panamaWorkflow ? visibleWorkOrderFolio(wo.folio ?? wo.ot_id) : wo.folio ?? wo.ot_id;
 
   return (
     <div className="flex flex-col gap-4 pb-6 animate-fade-up">
@@ -313,7 +317,7 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
           <ArrowLeft size={20} className="text-text" />
         </button>
         <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-bold text-text truncate">{wo.folio ?? wo.ot_id}</h1>
+          <h1 className="text-lg font-bold text-text truncate">{folio ?? 'Orden de trabajo'}</h1>
           <p className="text-xs text-text-secondary">{wo.fecha}</p>
           {wo.fecha_cierre && <p className="text-xs text-text-secondary">Cierre {wo.fecha_cierre}</p>}
         </div>
@@ -329,7 +333,11 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
 
       {/* Status flow */}
       <div className="bg-white rounded-xl p-3 shadow-sm border border-border">
-        <StatusPillRow current={wo.estado} />
+        <StatusPillRow current={wo.estado} compact={panamaWorkflow} />
+        {panamaWorkflow && !folio && <details className="text-xs text-text-secondary">
+          <summary className="min-h-11 cursor-pointer py-3 font-medium">Referencia de la OT</summary>
+          <p className="break-words">{wo.folio ?? wo.ot_id}</p>
+        </details>}
       </div>
 
       {/* Info card */}
@@ -354,7 +362,7 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
             </p>
           </div>
           <div>
-            <p className="text-xs text-text-secondary">Mecanico</p>
+            <p className="text-xs text-text-secondary">Mecánico</p>
             <div className="flex items-center gap-1">
               <Wrench size={12} className="text-text-secondary" />
               <p className="text-sm font-semibold text-text">
@@ -369,7 +377,7 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
         </div>
 
         <div>
-          <p className="text-xs text-text-secondary mb-1">Descripcion</p>
+          <p className="text-xs text-text-secondary mb-1">Descripción</p>
           <p className="text-sm text-text break-words">{wo.descripcion}</p>
           {wo.previousOtId && (previous ? <Link className="mt-2 inline-flex min-h-11 items-center text-sm font-semibold text-amber underline"
             to={`/workorders/${encodeURIComponent(previous.folio ?? previous.ot_id)}`}>Reincidencia de {previous.folio ?? previous.ot_id}</Link>
@@ -432,13 +440,18 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
       {panamaWorkflow && isPM && (
         <section className="flex flex-col gap-2 rounded-xl border border-border bg-white p-4 shadow-sm" aria-label="Checklist del modelo">
           <h2 className="text-sm font-semibold text-text">Checklist del modelo</h2>
-          {pm && <p className="text-sm text-text">{pm.model} · {pm.level}{pm.serial && ` · Serie ${pm.serial}`}</p>}
+          {pm && <p className="text-sm text-text">{pm.model} · {pm.level}</p>}
           {typeof pm?.dueAt === 'number' && <p className="text-sm text-text">Vencimiento oficial: {pm.dueAt.toLocaleString('es-PA')} h</p>}
           {pmError && <p role="alert" className="text-sm text-red-700">{pmError}</p>}
           {!pm && !pmError && <p className="text-sm text-text-secondary">Consultando checklist…</p>}
-          {pm && !pm.checklist && <p className="text-sm text-text-secondary">Checklist pendiente de validar para este modelo y nivel. La entrega permanece pendiente.</p>}
+          {pm && !pm.checklist && <p className="text-sm text-text-secondary">Valida el checklist antes de entregar.</p>}
           {pm?.checklist && <>
-            <p className="text-xs text-text-secondary">{pm.checklist.reference}</p>
+            <details className="text-xs text-text-secondary">
+              <summary className="min-h-11 cursor-pointer py-3 font-medium">Datos del checklist</summary>
+              <p>{pm.checklist.reference}</p>
+              {pm.serial && <p className="break-words">Serie {pm.serial}</p>}
+              <a href={PANAMA_PM_CHECKLIST_SOURCE} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center font-medium underline">Ver checklist oficial</a>
+            </details>
             <ul className="space-y-2 text-sm text-text">
               {pm.checklist.tasks.map((task) => (
                 <li key={task.id}>
@@ -469,7 +482,7 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
               ))}
             </ul>
           </>}
-          <a href={PANAMA_PM_CHECKLIST_SOURCE} target="_blank" rel="noreferrer" className="text-sm font-medium text-text underline underline-offset-2">Consultar Flota Checklists PM</a>
+          {!pm?.checklist && <a href={PANAMA_PM_CHECKLIST_SOURCE} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center text-sm font-medium text-text underline underline-offset-2">Ver checklist oficial</a>}
         </section>
       )}
 

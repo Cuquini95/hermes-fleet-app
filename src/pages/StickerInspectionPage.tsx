@@ -332,10 +332,7 @@ export default function StickerInspectionPage() {
         >
           <ArrowLeft size={20} className="text-text" />
         </button>
-        <div className="min-w-0">
-          <h1 className="text-xl font-bold text-text">Sticker 15 dias</h1>
-          <p className="text-xs text-text-secondary">Inspeccion formal con evidencia y aprobacion</p>
-        </div>
+        <h1 className="text-xl font-bold text-text">Sticker 15 días</h1>
       </div>
 
       {canSupervisorApprove && (
@@ -348,8 +345,8 @@ export default function StickerInspectionPage() {
           {reviewList.length === 0 && !reviewError && <p className="text-sm text-text-secondary">Sin inspecciones pendientes.</p>}
           {reviewList.map((item) => (
             <details key={item.folio} className="mb-2 rounded-lg border border-border p-3">
-              <summary className="cursor-pointer text-sm font-semibold text-text">{item.unitId} · {colorLabel(item.color)} · {item.folio}</summary>
-              <p className="my-2 text-xs text-text-secondary">{item.inspectionDate} · {item.inspector}</p>
+              <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold text-text">{item.unitId} · {item.inspectionDate} · {colorLabel(item.color)}</summary>
+              <p className="my-2 break-words text-xs text-text-secondary">{item.inspector} · Folio {item.folio}</p>
               {item.findings.map((finding) => (
                 <div key={finding.itemId} className="mb-2 text-sm text-text">
                   <p>{finding.label} {finding.comment}</p>
@@ -376,7 +373,7 @@ export default function StickerInspectionPage() {
       <div className="grid grid-cols-3 gap-2 mb-4">
         <StatusTile icon={<ClipboardCheck size={18} />} label="Respondidos" value={`${answeredCount}/${template.items.length}`} />
         <StatusTile icon={<FileText size={18} />} label="Hallazgos" value={String(findingsCount)} />
-        <StatusTile icon={isOnline ? <ShieldCheck size={18} /> : <WifiOff size={18} />} label="Modo" value={isOnline ? 'Online' : 'Offline'} />
+        <StatusTile icon={isOnline ? <ShieldCheck size={18} /> : <WifiOff size={18} />} label="Conexión" value={isOnline ? 'En línea' : 'Sin conexión'} />
       </div>
 
       <section className="bg-white rounded-xl p-4 shadow-sm border border-border mb-4 flex flex-col gap-3">
@@ -393,22 +390,23 @@ export default function StickerInspectionPage() {
           <input value={company} onChange={(event) => setCompany(event.target.value)} className="field-input" />
         </Field>
 
-        <Field label="Unidad / NFC / QR">
-          <select value={unitId} onChange={(event) => {
+        <div className="mt-2 flex flex-col gap-1">
+          <label htmlFor="sticker-unit" className="text-sm font-medium text-text-secondary">Unidad</label>
+          <select id="sticker-unit" value={unitId} onChange={(event) => {
             const nextUnit = equipment.find(item => item.unit_id === event.target.value);
             setUnitId(event.target.value);
             const nextTemplate = project === 'tmf-panama' && nextUnit && stickerTemplateForEquipment(nextUnit.type, nextUnit.model);
             if (nextTemplate) setTemplateId(nextTemplate);
             setResponses(buildInitialResponses(getStickerTemplate(nextTemplate || templateId).items, fecha));
           }} className="field-input bg-white">
-            <option value="">Seleccionar unidad...</option>
+            <option value="">Seleccionar</option>
             {equipment.map((eq) => (
               <option key={eq.unit_id} value={eq.unit_id}>
                 {eq.unit_id} - {eq.model}
               </option>
             ))}
           </select>
-        </Field>
+        </div>
 
         <Field label="Tipo de equipo">
           <select

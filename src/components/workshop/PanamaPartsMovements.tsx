@@ -95,7 +95,7 @@ function Movements({ ot, canReceive, onMoved }: { ot: string; canReceive: boolea
           }}>
             <option>Salida</option><option>Devolución</option>
           </select></label>
-          <label className="text-sm">Orden de trabajo<input required readOnly={Boolean(ot)} maxLength={90} className={input} value={workOrder} onChange={(event) => { setWorkOrder(event.target.value); setOriginalIssueId(''); }} /></label>
+          {!ot && <label className="text-sm">Orden de trabajo<input required maxLength={90} className={input} value={workOrder} onChange={(event) => { setWorkOrder(event.target.value); setOriginalIssueId(''); }} /></label>}
           {returns ? <label className="text-sm">Salida original<select aria-label="Salida original" required className={input} value={originalIssueId} onChange={event => setOriginalIssueId(event.target.value)}>
             <option value="">{eligible.length ? 'Selecciona la salida' : 'Sin salidas con saldo verificable'}</option>
             {eligible.map(item => <option key={item.id} value={item.id}>{item.partNumber} · {item.reference} · saldo {item.returnable}</option>)}
@@ -122,12 +122,18 @@ function Movements({ ot, canReceive, onMoved }: { ot: string; canReceive: boolea
           <li key={item.id} className="break-words rounded-lg bg-slate-50 p-2">
             <p>{item.kind} · {item.partNumber}{item.warehouse && ` · ${item.warehouse}`} · {item.quantity} {item.measurementUnit}
               {item.stockAfter && ` · existencia ${item.stockAfter}`}</p>
-            <p className="text-slate-700">{item.otFolio || item.ot || item.orderNumber || item.order} · {item.unit} · {item.reference} · {item.by} · {formatPanamaReceiptDate(item.at)}</p>
+            {!ot && item.unit && <p className="text-slate-700">{item.unit}</p>}
             {item.originalIssueId && <p>Salida original · {issueReference.get(item.originalIssueId) || item.originalIssueId}</p>}
             {item.kind === 'Salida' && <p>{item.returnable == null ? 'Saldo por conciliar' : `Saldo para devolución ${item.returnable}`}</p>}
             {['Salida', 'Devolución'].includes(item.kind) && <p>{item.valuation
-              ? `Costo OT ${displayMoney(item.valuation.delta, item.valuation.currency)} · ${item.valuation.reference}`
+              ? `Costo OT ${displayMoney(item.valuation.delta, item.valuation.currency)}`
               : 'Costo pendiente de conciliar'}</p>}
+            <details className="text-xs text-slate-600">
+              <summary className="min-h-11 cursor-pointer py-3 font-medium">Detalle del movimiento</summary>
+              <p>{item.otFolio || item.ot || item.orderNumber || item.order}</p>
+              <p>{item.reference} · {item.by} · {formatPanamaReceiptDate(item.at)}</p>
+              {item.valuation?.reference && <p>Valuación · {item.valuation.reference}</p>}
+            </details>
           </li>
         ))}
       </ul>}

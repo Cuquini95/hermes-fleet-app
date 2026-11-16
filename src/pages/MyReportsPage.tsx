@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
 import { mexicoDate } from '../lib/date-utils';
+import { visibleWorkOrderFolio } from '../lib/purchasing-api';
 import { useAuthStore } from '../stores/auth-store';
 import { SkeletonList } from '../components/ui/Skeleton';
 
@@ -230,6 +231,7 @@ function HorometroCard({ record }: { record: HorometroRecord }) {
 }
 
 function AveriaCard({ record }: { record: AveriaRecord }) {
+  const publicOt = visibleWorkOrderFolio(record.otId ?? '');
   return (
     <div className="bg-white rounded-xl shadow-sm border border-border p-3 flex items-center gap-3">
       <div className="flex-1 min-w-0">
@@ -239,10 +241,12 @@ function AveriaCard({ record }: { record: AveriaRecord }) {
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-text-secondary">{record.hora}</span>
-          {record.otId && (
-            <span className="text-xs font-mono text-text-secondary">{record.otId}</span>
-          )}
+          {publicOt && <span className="text-xs text-text-secondary">{publicOt}</span>}
         </div>
+        {record.otId && !publicOt && <details className="text-xs text-text-secondary">
+          <summary className="cursor-pointer py-1">Referencia</summary>
+          <p className="break-words">{record.otId}</p>
+        </details>}
       </div>
       <PrioridadBadge prioridad={record.prioridad} />
     </div>
@@ -260,12 +264,13 @@ interface SectionProps {
 }
 
 function Section({ icon, title, count, iconColorClass, children }: SectionProps) {
+  if (!count) return null;
   return (
     <section>
       <div className="flex items-center gap-2 mb-3">
         <span className={iconColorClass}>{icon}</span>
-        <h2 className="font-bold text-text text-sm uppercase tracking-wide flex-1">{title}</h2>
-        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${count > 0 ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-text-secondary'}`}>
+        <h2 className="font-bold text-text text-sm flex-1">{title}</h2>
+        <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
           {count}
         </span>
       </div>
@@ -360,11 +365,12 @@ export default function MyReportsPage() {
           type="button"
           onClick={() => navigate(-1)}
           className="p-2 rounded-xl bg-white border border-border shadow-sm"
+          aria-label="Volver"
         >
           <ArrowLeft size={20} className="text-text" />
         </button>
         <div className="flex-1 min-w-0">
-          <h1 className="text-xl font-bold text-text">Mis Reportes de Hoy</h1>
+          <h1 className="text-xl font-bold text-text">Mis reportes</h1>
           <p className="text-xs text-text-secondary capitalize">{todayDisplay}</p>
         </div>
         <button
@@ -381,8 +387,8 @@ export default function MyReportsPage() {
       {/* Last sync */}
       {lastRefresh && !loading && (
         <p className="text-xs text-text-secondary mb-4 pl-1">
-          Último sync:{' '}
-          {lastRefresh.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}
+          Actualizado{' '}
+          {lastRefresh.toLocaleTimeString('es-PA', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Panama' })}
         </p>
       )}
       {!lastRefresh && !loading && <div className="mb-4" />}
@@ -411,10 +417,7 @@ export default function MyReportsPage() {
         <div className="bg-green-50 border border-green-200 rounded-xl p-5 flex items-center gap-4">
           <CheckCircle size={28} className="text-success shrink-0" />
           <div>
-            <p className="font-semibold text-text text-sm">Todo en orden</p>
-            <p className="text-xs text-text-secondary mt-0.5">
-              Sin actividad registrada hoy ni ayer.
-            </p>
+            <p className="font-semibold text-text text-sm">Sin actividad registrada hoy ni ayer.</p>
           </div>
         </div>
       )}
@@ -426,17 +429,13 @@ export default function MyReportsPage() {
           {/* Checklists DVIR */}
           <Section
             icon={<ClipboardCheck size={16} />}
-            title="Checklists DVIR"
+            title="Inspecciones"
             count={data.dvir.length}
             iconColorClass="text-blue-600"
           >
-            {data.dvir.length === 0 ? (
-              <p className="text-xs text-text-secondary pl-1">Sin registros hoy</p>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {data.dvir.map((r) => <DvirCard key={r.id} record={r} />)}
-              </div>
-            )}
+            <div className="flex flex-col gap-2">
+              {data.dvir.map((r) => <DvirCard key={r.id} record={r} />)}
+            </div>
           </Section>
 
           {/* Combustible */}
@@ -446,13 +445,9 @@ export default function MyReportsPage() {
             count={data.combustible.length}
             iconColorClass="text-amber"
           >
-            {data.combustible.length === 0 ? (
-              <p className="text-xs text-text-secondary pl-1">Sin registros hoy</p>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {data.combustible.map((r) => <CombustibleCard key={r.id} record={r} />)}
-              </div>
-            )}
+            <div className="flex flex-col gap-2">
+              {data.combustible.map((r) => <CombustibleCard key={r.id} record={r} />)}
+            </div>
           </Section>
 
           {/* Horómetros */}
@@ -462,13 +457,9 @@ export default function MyReportsPage() {
             count={data.horometros.length}
             iconColorClass="text-text-secondary"
           >
-            {data.horometros.length === 0 ? (
-              <p className="text-xs text-text-secondary pl-1">Sin registros hoy</p>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {data.horometros.map((r) => <HorometroCard key={r.id} record={r} />)}
-              </div>
-            )}
+            <div className="flex flex-col gap-2">
+              {data.horometros.map((r) => <HorometroCard key={r.id} record={r} />)}
+            </div>
           </Section>
 
           {/* Averías */}
@@ -478,13 +469,9 @@ export default function MyReportsPage() {
             count={data.averias.length}
             iconColorClass="text-critical"
           >
-            {data.averias.length === 0 ? (
-              <p className="text-xs text-text-secondary pl-1">Sin registros hoy</p>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {data.averias.map((r) => <AveriaCard key={r.id} record={r} />)}
-              </div>
-            )}
+            <div className="flex flex-col gap-2">
+              {data.averias.map((r) => <AveriaCard key={r.id} record={r} />)}
+            </div>
           </Section>
 
         </div>
