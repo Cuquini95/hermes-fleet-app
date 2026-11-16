@@ -20,6 +20,7 @@ import PhotoCapture from '../components/ui/PhotoCapture';
 import OperationalReturnCard from '../components/workshop/OperationalReturnCard';
 import PmTriggerList from '../components/workshop/PmTriggerList';
 import PanamaWorkOrderCost from '../components/workshop/PanamaWorkOrderCost';
+import OrderComponentInterventions from '../components/workshop/ComponentInterventions';
 
 const FIELD_LABELS: Record<StatusLogEntry['field'], string> = {
   estado: 'Estado',
@@ -478,6 +479,10 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
           {wo.technical && <p className="mt-1 text-sm text-text-secondary">Aceptación técnica de {wo.technical.userName}.</p>}
         </section>
       )}
+
+      {panamaWorkflow && <OrderComponentInterventions otId={wo.ot_id} version={wo.version}
+        mayRegister={wo.estado === 'Completado' && Boolean(role && CLOSE.includes(role) && actorId === wo.technical?.userId)}
+        onSave={fetchWorkOrders} />}
 
       {panamaWorkflow && !isPM && <OperationalReturnCard key={wo.ot_id} order={wo}
         mayReview={role === 'supervisor' && actorId !== wo.technical?.userId && actorId !== wo.mecanico_usuario_id && actorId !== wo.execution?.userId}

@@ -80,7 +80,7 @@ export default function PanamaPage() {
           </p>
         )}
         {canSeeCuts && <PanamaSourceCuts key={userId} reload={reload} />}
-        {canSeeComponents && <PanamaComponentHistory />}
+        {canSeeComponents && <PanamaComponentHistory key={`componentes:${userId}`} />}
         {sections && definitions.filter(({ key }) => Object.hasOwn(sections, key)).map(({ key, title, fields }) => {
           const rows = sections[key]?.filter(row => row.unit.toUpperCase().includes(filter.trim().toUpperCase()));
           return (

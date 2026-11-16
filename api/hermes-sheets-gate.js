@@ -11,6 +11,7 @@ import { technicalDocuments } from './_lib/hermes-technical-library.js';
 import { dispatchPanamaMeter, METER_TAB, validatePanamaMeterAppend } from './_lib/hermes-panama-meter.js';
 import { readPersonalHistory } from './_lib/hermes-profile.js';
 import { visiblePanamaParts } from './_lib/hermes-part-prices.js';
+import { COMPONENT_INTERVENTION } from './_lib/hermes-panama-components.js';
 
 const ADMIN = ['jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
 const WORKSHOP = ['mecanico', ...ADMIN];
@@ -58,7 +59,7 @@ const APPEND = new Map([
 ]);
 
 const PANAMA_OPERATION_GROUPS = new Map([
-  ['taller', ['api/workshop/report', 'api/workshop/transition', 'api/workshop/returns']],
+  ['taller', ['api/workshop/report', 'api/workshop/transition', 'api/workshop/returns', 'api/workshop/componentinterventions']],
   ['inspecciones', ['api/workshop/dvir', 'api/workshop/sticker', 'api/workshop/stickerreview']],
   ['pm', ['api/workshop/pm', 'api/workshop/schedule', 'api/workshop/pmbatchcheck', 'api/workshop/pmbatch']],
   ['turnos', ['api/panama/turnos/entregar', 'api/panama/turnos/revisar']],
@@ -77,6 +78,7 @@ const PANAMA_OPERATION_GROUPS = new Map([
 ]);
 const operationGroup = new Map([...PANAMA_OPERATION_GROUPS].flatMap(([group, routes]) => routes.map(route => [route, group])));
 const relatedPause = new Map([
+  ['api/workshop/componentinterventions', 'api/workshop/transition'],
   ['api/workshop/pmbatch', 'api/workshop/pm'], ['api/workshop/pmbatchcheck', 'api/workshop/pm'],
   ['api/purchasing/inventory-reservation', 'api/purchasing/inventory-move'],
   ['api/purchasing/order-dispatch', 'api/purchasing/order-receive'],
@@ -145,7 +147,8 @@ async function sheetRead(req, res, sheets, session) {
     return invalid(res, 400, 'Paginación inválida.');
   }
   const rows = await visibleRows(sheets, tab, rule, session);
-  return res.status(200).json({ data: rows.slice(offset, offset + limit) });
+  const data = rows.slice(offset, offset + limit);
+  return res.status(200).json({ data: tab === 'OT_STATUS_LOG' ? data.map(row => row[2] === COMPONENT_INTERVENTION ? [] : row) : data });
 }
 
 async function sheetAppend(req, res, sheets, session) {

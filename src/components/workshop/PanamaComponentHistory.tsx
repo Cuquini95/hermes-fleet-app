@@ -1,6 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { hermesApiUrl } from '../../lib/hermes-api-base';
 import { useAuthStore } from '../../stores/auth-store';
+import { requestWorkshop } from '../../lib/workshop-api';
+import { ComponentInterventionList, type ComponentInterventionHistory } from './ComponentInterventions';
 
 interface ComponentRow {
   part: string;
@@ -67,8 +69,11 @@ export default function PanamaComponentHistory() {
   const [unit, setUnit] = useState('');
   const [request, setRequest] = useState<{ unit: string }>();
   const [record, setRecord] = useState<ComponentHistory>();
+  const [interventions, setInterventions] = useState<ComponentInterventionHistory>();
+  const [interventionError, setInterventionError] = useState(false);
   const [error, setError] = useState('');
   const userId = useAuthStore(state => state.userId);
+  const maySeeInterventions = useAuthStore(state => ['jefe_taller', 'coordinador', 'supervisor', 'gerencia'].includes(state.role ?? ''));
   useEffect(() => {
     if (!request || !userId) return;
     const controller = new AbortController();
@@ -81,12 +86,19 @@ export default function PanamaComponentHistory() {
     }).catch((e: unknown) => {
       if (!controller.signal.aborted) setError(e instanceof Error ? e.message : 'Consulta no disponible');
     });
+    if (maySeeInterventions) {
+      void requestWorkshop<ComponentInterventionHistory>(`componentinterventions?${new URLSearchParams({ unit: request.unit })}`)
+        .then(result => { if (!controller.signal.aborted) setInterventions(result); })
+        .catch(() => { if (!controller.signal.aborted) setInterventionError(true); });
+    }
     return () => controller.abort();
-  }, [request, userId]);
+  }, [request, userId, maySeeInterventions]);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setRecord(undefined);
+    setInterventions(undefined);
+    setInterventionError(false);
     setError('');
     setRequest({ unit: unit.trim().toUpperCase() });
   }
@@ -108,6 +120,11 @@ export default function PanamaComponentHistory() {
       </form>
       {request && !record && !error && <p role="status">Consultando componentes…</p>}
       {error && <p role="alert" className="text-red-700">{error}</p>}
+      {request && maySeeInterventions && <div className="space-y-2">
+        <h3 className="font-semibold">{request.unit} · Intervenciones en Hermes</h3>
+        {interventionError ? <p role="alert" className="text-sm text-amber-900">Historial de intervenciones de Hermes no disponible.</p>
+          : interventions ? <ComponentInterventionList history={interventions} linkOrders /> : <p role="status" className="text-sm">Consultando intervenciones…</p>}
+      </div>}
       {record && (
         <>
           <h3 className="font-semibold">{record.unit} · Cambios registrados</h3>
@@ -122,7 +139,7 @@ export default function PanamaComponentHistory() {
           <Records items={record.life} history={false} />
         </>
       )}
-      <p className="text-sm text-slate-600">Registra el reemplazo por pieza y posición en «ANOTAR CAMBIO» del maestro correspondiente.</p>
+      <p className="text-sm text-slate-600">La OT aceptada permite registrar el trabajo por pieza y posición. La vida según el maestro conserva su propio corte.</p>
     </section>
   );
 }

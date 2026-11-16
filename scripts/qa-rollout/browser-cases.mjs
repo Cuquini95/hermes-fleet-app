@@ -1044,6 +1044,76 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       return { unit: 'DZ203', retainedMaster: true, isolatedByPosition: true, recalculatedRemainingHours: 1888.25 };
     }, loadAccounts[77]));
 
+    if (withGateway) await record('MÓVIL-INTERVENCIONES-DE-COMPONENTES', async () => {
+      const technician = firstAccount('mecanico');
+      const reviewer = firstAccount('jefe_taller');
+      const priorOrders = sheet.read(tabs.orders);
+      const priorLogs = sheet.read(tabs.history);
+      const folios = ['OT-0841', 'OT-0842', 'OT-0843'];
+      const ids = ['OT-COMP-QA-A', 'OT-COMP-QA-B', 'OT-COMP-QA-C'];
+      sheet.seed(tabs.orders, [...priorOrders, ...folios.map((folio, index) => Object.assign(Array(26).fill(''), {
+        1: ids[index], 3: 'DZ203', 4: 'Avería', 5: 'Intervención sintética de cadena QA', 7: 'MEDIA', 9: 'Completado',
+        17: technician.user.id, 18: 'version-componente-' + index,
+        20: JSON.stringify({ userId: technician.user.id, userName: technician.membership.user_name, functionalTest: 'Prueba funcional QA' }),
+        21: JSON.stringify({ userId: reviewer.user.id, userName: reviewer.membership.user_name, acceptedAt: '2026-11-13T15:00:00.000Z' }),
+        25: folio,
+      }))]);
+      try {
+        return await inRole('jefe_taller', 360, async page => {
+          async function recordWork(index, action, meter, previous, retained) {
+            await page.goto(`${origin}/workorders/${folios[index]}`, { waitUntil: 'domcontentloaded' });
+            await dismissPrivacy(page);
+            await visible(page.getByRole('heading', { name: folios[index], exact: true }));
+            const box = page.locator('details').filter({ has: page.getByText('Intervenciones de componentes', { exact: true }) });
+            await box.locator('summary').click();
+            await box.getByLabel('Tipo de intervención').selectOption(action);
+            await box.getByLabel('Componente', { exact: true }).selectOption('Cadena');
+            await box.getByLabel('Posición', { exact: true }).selectOption('Izquierda');
+            await box.getByLabel('Horómetro acumulado al intervenir').fill(meter);
+            if (previous) await box.getByLabel(/Horas anteriores al trabajo/).fill(previous);
+            if (retained) await box.getByLabel('Horas que conserva la reconstrucción').fill(retained);
+            await box.getByLabel('Trabajo realizado').fill('Intervalo de vida comprobado en QA');
+            await box.getByLabel('Referencia del respaldo').fill('Acta sintética QA');
+            if (index === 1) {
+              sheet.failNext({ matches: writes => writes.some(write => write.tab === tabs.history && write.append?.[0]?.[2] === 'intervencion_componente'), when: 'after' });
+            }
+            await clickByName(page, 'Guardar intervención');
+            if (index === 1) {
+              await visible(page.getByRole('button', { name: 'Reintentar registro' }));
+              await page.reload({ waitUntil: 'domcontentloaded' });
+            }
+            await visible(box.getByText('Intervención guardada.', { exact: true }));
+            await visible(box.getByText(/Vida arrastrada/));
+            assert.equal(sheet.read(tabs.history).filter(row => row[1] === ids[index] && row[2] === 'intervencion_componente').length, 1);
+            await noHorizontalOverflow(page, 360);
+          }
+          await recordWork(0, 'new', '4000', '650');
+          await recordWork(1, 'partial', '4220.25');
+          await recordWork(2, 'rebuild', '4500.50', undefined, '140');
+          await page.goto(`${origin}/panama`, { waitUntil: 'domcontentloaded' });
+          const section = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Historial y vida de componentes' }) });
+          await section.getByLabel('Código de equipo').fill('DZ203');
+          await section.getByRole('button', { name: 'Consultar componentes' }).tap();
+          const rows = section.getByRole('list', { name: 'Intervenciones de componentes' });
+          await visible(rows.getByText(/Instalación nueva/));
+          await visible(rows.getByText(/Cambio parcial/));
+          await visible(rows.getByText(/Reconstrucción/));
+          await visible(rows.getByText(/Vida arrastrada 220[.,]25 h/));
+          await visible(rows.getByText('Vida arrastrada 140 h', { exact: true }));
+          await visible(rows.getByRole('link', { name: 'Anterior OT-0842', exact: true }));
+          await noHorizontalOverflow(page, 360);
+          await rows.scrollIntoViewIfNeeded();
+          await shot(page, 'intervenciones-360.png');
+          await rows.getByRole('link', { name: 'Anterior OT-0842', exact: true }).click();
+          await visible(page.getByRole('heading', { name: 'OT-0842', exact: true }));
+          return { unit: 'DZ203', folios, carriedHours: [0, 220.25, 140], retryDidNotDuplicate: true, orderLink: true, width: 360 };
+        }, reviewer);
+      } finally {
+        sheet.seed(tabs.orders, priorOrders);
+        sheet.seed(tabs.history, priorLogs);
+      }
+    });
+
     if (!withPurchasing) return [...external];
     const browserBuyer = loadAccounts.find(account => account.membership.can_approve_purchases === true);
     const browserWarehouse = loadAccounts.find(account => account.membership.can_receive_purchases === true);

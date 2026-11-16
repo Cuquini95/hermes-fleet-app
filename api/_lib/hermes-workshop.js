@@ -7,6 +7,8 @@ import { HermesSheetError, PANAMA_READINESS_TAB } from './hermes-google-sheets.j
 import { isEvidenceError, verifyEvidence } from './hermes-evidence.js';
 import { evaluatePmTriggers, pmLevelKey } from './hermes-pm-triggers.js';
 import { buildPanamaDowntime, downtimeInstant, downtimeShiftStarts, downtimeWindow, isReportedStop } from './hermes-panama-downtime.js';
+import { COMPONENT_INTERVENTION, canonicalComponent, componentActions, componentCatalog, componentHourTicks,
+  componentInterventionHistory, componentPositionKey, overlappingPositions } from './hermes-panama-components.js';
 
 const TAB = {
   inventory: '01 Inventario', orders: 'ORDENES_TRABAJO', history: 'OT_STATUS_LOG', failures: 'Averias',
@@ -1159,11 +1161,88 @@ async function downtimeReport(context) {
     allows: unit => scopeAllows(session, unit) && (!requested || requested === unit) });
 }
 
+async function readComponentJournal(sheets, unit) {
+  const tabs = [TAB.history, TAB.orders];
+  const [logs, orders] = await (sheets.readMany?.(tabs) ?? Promise.all(tabs.map(tab => sheets.read(tab))));
+  return componentInterventionHistory(logs, orders, unit);
+}
+
+async function listComponentInterventions(context) {
+  const { session, sheets, query } = context;
+  assert(ORDER_READ.has(session.role), 403, 'Tu rol no puede consultar intervenciones de Taller');
+  let order;
+  if (query?.otId) order = await getOrder(context, query.otId);
+  else assert(MANAGEMENT.has(session.role), 403, 'Consulta por unidad reservada a Taller y Operaciones');
+  const unit = order ? order.row[3].trim().toUpperCase() : requireUnit(session, query?.unit);
+  const { entries, incomplete } = await readComponentJournal(sheets, unit);
+  const visible = entries.filter(entry => !order || entry.orderId === order.otId).reverse();
+  const interventions = visible.map(({ actorId: _actor, requestId: _request, ...entry }) => entry);
+  if (session.role === 'mecanico') return { unit, incomplete, interventions: interventions.map(({ previous: _previous, ...entry }) => entry) };
+  return { unit, incomplete, interventions, ...(order && { catalog: componentCatalog,
+    confirmedRequests: visible.filter(entry => entry.actorId === session.userId).map(entry => entry.requestId) }) };
+}
+
+async function registerComponentIntervention(context) {
+  const { body, session, sheets } = context;
+  const { row, index, otId, effective } = context.componentOrder;
+  if (sheets.nativeOperations && body.expectedVersion != null) {
+    assert(body.expectedVersion === orderVersion(row), 409, 'La orden cambió. Actualiza antes de guardar.');
+  }
+  const execution = storedObject(row[WORKFLOW.execution]);
+  const technical = storedObject(row[WORKFLOW.technical]);
+  assert(effective[9] === 'Completado' && execution?.userId && execution.functionalTest
+    && technical?.userId && downtimeInstant(technical.acceptedAt) <= Date.parse(context.now), 409, 'La OT requiere aceptación técnica antes de registrar la intervención');
+  assert(session.userId === technical.userId && session.userId !== execution.userId && session.userId !== row[17], 403,
+    'El registro corresponde a quien aceptó técnicamente la OT');
+  const unit = row[3].trim().toUpperCase();
+  const { action } = body;
+  assert(componentActions.has(action), 400, 'Selecciona el tipo de intervención');
+  const component = canonicalComponent(text(body.part, 'Componente', 100, true), text(body.position, 'Posición', 100, true));
+  assert(component, 400, 'Selecciona un componente y una posición del catálogo');
+  const { part, position } = component;
+  const reference = text(body.reference, 'Referencia del respaldo', 180, true);
+  const details = text(body.details, 'Trabajo realizado', 800, true);
+  const meter = componentHourTicks(body.meter);
+  const provided = body.priorHours == null ? null : componentHourTicks(body.priorHours);
+  const rebuildCarry = action === 'rebuild' ? componentHourTicks(body.carriedHours) : null;
+  assert(meter !== null && (body.priorHours == null || (provided !== null && provided <= meter)), 400,
+    'Indica horas válidas con hasta tres decimales. Las horas anteriores no pueden superar el horómetro acumulado');
+  const { entries, incomplete } = await readComponentJournal(sheets, unit);
+  const replayed = await sheets.replay({ key: context.key, fingerprint: context.fingerprint });
+  if (replayed) return { status: 200, body: { ...replayed, replayed: true } };
+  assert(!incomplete, 409, 'El historial de componentes de la unidad requiere revisión');
+  const slot = componentPositionKey(part, position);
+  const history = entries.filter(entry => componentPositionKey(entry.part, entry.position) === slot);
+  assert(!entries.some(entry => entry.part === part && overlappingPositions(entry.position, position)), 409,
+    'Ya existe historial para una posición que se solapa. Registra sobre la posición que se usa en el historial');
+  assert(!history.some(entry => entry.orderId === otId && entry.acceptedAt === technical.acceptedAt), 409,
+    'Esta posición ya tiene una intervención registrada en la aceptación técnica de la OT');
+  const previous = history.at(-1);
+  const priorMeter = previous ? componentHourTicks(previous.meter) : null;
+  assert(priorMeter === null || meter >= priorMeter, 409, 'El horómetro acumulado es menor al de la intervención anterior');
+  const prior = previous ? componentHourTicks(previous.carriedHours) + meter - priorMeter : provided;
+  assert(!previous || provided === null || provided === prior, 400, 'Las horas anteriores difieren del historial de la posición');
+  assert(action === 'new' || prior !== null, 400, 'Indica las horas anteriores con respaldo para iniciar el historial de esta posición');
+  assert(action !== 'rebuild' || (rebuildCarry !== null && rebuildCarry <= prior), 400,
+    'Indica las horas conservadas de la reconstrucción. Deben estar entre cero y las horas anteriores');
+  const carry = action === 'new' ? 0 : action === 'partial' ? prior : rebuildCarry;
+  const event = { id: digest(context.key), unit, part, position, action, meter: meter / 1000, acceptedAt: technical.acceptedAt,
+    priorHours: prior === null ? null : prior / 1000, carriedHours: carry / 1000, reference, details,
+    ...(previous && { previous: { id: previous.id, orderId: previous.orderId } }),
+  };
+  const writes = [
+    { tab: TAB.history, append: [historyRow(context, otId, COMPONENT_INTERVENTION, event.id, JSON.stringify({ ...event, requestId: context.mutationId }))] },
+    { tab: TAB.orders, row: index, col: 18, values: [nextOrderVersion(context)] },
+  ];
+  const componentGuard = `component-ledger:${digest([unit, part, entries.findLast(entry => entry.part === part)?.id ?? 'initial'])}`;
+  return commit(context, writes, { intervention: event }, orderWriteGuard(row), undefined, componentGuard);
+}
+
 const MUTATIONS = {
   report: [report, ROLES, true], dvir: [dvir, INSPECT, true], transition: [transition, ORDER_READ, false],
   pm: [pm, ASSIGN, true], pmbatch: [pmBatch, ASSIGN, false], schedule: [schedule, ASSIGN, false],
   sticker: [sticker, ROLES, true], stickerreview: [stickerReview, SUPERVISE, false],
-  returns: [operationalReturn, OPERATIONS, false],
+  returns: [operationalReturn, OPERATIONS, false], componentinterventions: [registerComponentIntervention, CLOSE, false],
 };
 
 export async function dispatchWorkshop(input) {
@@ -1171,7 +1250,7 @@ export async function dispatchWorkshop(input) {
   const endpoint = path?.match(/^api\/workshop\/([a-z]+)$/)?.[1];
   try {
     assert(session?.userId && session.userName && ROLES.has(session.role), 401, 'Sesión inválida');
-    if (['returns', 'pmchecklist', 'pmtemplate', 'pmtriggers', 'schedulecheck', 'pmbatch', 'pmbatchcheck', 'downtime'].includes(endpoint)) {
+    if (['returns', 'pmchecklist', 'pmtemplate', 'pmtriggers', 'schedulecheck', 'pmbatch', 'pmbatchcheck', 'downtime', 'componentinterventions'].includes(endpoint)) {
       assert(isPanama(input), 404, 'Acción de taller no disponible');
     }
     if (method === 'POST' && endpoint === 'pmbatchcheck') {
@@ -1195,6 +1274,9 @@ export async function dispatchWorkshop(input) {
     }
     if (method === 'GET' && endpoint === 'downtime') {
       return { status: 200, body: await downtimeReport(input) };
+    }
+    if (method === 'GET' && endpoint === 'componentinterventions') {
+      return { status: 200, body: await listComponentInterventions(input) };
     }
     if (method === 'GET' && endpoint === 'returns') {
       assert(OPERATIONS.has(session.role), 403, 'Tu rol no puede revisar la recepción de Operaciones');
@@ -1225,7 +1307,7 @@ export async function dispatchWorkshop(input) {
       ]));
       const orders = rows.filter((row) => orderVisible(session, row));
       const ids = new Set(orders.map((row) => row[1]));
-      return { status: 200, body: { orders, history: logs.filter((row) => ids.has(row[1])),
+      return { status: 200, body: { orders, history: logs.filter((row) => ids.has(row[1]) && row[2] !== COMPONENT_INTERVENTION),
         ...(sheets.nativeOperations && { nativeOperations: true }) } };
     }
     if (method === 'GET' && endpoint === 'schedule') {
@@ -1254,11 +1336,12 @@ export async function dispatchWorkshop(input) {
     const fingerprint = digest(operation);
     if (create) requireUnit(session, body.unit);
     if (endpoint === 'pmbatch') batchUnits(session, body.items);
+    const componentOrder = endpoint === 'componentinterventions' ? await getOrder({ ...input, body: undefined }, body.otId) : undefined;
     const prior = await sheets.replay({ key, fingerprint });
     if (prior) return { status: 200, body: { ...(endpoint === 'pmbatch' ? await pmBatchFolios(input, prior) : prior), replayed: true } };
     const date = new Date();
     const local = dateFormatter.format(date).split('-').reverse().join('/');
-    return await handler({ ...input, key, mutationId, fingerprint, create, now: date.toISOString(), date: local,
+    return await handler({ ...input, key, mutationId, fingerprint, create, componentOrder, now: date.toISOString(), date: local,
       time: timeFormatter.format(date), otId: `OT-${digest(key).slice(0, 16).toUpperCase()}` });
   } catch (error) {
     const status = Number(error?.status ?? error?.statusCode);

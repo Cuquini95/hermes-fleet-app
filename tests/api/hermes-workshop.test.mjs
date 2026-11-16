@@ -80,6 +80,108 @@ const transition = (request, actor, otId, value, execution) => request('transiti
 });
 const executionProof = { functionalTest: 'Prueba funcional registrada, sin fuga y con respuesta normal.' };
 
+function acceptedComponentOrder(id, folio, unit = 'CA20') {
+  return Object.assign(Array(26).fill(''), { 1: id, 3: unit, 4: 'Avería', 9: 'Completado', 17: mechanic.userId,
+    20: JSON.stringify({ userId: mechanic.userId, ...executionProof }),
+    21: JSON.stringify({ userId: workshop.userId, acceptedAt: '2026-11-13T15:00:00.000Z' }), 25: folio });
+}
+
+test('la intervención en una posición conserva la vida según el trabajo y enlaza el historial anterior', async () => {
+  const { request, sheets } = fixture();
+  sheets.seed('ORDENES_TRABAJO', ['A', 'B', 'C', 'D', 'E'].map((letter, index) => acceptedComponentOrder(`OT-${letter}`, `OT-010${index}`)));
+  const submit = (otId, changes) => request('componentinterventions', workshop, {
+    mutationId: randomUUID(), otId, part: 'Cadena', position: 'Izquierda', meter: '4000',
+    reference: 'Acta de Taller QA', details: 'Componentes verificados', ...changes,
+  });
+  assert.equal((await submit('OT-A', { action: 'new', meter: '4000', priorHours: '650' })).status, 200);
+  assert.equal((await submit('OT-B', { action: 'partial', meter: '4220.25', position: 'Izq.', details: 'Se sustituyeron tres eslabones' })).status, 200);
+  assert.equal((await submit('OT-C', { action: 'rebuild', meter: '4500.5', carriedHours: '140', details: 'Se reconstruyó la cadena; inspección QA' })).status, 200);
+  assert.equal((await submit('OT-D', { action: 'partial', meter: '4502', position: 'Derecha', details: 'Una sección sustituida' })).status, 400);
+  assert.equal((await submit('OT-D', { action: 'rebuild', meter: '4520', carriedHours: '300' })).status, 400);
+  assert.equal((await submit('OT-E', { action: 'partial', meter: '4490' })).status, 409);
+  const { body } = await request('componentinterventions', coordinator, undefined, { unit: 'CA20' });
+  assert.deepEqual(body.interventions.map(e => [e.folio, e.action, e.priorHours, e.carriedHours, e.previous?.folio]), [
+    ['OT-0102', 'rebuild', 500.5, 140, 'OT-0101'], ['OT-0101', 'partial', 220.25, 220.25, 'OT-0100'],
+    ['OT-0100', 'new', 650, 0, undefined],
+  ]);
+  assert.equal((await request('componentinterventions', coordinator, undefined, { unit: 'EX401' })).status, 403);
+  assert.equal((await request('componentinterventions', mechanic, undefined, { unit: 'CA20' })).status, 403);
+  assert.equal((await request('componentinterventions', operator, undefined, { otId: 'OT-C' })).status, 403);
+  const own = (await request('componentinterventions', mechanic, undefined, { otId: 'OT-C' })).body.interventions;
+  assert.equal(own.length, 1);
+  assert.equal(own[0].previous, undefined);
+  assert.equal((await request('orders', workshop)).body.history.some(row => row[2] === 'intervencion_componente'), false);
+  assert.equal((await submit('OT-D', { action: 'new', meter: '4600', position: 'Todo' })).status, 409);
+  assert.equal((await submit('OT-D', { action: 'new', meter: '4600', position: 'Brazo' })).status, 400);
+  assert.equal((await submit('OT-D', { action: 'new', meter: '4600', position: 'Izquierda 99' })).status, 400);
+});
+
+test('una intervención requiere al revisor de la OT y dos registros concurrentes no bifurcan la misma posición', async () => {
+  const { request, sheets, interrupt } = fixture();
+  sheets.seed('ORDENES_TRABAJO', [acceptedComponentOrder('OT-C1', 'OT-0120'), acceptedComponentOrder('OT-C2', 'OT-0121')]);
+  const input = { mutationId: randomUUID(), otId: 'OT-C1', action: 'new', part: 'Rolos inferiores', position: 'Izquierda 1',
+    meter: '5000', reference: 'Parte de taller QA', details: 'Sustitución de rodillo completo' };
+  assert.equal((await request('componentinterventions', supervisor, input)).status, 403);
+  let first;
+  interrupt(async () => { first = await request('componentinterventions', workshop, input); });
+  const other = await request('componentinterventions', workshop, { ...input, mutationId: randomUUID(), otId: 'OT-C2', meter: '5001' });
+  assert.equal(first.status, 200);
+  assert.equal(other.status, 409);
+  assert.equal((await request('componentinterventions', workshop, input)).body.replayed, true);
+  assert.equal((await request('componentinterventions', { ...workshop, assignedUnits: ['EX401'] }, input)).status, 403);
+  assert.equal((await request('componentinterventions', workshop, { ...input, mutationId: randomUUID() })).status, 409);
+  assert.equal((await request('componentinterventions', workshop, undefined, { unit: 'CA20' })).body.interventions.length, 1);
+});
+
+test('una OT reaceptada conserva el evento anterior y admite otro trabajo en su nueva aceptación', async () => {
+  const { request, sheets } = fixture();
+  const order = acceptedComponentOrder('OT-REWORK', 'OT-0125');
+  sheets.seed('ORDENES_TRABAJO', [order]);
+  const input = { mutationId: randomUUID(), otId: 'OT-REWORK', action: 'new', part: 'Catalina', position: 'Izquierdo',
+    meter: '5000', reference: 'Parte de taller QA', details: 'Sustitución de catalina' };
+  assert.equal((await request('componentinterventions', workshop, input)).status, 200);
+  order[21] = JSON.stringify({ userId: workshop.userId, acceptedAt: new Date().toISOString() });
+  sheets.seed('ORDENES_TRABAJO', [order]);
+  assert.equal((await request('componentinterventions', workshop, { ...input, mutationId: randomUUID(), action: 'partial', meter: '5005' })).status, 200);
+  const history = (await request('componentinterventions', workshop, undefined, { unit: 'CA20' })).body.interventions;
+  assert.deepEqual(history.map(e => [e.action, e.carriedHours]), [['partial', 5], ['new', 0]]);
+});
+
+test('un historial con horas imposibles no se usa para calcular la intervención siguiente', async () => {
+  const { request, sheets } = fixture();
+  sheets.seed('ORDENES_TRABAJO', [acceptedComponentOrder('OT-VALID', 'OT-0125'), acceptedComponentOrder('OT-NEXT', 'OT-0126')]);
+  const input = { mutationId: randomUUID(), otId: 'OT-VALID', action: 'new', part: 'Catalina', position: 'Izquierdo',
+    meter: '5000', reference: 'Parte de taller QA', details: 'Sustitución de catalina' };
+  assert.equal((await request('componentinterventions', workshop, input)).status, 200);
+  const [log] = await sheets.read('OT_STATUS_LOG');
+  log[4] = JSON.stringify({ ...JSON.parse(log[4]), carriedHours: 6500 });
+  sheets.seed('OT_STATUS_LOG', [log]);
+  const { body } = await request('componentinterventions', workshop, undefined, { unit: 'CA20' });
+  assert.equal(body.incomplete, true);
+  assert.deepEqual(body.interventions, []);
+  assert.equal((await request('componentinterventions', workshop, { ...input, mutationId: randomUUID(), otId: 'OT-NEXT', meter: '5100' })).status, 409);
+});
+
+test('dos revisores pueden reportar con el mismo identificador de solicitud sin bloquear el historial', async () => {
+  const { request, sheets } = fixture();
+  const other = acceptedComponentOrder('OT-OTHER-REVIEWER', 'OT-0127');
+  other[21] = JSON.stringify({ userId: supervisor.userId, acceptedAt: '2026-11-13T15:00:00.000Z' });
+  sheets.seed('ORDENES_TRABAJO', [acceptedComponentOrder('OT-FIRST-REVIEWER', 'OT-0126'), other,
+    acceptedComponentOrder('OT-THIRD-REVIEWER', 'OT-0128')]);
+  const input = { mutationId: randomUUID(), otId: 'OT-FIRST-REVIEWER', action: 'new', part: 'Catalina', position: 'Izquierdo',
+    meter: '5000', reference: 'Parte de taller QA', details: 'Sustitución de catalina' };
+  const first = await request('componentinterventions', workshop, input);
+  const second = await request('componentinterventions', supervisor, { ...input, otId: 'OT-OTHER-REVIEWER', action: 'partial', meter: '5010' });
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.notEqual(first.body.intervention.id, second.body.intervention.id);
+  const third = await request('componentinterventions', workshop, { ...input, mutationId: randomUUID(), otId: 'OT-THIRD-REVIEWER', action: 'partial', meter: '5035' });
+  assert.equal(third.status, 200);
+  assert.equal(third.body.intervention.carriedHours, 35);
+  assert.deepEqual((await request('componentinterventions', workshop, undefined, { otId: 'OT-OTHER-REVIEWER' })).body.confirmedRequests, []);
+  assert.deepEqual((await request('componentinterventions', supervisor, undefined, { otId: 'OT-OTHER-REVIEWER' })).body.confirmedRequests, [input.mutationId]);
+});
+
 test('tiempo caído une dos OT superpuestas y reparte el intervalo una vez entre turnos de Panamá', async () => {
   const { request, sheets } = fixture([], {
     now: new Date('2026-11-14T02:00:00Z'),
