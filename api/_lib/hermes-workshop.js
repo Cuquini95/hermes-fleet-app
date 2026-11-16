@@ -119,6 +119,15 @@ async function equipmentFor({ sheets, session }, value) {
   return inventoryEquipment(await sheets.read(TAB.inventory), code);
 }
 
+async function reportFleet({ sheets, session }) {
+  if (session.project === PANAMA_PROJECT && sheets.readReportFleet) return sheets.readReportFleet();
+  const rows = await sheets.read(TAB.inventory, { cached: true });
+  const units = rows.slice(3).filter(row => row[1]?.trim()).map(row => ({
+    code: row[1].trim().toUpperCase(), model: [row[3]?.trim(), row[4]?.trim()].filter(Boolean).join(' '),
+  }));
+  return { units, capturedAt: null };
+}
+
 function orderVisible(session, row) {
   const unit = row[3]?.trim().toUpperCase();
   return Boolean(unit && /^OT-/.test(row[1] || '') && scopeAllows(session, unit)
@@ -190,8 +199,12 @@ async function commit(context, writes, result, guard, readiness, extraGuard) {
 }
 
 async function report(context) {
-  const { body } = context;
-  const { code } = await equipmentFor(context, body.unit);
+  const { body, session, sheets } = context;
+  const code = requireUnit(session, body.unit);
+  if (isPanama(context) && sheets.readReportFleet) {
+    const { units } = await reportFleet(context);
+    assert(units.some(unit => unit.code === code), 404, 'Unidad no encontrada en el inventario');
+  } else inventoryEquipment(await sheets.read(TAB.inventory), code);
   const type = text(body.type, 'Tipo de falla', 60, true);
   const description = text(body.description, 'Descripción', 3000, true);
   const customer = text(body.customer, 'Cliente', 120);
@@ -1350,6 +1363,14 @@ export async function dispatchWorkshop(input) {
   const endpoint = path?.match(/^api\/workshop\/([a-z]+)$/)?.[1];
   try {
     assert(session?.userId && session.userName && ROLES.has(session.role), 401, 'Sesión inválida');
+    if (method === 'GET' && endpoint === 'reportunits') {
+      try {
+        const { units, capturedAt } = await reportFleet(input);
+        return { status: 200, body: { units: units.filter(unit => scopeAllows(session, unit.code)), capturedAt } };
+      } catch {
+        return { status: 503, body: { error: 'No se pudo cargar la lista de equipos.' } };
+      }
+    }
     if (['returns', 'pmchecklist', 'pmtemplate', 'pmtriggers', 'schedulecheck', 'pmbatch', 'pmbatchcheck', 'downtime', 'componentinterventions', 'warranties', 'exceptions'].includes(endpoint)) {
       assert(isPanama(input), 404, 'Acción de taller no disponible');
     }

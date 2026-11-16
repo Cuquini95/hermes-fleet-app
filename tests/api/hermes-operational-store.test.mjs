@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { createHermesGateway } from '../../api/hermes-sheets-gate.js';
 import { createPanamaOperationalStore } from '../../api/_lib/hermes-operational-store.js';
+import { readPanamaReportFleet } from '../../api/_lib/hermes-panama.js';
 
 test('Panamá records a failure and its order once, and a new gateway can read both', async () => {
   const tables = new Map([
@@ -12,7 +13,20 @@ test('Panamá records a failure and its order once, and a new gateway can read b
     ['HERMES_PA_ESTADO_UNIDAD', [['UNIDAD', 'REVISION', 'FECHA']]],
   ]);
   const receipts = new Map();
-  const readInventory = async () => [[], [], ['#', 'COD1'], ['1', 'DZ203', 'Dozer', 'Komatsu', 'D155AX-6']];
+  const capturedAt = '2026-04-02T12:00:00Z';
+  let sheetReads = 0;
+  let cutReads = 0;
+  const unavailableSheet = async () => { sheetReads++; throw new Error('Sheets unavailable'); };
+  const readReportFleet = () => readPanamaReportFleet({
+    allowSnapshot: true,
+    readLive: unavailableSheet,
+    readCut: async ({ key }) => {
+      assert.equal(key, 'fleet');
+      cutReads++;
+      return { captured_at: capturedAt, rows: [['Código', 'Equipo', 'Modelo', 'Clase contractual', 'Activo'],
+        ['DZ203', 'Dozer', 'D155AX-6', 'Dozer', 'Sí'], ['EX401', 'Excavadora', 'DX360', 'Excavadora', 'Sí']] };
+    },
+  });
   async function request(path, { query, body } = {}) {
     switch (path) {
       case '/rest/v1/hermes_panama_operational_tables': {
@@ -43,7 +57,7 @@ test('Panamá records a failure and its order once, and a new gateway can read b
   const actor = { project: 'tmf-panama', userId: randomUUID(), userName: 'Operador QA', role: 'operador', assignedUnits: ['DZ203'] };
   const coordinator = { ...actor, userId: randomUUID(), role: 'coordinador', userName: 'Coordinación QA' };
   const gateway = session => createHermesGateway({
-    sheets: createPanamaOperationalStore({ request, readInventory }),
+    sheets: createPanamaOperationalStore({ request, readInventory: unavailableSheet, readReportFleet }),
     sessionReader: async () => session, panamaOnly: true, enablePanamaOperations: true,
     writeEnabled: true, panamaWriteGroups: new Set(['taller']),
   });
@@ -53,6 +67,14 @@ test('Panamá records a failure and its order once, and a new gateway can read b
     return response;
   }
   const input = { mutationId: randomUUID(), unit: 'DZ203', type: 'Hidráulica', description: 'Prueba de guardado', canMove: true };
+  const listUnits = await call(gateway(actor), 'GET', 'api/workshop/reportunits');
+  assert.equal(listUnits.code, 200);
+  assert.deepEqual(listUnits.body, { units: [{ code: 'DZ203', model: 'D155AX-6' }], capturedAt });
+  assert.equal((await call(gateway({ ...actor, role: 'almacen' }), 'GET', 'api/workshop/reportunits')).code, 401);
+  assert.equal((await call(gateway({ ...actor, project: 'tcm' }), 'GET', 'api/workshop/reportunits')).code, 403);
+  assert.equal((await call(gateway(actor), 'POST', 'api/workshop/report', { ...input, unit: 'EX401' })).code, 403);
+  assert.equal(cutReads, 1);
+  assert.equal((await call(gateway({ ...actor, allUnits: true }), 'POST', 'api/workshop/report', { ...input, unit: 'EX999' })).code, 404);
   const mismatchedActor = await call(gateway(actor), 'POST', 'api/workshop/report', { ...input, expectedUserId: coordinator.userId });
   assert.equal(mismatchedActor.code, 403);
   assert.equal(receipts.size, 0);
@@ -71,6 +93,8 @@ test('Panamá records a failure and its order once, and a new gateway can read b
   });
   assert.equal(stale.code, 409);
   assert.equal(receipts.size, 1);
+  assert.equal(cutReads, 3);
+  assert.equal(sheetReads, 0);
 });
 
 test('the operational read treats missing tables as unavailable and catalog rows retain their offset', async () => {

@@ -2,14 +2,13 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { z } from 'zod';
-import { useEquipmentList } from '../hooks/useEquipmentList';
 import { calculatePriority } from '../lib/priority-calculator';
 import { saveWorkshopCapture } from '../lib/offline-queue';
-import { WorkshopApiError } from '../lib/workshop-api';
+import { requestWorkshop, type ReportUnit, WorkshopApiError } from '../lib/workshop-api';
 import { visibleWorkOrderFolio } from '../lib/purchasing-api';
 import { checkpointFallaClear, checkpointFallaDraft, clearFallaDraft, loadFallaDraft, saveFallaDraft, type FallaDraft } from '../lib/falla-draft';
 import { useAuthStore } from '../stores/auth-store';
-import { useEquipmentStore } from '../stores/equipment-store';
+import { equipmentSessionKey, useEquipmentStore } from '../stores/equipment-store';
 import AutoPriorityIndicator from '../components/falla/AutoPriorityIndicator';
 import PhotoCapture from '../components/ui/PhotoCapture';
 import ConfirmModal from '../components/ui/ConfirmModal';
@@ -62,10 +61,11 @@ export default function FallaPage() {
 
 function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama: boolean; requestedUnit?: string }) {
   const navigate = useNavigate();
-  const equipment = useEquipmentList();
-  const equipmentFetched = useEquipmentStore((state) => state.fetched);
-  const equipmentError = useEquipmentStore((state) => state.error);
-  const reloadEquipment = useEquipmentStore((state) => state.refetch);
+  const equipmentSession = useAuthStore(equipmentSessionKey);
+  const reportUnits = useEquipmentStore(state => state.reportUnits);
+  const [equipmentError, setEquipmentError] = useState(false);
+  const [equipmentAttempt, setEquipmentAttempt] = useState(0);
+  const equipment = reportUnits ?? [];
   const noEquipment = isPanama && equipment.length === 0;
   const optionalDetails = useRef<HTMLDetailsElement>(null);
   const sending = useRef(false);
@@ -79,7 +79,7 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
   const currentDraft = useRef(draft);
   const [photos, setPhotos] = useState<PhotoItem[]>([]);
   const { unidad, tipoFalla, descripcion, puedeMoverse, clienteAfectado, ubicacion, downtime, previousOtId, pending } = draft;
-  const scannedUnit = ready && equipment.some(unit => unit.unit_id === requestedUnit) ? requestedUnit : undefined;
+  const scannedUnit = ready && equipment.some(unit => unit.code === requestedUnit) ? requestedUnit : undefined;
   const hasCapture = hasDraftCapture(draft);
   const reportPending = Boolean(draft.mutationId || pending);
   const qrConflict = Boolean(scannedUnit && scannedUnit !== unidad && !saved && hasCapture);
@@ -88,6 +88,20 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
   const localStart = stopped && draft.stopStartedAt
     ? Date.parse(`${draft.stopStartedAt}:00-05:00`) : null;
   const validStart = localStart === null || (Number.isFinite(localStart) && localStart <= Date.now());
+
+  useEffect(() => {
+    if (!equipmentSession) return;
+    let active = true;
+    void requestWorkshop<{ units: ReportUnit[] }>('reportunits').then(({ units }) => {
+      if (active && equipmentSessionKey(useAuthStore.getState()) === equipmentSession) {
+        useEquipmentStore.setState({ reportUnits: units });
+        setEquipmentError(false);
+      }
+    }).catch(() => {
+      if (active && equipmentSessionKey(useAuthStore.getState()) === equipmentSession) setEquipmentError(true);
+    });
+    return () => { active = false; };
+  }, [equipmentAttempt, equipmentSession]);
 
   useEffect(() => {
     let active = true;
@@ -319,8 +333,8 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
           >
             <option value="">Seleccionar unidad...</option>
             {equipment.map((eq) => (
-              <option key={eq.unit_id} value={eq.unit_id}>
-                {eq.unit_id} — {eq.model}
+              <option key={eq.code} value={eq.code}>
+                {eq.code}{eq.model && ` — ${eq.model}`}
               </option>
             ))}
           </select>
@@ -328,10 +342,13 @@ function FallaForm({ scope, isPanama, requestedUnit }: { scope: string; isPanama
             <div className="space-y-1">
               <p role={equipmentError ? 'alert' : 'status'} className="text-sm text-text-secondary">
                 {equipmentError ? 'No se pudo cargar la lista de equipos.'
-                  : equipmentFetched ? 'No hay equipos disponibles para tu cuenta.' : 'Cargando equipos…'}
+                  : reportUnits ? 'No hay equipos disponibles para tu cuenta.' : 'Cargando equipos…'}
               </p>
               {equipmentError && (
-                <button type="button" onClick={() => void reloadEquipment()} className="min-h-12 text-sm font-semibold text-text underline">
+                <button type="button" onClick={() => {
+                  setEquipmentError(false);
+                  setEquipmentAttempt(attempt => attempt + 1);
+                }} className="min-h-12 text-sm font-semibold text-text underline">
                   Volver a cargar equipos
                 </button>
               )}

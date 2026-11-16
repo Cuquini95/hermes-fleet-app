@@ -8,6 +8,7 @@ import { useEquipmentList } from '../hooks/useEquipmentList';
 import { mexicoDateInput, mexicoTimeInput } from '../lib/date-utils';
 import { saveWorkshopCapture } from '../lib/offline-queue';
 import { WorkshopApiError } from '../lib/workshop-api';
+import { useEquipmentStore } from '../stores/equipment-store';
 import SystemCheckRow from '../components/dvir/SystemCheckRow';
 import DVIRResultBanner from '../components/dvir/DVIRResultBanner';
 import ConfirmModal from '../components/ui/ConfirmModal';
@@ -39,6 +40,10 @@ function buildInitialChecks(): CheckState[] {
 export default function DVIRPage() {
   const navigate = useNavigate();
   const equipment = useEquipmentList();
+  const reportUnits = useEquipmentStore(state => state.reportUnits);
+  const units = equipment.length === 0 && reportUnits
+    ? reportUnits.map(({ code, model }) => ({ unit_id: code, model }))
+    : equipment;
   const mutationId = useRef('');
   const sending = useRef(false);
   const [saving, setSaving] = useState(false);
@@ -209,9 +214,9 @@ export default function DVIRPage() {
             className="w-full rounded-xl border border-border p-3 bg-white text-text"
           >
             <option value="">Seleccionar unidad...</option>
-            {equipment.map((eq) => (
+            {units.map((eq) => (
               <option key={eq.unit_id} value={eq.unit_id}>
-                {eq.unit_id} — {eq.model}
+                {eq.unit_id}{eq.model && ` — ${eq.model}`}
               </option>
             ))}
           </select>

@@ -236,6 +236,43 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       } finally { sheet.setUnavailable([tabs.fleet], false); }
     }, loadAccounts[78]));
 
+    if (withGateway) await record('MÓVIL-FALLA-FLOTA-PUBLICADA-SIN-HOJAS', () => inRole('operador', 360, async page => {
+      const description = 'La bomba pierde aceite al arrancar';
+      const capturedAt = new Date().toISOString();
+      const previous = [tabs.orders, tabs.failure, tabs.history].map(tab => [tab, sheet.read(tab)]);
+      const store = fixture.operationalSheets;
+      const previousReadReportFleet = store.readReportFleet;
+      store.readReportFleet = async () => ({ capturedAt, units: [
+        { code: 'DZ203', model: 'Caterpillar 745' }, { code: 'EX410', model: 'Komatsu PC490' },
+      ] });
+      sheet.setUnavailable([tabs.fleet], true);
+      try {
+        const roster = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/api/workshop/reportunits'));
+        await fillFailure(page, description, false);
+        const loaded = await roster;
+        assert.equal(loaded.status(), 200);
+        const units = await loaded.json();
+        assert.equal(units.capturedAt, capturedAt);
+        assert.deepEqual(units.units, [{ code: 'DZ203', model: 'Caterpillar 745' }]);
+        await noHorizontalOverflow(page, 360);
+        await clickByName(page, 'Confirmar');
+        await visible(page.getByText(/OT creada/i));
+        const [order] = sheet.read(tabs.orders).filter(row => row[5] === description);
+        assert(order, 'La OT no quedó guardada');
+        assert.equal(order[3], 'DZ203');
+        assert.equal(sheet.read(tabs.orders).filter(row => row[5] === description).length, 1);
+        assert.equal(sheet.read(tabs.failure).filter(row => row[13] === order[1]).length, 1);
+        assert.equal(sheet.read(tabs.history).filter(row => row[1] === order[1] && row[4] === 'Abierta').length, 1);
+        await shot(page, 'falla-sin-hojas-360.png');
+        return { width: 360, capturedAt, allowedUnits: units.units.length, folio: order[25] || order[1], failureAndHistoryLinked: true };
+      } finally {
+        sheet.setUnavailable([tabs.fleet], false);
+        if (previousReadReportFleet) store.readReportFleet = previousReadReportFleet;
+        else delete store.readReportFleet;
+        for (const [tab, rows] of previous) sheet.seed(tab, rows);
+      }
+    }, loadAccounts[78]));
+
     if (withGateway) await record('MÓVIL-FLOTA-HISTORIAL-UNIDAD', () => inRole('gerencia', 390, async page => {
       const priorFailures = sheet.read(tabs.failure);
       const priorOrders = sheet.read(tabs.orders);

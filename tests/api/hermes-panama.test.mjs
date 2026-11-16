@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dispatchPanama } from '../../api/_lib/hermes-panama.js';
+import { dispatchPanama, readPanamaReportFleet } from '../../api/_lib/hermes-panama.js';
 import { createHermesGateway } from '../../api/hermes-sheets-gate.js';
 
 const teamMember = { userId: 'qa-panama', project: 'tmf-panama', role: 'jefe_taller', assignedUnits: ['dz203'], allUnits: false };
@@ -92,6 +92,22 @@ test('fleet projection joins the official equipment master by Panama TMF code wi
   assert.deepEqual(inventory[3].slice(1,7), ['DZ203','Dozer','Komatsu','D155AX-6','','PA-203']);
   assert.equal(inventory[3][8], '');
   assert.equal(inventory[4][6], '');
+});
+
+test('the report roster falls back to the fleet sheet when the database cut is missing or invalid', async () => {
+  const units = [{ code: 'DZ203', model: 'D155' }, { code: 'EX401', model: 'DX360' }];
+  const missing = async () => { throw new Error('Unavailable'); };
+  const publishedAt = new Date(Date.now() - 3000).toISOString();
+  for (const readCut of [missing, async () => ({ captured_at: 'unknown', rows: fixtures.fleet }),
+    async () => ({ captured_at: publishedAt, rows: [fixtures.fleet[0]] }),
+    async () => ({ captured_at: publishedAt, rows: [...fixtures.fleet, fixtures.fleet[1]] })]) {
+    const readLive = async ({ key }) => {
+      assert.equal(key, 'fleet');
+      return fixtures.fleet;
+    };
+    assert.deepEqual(await readPanamaReportFleet({ readCut, readLive, allowSnapshot: true }), { units, capturedAt: null });
+  }
+  await assert.rejects(readPanamaReportFleet({ readCut: missing, readLive: missing, allowSnapshot: true }), /Unavailable/);
 });
 
 test('maintenance exposes PM FLOTA and its scoped interval and component sources independently', async () => {

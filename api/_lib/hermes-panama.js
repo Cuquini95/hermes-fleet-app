@@ -192,6 +192,31 @@ export async function readPanamaInventory(read = readSource) {
 
 export const readPanamaConsultationInventory = () => readPanamaInventory(readSourceForConsultation);
 
+export async function readPanamaReportFleet({
+  readLive = readSource,
+  readCut = readSnapshot,
+  allowSnapshot = process.env.VERCEL_ENV === 'production',
+} = {}) {
+  const fleet = sourceSpecs[0];
+  const project = (rows, capturedAt) => {
+    const units = visibleRecords(rows, fleet, { allUnits: true })
+      .map(({ unit, model }) => ({ code: keyOf(unit), model }));
+    if (!units.length || new Set(units.map(unit => unit.code)).size !== units.length) {
+      throw new Error('Invalid Panama fleet roster');
+    }
+    return { units, capturedAt };
+  };
+  if (allowSnapshot) {
+    try {
+      const snapshot = await readCut(fleet);
+      const captured = Date.parse(snapshot.captured_at);
+      if (!Number.isFinite(captured) || captured > Date.now() + 300_000) throw new Error('Invalid Panama fleet capture');
+      return project(snapshot.rows, snapshot.captured_at);
+    } catch { /* Keep the fleet sheet available while a cut is missing or unreadable. */ }
+  }
+  return project(await readLive(fleet), null);
+}
+
 function visibleRecords(rows, spec, session) {
   const [header = [], ...data] = rows;
   const names = header.map(keyOf);

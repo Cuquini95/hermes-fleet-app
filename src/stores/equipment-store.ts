@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
+import type { ReportUnit } from '../lib/workshop-api';
 import { useAuthStore } from './auth-store';
 import type { Equipment } from '../types/equipment';
 
@@ -49,6 +50,7 @@ function parseEquipmentRow(row: string[]): Equipment | null {
 
 interface EquipmentState {
   equipment: Equipment[];
+  reportUnits: ReportUnit[] | null;
   fetched: boolean;
   loading: boolean;
   error: string | null;
@@ -58,7 +60,7 @@ interface EquipmentState {
 
 /** Equipment (unidades) store: fetch-from-sheet list plus fetched/loading/error flags and refetch helper. */
 let sessionGeneration = 0;
-const emptyState = { equipment: [], fetched: false, loading: false, error: null };
+const emptyState = { equipment: [], reportUnits: null, fetched: false, loading: false, error: null };
 
 export const useEquipmentStore = create<EquipmentState>((set, get) => ({
   ...emptyState,
@@ -88,11 +90,11 @@ export const useEquipmentStore = create<EquipmentState>((set, get) => ({
   },
 }));
 
-type ScopedAuthState = ReturnType<typeof useAuthStore.getState> & { userId?: string };
-const sessionIdentity = (state: ScopedAuthState) => state.isAuthenticated ? state.userId || state.role : null;
+export const equipmentSessionKey = (state: ReturnType<typeof useAuthStore.getState>) => state.isAuthenticated
+  ? JSON.stringify([state.project, state.userId, state.role, state.unitScope, [...state.assignedUnits].sort()]) : null;
 
 useAuthStore.subscribe((current, previous) => {
-  if (sessionIdentity(current) === sessionIdentity(previous)) return;
+  if (equipmentSessionKey(current) === equipmentSessionKey(previous)) return;
   sessionGeneration++;
   useEquipmentStore.setState(emptyState);
 });

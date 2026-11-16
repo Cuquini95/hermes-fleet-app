@@ -15,6 +15,7 @@ const entry = process.env.HERMES_PGLITE_ENTRY;
 if (!entry || !isAbsolute(entry)) throw new Error('Indica la ruta absoluta de PGlite en HERMES_PGLITE_ENTRY.');
 const { PGlite } = await import(pathToFileURL(entry).href);
 const { createPanamaOperationalStore } = await import('../../api/_lib/hermes-operational-store.js');
+const { readPanamaReportFleet } = await import('../../api/_lib/hermes-panama.js');
 const db = new PGlite();
 const work = await mkdtemp(join(tmpdir(), 'hermes-concurrencia-'));
 const out = resolve(process.env.HERMES_QA_EVIDENCE || work);
@@ -65,21 +66,34 @@ async function requestStore(path, { query, body }) {
 
 try {
   await db.exec('create role anon; create role authenticated; create role service_role bypassrls;');
-  for (const migration of ['20261113204500_hermes_panama_operational_store.sql', '20261114181455_hermes_panama_purchase_numbers.sql',
+  for (const migration of ['20261113193000_hermes_panama_source_snapshots.sql', '20261113204500_hermes_panama_operational_store.sql', '20261114181455_hermes_panama_purchase_numbers.sql',
     '20261114231214_hermes_panama_work_order_numbers.sql', '20261114174000_hermes_panama_purchase_signatures.sql',
     '20261116143000_hermes_panama_purchase_signature_profiles.sql']) {
     await db.exec(await readFile(new URL('../../supabase/migrations/' + migration, import.meta.url), 'utf8'));
   }
   report.postgres = (await db.query('show server_version')).rows[0].server_version;
-  fixture = await startFixture({ repoDirectory, distDirectory: work, createOperationalSheets: seed => ({
-    ...createPanamaOperationalStore({ request: requestStore, readInventory: async () => seed.read('01 Inventario') }),
-    seed: async (table, rows) => {
-      assert(rows.length > 0, 'La tabla aislada debe conservar su encabezado');
-      const updated = await db.query('update public.hermes_panama_operational_tables set rows=$2::jsonb where name=$1',
-        [table, JSON.stringify(rows)]);
-      assert.equal(updated.affectedRows, 1, 'La semilla debe afectar una sola tabla aislada');
-    },
-  }) });
+  fixture = await startFixture({ repoDirectory, distDirectory: work, createOperationalSheets: async seed => {
+    const inventory = seed.read('01 Inventario');
+    const fleet = [['Código', 'Equipo', 'Modelo', 'Clase contractual', 'Activo'], ...inventory.slice(3)
+      .map(row => [row[1], row[2], [row[3], row[4]].filter(Boolean).join(' '), 'Equipo', 'Sí'])];
+    await db.query("insert into public.hermes_panama_source_snapshots values ('fleet', now(), $1::jsonb)", [JSON.stringify(fleet)]);
+    const readReportFleet = () => readPanamaReportFleet({
+      allowSnapshot: true,
+      readCut: async ({ key }) => (await db.query(
+        'select captured_at::text, rows from public.hermes_panama_source_snapshots where source=$1', [key],
+      )).rows[0],
+      readLive: () => assert.fail('La carga aislada debe usar la flota publicada en Postgres'),
+    });
+    return {
+      ...createPanamaOperationalStore({ request: requestStore, readInventory: async () => inventory, readReportFleet }),
+      seed: async (table, rows) => {
+        assert(rows.length > 0, 'La tabla aislada debe conservar su encabezado');
+        const updated = await db.query('update public.hermes_panama_operational_tables set rows=$2::jsonb where name=$1',
+          [table, JSON.stringify(rows)]);
+        assert.equal(updated.affectedRows, 1, 'La semilla debe afectar una sola tabla aislada');
+      },
+    };
+  } });
   await checkLoad(fixture, async (id, measure) => {
     try {
       results.push({ id, status: 'pasa', ...await measure() });

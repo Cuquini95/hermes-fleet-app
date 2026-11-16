@@ -1,6 +1,6 @@
 import { identityConfig, identityRequest } from './hermes-identity.js';
 import { canonicalTab, HermesSheetError } from './hermes-google-sheets.js';
-import { PANAMA_PROJECT, readPanamaConsultationInventory, readPanamaWorkshopMasters } from './hermes-panama.js';
+import { PANAMA_PROJECT, readPanamaConsultationInventory, readPanamaReportFleet, readPanamaWorkshopMasters } from './hermes-panama.js';
 
 const tables = '/rest/v1/hermes_panama_operational_tables';
 const receipts = '/rest/v1/hermes_panama_commit_receipts';
@@ -26,7 +26,9 @@ export function isPurchaseSignature(png) {
     && bytes.subarray(-8, -4).toString('ascii') === 'IEND';
 }
 
-export function createPanamaOperationalStore({ request = database, readInventory = readPanamaConsultationInventory } = {}) {
+export function createPanamaOperationalStore({
+  request = database, readInventory = readPanamaConsultationInventory, readReportFleet = readPanamaReportFleet,
+} = {}) {
   async function read(tab) {
     const name = canonicalTab(tab);
     if (name === '01 Inventario') return readInventory();
@@ -124,7 +126,8 @@ export function createPanamaOperationalStore({ request = database, readInventory
     }
   }
 
-  return { read, readMany, replay, commit, readPurchaseSignature, registeredPurchaseSignatureSource, readWorkshopMasters: readPanamaWorkshopMasters, nativeOperations: true };
+  return { read, readMany, replay, commit, readPurchaseSignature, registeredPurchaseSignatureSource,
+    readReportFleet, readWorkshopMasters: readPanamaWorkshopMasters, nativeOperations: true };
 }
 
 export const panamaOperationalStore = createPanamaOperationalStore();
