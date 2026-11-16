@@ -29,6 +29,7 @@ export const tabs = {
   dvir: '14 Inspecciones', sticker: 'Inspeccion_Stickers', findings: 'Inspeccion_Hallazgos',
   pm: 'Ordenes Mantenimiento', pmHistory: '05 Historial PM', schedule: 'WORKSHOP_SCHEDULE',
   requests: 'Cotizaciones_Pendientes', purchases: 'Órdenes de Compra', lines: 'OC_Lineas',
+  apInvoices: 'HERMES_PA_FACTURAS_OC', apPayments: 'HERMES_PA_PAGOS_FACTURA',
   providers: 'Proveedores', parts: '12 Inventario Rep.', expenses: '02 Gastos', changes: '10 Control Cambios',
 };
 
@@ -70,6 +71,8 @@ function fixtureRows() {
       ['Segundo proveedor QA','QAT000000002','Calle de prueba 20']]],
     [tabs.purchases, [['OC_ID','FECHA','PROVEEDOR','RFC','DIRECCION','UNIDAD','SUBTOTAL','IVA','ENVIO','OTROS','TOTAL','ESTADO','COMENTARIOS','APROBADA_POR','FECHA_ENTREGA']]],
     [tabs.lines, [['OC_ID','ITEM','DESCRIPCION','CANTIDAD','PRECIO_UNITARIO','TOTAL'], ['OC-001','1','Partida histórica ficticia sin cabecera','1','12','12']]],
+    [tabs.apInvoices, [['ID','OC_ID','DETALLE_JSON']]],
+    [tabs.apPayments, [['ID','FACTURA_ID','DETALLE_JSON']]],
     ['Movimientos Repuestos PA', [['ID']]],
     [tabs.parts, [[], [], [], [], ['SKU','Descripción','OEM','Serie','Unidad','Stock','Mínimo','Precio','Ubicación','','Equipo','','','Proveedor'], ['QA-001','Filtro hidráulico de prueba','OEM-QA-001','','pza','8','3','123.45','Almacén QA','','DZ203','','','Proveedor QA'], ['QA-002','Sello de prueba','OEM-QA-002','','pza','1','2','21.50','Almacén QA','','EX401','','','Proveedor QA']]],
     [tabs.expenses, [

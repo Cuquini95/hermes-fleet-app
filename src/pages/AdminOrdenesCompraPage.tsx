@@ -263,7 +263,10 @@ export default function AdminOrdenesCompraPage() {
     <div className="mx-auto max-w-5xl p-3 pb-24 sm:p-4">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <h1 className="text-xl font-bold">Órdenes de Compra</h1>
-        <Link to="/admin/proveedores" className={button}>Proveedores</Link>
+        <div className="flex flex-wrap gap-2">
+          {isPanama && !previewDemo && <Link to="/panama/cuentas-por-pagar" className={button + ' inline-flex min-h-11 items-center'}>Cuentas por pagar</Link>}
+          <Link to="/admin/proveedores" className={button}>Proveedores</Link>
+        </div>
       </div>
       {error && <p role="alert" className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
       {message && <p role="status" className="mb-3 rounded-lg bg-green-50 p-3 text-sm text-green-800">{message}</p>}
@@ -421,7 +424,7 @@ export default function AdminOrdenesCompraPage() {
               )}
               {!isPanama && data.canApprove && isApprovalRecorded(order) && order.status !== 'Pagada' && <button type="button" className={button} disabled={saving} onClick={() => void changeStatus(order, 'Pagada')}>Marcar pagada</button>}
               {isApprovalRecorded(order) && <button type="button" className={button} disabled={saving} onClick={() => setReceiving(receiving === order.folio ? '' : order.folio)}>{isPanama ? 'Ver recepciones' : 'Recepciones'}</button>}
-              {data.canRecordInvoice && order.status === 'Recibida' && !order.invoiceReconciled && <button type="button" className={button} disabled={saving}
+              {data.canRecordInvoice && (!isPanama || order.invoice) && order.status === 'Recibida' && !order.invoiceReconciled && <button type="button" className={button} disabled={saving}
                 onClick={() => openReconciliation(order, 'order-invoice')}>{order.invoice ? 'Verificar factura' : 'Vincular factura'}</button>}
               {data.canRecordPayment && order.status === 'Recibida' && order.invoiceReconciled && !order.payment && <button type="button" className={button} disabled={saving}
                 onClick={() => openReconciliation(order, 'order-payment')}>Registrar pago conciliado</button>}

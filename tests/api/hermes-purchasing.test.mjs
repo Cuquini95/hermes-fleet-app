@@ -16,6 +16,8 @@ function store({ vendors = [['NOMBRE'], ['Proveedor de prueba', 'RFC-QA', 'Direc
     [TAB.vendors]: vendors,
     [TAB.expenses]: [['Gasto_ID']],
     [TAB.audit]: [['Registro']],
+    HERMES_PA_FACTURAS_OC: [['ID', 'OC_ID', 'DETALLE_JSON']],
+    HERMES_PA_PAGOS_FACTURA: [['ID', 'FACTURA_ID', 'DETALLE_JSON']],
     '12 Inventario Rep.': [['SKU','Descripción','OEM','Serie','Unidad','Stock','Mínimo','Precio','Ubicación','','Equipo'], ['SKU-QA','Filtro QA','','','pza','4','2','5','','','QA-DZ203']],
     'Movimientos Repuestos PA': [['ID']],
     '01 Inventario': [['#','COD1','Descripción','Marca','Modelo'], ['1','QA-DZ203','Equipo QA','Komatsu','D65EX-16'], ['2','QA-EX401','Equipo QA','Doosan','DX360']],
@@ -969,4 +971,67 @@ test('firma una OC aprobada solo con la cuenta que la aprobó y conserva la apro
   assert.equal(signatures.length, 1);
   assert.deepEqual(sheets.inspect(TAB.orders)[1], header);
   assert.equal((await call('order', null, buyer, { folio: '3002' })).body.approvalSignature, png);
+});
+
+test('AP concilia seis de diez unidades recibidas, conserva pagos parciales y evita reintentos duplicados', async () => {
+  const { sheets, call, readOrder } = setup();
+  const buyer = { ...manager, project: 'tmf-panama' };
+  const warehouse = { ...buyer, userId: 'ap-receiver', role: 'jefe_taller', canApprovePurchases: false, canReceivePurchases: true };
+  const accounting = { ...buyer, userId: 'ap-accountant', canApprovePurchases: false, canRecordPurchaseInvoices: true };
+  const treasury = { ...buyer, userId: 'ap-treasury', canApprovePurchases: false, canRecordPurchasePayments: true };
+  const folio = 'OC-AP-001';
+  const lineId = folio + '-L1';
+  const header = Array(28).fill('');
+  Object.assign(header, { 0: folio, 1: '14/11/2026', 2: 'Proveedor AP QA', 3: 'RUC-AP-QA', 5: 'QA-DZ203',
+    6: '1000.00', 7: '70.00', 10: '1070.00', 11: 'Aprobada', 13: buyer.userName, 15: 'v1',
+    16: JSON.stringify({ id: 'TP_PA', template: 'transplus', name: 'TRANSPLUS', currency: 'USD', taxLabel: 'ITBMS' }),
+    17: buyer.userId, 18: '2026-11-14T14:00:00Z', 27: '3002' });
+  sheets.seed(TAB.orders, [['OC_ID'], header]);
+  sheets.seed(TAB.lines, [['OC_ID'], [folio, '1', 'Filtro AP QA', '10', '100.00', '1000.00', lineId, '', '', '', '0', '[]']]);
+  const write = (action, body, role) => call(action, { operationId: randomUUID(), ...body }, role);
+  const version = async () => (await readOrder(folio, buyer)).version;
+  const receipt = async (quantity, reference) => write('order-receive', { folio, version: await version(), lineId, quantity, reference }, warehouse);
+  assert.equal((await receipt('6', 'REM-AP-6')).status, 200);
+  const detail = { folio, version: await version(), reference: 'FAC-AP-6', issueDate: '2026-11-14', dueDate: '2026-12-14',
+    amount: '642.00', currency: 'USD', tax: '42.00', lines: [{ lineId, quantity: '6', unitPrice: '100.00' }] };
+  const ap = async (role = accounting) => (await call('ap', null, role)).body;
+  assert.equal((await write('ap-invoice', detail, buyer)).status, 403);
+  assert.equal((await write('ap-invoice', { ...detail, lines: [{ lineId, quantity: '7', unitPrice: '100.00' }] }, accounting)).status, 409);
+  const invoiceAttempt = { ...detail, operationId: randomUUID() };
+  sheets.failNext('after');
+  await call('ap-invoice', invoiceAttempt, accounting);
+  const saved = await call('ap-invoice', invoiceAttempt, accounting);
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  const invoiceId = saved.body.id;
+  assert.equal((await readOrder(folio, buyer)).status, 'Recibida parcial');
+  assert.equal((await write('ap-invoice', { ...detail, version: await version(), reference: 'FAC-DUPLICADA' }, accounting)).status, 409);
+  assert.equal((await ap()).orders[0].lines[0].available, '0');
+  assert.equal((await ap()).invoices[0].dueDate, '2026-12-14');
+  assert.equal((await ap()).invoices.length, 1);
+  assert.deepEqual((await ap({ ...accounting, allUnits: false, assignedUnits: ['OTHER'] })).invoices, []);
+
+  const motion = { invoiceId, version: await version(), date: '2026-11-14', reference: 'BANCO-AP-1', amount: '200.00', operationId: randomUUID() };
+  assert.equal((await call('ap-payment', motion, accounting)).status, 403);
+  assert.equal((await call('ap-payment', { ...motion, amount: '643.00' }, treasury)).status, 409);
+  sheets.failNext('after');
+  await call('ap-payment', motion, treasury);
+  assert.equal((await call('ap-payment', motion, treasury)).status, 200);
+  let entry = (await ap(treasury)).invoices[0];
+  assert.deepEqual([entry.status, entry.balance, entry.paid, entry.payments.length], ['Parcial', '442.00', '200.00', 1]);
+  assert.equal((await write('ap-payment', { ...motion, version: await version(), amount: '1.00', operationId: randomUUID() }, treasury)).status, 409);
+  assert.equal((await write('ap-payment', { ...motion, version: await version(), reference: 'BANCO-AP-2', amount: '442.00', operationId: randomUUID() }, treasury)).status, 200);
+  assert.equal((await readOrder(folio, buyer)).status, 'Recibida parcial');
+
+  assert.equal((await receipt('4', 'REM-AP-4')).status, 200);
+  const remaining = { ...detail, version: await version(), reference: 'FAC-AP-4', amount: '428.00', tax: '28.00',
+    lines: [{ lineId, quantity: '4', unitPrice: '100.00' }] };
+  assert.equal((await write('order-invoice', { ...remaining, currency: 'USD' }, accounting)).status, 409);
+  const last = await write('ap-invoice', remaining, accounting);
+  assert.equal(last.status, 200, JSON.stringify(last.body));
+  assert.equal((await write('ap-payment', { invoiceId: last.body.id, version: await version(), date: '2026-11-14',
+    reference: 'BANCO-AP-3', amount: '428.00' }, treasury)).status, 200);
+  assert.equal((await readOrder(folio, buyer)).status, 'Pagada');
+  const ledger = (await ap()).invoices;
+  assert.equal(ledger.length, 2);
+  assert.ok(ledger.every(invoice => invoice.status === 'Pagada' && invoice.balance === '0.00'));
 });

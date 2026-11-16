@@ -144,6 +144,11 @@ async function candidateAddedMigrations() {
   const old = new Set(await readdir(resolve(previousRepo, 'supabase/migrations')));
   const now = await readdir(resolve(repo, 'supabase/migrations'));
   const added = now.filter(name => /^\d{14}_.+\.sql$/.test(name) && !old.has(name)).sort();
+  const existingFixtureJournals = [
+    '20261116030000_hermes_panama_expense_adjustments.sql',
+    '20261116031000_hermes_panama_alert_delivery.sql',
+  ];
+  for (const name of existingFixtureJournals.filter(name => old.has(name))) await migration(name);
   for (const name of added) await migration(name);
   return added;
 }

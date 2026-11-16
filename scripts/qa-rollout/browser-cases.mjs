@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -1947,13 +1948,169 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     }));
 
     const browserAccounting = loadAccounts.find(account => account.membership.can_record_purchase_invoices === true);
+    const browserTreasury = loadAccounts.find(account => account.membership.can_record_purchase_payments === true);
+    await record('MÓVIL-CUENTAS-POR-PAGAR-PARCIALES', async () => {
+      const apPath = `${origin}/panama/cuentas-por-pagar`;
+      const apiPath = `${origin}/hermes-api/api/purchasing/`;
+      const vendor = 'Segundo proveedor QA';
+      const part = 'Filtro de factura parcial QA';
+      const reference = 'FAC-PARCIAL-QA';
+      const bankReference = 'TRF-PARCIAL-QA';
+      const date = days => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+      const issueDate = date(-45), dueDate = date(-11), paymentDate = date(-9);
+      const post = (page, action, data) => page.request.post(apiPath + action, { data: { ...data, operationId: randomUUID() } });
+      async function readAP(page) {
+        const response = await page.request.get(apiPath + 'ap');
+        assert.equal(response.status(), 200, await response.text());
+        return response.json();
+      }
+      const invoiceCard = page => page.getByRole('article').filter({ has: page.getByText(reference, { exact: true }) });
+      const balanceCard = page => page.getByRole('article').filter({ has: page.getByText(vendor, { exact: true }), hasText: 'Saldo abierto' });
+      const field = (card, name, value) => visible(card.getByText(name, { exact: true }).locator('..').getByText(value));
+      const [year, month, day] = dueDate.split('-');
+      const dueLabel = new RegExp(`${dueDate}|${day}[/-]${month}[/-]${year}`);
+
+      const { folio, number } = await inRole('gerencia', 390, async page => {
+        const saved = await post(page, 'order-save', {
+          date: date(-70), deliveryDate: date(-35), vendorName: vendor, vendorRfc: 'QAT000000002', unit: 'DZ203',
+          entity: 'TP_PA_QA', tax: '7.00', lines: [{ description: part, quantity: '10', unitPrice: '10.00' }],
+        });
+        assert.equal(saved.status(), 200, await saved.text());
+        const draft = await saved.json();
+        const approved = await post(page, 'order-status', {
+          folio: draft.folio, version: draft.version, status: 'Aprobada', reason: 'Requisición de 10 filtros verificada por Compras QA',
+        });
+        assert.equal(approved.status(), 200, await approved.text());
+        assert.equal((await approved.json()).status, 'Aprobada');
+        await page.goto(apPath, { waitUntil: 'domcontentloaded' });
+        await visible(page.getByText('Solo consulta.', { exact: true }));
+        assert.equal(await page.getByRole('button', { name: 'Registrar factura', exact: true }).count(), 0);
+        return draft;
+      }, browserBuyer);
+
+      await inRole('jefe_taller', 390, async page => {
+        await page.goto(`${origin}/panama/recepciones`, { waitUntil: 'domcontentloaded' });
+        await page.getByRole('searchbox').fill(number);
+        const order = page.getByRole('article').filter({ has: page.getByRole('heading', { name: number, exact: true }) });
+        await order.getByRole('button', { name: 'Recibir partida' }).tap();
+        await order.getByLabel('Cantidad recibida').fill('6');
+        await order.getByLabel('Referencia o remisión').fill('REM-PARCIAL-QA');
+        await order.getByRole('button', { name: 'Registrar recepción', exact: true }).tap();
+        await visible(order.getByText('Recibidas 6', { exact: true }));
+        await visible(order.getByText('Pendientes 4', { exact: true }));
+      }, browserWarehouse);
+
+      await inRole('gerencia', 360, async page => {
+        await page.goto(`${origin}/admin/ordenes-compra`, { waitUntil: 'domcontentloaded' });
+        await page.getByRole('main').getByRole('link', { name: 'Cuentas por pagar', exact: true }).tap();
+        await page.waitForURL(apPath);
+        await visible(page.getByRole('heading', { name: 'Cuentas por pagar', exact: true }));
+        const order = (await readAP(page)).orders.find(item => item.folio === folio);
+        assert.equal(order.status, 'Recibida parcial');
+        const line = order.lines[0];
+        assert.deepEqual([line.ordered, line.received, line.invoiced, line.available].map(Number), [10, 6, 0, 6]);
+
+        const excessive = await post(page, 'ap-invoice', {
+          folio, version: order.version, reference: 'FAC-EXCESO-QA', issueDate, dueDate, currency: 'USD',
+          amount: '74.90', tax: '4.90', discount: '0', shipping: '0', other: '0',
+          lines: [{ lineId: line.id, quantity: '7', unitPrice: '10.00' }],
+        });
+        assert.equal(excessive.status(), 409, await excessive.text());
+        assert.match((await excessive.json()).error, /saldo recibido sin facturar/i);
+        assert.equal((await readAP(page)).invoices.some(invoice => invoice.folio === folio), false);
+
+        await clickByName(page, 'Registrar factura');
+        await page.getByRole('combobox', { name: 'Orden de compra', exact: true }).selectOption(folio);
+        await page.getByLabel('Referencia de factura').fill(reference);
+        await page.getByLabel('Fecha de emisión').fill(issueDate);
+        await page.getByLabel('Fecha de vencimiento').fill(dueDate);
+        await page.getByLabel('Total de factura').fill('64.20');
+        await page.getByLabel('ITBMS', { exact: true }).fill('4.20');
+        await page.getByLabel('Cantidad facturada').fill('6');
+        await page.getByLabel('Precio unitario facturado').fill('10.00');
+        await noHorizontalOverflow(page, 360);
+        await page.screenshot({ path: resolve(out, 'cuentas-por-pagar-factura-360.png'), fullPage: true });
+        await page.getByLabel('Total de factura').fill('64.21');
+        await clickByName(page, 'Guardar factura');
+        await visible(page.getByRole('form', { name: 'Registro de factura' }).getByRole('alert').filter({ hasText: /64[.,]20/ }));
+        await page.getByLabel('Total de factura').fill('64.20');
+        await clickByName(page, 'Guardar factura');
+        const card = invoiceCard(page);
+        await visible(card.getByText('Pendiente', { exact: true }));
+        await visible(card.getByText(/Vencida/i));
+        await field(card, 'Vence', dueLabel);
+        await field(card, 'Saldo', /64[.,]20/);
+        assert.equal(await card.getByRole('button', { name: 'Registrar pago', exact: true }).count(), 0);
+      }, browserAccounting);
+
+      await inRole('gerencia', 390, async page => {
+        await page.goto(apPath, { waitUntil: 'domcontentloaded' });
+        const card = invoiceCard(page);
+        await card.getByRole('button', { name: 'Registrar pago', exact: true }).tap();
+        assert.equal(await page.getByRole('button', { name: 'Registrar factura', exact: true }).count(), 0);
+        await card.getByLabel('Referencia bancaria').fill(bankReference);
+        await card.getByLabel('Fecha de pago').fill(paymentDate);
+        await card.getByLabel('Importe confirmado').fill('25.00');
+        const attempts = [];
+        page.on('request', request => {
+          if (request.method() === 'POST' && request.url() === apiPath + 'ap-payment') attempts.push(request.postDataJSON().operationId);
+        });
+        sheet.failNext({ matches: writes => writes.some(write => write.tab === tabs.apPayments), when: 'after' });
+        await card.getByRole('button', { name: 'Guardar pago', exact: true }).evaluate(button => {
+          button.click();
+          button.click();
+        });
+        const retry = page.getByRole('button', { name: 'Reintentar confirmación', exact: true });
+        await visible(retry);
+        assert.equal(attempts.length, 1);
+        assert.equal((await readAP(page)).invoices.find(item => item.folio === folio).payments.length, 1);
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await retry.tap();
+        await retry.waitFor({ state: 'hidden' });
+        assert.equal(attempts.length, 2);
+        assert.equal(attempts[0], attempts[1]);
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await visible(card.getByText('Parcial', { exact: true }));
+        await visible(card.getByText(/Vencida/i));
+        await field(card, 'Vence', dueLabel);
+        await field(card, 'Pagado', /25[.,]00/);
+        await field(card, 'Saldo', /39[.,]20/);
+        await field(balanceCard(page), 'Saldo abierto', /39[.,]20/);
+        await field(balanceCard(page), 'Saldo vencido', /39[.,]20/);
+        const statusFilter = page.getByRole('combobox', { name: 'Estado', exact: true });
+        await statusFilter.selectOption({ label: 'Pagadas' });
+        await card.waitFor({ state: 'hidden' });
+        await statusFilter.selectOption({ label: 'Vencidas' });
+        await card.getByText('Pagos registrados (1)', { exact: true }).tap();
+        await visible(card.getByText(new RegExp(`^${bankReference} · `)));
+        const matchingInvoices = (await readAP(page)).invoices.filter(item => item.folio === folio);
+        assert.equal(matchingInvoices.length, 1);
+        const [invoice] = matchingInvoices;
+        assert.deepEqual([invoice.reference, invoice.issueDate, invoice.dueDate, invoice.status, invoice.currency],
+          [reference, issueDate, dueDate, 'Parcial', 'USD']);
+        assert.deepEqual([invoice.total, invoice.paid, invoice.balance].map(Number), [64.2, 25, 39.2]);
+        assert.deepEqual(invoice.lines.map(line => [Number(line.quantity), Number(line.unitPrice)]), [[6, 10]]);
+        assert.deepEqual(invoice.lines[0].receipts.map(receipt => [receipt.reference, Number(receipt.quantity)]), [['REM-PARCIAL-QA', 6]]);
+        assert.deepEqual(invoice.payments.map(payment => [payment.reference, payment.date, Number(payment.amount)]), [[bankReference, paymentDate, 25]]);
+        assert.equal(sheet.read(tabs.purchases).find(row => row[0] === folio)[11], 'Recibida parcial');
+        await noHorizontalOverflow(page, 390);
+        await page.screenshot({ path: resolve(out, 'cuentas-por-pagar-parciales-390.png'), fullPage: true });
+      }, browserTreasury);
+
+      return { folio, number, ordered: 10, received: 6, remainingDelivery: 4, invoiced: 6, currency: 'USD',
+        dueDate, invoiceTotal: 64.2, payments: 1, paid: 25, openBalance: 39.2, overdueBalance: 39.2,
+        invalidTotalRejected: true, excessInvoiceRejected: true, recoveredPaymentAfterLostResponse: true, persistedAfterReload: true };
+    });
+
     await record('MÓVIL-CONCILIACIÓN-OC-RECEPCIÓN-FACTURA', () => inRole('gerencia', 390, async page => {
       const folio = 'OC-CRUCE-QA';
       const head = Array(28).fill('');
       Object.assign(head, { 0: folio, 1: '14/11/2026', 2: 'Proveedor conciliación QA', 3: 'RUC-CRUCE-QA', 5: 'DZ203',
         6: '20.00', 7: '1.40', 8: '0.00', 9: '0.00', 10: '21.40', 11: 'Recibida', 13: 'Compras QA',
         15: 'version-cruce-qa', 16: JSON.stringify({ id: 'TP_PA_QA', name: 'Trans Plus Panamá QA', currency: 'USD', taxLabel: 'ITBMS', template: 'transplus' }),
-        17: 'buyer-qa', 18: '2026-11-14T14:00:00Z', 25: '0.00', 27: '3909' });
+        17: 'buyer-qa', 18: '2026-11-14T14:00:00Z', 23: JSON.stringify({ reference: 'FACT-CRUCE-QA', amount: '21.40',
+          currency: 'USD', at: '2026-11-14T17:00:00Z', by: 'Contabilidad histórica QA', actorId: 'legacy-accounting-qa' }),
+        25: '0.00', 27: '3909' });
       const lineId = folio + '-L1';
       const receipts = [1, 2].map(n => ({ id: 'REM-CRUCE-' + n, quantity: '1', reference: 'Remisión ' + n,
         actorId: 'warehouse-qa', by: 'Almacén QA', at: '2026-11-14T16:00:00Z' }));
@@ -1964,7 +2121,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       try {
         await page.goto(`${origin}/admin/ordenes-compra`, { waitUntil: 'domcontentloaded' });
         const card = page.locator('article').filter({ hasText: 'Proveedor conciliación QA' });
-        await card.getByRole('button', { name: 'Vincular factura' }).tap();
+        await card.getByRole('button', { name: 'Verificar factura' }).tap();
         await card.getByLabel('Folio de factura').fill('FACT-CRUCE-QA');
         await card.getByLabel('Total de factura').fill('21.40');
         await card.getByLabel('Moneda de factura').selectOption('PAB');
@@ -1973,7 +2130,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await card.getByLabel('Precio unitario facturado').fill('20');
         await card.getByRole('button', { name: 'Confirmar registro' }).tap();
         await visible(page.getByText(/moneda.*ITBMS.*cantidad.*precio/i));
-        assert.equal(sheet.read(tabs.purchases).find(row => row[0] === folio)[23], '');
+        assert.equal(sheet.read(tabs.purchases).find(row => row[0] === folio)[23], head[23]);
         await card.getByLabel('Moneda de factura').selectOption('USD');
         await card.getByLabel('ITBMS de factura').fill('1.40');
         await card.getByLabel('Cantidad facturada').fill('2');

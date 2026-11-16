@@ -62,6 +62,7 @@ const MyReportsPage       = lazy(() => import('./pages/MyReportsPage'));
 
 const AdminActivosPage       = lazy(() => import('./pages/AdminActivosPage'));
 const AdminOrdenesCompraPage = lazy(() => import('./pages/AdminOrdenesCompraPage'));
+const CuentasPorPagarPage     = lazy(() => import('./pages/CuentasPorPagarPage'));
 const AdminProveedoresPage   = lazy(() => import('./pages/AdminProveedoresPage'));
 const OrdenCompraPrintPage   = lazy(() => import('./pages/OrdenCompraPrintPage'));
 
@@ -211,6 +212,7 @@ export default function App() {
         {/* Admin (Gerencia) */}
         <Route path="/admin/activos"             element={<RequireRole roles={['gerencia']}><PageBoundary role={role}><S><AdminActivosPage /></S></PageBoundary></RequireRole>} />
         <Route path="/admin/ordenes-compra"      element={<RequireRole roles={['gerencia']}><PageBoundary role={role}><S><AdminOrdenesCompraPage /></S></PageBoundary></RequireRole>} />
+        <Route path="/panama/cuentas-por-pagar"   element={<RequireRole roles={['gerencia']}><PageBoundary role={role}><S><CuentasPorPagarPage /></S></PageBoundary></RequireRole>} />
         <Route path="/admin/proveedores"         element={<RequireRole roles={['gerencia']}><PageBoundary role={role}><S><AdminProveedoresPage /></S></PageBoundary></RequireRole>} />
         <Route path="/admin/ordenes-compra/:ocId" element={<RequireRole roles={['gerencia']}><PageBoundary role={role}><S><OrdenCompraPrintPage /></S></PageBoundary></RequireRole>} />
       </Route>

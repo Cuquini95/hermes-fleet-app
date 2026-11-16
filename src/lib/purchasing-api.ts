@@ -196,8 +196,13 @@ const receiptUploadPath = String(import.meta.env.VITE_HERMES_EXPENSE_RECEIPT_UPL
 const legacyReceiptUpload = /^\/(?!\/)[a-zA-Z0-9/_-]+$/.test(receiptUploadPath);
 export const canAttachExpenseReceipt = (project: string) => project === 'tmf-panama' || legacyReceiptUpload;
 
+export const panamaApPendingKey = (owner: string) => 'hermes:panama:ap:' + owner;
+
 export function setPurchaseSession(owner: string) {
   if (sessionOwner === owner) return;
+  if (sessionOwner) {
+    try { sessionStorage.removeItem(panamaApPendingKey(sessionOwner)); } catch { /* Session storage can be disabled. */ }
+  }
   sessionOwner = owner;
   sessionGeneration++;
   pending.clear();

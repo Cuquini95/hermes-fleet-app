@@ -1201,6 +1201,221 @@ function invoiceMatchesCurrent(record) {
   }
 }
 
+const AP_INVOICES = 'HERMES_PA_FACTURAS_OC';
+const AP_PAYMENTS = 'HERMES_PA_PAGOS_FACTURA';
+const apCharges = ['tax', 'discount', 'shipping', 'other'];
+const centsFor = (record, field) => decimalCell(record[field], 2, field);
+const sumCents = (records, field) => records.reduce((sum, record) => sum + centsFor(record, field), 0n);
+
+async function readApTables(sheets) {
+  const [orders, lines, invoiceRows, paymentRows] = await readTables(sheets, PURCHASE_TABS.orders, PURCHASE_TABS.lines, AP_INVOICES, AP_PAYMENTS);
+  const records = (rows) => entries(rows).map(({ row }) => ({ id: row[0], parent: row[1], ...recordedDocument(row[2]) }));
+  const invoices = records(invoiceRows);
+  const payments = records(paymentRows);
+  return { orders, lines, invoices, payments };
+}
+
+function isoTodayPanama() {
+  const [day, month, year] = timestamp().date.split('/');
+  return year + '-' + month + '-' + day;
+}
+
+function apDate(value, label) {
+  const date = field(value, 10, label, true);
+  calendarDate(date, label);
+  return date;
+}
+
+function apInvoiceSummary(invoice, order, allPayments) {
+  const payments = allPayments.filter(payment => payment.parent === invoice.id);
+  const paid = sumCents(payments, 'amount');
+  const total = centsFor(invoice, 'total');
+  const { id, reference, issueDate, dueDate, currency, lines, legacy } = invoice;
+  return {
+    id, reference, issueDate, dueDate, currency, lines, legacy, total: money(total),
+    ...Object.fromEntries(apCharges.map(key => [key, money(centsFor(invoice, key))])),
+    folio: order.folio, version: order.version, number: order.number, unit: order.unit, vendorName: order.vendorName,
+    vendorTaxId: order.vendorRfc, entity: order.issuer.name, entityId: order.issuer.id,
+    paid: money(paid), balance: money(total - paid), status: paid === total ? 'Pagada' : paid ? 'Parcial' : 'Pendiente',
+    payments: payments.map(({ id, reference, date, amount }) => ({ id, reference, date, amount })),
+  };
+}
+
+function apOrderLines(order, invoices) {
+  return order.lines.map(line => {
+    const purchased = invoices.flatMap(invoice => invoice.lines).filter(item => item.lineId === line.id);
+    const invoiced = purchased.reduce((sum, item) => sum + decimalCell(item.quantity, 3, 'facturado'), 0n);
+    const received = decimalCell(line.received, 3, 'recibido');
+    return { ...line, ordered: line.quantity, invoiced: quantity(invoiced), available: quantity(received - invoiced), purchased };
+  });
+}
+
+function apRead(data, session, capabilities) {
+  const orders = [];
+  const invoices = [];
+  const linesByOrder = new Map();
+  for (const item of entries(data.lines)) {
+    const key = upper(item.row[0]);
+    const lines = linesByOrder.get(key) ?? [];
+    lines.push(item);
+    linesByOrder.set(key, lines);
+  }
+  for (const { row } of entries(data.orders)) {
+    if (!canUseUnit(session, row[5]) || !RECEIPT_ORDER_STATUS.has(row[11])) continue;
+    const order = orderRecord(row, linesByOrder.get(upper(row[0])) ?? []);
+    if (!order.issuer || !hasRecordedApproval(order)) continue;
+    const matched = data.invoices.filter(invoice => invoice.parent === order.folio);
+    const { folio, number, version, status, unit, vendorName, issuer, total } = order;
+    orders.push({ folio, number, version, status, unit, vendorName, issuer, total, legacy: Boolean(order.invoice),
+      unbilledTotal: money(centsFor(order, 'total') - (order.invoice ? centsFor(order.invoice, 'amount') : sumCents(matched, 'total'))),
+      lines: apOrderLines(order, matched).map(({ id, number, description, partNumber, ordered, received, invoiced, available, unitPrice }) =>
+        ({ id, number, description, partNumber, ordered, received, invoiced, available, unitPrice })) });
+    invoices.push(...matched.map(invoice => apInvoiceSummary(invoice, order, data.payments)));
+    if (order.invoice) {
+      const id = 'legacy:' + folio;
+      const legacy = { id, reference: order.invoice.reference, total: order.invoice.amount, currency: order.invoice.currency,
+        issueDate: '', dueDate: '', lines: [], legacy: true };
+      const paid = order.payment ? [{ ...order.payment, parent: id, id: id + ':paid', date: '' }] : [];
+      invoices.push(apInvoiceSummary(legacy, order, paid));
+    }
+  }
+  return ok({ orders: orders.reverse(), invoices: invoices.reverse(), ...capabilities });
+}
+
+function allocateApReceipts(line, quantityRequested, approver) {
+  const used = new Map();
+  for (const previous of line.purchased) {
+    for (const receipt of previous.receipts) {
+      used.set(receipt.id, (used.get(receipt.id) ?? 0n) + decimalCell(receipt.quantity, 3, 'facturado'));
+    }
+  }
+  let remainder = quantityRequested;
+  let supported = 0n;
+  const ids = new Set();
+  const allocated = [];
+  for (const receipt of line.receipts) {
+    const available = decimal(receipt.quantity, 3, 'remisión', true);
+    const consumed = used.get(receipt.id) ?? 0n;
+    if (!receipt.id || ids.has(receipt.id) || !receipt.reference || !receipt.actorId || receipt.actorId === approver
+      || !Number.isFinite(Date.parse(receipt.at)) || consumed > available) error(409, 'Revisa las remisiones de la partida ' + line.number + '.');
+    ids.add(receipt.id);
+    supported += available;
+    const use = remainder < available - consumed ? remainder : available - consumed;
+    if (use > 0n) allocated.push({ id: receipt.id, reference: receipt.reference, quantity: quantity(use) });
+    remainder -= use;
+  }
+  if (remainder || supported !== decimalCell(line.received, 3, 'recibido') || [...used.keys()].some(id => !ids.has(id))) {
+    error(409, 'La cantidad facturada supera la recepción verificable de la partida ' + line.number + '.');
+  }
+  return allocated;
+}
+
+function invoiceApOrder(body, order, invoices, priorInvoices, actorId) {
+  const reference = field(body.reference, 160, 'folio de factura', true);
+  const issueDate = apDate(body.issueDate, 'fecha de factura');
+  const dueDate = apDate(body.dueDate, 'vencimiento');
+  if (issueDate > isoTodayPanama() || dueDate < issueDate) error(400, 'Revisa la fecha y el vencimiento de la factura.');
+  const currency = upper(field(body.currency, 3, 'moneda', true));
+  if (currency !== order.issuer.currency) error(409, 'La moneda debe coincidir con la OC.');
+  const vendor = upper(order.vendorRfc || order.vendorName);
+  const identity = [order.issuer.id, vendor, upper(reference)];
+  if (invoices.some(invoice => invoice.entityId === identity[0] && invoice.vendorKey === identity[1] && upper(invoice.reference) === identity[2])) {
+    error(409, 'El folio de factura ya está registrado para este proveedor.');
+  }
+  if (!Array.isArray(body.lines) || !body.lines.length || body.lines.length > order.lines.length) {
+    error(400, 'Agrega las partidas facturadas.');
+  }
+  const availableLines = new Map(apOrderLines(order, priorInvoices).map(line => [line.id, line]));
+  const seen = new Set();
+  let subtotal = 0n;
+  const lines = body.lines.map(item => {
+    const id = field(item?.lineId, 120, 'partida', true);
+    const line = availableLines.get(id);
+    if (!line || seen.has(id)) error(409, 'La partida debe pertenecer a la OC y aparecer una sola vez.');
+    seen.add(id);
+    const qty = decimal(item.quantity, 3, 'cantidad facturada', true);
+    const price = decimal(item.unitPrice, 2, 'precio de factura');
+    if (qty > decimalCell(line.available, 3, 'recibido sin facturar')) error(409, 'La cantidad supera el saldo recibido sin facturar de la partida ' + line.number + '.');
+    if (price !== centsFor(line, 'unitPrice')) error(409, 'El precio de factura no coincide con la partida ' + line.number + ' de la OC.');
+    const receipts = allocateApReceipts(line, qty, order.approvedById);
+    subtotal += lineCost(qty, price);
+    return { lineId: id, quantity: quantity(qty), unitPrice: money(price), receipts };
+  });
+  const charges = Object.fromEntries(apCharges.map(key => [key, decimal(body[key] ?? (key === 'tax' ? '' : '0'), 2, key)]));
+  if (apCharges.some(key => charges[key] + sumCents(priorInvoices, key) > centsFor(order, key))) {
+    error(409, 'El impuesto, descuento o cargo supera el importe disponible de la OC.');
+  }
+  const total = subtotal + charges.tax + charges.shipping + charges.other - charges.discount;
+  const submitted = decimal(body.amount, 2, 'total de factura', true);
+  if (total !== submitted || charges.discount > subtotal || total + sumCents(priorInvoices, 'total') > centsFor(order, 'total')) {
+    error(409, 'El total de la factura no concilia con sus partidas y el saldo de la OC.');
+  }
+  return { identity, record: { reference, issueDate, dueDate, currency, entityId: identity[0], vendorKey: vendor, actorId, at: timestamp().iso,
+    total: money(total), ...Object.fromEntries(apCharges.map(key => [key, money(charges[key])])), lines } };
+}
+
+async function changeAp(action, body, session, sheets, tx) {
+  const data = await readApTables(sheets);
+  const isInvoice = action === 'ap-invoice';
+  const invoiceId = isInvoice ? null : field(body.invoiceId, 100, 'factura', true);
+  const invoice = data.invoices.find(item => item.id === invoiceId);
+  if (!isInvoice && !invoice) error(404, 'Factura no encontrada.');
+  const { record: order, header } = orderLookup(invoice?.parent ?? field(body.folio, 90, 'OC', true), data.orders, data.lines, session);
+  checkVersion(body, order);
+  if (!order.issuer || !hasRecordedApproval(order) || !['Recibida parcial', 'Recibida'].includes(order.status) || order.invoice || order.payment) {
+    error(409, 'La OC requiere recepción registrada y conciliación en un solo flujo.');
+  }
+  if (session.userId === order.approvedById || order.lines.some(line => line.receipts.some(receipt => receipt.actorId === session.userId))
+    || (invoice && invoice.actorId === session.userId)) error(403, 'Usa una cuenta distinta de quien aprobó, recibió o registró la factura.');
+  const prior = data.invoices.filter(item => item.parent === order.folio);
+  const values = [...header.row];
+  values[15] = tx.version;
+  values[21] = timestamp().iso;
+  let id;
+  let guard;
+  let write;
+  let reference;
+  let amount;
+  if (isInvoice) {
+    const created = invoiceApOrder(body, order, data.invoices, prior, session.userId);
+    const { identity, record } = created;
+    const legacy = entries(data.orders).some(({ row }) => row[23] && issuerSnapshot(row)?.id === identity[0]
+      && upper(row[3] || row[2]) === identity[1] && upper(recordedDocument(row[23]).reference) === identity[2]);
+    if (legacy) error(409, 'Esta factura ya está registrada en una OC.');
+    guard = 'oc-invoice:' + hash(identity);
+    id = 'FAP-' + hash(tx.key).slice(0, 20).toUpperCase();
+    reference = record.reference;
+    amount = record.total;
+    write = append(AP_INVOICES, [[id, order.folio, JSON.stringify(record)]]);
+  } else {
+    reference = field(body.reference, 160, 'referencia bancaria', true);
+    const date = apDate(body.date, 'fecha del pago');
+    if (date < invoice.issueDate || date > isoTodayPanama()) error(400, 'La fecha del pago debe estar entre la fecha de factura y hoy.');
+    const submitted = decimal(body.amount, 2, 'pago confirmado', true);
+    const payments = data.payments.filter(payment => payment.parent === invoice.id);
+    if (submitted + sumCents(payments, 'amount') > centsFor(invoice, 'total')) error(409, 'El pago supera el saldo de la factura.');
+    if (data.payments.some(payment => payment.entityId === order.issuer.id && upper(payment.reference) === upper(reference))
+      || entries(data.orders).some(({ row }) => row[24] && issuerSnapshot(row)?.id === order.issuer.id && upper(recordedDocument(row[24]).reference) === upper(reference))) {
+      error(409, 'La referencia bancaria ya está registrada para esta entidad.');
+    }
+    guard = 'oc-payment:' + hash([order.issuer.id, '', upper(reference)]);
+    id = 'PAP-' + hash(tx.key).slice(0, 20).toUpperCase();
+    amount = money(submitted);
+    write = append(AP_PAYMENTS, [[id, invoice.id, JSON.stringify({ reference, date, amount,
+      entityId: order.issuer.id, by: session.userName, actorId: session.userId, at: timestamp().iso })]]);
+    const fullyBilled = order.status === 'Recibida' && sumCents(prior, 'total') === centsFor(order, 'total')
+      && apOrderLines(order, prior).every(line => decimalCell(line.invoiced, 3, 'facturado') === decimalCell(line.ordered, 3, 'ordenado'));
+    if (fullyBilled && prior.every(item => {
+      const paid = sumCents(data.payments.filter(payment => payment.parent === item.id), 'amount');
+      return paid + (item.id === invoice.id ? submitted : 0n) === centsFor(item, 'total');
+    })) values[11] = 'Pagada';
+  }
+  return tx.commit([write, wholeRow(PURCHASE_TABS.orders, header.index, Array.from(values, value => value ?? '')),
+    auditRow(session, tx.operationId, isInvoice ? 'Factura AP conciliada' : 'Pago AP registrado', order.folio,
+      reference + ' · ' + order.issuer.currency + ' ' + amount)],
+  { id, folio: order.folio, number: order.number, version: tx.version }, [orderGuard(order), guard]);
+}
+
 async function changeOrder(action, body, session, sheets, tx) {
   const lookup = field(body.folio, 90, 'folio', true);
   const [orderRows, lineRows, requestRows] = await readTables(
@@ -1275,6 +1490,9 @@ async function changeOrder(action, body, session, sheets, tx) {
     values[11] = status;
   } else if (action === 'order-invoice' || action === 'order-payment') {
     const invoice = action === 'order-invoice';
+    if ((await sheets.read(AP_INVOICES)).some(row => row[1] === record.folio)) {
+      error(409, 'La OC tiene facturas en Cuentas por pagar.');
+    }
     if (!hasRecordedApproval(record) || record.status !== 'Recibida' || record.receiptStatus !== 'Recibida' || !record.issuer) {
       error(409, 'Confirma todas las recepciones y la aprobación antes de conciliar la factura o el pago.');
     }
@@ -1890,8 +2108,8 @@ async function readWorkOrderCost(sheets, session, identifier, laborValuations) {
     })) };
 }
 
-const WRITES = new Set(['request-submit', 'request-status', 'order-save', 'order-status', 'order-sign', 'order-receive', 'order-dispatch', 'order-invoice', 'order-payment', 'order-delete', 'inventory-move', 'inventory-reservation', 'expense-save', 'expense-delete', 'expense-review', 'expense-adjustment-propose', 'expense-adjustment-review']);
-const READS = new Set(['orders', 'order', 'receiving', 'requests', 'expenses', 'inventory-movements', 'inventory-stock', 'inventory-replenishment', 'expense-options', 'workorder-cost', 'expense-adjustments']);
+const WRITES = new Set(['ap-invoice', 'ap-payment', 'request-submit', 'request-status', 'order-save', 'order-status', 'order-sign', 'order-receive', 'order-dispatch', 'order-invoice', 'order-payment', 'order-delete', 'inventory-move', 'inventory-reservation', 'expense-save', 'expense-delete', 'expense-review', 'expense-adjustment-propose', 'expense-adjustment-review']);
+const READS = new Set(['ap', 'orders', 'order', 'receiving', 'requests', 'expenses', 'inventory-movements', 'inventory-stock', 'inventory-replenishment', 'expense-options', 'workorder-cost', 'expense-adjustments']);
 
 export async function dispatchPurchasing({ path, method, body = {}, query = {}, session, sheets, evidenceStorage, inventoryValuations, laborValuations }) {
   const action = path.replace(/^api\/purchasing\//, '');
@@ -1911,6 +2129,9 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
       : ['inventory-movements', 'inventory-stock'].includes(action) ? panama && (warehouseAccess || REQUEST_ROLES.has(session.role))
       : action === 'inventory-replenishment' ? panama && session.allUnits === true && (warehouseAccess || session.role === 'gerencia')
       : action === 'workorder-cost' ? panama && session.role === 'gerencia'
+      : action === 'ap' ? panama && session.previewDemo !== true && session.role === 'gerencia'
+      : action === 'ap-invoice' ? invoiceAccess && session.previewDemo !== true
+      : action === 'ap-payment' ? paymentAccess && session.previewDemo !== true
       : action === 'order-invoice' ? invoiceAccess
       : action === 'order-payment' ? paymentAccess
       : action === 'requests' ? REQUEST_ROLES.has(session.role)
@@ -1923,6 +2144,8 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
       || (action === 'order-sign' && (!panama || session.previewDemo === true))) {
       error(403, 'Tu cuenta no tiene permiso para realizar esta acción.');
     }
+    if (action === 'ap') return apRead(await readApTables(sheets), session,
+      { canRecordInvoice: invoiceAccess, canRecordPayment: paymentAccess });
     if (action === 'workorder-cost') return ok(await readWorkOrderCost(sheets, session, query.ot, laborValuations));
     if (action === 'inventory-stock') return ok(await inventoryByWarehouse(sheets, session));
     if (action === 'inventory-replenishment') return ok(await inventoryByWarehouse(sheets, session, query));
@@ -2022,6 +2245,7 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
     }
     const previous = await tx.replay();
     if (previous !== null) return ok(previous);
+    if (action === 'ap-invoice' || action === 'ap-payment') return await changeAp(action, body, session, sheets, tx);
     if (action === 'request-submit') return await submitRequest(body, session, sheets, tx);
     if (action === 'request-status') return await changeRequest(body, session, sheets, tx);
     if (action === 'order-save') return await saveOrder(body, session, sheets, tx);
