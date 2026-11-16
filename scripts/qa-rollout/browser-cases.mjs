@@ -2044,7 +2044,15 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         });
         assert.equal(approved.status(), 200, await approved.text());
         assert.equal((await approved.json()).status, 'Aprobada');
-        await page.goto(apPath, { waitUntil: 'domcontentloaded' });
+        const more = page.getByRole('navigation', { name: 'Navegación principal' }).getByRole('button', { name: 'Más', exact: true });
+        await more.tap();
+        await page.getByRole('button', { name: 'Órdenes de compra', exact: true }).tap();
+        await page.waitForURL(origin + '/admin/ordenes-compra');
+        await more.tap();
+        await page.getByRole('button', { name: 'Cuentas por pagar', exact: true }).tap();
+        await page.waitForURL(apPath);
+        await visible(page.getByRole('heading', { name: 'Facturas', exact: true }));
+        await visible(page.getByRole('heading', { name: 'Saldos por proveedor', exact: true }));
         await visible(page.getByText('Solo consulta.', { exact: true }));
         const queue = page.getByRole('region', { name: 'Órdenes por procesar', exact: true });
         const approvedRow = queue.getByRole('listitem').filter({ has: page.getByRole('link', { name: 'OC ' + draft.number, exact: true }) });

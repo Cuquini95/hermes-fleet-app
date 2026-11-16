@@ -17,10 +17,19 @@ export default function BottomNav() {
   const navigate = useNavigate();
   const location = useLocation();
   const role = useAuthStore((s) => s.role);
+  const project = useAuthStore((s) => s.project);
+  const previewDemo = useAuthStore((s) => s.previewDemo);
 
   if (!role) return null;
 
   const { visible, overflow } = NAV_CONFIG[role];
+  const purchasing: NavItem[] = [];
+  if (role === 'gerencia' && project === 'tmf-panama') {
+    purchasing.push({ id: 'ordenes-compra', label: 'Órdenes de compra', icon: 'FileText', path: '/admin/ordenes-compra' });
+    if (!previewDemo) {
+      purchasing.push({ id: 'cuentas-por-pagar', label: 'Cuentas por pagar', icon: 'Receipt', path: '/panama/cuentas-por-pagar' });
+    }
+  }
 
   const isActive = (item: NavItem) => {
     if (!item.path) return false;
@@ -78,7 +87,7 @@ export default function BottomNav() {
       <MoreTray
         open={showMoreTray}
         onClose={() => setShowMoreTray(false)}
-        items={[...overflow, { id: 'tmf', label: 'Maestros TMF', icon: 'Table2', path: '/panama' }]}
+        items={[...purchasing, ...overflow, { id: 'tmf', label: 'Maestros TMF', icon: 'Table2', path: '/panama' }]}
       />
     </>
   );
