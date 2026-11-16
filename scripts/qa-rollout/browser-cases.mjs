@@ -1114,6 +1114,65 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       }
     });
 
+    if (withGateway) await record('MÓVIL-LLANTAS-NÚMERO-DE-FUEGO', async () => {
+      const tab = '13 Neumáticos';
+      const previous = sheet.read(tab);
+      sheet.seed(tab, [['ID','UNIDAD','MODELO','POSICIÓN']]);
+      try {
+        return await inRole('coordinador', 360, async page => {
+          await page.goto(`${origin}/neumaticos`, { waitUntil: 'domcontentloaded' });
+          await dismissPrivacy(page);
+          await visible(page.getByRole('heading', { name: 'Neumáticos por número de fuego' }));
+          await page.getByLabel('Serie o número de fuego').fill('FUEGO-QA-37');
+          await clickByName(page, 'Consultar');
+          await clickByName(page, 'Montar');
+          let form = page.getByRole('form', { name: 'Montar' });
+          await form.getByLabel(/Unidad de destino/).selectOption('DZ203');
+          await form.getByLabel(/Posición de destino/).selectOption('I1');
+          await form.getByLabel(/Medida del equipo/).selectOption('h');
+          await form.getByLabel(/Lectura acumulada/).fill('1000');
+          await form.getByLabel(/Costo de adquisición/).fill('850');
+          await form.getByLabel(/Moneda/).selectOption('USD');
+          await form.getByLabel(/Factura o comprobante/).fill('Factura QA-37');
+          await form.getByRole('button', { name: 'Guardar' }).click();
+          await visible(page.getByText('Montaje', { exact: true }));
+          await clickByName(page, 'Inspeccionar');
+          form = page.getByRole('form', { name: 'Inspeccionar' });
+          await form.getByLabel(/Lectura acumulada/).fill('1050');
+          await form.getByLabel('Presión (PSI)').fill('0');
+          await form.getByLabel('Profundidad (mm)').fill('11.5');
+          await form.getByRole('button', { name: 'Guardar' }).click();
+          await visible(page.getByText(/Presión 0 PSI/));
+          await clickByName(page, 'Trasladar o rotar');
+          form = page.getByRole('form', { name: 'Trasladar o rotar' });
+          await form.getByLabel(/Unidad de destino/).selectOption('DZ205');
+          await form.getByLabel(/Posición de destino/).selectOption('D2');
+          await form.getByLabel(/Lectura acumulada de origen/).fill('1100');
+          await form.getByLabel(/Lectura acumulada de destino/).fill('600');
+          await form.getByLabel(/Medida del destino/).selectOption('h');
+          sheet.failNext({ matches: writes => writes.some(write => write.tab === tab), when: 'after' });
+          await form.getByRole('button', { name: 'Guardar' }).click();
+          await visible(page.getByRole('button', { name: 'Reintentar guardado' }));
+          await page.reload({ waitUntil: 'domcontentloaded' });
+          await clickByName(page, 'Reintentar guardado');
+          await visible(page.getByText('Origen DZ203 · I1', { exact: true }));
+          await visible(page.getByText('Destino DZ205 · D2', { exact: true }));
+          await clickByName(page, 'Inspeccionar');
+          form = page.getByRole('form', { name: 'Inspeccionar' });
+          await form.getByLabel(/Lectura acumulada/).fill('640');
+          await form.getByLabel('Presión (PSI)').fill('105');
+          await form.getByLabel('Profundidad (mm)').fill('10');
+          await form.getByRole('button', { name: 'Guardar' }).click();
+          await visible(page.getByText('140 h', { exact: true }));
+          await visible(page.getByText(/USD 6[.,]0714\/h/));
+          assert.equal(sheet.read(tab).filter(row => row[7] === 'FUEGO-QA-37').length, 4);
+          await noHorizontalOverflow(page, 360);
+          await shot(page, 'llantas-360.png');
+          return { serial: 'FUEGO-QA-37', unit: 'DZ205', position: 'D2', usage: 140, rate: 6.0714, events: 4, persistedRetry: true, width: 360 };
+        });
+      } finally { sheet.seed(tab, previous); }
+    });
+
     if (!withPurchasing) return [...external];
     const browserBuyer = loadAccounts.find(account => account.membership.can_approve_purchases === true);
     const browserWarehouse = loadAccounts.find(account => account.membership.can_receive_purchases === true);

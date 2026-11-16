@@ -15,7 +15,7 @@ import {
   Ruler,
   Loader2,
 } from 'lucide-react';
-import { appendRow, SHEET_TABS } from '../lib/sheets-api';
+import { appendRow, SheetAppendError, SHEET_TABS } from '../lib/sheets-api';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { mexicoDate } from '../lib/date-utils';
 import SuccessToast from '../components/ui/SuccessToast';
@@ -147,6 +147,22 @@ function nextSeq() { return String(_seq++); }
 
 // ════════════════════════════════════════════════════════════════════════════
 export default function NeumaticosPage() {
+  const project = useAuthStore(state => state.project);
+  const userId = useAuthStore(state => state.userId);
+  return project === 'tmf-panama' ? <PanamaTirePage key={userId} /> : <LegacyTireInspection />;
+}
+
+function PanamaTirePage() {
+  const [byUnit, setByUnit] = useState(false);
+  return <>
+    <button type="button" onClick={() => setByUnit(value => !value)} className="mt-2 min-h-11 rounded-lg border border-border bg-white px-3 text-sm font-semibold">
+      {byUnit ? 'Volver a número de fuego' : 'Inspección por unidad'}
+    </button>
+    {byUnit ? <LegacyTireInspection /> : <PanamaTireHistory />}
+  </>;
+}
+
+function LegacyTireInspection() {
   const navigate = useNavigate();
   const equipmentList = useEquipmentList();
   const project = useAuthStore(state => state.project);
@@ -233,8 +249,8 @@ export default function NeumaticosPage() {
       setToastMessage(`Llanta ${llanta.posicion} registrada ✓`);
       setToastType('success');
       setToastVisible(true);
-    } catch {
-      setToastMessage('Error al guardar. Reintenta.');
+    } catch (error) {
+      setToastMessage(error instanceof SheetAppendError && error.status === 409 ? 'Abre la ficha por número de fuego para inspeccionar esta llanta.' : 'Error al guardar. Reintenta.');
       setToastType('error');
       setToastVisible(true);
     } finally {
@@ -258,7 +274,6 @@ export default function NeumaticosPage() {
           <h1 className="text-xl font-bold text-text">Reporte de Neumáticos</h1>
         </div>
 
-        {project === 'tmf-panama' && <PanamaTireHistory key={project} />}
         <p className="text-sm text-text-secondary mb-4">Selecciona la unidad a inspeccionar</p>
 
         <div className="flex flex-col gap-2 mb-6">

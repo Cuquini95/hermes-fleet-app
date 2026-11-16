@@ -12,6 +12,7 @@ import { dispatchPanamaMeter, METER_TAB, validatePanamaMeterAppend } from './_li
 import { readPersonalHistory } from './_lib/hermes-profile.js';
 import { visiblePanamaParts } from './_lib/hermes-part-prices.js';
 import { COMPONENT_INTERVENTION } from './_lib/hermes-panama-components.js';
+import { dispatchPanamaTires, isTireEventRow, prepareLegacyTireInspection, TIRE_TAB } from './_lib/hermes-panama-tires.js';
 
 const ADMIN = ['jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
 const WORKSHOP = ['mecanico', ...ADMIN];
@@ -72,12 +73,13 @@ const PANAMA_OPERATION_GROUPS = new Map([
   ['horometro', [`api/sheets/append:${METER_TAB}`, 'api/panama/horometros']],
   ['combustible', ['api/sheets/append:Combustible']],
   ['fletes', ['api/sheets/append:Reporte_Fletes_Transporte']],
-  ['llantas', ['api/sheets/append:13 Neumáticos']],
+  ['llantas', ['api/sheets/append:13 Neumáticos', 'api/workshop/tires']],
   ['proveedores', ['api/sheets/append:Proveedores']],
   ['activos', ['api/sheets/append:Activos']],
 ]);
 const operationGroup = new Map([...PANAMA_OPERATION_GROUPS].flatMap(([group, routes]) => routes.map(route => [route, group])));
 const relatedPause = new Map([
+  ['api/workshop/tires', `api/sheets/append:${TIRE_TAB}`],
   ['api/workshop/componentinterventions', 'api/workshop/transition'],
   ['api/workshop/pmbatch', 'api/workshop/pm'], ['api/workshop/pmbatchcheck', 'api/workshop/pm'],
   ['api/purchasing/inventory-reservation', 'api/purchasing/inventory-move'],
@@ -148,6 +150,7 @@ async function sheetRead(req, res, sheets, session) {
   }
   const rows = await visibleRows(sheets, tab, rule, session);
   const data = rows.slice(offset, offset + limit);
+  if (tab === TIRE_TAB && session.project === PANAMA_PROJECT) return res.status(200).json({ data: data.map(row => isTireEventRow(row) ? [] : row.slice(0, 26)) });
   return res.status(200).json({ data: tab === 'OT_STATUS_LOG' ? data.map(row => row[2] === COMPONENT_INTERVENTION ? [] : row) : data });
 }
 
@@ -168,7 +171,8 @@ async function sheetAppend(req, res, sheets, session) {
       return invalid(res, 400, 'La unidad no figura en el inventario TMF.');
     }
   }
-  const row = session.project === PANAMA_PROJECT && tab === METER_TAB ? values.slice(0, 10) : values.slice();
+  const row = session.project === PANAMA_PROJECT && tab === METER_TAB ? values.slice(0, 10)
+    : session.project === PANAMA_PROJECT && tab === TIRE_TAB ? values.slice(0, 26) : values.slice();
   if (rule.actor !== undefined) row[rule.actor] = session.userName;
   if (session.project === PANAMA_PROJECT && rule.actorId !== undefined) {
     while (row.length < rule.actorId) row.push('');
@@ -182,7 +186,15 @@ async function sheetAppend(req, res, sheets, session) {
     if (previous) return res.status(200).json(previous);
     guard = await validatePanamaMeterAppend(sheets, row);
   }
-  await sheets.commit({ key, fingerprint, guard, writes: [{ tab, append: [row] }], result: { success: true } });
+  let append = row;
+  if (session.project === PANAMA_PROJECT && tab === TIRE_TAB) {
+    const previous = await sheets.replay({ key, fingerprint });
+    if (previous) return res.status(200).json(previous);
+    const inspection = prepareLegacyTireInspection(await sheets.read(TIRE_TAB, { requireExisting: true }), row);
+    append = inspection.row;
+    guard = inspection.guard;
+  }
+  await sheets.commit({ key, fingerprint, guard, writes: [{ tab, append: [append] }], result: { success: true } });
   return res.status(200).json({ success: true });
 }
 
@@ -383,6 +395,10 @@ export function createHermesGateway({
         return await meterHandler(req, res);
       }
 
+      if (path === 'api/workshop/tires') {
+        const result = await dispatchPanamaTires({ method: req.method, query: req.query, body: req.body, session, sheets });
+        return res.status(result.status).json(result.body);
+      }
       const dispatch = path.startsWith('api/workshop/') ? dispatchWorkshop : path.startsWith('api/purchasing/') ? dispatchPurchasing : null;
       if (!dispatch) return invalid(res, 404, 'Ruta no disponible.');
       const batchPm = ['api/workshop/pmbatch', 'api/workshop/pmbatchcheck'].includes(path);

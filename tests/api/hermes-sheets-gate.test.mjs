@@ -9,6 +9,46 @@ function response() {
 
 const operator = { userId: 'qa-operador', userName: 'Operador QA', role: 'operador', assignedUnits: ['CA20'], allUnits: false };
 
+test('el historial genérico de neumáticos conserva las inspecciones previas pero oculta los traslados de la bitácora', async () => {
+  const header = ['ID','UNIDAD'], legacy = ['vista','CA20','Modelo','I1'];
+  const transfer = Array(28).fill('');
+  Object.assign(transfer, { 0: 'traslado', 1: 'CA20', 3: 'I1', 10: '12345', 26: 'HERMES_TIRES_V1', 27: 'origen fuera de alcance' });
+  const result = response();
+  await createHermesGateway({ enablePanamaOperations: true,
+    sessionReader: async () => ({ ...operator, project: 'tmf-panama', role: 'coordinador' }),
+    sheets: { read: async () => [header, legacy, transfer] },
+  })({ method: 'GET', query: { path: 'api/sheets/read', tab: '13 Neumáticos' } }, result);
+  assert.deepEqual(result.body.data, [header, legacy, []]);
+});
+
+test('la pausa de la captura de neumáticos también detiene el registro por número de fuego', async () => {
+  const result = response();
+  await createHermesGateway({ enablePanamaOperations: true, writeEnabled: true, pausedOperations: new Set(['api/sheets/append:13 Neumáticos']),
+    sessionReader: async () => ({ ...operator, project: 'tmf-panama', role: 'coordinador' }),
+    sheets: { read: async () => assert.fail('La escritura debe quedar en pausa') },
+  })({ method: 'POST', query: { path: 'api/workshop/tires' }, body: {} }, result);
+  assert.equal(result.statusCode, 503);
+  assert.match(result.body.error, /pausa/);
+});
+
+test('la captura por unidad no puede contradecir la ubicación administrada de un número de fuego', async () => {
+  const tire = { id: 'a'.repeat(64), at: '2026-11-14T17:00:00Z', serial: 'F-OLD', actor: 'Taller QA',
+    body: { action: 'mount', unit: 'CA20', position: 'I1', basis: 'h', meter: '1000' } };
+  const tracked = Array(28).fill('');
+  Object.assign(tracked, { 0: tire.id, 1: 'CA20', 3: 'I1', 7: 'F-OLD', 26: 'HERMES_TIRES_V1', 27: JSON.stringify(tire) });
+  const gate = createHermesGateway({ enablePanamaOperations: true, writeEnabled: true,
+    sessionReader: async () => ({ ...operator, project: 'tmf-panama', role: 'coordinador', allUnits: true }),
+    sheets: { read: async () => [['ID','UNIDAD'], tracked], replay: async () => null,
+      commit: async () => assert.fail('Una inspección independiente no puede alterar la ubicación administrada') },
+  });
+  const result = response();
+  await gate({ method: 'POST', query: { path: 'api/sheets/append' }, body: {
+    tab: '13 Neumáticos', values: ['nueva','CA21','','D2','','','','F-OLD'],
+  } }, result);
+  assert.equal(result.statusCode, 409);
+  assert.match(result.body.error, /número de fuego/);
+});
+
 test('legacy data reads respect assigned units and role', async () => {
   const sheets = { read: async () => [['fecha', 'hora', 'UNIDAD'], ['2026-11-11', '22:01', 'CA20'], ['2026-11-11', '22:02', 'CV100']] };
   const gate = createHermesGateway({ sheets, sessionReader: async () => operator });
