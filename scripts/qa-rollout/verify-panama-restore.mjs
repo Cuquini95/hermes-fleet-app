@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { readFile, readdir } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { jsPDF } from 'jspdf';
 import { dispatchWorkshop } from '../../api/_lib/hermes-workshop.js';
 import { dispatchEvidence } from '../../api/_lib/hermes-evidence.js';
 import { createPanamaOperationalStore } from '../../api/_lib/hermes-operational-store.js';
@@ -32,9 +33,14 @@ const operatorId = '00000000-0000-4000-8000-000000000001';
 const qaExpenseEnv = { HERMES_PANAMA_EXPENSE_CLOSED_THROUGH: '2026-10', HERMES_PANAMA_EXPENSE_REVIEWER_IDS: operatorId };
 const savedEnv = Object.fromEntries(Object.keys(qaExpenseEnv).map(key => [key, process.env[key]]));
 const evidenceId = '1'.repeat(64);
+const warrantyEvidenceId = '2'.repeat(64);
 const attachment = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2n2IAAAAASUVORK5CYII=', 'base64');
+const warrantyPdf = new jsPDF();
+warrantyPdf.text('Garantía de prueba · OT-0100', 20, 20);
+const warrantyAttachment = Buffer.from(warrantyPdf.output('arraybuffer'));
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
-const ot = id => ['', id, '2026-11-14', 'QA-DZ203', '', '', '', '', '', 'Abierta', `/hermes-api/api/evidence?id=${evidenceId}`];
+const evidenceLink = id => `/hermes-api/api/evidence?id=${id}`;
+const ot = (id, evidence = '') => ['', id, '2026-11-14', 'QA-DZ203', '', '', '', '', '', 'Abierta', evidence];
 const oc = (id, state) => Object.assign(Array(19).fill(''), { 0: id, 1: '2026-11-14', 5: 'QA-DZ203', 11: state,
   13: 'Gerencia QA', 17: operatorId, 18: '2026-11-14T16:00:00Z' });
 
@@ -153,7 +159,22 @@ async function candidateAddedMigrations() {
   return added;
 }
 
-async function checkPrivateAttachment(download, connection, sheets, session, archive) {
+async function verifyEvidenceArchive(connection, archive) {
+  const { rows: metadata } = await connection.query(
+    'select id, byte_size, sha256 from public.hermes_panama_evidence where ready order by id',
+  );
+  const recovered = new Map(Object.entries(archive).map(([id, data]) => [id, Buffer.from(data, 'base64')]));
+  for (const row of metadata) {
+    const bytes = recovered.get(row.id);
+    assert.ok(bytes, `Falta el adjunto ${row.id}`);
+    assert.equal(bytes.length, row.byte_size, `Tamaño incorrecto del adjunto ${row.id}`);
+    assert.equal(sha(bytes), row.sha256, `SHA-256 incorrecto del adjunto ${row.id}`);
+  }
+  assert.equal(recovered.size, metadata.length, 'Hay archivos archivados sin registro restaurado');
+  return recovered;
+}
+
+async function checkPrivateAttachment(download, connection, sheets, session, files, id) {
   const res = {
     headers: new Map(),
     setHeader(key, value) { this.headers.set(key, value); },
@@ -162,17 +183,42 @@ async function checkPrivateAttachment(download, connection, sheets, session, arc
     json(payload) { this.payload = payload; return this; },
   };
   await download({
-    req: { method: 'GET', query: { id: archive.id }, headers: { 'sec-fetch-site': 'same-origin' } },
+    req: { method: 'GET', query: { id }, headers: { 'sec-fetch-site': 'same-origin' } },
     res, session, sheets,
     storage: {
       async find(id) {
         const { rows: stored } = await connection.query('select * from public.hermes_panama_evidence where id=$1', [id]);
         return stored[0];
       },
-      async read() { return Buffer.from(archive.bytes, 'base64'); },
+      async read(row) {
+        const file = files.get(row.id);
+        if (!file) throw new Error('Adjunto archivado no disponible');
+        return file;
+      },
     },
   });
   return res;
+}
+
+async function verifyRestoredDownloads(download, connection, sheets, files) {
+  const cases = [
+    { id: evidenceId, mimeType: 'image/png', bytes: attachment },
+    { id: warrantyEvidenceId, mimeType: 'application/pdf', bytes: warrantyAttachment },
+  ];
+  const sessions = [
+    { role: 'coordinador', userId: '00000000-0000-4000-8000-000000000002' },
+    { role: 'jefe_taller', userId: '00000000-0000-4000-8000-000000000003' },
+  ];
+  const access = { project: 'tmf-panama', assignedUnits: ['QA-DZ203'] };
+  for (const session of sessions) {
+    for (const { id, mimeType, bytes } of cases) {
+      const result = await checkPrivateAttachment(download, connection, sheets, { ...access, ...session }, files, id);
+      assert.equal(result.code, 200, `${session.role} · ${mimeType}: ${JSON.stringify(result.payload)}`);
+      assert.equal(result.headers.get('Content-Type'), mimeType);
+      assert.deepEqual(result.bytes, bytes);
+    }
+  }
+  return { roles: sessions.map(session => session.role), mediaTypes: cases.map(item => item.mimeType), downloads: sessions.length * cases.length };
 }
 
 async function seedClosedAdjustment(connection) {
@@ -200,7 +246,7 @@ async function seedClosedAdjustment(connection) {
   return { id, author, reviewer, original };
 }
 
-async function verifyRollback(connection, archive, added, adjustment) {
+async function verifyRollback(connection, files, added, adjustment) {
   if (!previousRepo) return null;
   const previous = gitHead(previousRepo);
   const candidate = gitHead(repo);
@@ -209,7 +255,6 @@ async function verifyRollback(connection, archive, added, adjustment) {
     const changed = execFileSync('git', ['status', '--porcelain', '--untracked-files=normal'], { cwd: dir, encoding: 'utf8' });
     assert.equal(changed.trim(), '', 'Usa los dos checkouts sin cambios pendientes para acreditar la reversión.');
   }
-  assert(added.length > 0, 'La reversión debe ensayarse con el esquema actualizado.');
   const before = (await connection.query('select name, rows from public.hermes_panama_operational_tables order by name')).rows;
   const loadPrevious = file => import(pathToFileURL(resolve(previousRepo, 'api/_lib', file)).href);
   const started = performance.now();
@@ -223,7 +268,7 @@ async function verifyRollback(connection, archive, added, adjustment) {
   const oldSheets = storeOnMemoryDatabase(connection, [unit], oldStore);
   const oldOrder = await oldWorkshop({ path: 'api/workshop/orders', method: 'GET', sheets: oldSheets, session });
   assert.equal(oldOrder.status, 200);
-  assert(oldOrder.body.orders.some(row => row[1] === 'OT-HIST-QA' && row[25] === 'OT-0100' && row[10].endsWith(archive.id)));
+  assert(oldOrder.body.orders.some(row => row[1] === 'OT-HIST-QA' && row[25] === 'OT-0100' && row[10] === evidenceLink(evidenceId)));
   const purchase = await oldPurchasing({ path: 'api/purchasing/order', method: 'GET', query: { folio: '3002' }, sheets: oldSheets, session });
   assert.equal(purchase.status, 200, JSON.stringify(purchase.body));
   assert.deepEqual([purchase.body.order.status, purchase.body.order.approvedById, purchase.body.order.receiptStatus,
@@ -232,10 +277,7 @@ async function verifyRollback(connection, archive, added, adjustment) {
   const stock = await oldPurchasing({ path: 'api/purchasing/inventory-stock', method: 'GET', sheets: oldSheets, session });
   assert.equal(stock.status, 200);
   assert(stock.body.items.some(item => item.partNumber === 'RESERVA-QA' && item.available === '1' && item.reserved === '3'));
-  const evidence = await checkPrivateAttachment(oldEvidence, connection, oldSheets, session, archive);
-  assert.equal(evidence.code, 200, JSON.stringify(evidence.payload));
-  assert.equal(evidence.headers.get('Content-Type'), 'image/png');
-  assert.equal(sha(evidence.bytes), sha(attachment));
+  const evidence = await verifyRestoredDownloads(oldEvidence, connection, oldSheets, files);
   const forbiddenEdit = await oldPurchasing({ path: 'api/purchasing/expense-delete', method: 'POST',
     body: { id: adjustment.id, operationId: randomUUID() }, sheets: oldSheets, session: adjustment.author });
   assert.equal(forbiddenEdit.status, 409);
@@ -259,14 +301,13 @@ async function verifyRollback(connection, archive, added, adjustment) {
   for (const stored of before.filter(row => unchanged.includes(row.name))) {
     assert.deepEqual(await rows(connection, stored.name), stored.rows);
   }
-  const newEvidence = await checkPrivateAttachment(dispatchEvidence, connection, reapplied, session, archive);
-  assert.equal(newEvidence.code, 200);
+  await verifyRestoredDownloads(dispatchEvidence, connection, reapplied, files);
   const adjusted = await dispatchPurchasing({ path: 'api/purchasing/expense-adjustments', method: 'GET', sheets: reapplied,
     session: adjustment.reviewer, query: { id: adjustment.id } });
   assert.equal(adjusted.status, 200);
   assert.deepEqual([adjusted.body.originalAmount, adjusted.body.effectiveAmount], ['107.00', '97.00']);
   return {
-    olderCodeRanOnRestoredSchema: true, previous, candidate, readyInMs, appliedMigrations: added,
+    olderCodeRanOnRestoredSchema: true, previous, candidate, readyInMs, appliedMigrations: added, evidence,
     compatible: ['Consulta de OT', 'Aprobación y recepción de OC', 'Saldo reservado y disponible', 'Descarga privada con integridad',
       'Alta de avería con folio', 'Reintento del alta al volver a la candidata', 'Protección del gasto del período cerrado'],
     retainedNewJournals: Object.fromEntries(before.filter(row => unchanged.includes(row.name)).map(row => [row.name, row.rows.length - 1])),
@@ -285,7 +326,7 @@ try {
   await migration('20261113204500_hermes_panama_operational_store.sql');
   await migration('20261113203000_hermes_panama_private_evidence.sql');
   await migration('20261114174000_hermes_panama_purchase_signatures.sql');
-  await save(db, 'legacy', [{ tab: orders, append: [ot('OT-HIST-QA')] },
+  await save(db, 'legacy', [{ tab: orders, append: [ot('OT-HIST-QA', evidenceLink(evidenceId))] },
     { tab: purchases, append: [oc('OC-HIST-QA', 'Aprobada')] }], { otId: 'OT-HIST-QA', folio: 'OC-HIST-QA' });
   await migration('20261114181455_hermes_panama_purchase_numbers.sql');
   await migration('20261114231214_hermes_panama_work_order_numbers.sql');
@@ -312,16 +353,15 @@ try {
   [evidenceId, operatorId, attachment.length, sha(attachment)]);
 
   await migration('20261116012000_hermes_panama_warranty_evidence.sql');
-  const warrantyEvidenceId = '2'.repeat(64);
   const addWarrantyEvidence = (recordId, slot) => db.query(`insert into public.hermes_panama_evidence
     (id,actor_id,kind,operation_id,slot,units,record_id,preview_demo,mime_type,byte_size,sha256,ready)
-    values ($1,$2,'warranty',$2,$3,array['QA-DZ203'],$4,false,'application/pdf',30,$5,true)`,
-    [warrantyEvidenceId, operatorId, slot, recordId, sha(attachment)]);
+    values ($1,$2,'warranty',$2,$3,array['QA-DZ203'],$4,false,'application/pdf',$5,$6,true)`,
+    [warrantyEvidenceId, operatorId, slot, recordId, warrantyAttachment.length, sha(warrantyAttachment)]);
   await assert.rejects(() => addWarrantyEvidence('', 0), { code: '23514' });
   await assert.rejects(() => addWarrantyEvidence('OT-HIST-QA', 4), { code: '23514' });
   await addWarrantyEvidence('OT-HIST-QA', 0);
   await save(db, 'warranty-qa', [{ tab: warrantyTab, append: [['2026-11-15T08:00:00.000Z', 'OT-HIST-QA',
-    'garantia_ot', 'GAR-QA', JSON.stringify({ caseId: 'GAR-QA', action: 'coverage', attachments: ['/hermes-api/api/evidence?id=' + warrantyEvidenceId] }),
+    'garantia_ot', 'GAR-QA', JSON.stringify({ caseId: 'GAR-QA', action: 'coverage', requestId: operatorId, attachments: [evidenceLink(warrantyEvidenceId)] }),
     'Gerencia QA', 'gerencia', operatorId]] }], { caseId: 'GAR-QA' });
   const warrantyRows = await rows(db, warrantyTab);
   assert.equal(warrantyRows.length, 2);
@@ -347,19 +387,28 @@ try {
     ...(previousRepo ? ['HERMES_PA_AJUSTES_GASTOS', 'HERMES_PA_ENTREGA_ALERTAS'] : [])];
   const durableSnapshots = await Promise.all(protectedTables.map(async tab => [tab, await rows(db, tab)]));
   const backup = await db.dumpDataDir('gzip');
-  const attachmentArchive = JSON.stringify({ id: evidenceId, bytes: attachment.toString('base64') });
+  const attachmentArchive = JSON.stringify({
+    [evidenceId]: attachment.toString('base64'),
+    [warrantyEvidenceId]: warrantyAttachment.toString('base64'),
+  });
   const began = performance.now();
   restored = await PGlite.create({ loadDataDir: backup });
   for (const [table, contents] of [...Object.entries(expected), ...durableSnapshots]) {
     assert.deepEqual(await rows(restored, table), contents, 'Restauración de ' + table);
   }
-  const record = (await restored.query('select id, record_id, sha256, ready from public.hermes_panama_evidence where id=$1', [evidenceId])).rows[0];
-  const recoveredFile = JSON.parse(attachmentArchive);
-  assert.equal(record.id, recoveredFile.id);
-  assert.equal(record.record_id, 'OT-HIST-QA');
-  assert.equal(record.sha256, sha(Buffer.from(recoveredFile.bytes, 'base64')));
-  assert.equal(record.ready, true);
+  const recoveredArchive = JSON.parse(attachmentArchive);
+  const recoveredFiles = await verifyEvidenceArchive(restored, recoveredArchive);
   const restoreReadyInMs = Math.round(performance.now() - began);
+  const evidence = await verifyRestoredDownloads(dispatchEvidence, restored, storeOnMemoryDatabase(restored, ['QA-DZ203']), recoveredFiles);
+  evidence.allDownloadsInMs = Math.round(performance.now() - began);
+  await assert.rejects(verifyEvidenceArchive(restored, { [evidenceId]: recoveredArchive[evidenceId] }), /Falta el adjunto/);
+  const corruptedPdf = Buffer.from(warrantyAttachment);
+  corruptedPdf[12] ^= 1;
+  await assert.rejects(verifyEvidenceArchive(restored, {
+    ...recoveredArchive, [warrantyEvidenceId]: corruptedPdf.toString('base64'),
+  }), /SHA-256 incorrecto/);
+  evidence.missingArchiveEntryDetected = true;
+  evidence.corruptedArchiveEntryDetected = true;
   assert.equal((await create(restored, 1)).replayed, true);
   assert.deepEqual(await rows(restored, orders), expected[orders]);
   await create(restored, 3);
@@ -370,9 +419,9 @@ try {
   assert.deepEqual(await rows(restored, warrantyTab), warrantyRows);
   assert.deepEqual((await rows(restored, odometerTab)).at(-1), odometer);
   const batchFolios = await verifyPmBatch(restored);
-  const rollback = await verifyRollback(restored, recoveredFile, added, adjustment);
+  const rollback = await verifyRollback(restored, recoveredFiles, added, adjustment);
   console.log(JSON.stringify({ environment: 'Postgres aislado / adjunto archivado sintético',
-    restoreReadyInMs, verificationInMs: Math.round(performance.now() - began), rollback, ...(alertProof && { alertProof }),
+    restoreReadyInMs, verificationInMs: Math.round(performance.now() - began), evidence, rollback, ...(alertProof && { alertProof }),
     concurrentCreations: 2, folios: 'OT-0100..0103 / OC 3001..3004',
     batchFolios, warehouseReserve, retained: ['OT y evidencia', 'aprobación de OC', 'recepción y saldo', 'comprobante de reintento', 'garantía y evidencia privada', 'odómetro separado de horas', 'stock y reservas',
       ...(previousRepo ? ['ajustes autorizados', 'acuses y reintentos de alertas'] : [])] }));

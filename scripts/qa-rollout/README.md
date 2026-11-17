@@ -36,4 +36,6 @@ HERMES_QA_PREVIOUS_REPO=/ruta/absoluta/al/checkout/anterior \
 node scripts/qa-rollout/verify-panama-restore.mjs
 ```
 
-El ensayo aplica las migraciones nuevas a datos sintéticos, restaura la base y comprueba la descarga privada con un adjunto archivado por separado. Mide el tiempo hasta abrir los primeros vínculos restaurados. Ejecuta el código anterior contra el esquema restaurado, verifica la consulta de OT, aprobación y recepción de OC, saldos y adjuntos y registra una avería que la candidata recupera sin duplicar al reintentar. Conserva las nuevas bitácoras en el esquema. El tiempo del ensayo local corresponde a PGlite y al adjunto sintético.
+El ensayo restaura la base sintética y una copia separada de la foto de una OT y del PDF de garantía. Compara tamaño y SHA-256 con el registro restaurado, comprueba ambas descargas como Coordinación y Jefe de Taller y detecta si el archivo falta o está dañado. Mide el tiempo desde el inicio de la restauración hasta completar las descargas.
+
+Con el checkout anterior, el ensayo aplica las migraciones adicionales que correspondan y verifica la consulta de OT, aprobación y recepción de OC, saldos y adjuntos sobre la base restaurada. La candidata recupera la avería registrada por la versión anterior sin duplicar el folio y conserva las bitácoras. Los tiempos corresponden a PGlite y archivos sintéticos.
