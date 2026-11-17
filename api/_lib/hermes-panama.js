@@ -2,6 +2,7 @@ import { GoogleAuth } from 'google-auth-library';
 import { createHermesSheets } from './hermes-google-sheets.js';
 import { identityConfig, identityRequest } from './hermes-identity.js';
 import { resolveShiftBilling } from './hermes-panama-shift-billing.js';
+import { PM_CHECKLIST_SOURCE, pmModelCode, resolvePanamaPmChecklist } from './hermes-panama-pm-checklist.js';
 
 export const PANAMA_PROJECT = 'tmf-panama';
 const management = new Set(['jefe_taller', 'coordinador', 'supervisor', 'gerencia']);
@@ -386,8 +387,36 @@ async function publishedCuts({ method, session, readCuts }) {
   }
 }
 
+const readPmChecklistCut = () => readSnapshot({ key: PM_CHECKLIST_SOURCE });
+
+export async function readPrintablePanamaPm(query, session, {
+  expectedModel, folio, readPmChecklists = readPmChecklistCut,
+  readPlan = () => readMaster(maintenancePlan, source => visibleRecords(rowsOf(source), maintenancePlan, session)),
+} = {}) {
+  const unit = typeof query?.unit === 'string' ? query.unit.trim().toUpperCase() : '';
+  const match = typeof query?.level === 'string' ? /^PM[- ]?(\d{1,5}|\d{1,2},\d{3})$/i.exec(query.level.trim()) : null;
+  const hours = Number(match?.[1]?.replace(',', ''));
+  if (!/^[A-Z][A-Z0-9_-]{0,24}$/.test(unit) || !Number.isFinite(hours) || hours < 1) {
+    return { status: 400, body: { error: 'Selecciona un equipo y un intervalo PM.' } };
+  }
+  if (session.project !== PANAMA_PROJECT || (!session.allUnits && !session.assignedUnits?.includes(unit))) {
+    return { status: 403, body: { error: 'Equipo fuera de tu alcance.' } };
+  }
+  const matches = (await readPlan()).filter(plan => plan.unit === unit);
+  const plan = matches.length === 1 ? matches[0] : null;
+  if (!plan?.checklist) return { status: 404, body: { error: `Falta vincular el checklist de ${unit} en el maestro PM.` } };
+  if (expectedModel && pmModelCode(expectedModel) !== pmModelCode(plan.model)) {
+    return { status: 409, body: { error: 'El modelo de esta orden difiere del maestro PM.' } };
+  }
+  const document = resolvePanamaPmChecklist(plan, hours, await readPmChecklists());
+  return document
+    ? { status: 200, body: { ...document, ...(folio && { folio }) } }
+    : { status: 404, body: { error: `El maestro no tiene un checklist para ${unit} a ${hours.toLocaleString('en-US')} h.` } };
+}
+
 export async function dispatchPanama({
   path, method, query, session, read, readCuts = readPublishedCuts, sourceReaders, preferPublished = true,
+  readPmChecklists,
 }) {
   if (session.project !== PANAMA_PROJECT) return { status: 403, body: { error: 'Consulta reservada a TMF Panamá.' } };
   if (path === 'api/panama/cortes') return publishedCuts({ method, session, readCuts });
@@ -396,6 +425,14 @@ export async function dispatchPanama({
     if (read || !preferPublished) return project(await (read ?? readSourceForConsultation)(spec));
     return readMaster(spec, project, sourceReaders);
   };
+  if (path === 'api/panama/pm-checklist') {
+    if (method !== 'GET') return { status: 405, body: { error: 'Método no permitido.' } };
+    if (!management.has(session.role)) return { status: 403, body: { error: 'Consulta reservada a Taller y Operaciones.' } };
+    return readPrintablePanamaPm(query, session, {
+      readPlan: async () => (await readSection(maintenancePlan)).records,
+      readPmChecklists,
+    });
+  }
   if (path === 'api/panama/componentes') return componentDetails({ method, query, session, readSection });
   if (path !== 'api/panama/summary' && path !== 'api/panama/maintenance') return { status: 404, body: { error: 'Ruta no disponible para Panamá.' } };
   if (method !== 'GET') return { status: 405, body: { error: 'Hermes Panamá está en modo consulta.' } };

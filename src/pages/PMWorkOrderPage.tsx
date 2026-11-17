@@ -9,7 +9,7 @@ import { useEquipmentList } from '../hooks/useEquipmentList';
 import { getNextPM } from '../data/pm-rules';
 import { getCumulativePMParts, getAvailablePMLevels, type PMPart } from '../data/pm-parts-catalog';
 import { mexicoDateInput } from '../lib/date-utils';
-import { requestWorkshop, WorkshopApiError, checkSchedule, mechanicCoversUnit, PANAMA_PM_CHECKLIST_SOURCE,
+import { requestWorkshop, WorkshopApiError, checkSchedule, mechanicCoversUnit,
   type ScheduleAssessment, type ScheduleResources, type WorkshopMechanic } from '../lib/workshop-api';
 import type { PMChecklist, PMTrigger } from '../types/workorder';
 import { useAuthStore } from '../stores/auth-store';
@@ -20,6 +20,7 @@ import SuccessToast from '../components/ui/SuccessToast';
 import ScheduleResourcesFields from '../components/calendar/ScheduleResourcesFields';
 import PmTriggerList from '../components/workshop/PmTriggerList';
 import { visibleWorkOrderFolio } from '../lib/purchasing-api';
+import PanamaPmChecklistPdf from '../components/workshop/PanamaPmChecklistPdf';
 
 const CATEGORY_ICONS: Record<string, string> = {
   Filtro: '🔧',
@@ -359,16 +360,13 @@ export default function PMWorkOrderPage() {
                   <summary className="min-h-11 cursor-pointer py-3 font-medium text-text">Checklist · {selectedTemplate.checklist.tasks.length} tareas</summary>
                   <p className="break-words">{selectedTemplate.model}{selectedTemplate.serial && ` · Serie ${selectedTemplate.serial}`}</p>
                   <p className="break-words">{selectedTemplate.checklist.reference}</p>
-                  <a href={officialEntry?.checklistUrl ?? PANAMA_PM_CHECKLIST_SOURCE} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center font-medium underline">Ver checklist oficial</a>
                 </details>
               ) : <>
                 <p>{selectedTemplate === null ? 'Cargando checklist…'
                   : selectedTemplate.checklist === null ? 'Valida el checklist antes de entregar la OT.'
                     : 'Checklist sin verificar.'}</p>
-                <a href={officialEntry?.checklistUrl ?? PANAMA_PM_CHECKLIST_SOURCE} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center font-medium underline">
-                  Ver checklist oficial
-                </a>
               </>}
+              <PanamaPmChecklistPdf unit={unidad} level={pmLevel} />
             </div>
           )}
           {isPanama && pmLevel && <section aria-label="Disparadores de mantenimiento" className="mt-3 space-y-2 rounded-xl border border-border p-3">
@@ -479,9 +477,11 @@ export default function PMWorkOrderPage() {
       {printData && (
         <>
           {checklistMissing && <p className="mb-3 rounded-xl border border-border bg-white p-3 text-sm text-text">
-            Valida el checklist antes de entregar.{' '}
-            <a href={PANAMA_PM_CHECKLIST_SOURCE} target="_blank" rel="noreferrer" className="font-medium underline underline-offset-2">Ver checklist oficial</a>
+            Valida el checklist antes de entregar.
           </p>}
+          {isPanama && <div className="mb-3 rounded-xl border border-border bg-white px-3 text-sm">
+            <PanamaPmChecklistPdf unit={printData.unidad} level={printData.pmLevel} orderId={printData.otId} />
+          </div>}
           <button type="button" onClick={() => navigate(`/workorders/${encodeURIComponent(printData.otId)}`)} className="mb-3 w-full rounded-xl border border-border p-3 text-sm font-semibold text-text">
             Abrir orden{(isPanama ? visibleWorkOrderFolio(printData.otId) : printData.otId) ? ` ${printData.otId}` : ''}
           </button>

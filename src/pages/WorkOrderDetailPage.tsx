@@ -13,7 +13,8 @@ import { useEquipmentById } from '../hooks/useEquipmentList';
 import { PRIORITY_CONFIG, ESTADO_CONFIG, getNextStatuses } from '../types/workorder';
 import type { OTEstado, OTStatusField, PMChecklistDefinition, StatusLogEntry, WorkshopExecutionInput } from '../types/workorder';
 import { photoUrls } from '../lib/averias';
-import { requestWorkshop, mechanicCoversUnit, PANAMA_PM_CHECKLIST_SOURCE, type WorkshopMechanic } from '../lib/workshop-api';
+import { requestWorkshop, mechanicCoversUnit, type WorkshopMechanic } from '../lib/workshop-api';
+import PanamaPmChecklistPdf from '../components/workshop/PanamaPmChecklistPdf';
 import { mexicoDateInput } from '../lib/date-utils';
 import { uploadPhoto } from '../lib/photo-upload';
 import { uploadEvidence } from '../lib/evidence-upload';
@@ -450,7 +451,6 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
               <summary className="min-h-11 cursor-pointer py-3 font-medium">Datos del checklist</summary>
               <p>{pm.checklist.reference}</p>
               {pm.serial && <p className="break-words">Serie {pm.serial}</p>}
-              <a href={PANAMA_PM_CHECKLIST_SOURCE} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center font-medium underline">Ver checklist oficial</a>
             </details>
             <ul className="space-y-2 text-sm text-text">
               {pm.checklist.tasks.map((task) => (
@@ -482,7 +482,7 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
               ))}
             </ul>
           </>}
-          {!pm?.checklist && <a href={PANAMA_PM_CHECKLIST_SOURCE} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center text-sm font-medium text-text underline underline-offset-2">Ver checklist oficial</a>}
+          {pm?.level && <PanamaPmChecklistPdf unit={wo.unidad} level={pm.level} orderId={wo.ot_id} />}
         </section>
       )}
 

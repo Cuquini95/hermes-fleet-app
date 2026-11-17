@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { STICKER_INSPECTION_TEMPLATES, stickerTemplateForEquipment } from '../../src/data/sticker-inspection-templates.js';
 import { activeFailureUnits, buildDispatchReadinessMap } from '../../src/lib/dispatch-readiness.js';
-import { PANAMA_PROJECT } from './hermes-panama.js';
+import { PANAMA_PROJECT, readPrintablePanamaPm } from './hermes-panama.js';
 import { workshopExceptionRecords } from './hermes-panama-exceptions.js';
 import { panamaWorkshopDate, panamaWorkshopFailureOrder, reconcilePanamaWorkshop } from './hermes-panama-workshop.js';
 import { HermesSheetError, PANAMA_READINESS_TAB } from './hermes-google-sheets.js';
@@ -1456,7 +1456,15 @@ export async function dispatchWorkshop(input) {
     }
     if (method === 'GET' && endpoint === 'pmchecklist') {
       assert(ORDER_READ.has(session.role), 403, 'Tu rol no puede consultar el taller');
-      return { status: 200, body: await pmDefinition(input, await getOrder(input, input.query?.otId)) };
+      const order = await getOrder(input, input.query?.otId);
+      const definition = await pmDefinition(input, order);
+      if (input.query?.format === 'print') {
+        assert(!session.previewDemo, 404, 'Esta orden de prueba no tiene un checklist del maestro.');
+        return await readPrintablePanamaPm({ unit: order.row[3], level: definition.level }, session, {
+          expectedModel: definition.model, folio: order.otId,
+        });
+      }
+      return { status: 200, body: definition };
     }
     if (method === 'GET' && endpoint === 'pmtemplate') {
       assert(ASSIGN.has(session.role), 403, 'Tu rol no puede preparar órdenes PM');

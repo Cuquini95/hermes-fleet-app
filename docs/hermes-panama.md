@@ -54,3 +54,10 @@ La salud del gateway comprueba sesión, maestro de flota y registro operativo. U
 La sección de Manuales y Diagramas en Panamá usa `HERMES_PANAMA_TECHNICAL_CATALOG_JSON`. Cada entrada contiene `title`, `model`, `kind` (manual o diagram), `source` y `url` de archivo de Google Drive. Taller debe verificar edición, aplicación por equipo y permiso de lectura en Drive antes de publicar una entrada. El vínculo conserva los permisos existentes de Drive. El entorno sin catálogo indica biblioteca no disponible.
 
 La flota puede complementar marca, modelo y serie mediante `HERMES_PANAMA_EQUIPMENT_SHEET_ID`, con lectura de `EQUIPOS!A3:M` del Maestro de Equipos. Solo se unen filas de Panamá y TMF por código inequívoco. Los campos sin fuente, como horómetro actual y disponibilidad de despacho, requieren sus registros propios.
+
+El PDF de Programa PM y de la orden usa el enlace de equipo en AJUSTES y el
+corte `pmChecklists` de Flota - Checklists PM, en
+`hermes_panama_source_snapshots`. El campo `rows` contiene las pestañas técnicas
+con el formato `[{ id, name, rows }]`, desde la cabecera hasta Hallazgos y firmas.
+El PDF incluye los intervalos correspondientes y conserva las condiciones por
+modelo. Actualiza ese corte cuando se revisen las tareas del maestro.

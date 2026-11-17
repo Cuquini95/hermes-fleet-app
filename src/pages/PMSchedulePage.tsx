@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/auth-store';
 import { SkeletonList } from '../components/ui/Skeleton';
 import PanamaPmBatch from '../components/workshop/PanamaPmBatch';
 import PanamaPmNextService from '../components/workshop/PanamaPmNextService';
+import PanamaPmChecklistPdf from '../components/workshop/PanamaPmChecklistPdf';
 import { PANAMA_PM_MASTER_URL, PANAMA_PM_REGISTER_URL, fetchPanamaMaintenance, type MaintenanceEntry, type PanamaMaintenance } from '../lib/panama-maintenance';
 import LegacyPMSchedulePage from './LegacyPMSchedulePage';
 
@@ -44,7 +45,8 @@ function MaintenanceCard({ entry, canSchedule }: { entry: MaintenanceEntry; canS
         </div>
       )}
       <div className="mt-2 flex flex-wrap gap-x-4 text-sm font-semibold">
-        {entry.checklistUrl && <a href={entry.checklistUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center underline">Checklist del equipo</a>}
+        {entry.checklistUrl && entry.level && <PanamaPmChecklistPdf unit={entry.unit} level={entry.level} />}
+        {!entry.checklistUrl && entry.level && <p className="flex min-h-11 items-center font-normal text-text-secondary">Checklist pendiente</p>}
         {canSchedule && entry.level && <Link
           to={`/pm-order?${new URLSearchParams({ unidad: entry.unit, nivel: entry.level })}`}
           className="inline-flex min-h-11 items-center text-amber"
