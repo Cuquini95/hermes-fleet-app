@@ -196,6 +196,38 @@ test('el lector conserva el corte privado si la lectura del Maestro falla o pier
   assert.equal(review.orders.records[0].priority, undefined);
 });
 
+test('la consulta de Taller prioriza el corte y la verificación operativa prioriza la hoja', async () => {
+  const failures = [['CASO', 'EQUIPO', 'FALLA REPORTADA', 'ESTADO', 'ÚLTIMO REPORTE', 'OT VINCULADA'],
+    ['TMF-42', 'DZ203', 'Revisar', 'DETENIDO REPORTADO', '14-nov-2026 07:32', '']];
+  const orders = [['Nº OT', 'EQUIPO', 'FALLA / TRABAJO A REALIZAR', 'ESTADO', 'CONTROL INTEGRIDAD OT'],
+    ['OT-0042', 'DZ203', 'Revisar', 'Abierta', 'Pendiente']];
+  const reads = [];
+  const options = {
+    allowSnapshot: true,
+    readLive: async ({ key }) => { reads.push('live'); return key === 'failures' ? failures : orders; },
+    readCut: async ({ key }) => { reads.push('cut'); return { captured_at: capturedAt, rows: key === 'failures' ? failures : orders }; },
+  };
+  const display = await panamaMaster.readPanamaWorkshopMasters({ ...options, preferPublished: true });
+  assert.deepEqual(reads, ['cut', 'cut']);
+  assert.equal(display.failures.capturedAt, capturedAt);
+  reads.length = 0;
+  const operational = await panamaMaster.readPanamaWorkshopMasters(options);
+  assert.deepEqual(reads, ['live', 'live']);
+  assert.equal(operational.failures.capturedAt, null);
+
+  const store = sheetsWith({ masters: display });
+  const preferences = [];
+  store.readWorkshopMasters = async ({ preferPublished = false } = {}) => {
+    preferences.push(preferPublished);
+    return preferPublished ? display : operational;
+  };
+  const { body } = await readiness(store);
+  assert.equal(body.workshop.failures.capturedAt, capturedAt);
+  await readiness(store, { ...manager, role: 'operador' });
+  assert.equal((await verifyUnitsReadiness(store, new Set(['DZ203']))).get('DZ203')?.level, 'blocked');
+  assert.deepEqual(preferences, [true, false, false]);
+});
+
 test('un detenido oficial bloquea esa unidad y un estado por verificar no se cuenta como detenido', async () => {
   const store = sheetsWith({
     masters: {

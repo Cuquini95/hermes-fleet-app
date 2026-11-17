@@ -166,6 +166,43 @@ test('snapshot sections retain their timestamp and scope; unavailable sources st
   assert.equal(body.snapshots.shifts, undefined);
 });
 
+test('las consultas de Maestros TMF priorizan el corte publicado y conservan el alcance de la sesión', async () => {
+  const captured_at = new Date().toISOString();
+  let liveReads = 0;
+  const { body } = await dispatchPanama({ ...query, read: undefined, query: { sections: 'fleet,costs' },
+    sourceReaders: {
+      allowSnapshot: true,
+      readCut: async ({ key }) => {
+        assert.equal(key, 'fleet');
+        return { captured_at, rows: fixtures.fleet };
+      },
+      readLive: async () => { liveReads++; throw new Error('Hoja no disponible'); },
+    },
+  });
+  assert.equal(liveReads, 0);
+  assert.deepEqual(Object.keys(body.sections), ['fleet']);
+  assert.deepEqual(body.sections.fleet.map(row => row.unit), ['DZ203']);
+  assert.equal(body.snapshots.fleet, captured_at);
+});
+
+test('una consulta vuelve a la hoja si el corte tiene columnas inválidas o fecha futura', async () => {
+  const captured_at = new Date().toISOString();
+  const future = new Date(Date.now() + 600_000).toISOString();
+  for (const cut of [{ captured_at, rows: [['Columna movida']] }, { captured_at: future, rows: fixtures.fleet }]) {
+    let liveReads = 0;
+    const { body } = await dispatchPanama({ ...query, read: undefined, query: { sections: 'fleet' },
+      sourceReaders: {
+        allowSnapshot: true,
+        readCut: async () => cut,
+        readLive: async () => { liveReads++; return fixtures.fleet; },
+      },
+    });
+    assert.equal(liveReads, 1);
+    assert.deepEqual(body.sections.fleet.map(row => row.unit), ['DZ203']);
+    assert.equal(body.snapshots.fleet, undefined);
+  }
+});
+
 test('a focused master consultation reads only the requested source permitted by the session', async () => {
   const result = await dispatchPanama({ ...query, query: { sections: 'failures,costs' }, read: async ({ key }) => {
     assert.equal(key, 'failures');

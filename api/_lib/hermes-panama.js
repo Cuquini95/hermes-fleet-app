@@ -134,10 +134,34 @@ export async function readPanamaForPmScheduling(spec) {
 
 const rowsOf = source => Array.isArray(source) ? source : source.rows;
 
-export async function readPanamaWorkshopMasters({
+const publishedMastersAvailable = () => ['production', 'preview'].includes(process.env.VERCEL_ENV);
+
+async function readMaster(spec, project, {
   readLive = readSource,
   readCut = readSnapshot,
-  allowSnapshot = process.env.VERCEL_ENV === 'production',
+  allowSnapshot = publishedMastersAvailable(),
+  preferPublished = true,
+} = {}) {
+  const live = async () => project(await readLive(spec));
+  if (!allowSnapshot) return live();
+  const published = async () => {
+    const source = await readCut(spec);
+    const capturedAt = Date.parse(source?.captured_at);
+    if (!Array.isArray(source?.rows) || !Number.isFinite(capturedAt) || capturedAt > Date.now() + 300_000) {
+      throw new Error('Invalid Panama master capture');
+    }
+    return project(source);
+  };
+  const [primary, fallback] = preferPublished ? [published, live] : [live, published];
+  try { return await primary(); }
+  catch { return fallback(); }
+}
+
+export async function readPanamaWorkshopMasters({
+  preferPublished = false,
+  readLive = readSource,
+  readCut = readSnapshot,
+  allowSnapshot = preferPublished ? publishedMastersAvailable() : process.env.VERCEL_ENV === 'production',
 } = {}) {
   const specs = sourceSpecs.filter(spec => spec.key === 'failures' || spec.key === 'orders');
   const sections = await Promise.all(specs.map(async spec => {
@@ -146,12 +170,8 @@ export async function readPanamaWorkshopMasters({
       capturedAt: source.captured_at ?? null,
     });
     try {
-      return [spec.key, project(await readLive(spec))];
+      return [spec.key, await readMaster(spec, project, { readLive, readCut, allowSnapshot, preferPublished })];
     } catch {
-      if (allowSnapshot) {
-        try { return [spec.key, project(await readCut(spec))]; }
-        catch { /* A missing or invalid cut leaves this source unavailable. */ }
-      }
       return [spec.key, null];
     }
   }));
@@ -287,7 +307,7 @@ function componentLifeCalculation(record) {
   return { status, elapsed: elapsed / 1000, remaining: remaining / 1000 };
 }
 
-async function componentDetails({ method, query, session, read }) {
+async function componentDetails({ method, query, session, readSection }) {
   if (method !== 'GET') return { status: 405, body: { error: 'Consulta de componentes de solo lectura.' } };
   if (!management.has(session.role) && session.role !== 'mecanico') {
     return { status: 403, body: { error: 'Consulta reservada a Taller y Supervisión.' } };
@@ -299,10 +319,10 @@ async function componentDetails({ method, query, session, read }) {
     return { status: 403, body: { error: 'Unidad fuera del alcance de la sesión.' } };
   }
   const results = await Promise.allSettled(componentSources.map(async spec => {
-    const source = await read(spec);
-    const records = visibleRecords(rowsOf(source), spec, { ...session, allUnits: false, assignedUnits: [unit] })
+    const { records, capturedAt } = await readSection(spec, { ...session, allUnits: false, assignedUnits: [unit] });
+    const validRecords = records
       .filter(row => row.part && (!row.date || /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(row.date)));
-    return { records, capturedAt: source.captured_at };
+    return { records: validRecords, capturedAt };
   }));
   const changes = [], life = [], unavailable = [], snapshots = {};
   results.forEach((result, index) => {
@@ -366,10 +386,17 @@ async function publishedCuts({ method, session, readCuts }) {
   }
 }
 
-export async function dispatchPanama({ path, method, query, session, read = readSourceForConsultation, readCuts = readPublishedCuts }) {
+export async function dispatchPanama({
+  path, method, query, session, read, readCuts = readPublishedCuts, sourceReaders, preferPublished = true,
+}) {
   if (session.project !== PANAMA_PROJECT) return { status: 403, body: { error: 'Consulta reservada a TMF Panamá.' } };
   if (path === 'api/panama/cortes') return publishedCuts({ method, session, readCuts });
-  if (path === 'api/panama/componentes') return componentDetails({ method, query, session, read });
+  const readSection = async (spec, scope = session) => {
+    const project = source => ({ records: visibleRecords(rowsOf(source), spec, scope), capturedAt: source.captured_at });
+    if (read || !preferPublished) return project(await (read ?? readSourceForConsultation)(spec));
+    return readMaster(spec, project, sourceReaders);
+  };
+  if (path === 'api/panama/componentes') return componentDetails({ method, query, session, readSection });
   if (path !== 'api/panama/summary' && path !== 'api/panama/maintenance') return { status: 404, body: { error: 'Ruta no disponible para Panamá.' } };
   if (method !== 'GET') return { status: 405, body: { error: 'Hermes Panamá está en modo consulta.' } };
   if (path === 'api/panama/maintenance' && !management.has(session.role)) {
@@ -385,9 +412,8 @@ export async function dispatchPanama({ path, method, query, session, read = read
   const snapshots = {};
   const sections = await Promise.all(visible.filter(spec => !requested || requested.has(spec.key)).map(async spec => {
     try {
-      const source = await read(spec);
-      const records = visibleRecords(rowsOf(source), spec, session);
-      if (source.captured_at) snapshots[spec.key] = source.captured_at;
+      const { records, capturedAt } = await readSection(spec);
+      if (capturedAt) snapshots[spec.key] = capturedAt;
       return [spec.key, records];
     } catch {
       return [spec.key, null];

@@ -1116,7 +1116,7 @@ async function readinessSources(context) {
   const [failures, stickers, inspections, orders, masters, confirmed] = await Promise.allSettled([
     ...READINESS_SOURCES.map(async ([, tab]) => sheets.read(tab, { cached: true, requireExisting: true })),
     Promise.resolve().then(() => isPanama(context) ? sheets.read(TAB.orders, { cached: true, requireExisting: true }) : []),
-    Promise.resolve().then(() => readMasters ? sheets.readWorkshopMasters() : null),
+    Promise.resolve().then(() => readMasters ? sheets.readWorkshopMasters({ preferPublished: MANAGEMENT.has(session.role) }) : null),
     Promise.resolve().then(() => readOperating ? sheets.read('HERMES_PA_CONFIRMACION_OPERATIVA') : null),
   ]);
   const response = { unavailable: [] };

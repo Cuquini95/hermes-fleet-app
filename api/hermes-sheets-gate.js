@@ -315,7 +315,7 @@ export function createHermesGateway({
         const [fleet, operations, masters, evidence] = await Promise.allSettled([
           healthProbe(() => sheets.read('01 Inventario', { cached: true })),
           healthProbe(() => sheets.read('ORDENES_TRABAJO', { cached: true, requireExisting: true })),
-          healthProbe(() => sheets.readWorkshopMasters?.()),
+          healthProbe(() => sheets.readWorkshopMasters?.({ preferPublished: true })),
           healthProbe(() => !demo && sheets.nativeOperations ? probeEvidence() : undefined),
         ]);
         const checks = {
@@ -415,7 +415,7 @@ export function createHermesGateway({
       const dispatch = path.startsWith('api/workshop/') ? dispatchWorkshop : path.startsWith('api/purchasing/') ? dispatchPurchasing : null;
       if (!dispatch) return invalid(res, 404, 'Ruta no disponible.');
       const batchPm = ['api/workshop/pmbatch', 'api/workshop/pmbatchcheck'].includes(path);
-      const readPmSources = async () => (await dispatchPanama({ path: 'api/panama/maintenance', method: 'GET', session,
+      const readPmSources = async () => (await dispatchPanama({ path: 'api/panama/maintenance', method: 'GET', session, preferPublished: false,
         read: demo ? demoSheets.readSummary : readPanama ?? (batchPm ? readPanamaForPmScheduling : undefined) })).body;
       const result = await dispatch({ path, method: req.method, body: req.body ?? {}, query: req.query ?? {}, session, sheets, listMechanics, readPmSources });
       return res.status(result.status).json(result.body);
