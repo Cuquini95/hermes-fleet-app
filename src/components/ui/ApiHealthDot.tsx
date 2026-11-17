@@ -13,7 +13,7 @@ const CHECK_LABELS = { identity: 'Sesión', fleet: 'Maestro de flota', operation
   masters: 'Maestros de Taller', evidence: 'Adjuntos privados' };
 const CHECK_ACTIONS: Record<keyof typeof CHECK_LABELS, string> = {
   identity: 'Vuelve a iniciar sesión.',
-  fleet: 'Consulta el último corte disponible.',
+  fleet: 'Reintenta la consulta.',
   operations: 'Conserva el borrador y comprueba si el folio existe antes de reintentar.',
   masters: 'Usa el último corte visible con su fecha.',
   evidence: 'Conserva el archivo y vuelve a intentar adjuntarlo cuando el servicio regrese.',
@@ -98,7 +98,12 @@ export default function ApiHealthDot() {
                     <div key={check} className="flex justify-between gap-3">
                       <dt className="text-white/80">{CHECK_LABELS[check as keyof typeof CHECK_LABELS] ?? check}</dt>
                       <dd className={state === 'up' ? 'text-green-300' : 'text-amber-300'}>
-                        {state === 'up' ? 'Disponible' : <>
+                        {state === 'up' ? <>
+                          Disponible
+                          {check === 'fleet' && health.fleetCapturedAt && <time className="block text-white/60" dateTime={health.fleetCapturedAt}>
+                            Corte del {new Date(health.fleetCapturedAt).toLocaleString('es-PA', { timeZone: 'America/Panama', dateStyle: 'short', timeStyle: 'short' })}
+                          </time>}
+                        </> : <>
                           <span>No disponible</span>
                           <span className="block mt-1">{CHECK_ACTIONS[check as keyof typeof CHECK_LABELS]}</span>
                         </>}

@@ -16,6 +16,7 @@ export interface ApiHealth {
   status: 'ok' | 'degraded' | 'down' | 'loading';
   uptime_seconds?: number;
   checks?: Partial<Record<'identity' | 'fleet' | 'operations' | 'masters' | 'evidence', 'up' | 'down'>>;
+  fleetCapturedAt?: string;
   dataMode?: 'demo' | 'operational';
   writeEnabled?: boolean;
   operationGroups?: string[];

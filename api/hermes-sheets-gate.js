@@ -326,7 +326,7 @@ export function createHermesGateway({
           return res.status(200).json({ status: 'ok', writeEnabled });
         }
         const [fleet, operations, masters, evidence] = await Promise.allSettled([
-          healthProbe(() => sheets.read('01 Inventario', { cached: true })),
+          healthProbe(() => sheets.readReportFleet ? sheets.readReportFleet() : sheets.read('01 Inventario', { cached: true })),
           healthProbe(() => sheets.read('ORDENES_TRABAJO', { cached: true, requireExisting: true })),
           healthProbe(() => sheets.readWorkshopMasters?.({ preferPublished: true })),
           healthProbe(() => !demo && sheets.nativeOperations ? probeEvidence() : undefined),
@@ -343,9 +343,11 @@ export function createHermesGateway({
           checks.evidence = evidence.status === 'fulfilled' && evidence.value === true ? 'up' : 'down';
         }
         const canWrite = enablePanamaOperations && writeEnabled && checks.operations === 'up';
+        const fleetCapturedAt = fleet.status === 'fulfilled' ? fleet.value?.capturedAt : null;
         return res.status(200).json({
           status: Object.values(checks).every(check => check === 'up') ? 'ok' : 'degraded',
           checks,
+          ...(fleetCapturedAt && { fleetCapturedAt }),
           writeEnabled: canWrite,
           dataMode: demo ? 'demo' : 'operational',
           ...(permittedGroups && { operationGroups: canWrite ? [...permittedGroups] : [] }),

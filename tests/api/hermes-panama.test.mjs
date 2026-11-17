@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dispatchPanama, readPanamaReportFleet } from '../../api/_lib/hermes-panama.js';
+import { dispatchPanama, readPanamaInventory, readPanamaReportFleet } from '../../api/_lib/hermes-panama.js';
 import { createHermesGateway } from '../../api/hermes-sheets-gate.js';
 
 const teamMember = { userId: 'qa-panama', project: 'tmf-panama', role: 'jefe_taller', assignedUnits: ['dz203'], allUnits: false };
@@ -78,7 +78,6 @@ test('gateway keeps Panama in its own read routes and never writes its source', 
 });
 
 test('fleet projection joins the official equipment master by Panama TMF code without borrowing Mexican rows', async () => {
-  const { readPanamaInventory } = await import('../../api/_lib/hermes-panama.js');
   const inventory = await readPanamaInventory(async spec => {
     if (spec.key === 'fleet') return fixtures.fleet;
     assert.equal(spec.key, 'equipmentDetails');
@@ -92,6 +91,45 @@ test('fleet projection joins the official equipment master by Panama TMF code wi
   assert.deepEqual(inventory[3].slice(1,7), ['DZ203','Dozer','Komatsu','D155AX-6','','PA-203']);
   assert.equal(inventory[3][8], '');
   assert.equal(inventory[4][6], '');
+});
+
+test('inventory and health use the same valid fleet cut when Sheets cannot respond', async () => {
+  const capturedAt = new Date(Date.now() - 3000).toISOString();
+  const readLive = async () => { throw new Error('Sheets unavailable'); };
+  const readCut = async ({ key }) => {
+    const rows = key === 'fleet' ? fixtures.fleet : [
+      ['CÓDIGO','TIPO','MARCA','MODELO','SERIE','PAÍS','PROYECTO'],
+      ['DZ203','Dozer','Komatsu','D155AX-6','PA-203','Panamá','TMF'],
+    ];
+    return { captured_at: capturedAt, rows };
+  };
+  const gateway = createHermesGateway({
+    sheets: {
+      nativeOperations: true,
+      read: tab => tab === '01 Inventario' ? readPanamaInventory(readLive, { readCut, allowSnapshot: true }) : [[]],
+      readReportFleet: () => readPanamaReportFleet({ readLive, readCut, allowSnapshot: true }),
+      readWorkshopMasters: async () => ({ failures: {}, orders: {} }),
+    },
+    sessionReader: async () => teamMember,
+    probeEvidence: async () => true,
+    enablePanamaOperations: true,
+    writeEnabled: false,
+  });
+  async function get(path, query = {}) {
+    const result = { code: 0, body: null };
+    const res = { setHeader() {}, status(code) { result.code = code; return this; }, json(body) { result.body = body; } };
+    await gateway({ method: 'GET', query: { path, ...query } }, res);
+    assert.equal(result.code, 200);
+    return result.body;
+  }
+  const health = await get('health');
+  assert.equal(health.checks.fleet, 'up');
+  assert.equal(health.status, 'ok');
+  assert.equal(health.fleetCapturedAt, capturedAt);
+  assert.equal(health.writeEnabled, false);
+  const inventory = await get('api/sheets/read', { tab: '01 Inventario' });
+  assert.deepEqual(inventory.data[3].slice(1, 7), ['DZ203', 'Dozer', 'Komatsu', 'D155AX-6', '', 'PA-203']);
+  assert.deepEqual(inventory.data[4], []);
 });
 
 test('the report roster falls back to the fleet sheet when the database cut is missing or invalid', async () => {

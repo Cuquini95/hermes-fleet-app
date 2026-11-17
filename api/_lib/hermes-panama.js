@@ -185,12 +185,26 @@ const equipmentDetails = {
   columns: { unit: 'CÓDIGO', project: 'PROYECTO', kind: 'TIPO', brand: 'MARCA', model: 'MODELO', serial: 'SERIE' },
 };
 
-export async function readPanamaInventory(read = readSource) {
-  const [fleet, details] = await Promise.all([
-    read(sourceSpecs[0]),
-    Promise.resolve().then(() => read(equipmentDetails)).then(rows => visibleRecords(rowsOf(rows), equipmentDetails, { allUnits: true })).catch(() => []),
+function readFleetMaster(project, readers) {
+  const fleet = sourceSpecs[0];
+  return readMaster(fleet, source => {
+    const records = visibleRecords(rowsOf(source), fleet, { allUnits: true });
+    if (!records.length || new Set(records.map(row => keyOf(row.unit))).size !== records.length) {
+      throw new Error('Invalid Panama fleet roster');
+    }
+    return project(records, source.captured_at ?? null);
+  }, readers);
+}
+
+export async function readPanamaInventory(read = readSource, {
+  readCut = readSnapshot, allowSnapshot = false,
+} = {}) {
+  const readers = { readLive: read, readCut, allowSnapshot };
+  const [rows, details] = await Promise.all([
+    readFleetMaster(records => records, readers),
+    readMaster(equipmentDetails, source => visibleRecords(rowsOf(source), equipmentDetails, { allUnits: true }), readers)
+      .catch(() => []),
   ]);
-  const rows = visibleRecords(rowsOf(fleet), sourceSpecs[0], { allUnits: true });
   const byUnit = new Map();
   const ambiguous = new Set();
   for (const detail of details) {
@@ -211,31 +225,19 @@ export async function readPanamaInventory(read = readSource) {
   ];
 }
 
-export const readPanamaConsultationInventory = () => readPanamaInventory(readSourceForConsultation);
+export const readPanamaConsultationInventory = () => readPanamaInventory(readSource, {
+  allowSnapshot: publishedMastersAvailable(),
+});
 
 export async function readPanamaReportFleet({
   readLive = readSource,
   readCut = readSnapshot,
-  allowSnapshot = process.env.VERCEL_ENV === 'production',
+  allowSnapshot = publishedMastersAvailable(),
 } = {}) {
-  const fleet = sourceSpecs[0];
-  const project = (rows, capturedAt) => {
-    const units = visibleRecords(rows, fleet, { allUnits: true })
-      .map(({ unit, model }) => ({ code: keyOf(unit), model }));
-    if (!units.length || new Set(units.map(unit => unit.code)).size !== units.length) {
-      throw new Error('Invalid Panama fleet roster');
-    }
-    return { units, capturedAt };
-  };
-  if (allowSnapshot) {
-    try {
-      const snapshot = await readCut(fleet);
-      const captured = Date.parse(snapshot.captured_at);
-      if (!Number.isFinite(captured) || captured > Date.now() + 300_000) throw new Error('Invalid Panama fleet capture');
-      return project(snapshot.rows, snapshot.captured_at);
-    } catch { /* Keep the fleet sheet available while a cut is missing or unreadable. */ }
-  }
-  return project(await readLive(fleet), null);
+  return readFleetMaster((rows, capturedAt) => ({
+    units: rows.map(({ unit, model }) => ({ code: keyOf(unit), model })),
+    capturedAt,
+  }), { readLive, readCut, allowSnapshot });
 }
 
 function visibleRecords(rows, spec, session) {

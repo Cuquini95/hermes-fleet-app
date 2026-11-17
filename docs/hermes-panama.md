@@ -51,6 +51,8 @@ El acceso muestra «Recuperar contraseña». Para habilitar el envío, TI config
 
 La salud del gateway comprueba sesión, maestro de flota y registro operativo. Una prueba de guardado y relectura comprueba por separado la escritura.
 
+El inventario y la comprobación de flota en Producción y Preview operativo leen primero el corte privado de flota. Si el corte falla, consultan el maestro en Sheets. El panel muestra la fecha y hora del corte cuando recibe datos de ese respaldo.
+
 La sección de Manuales y Diagramas en Panamá usa `HERMES_PANAMA_TECHNICAL_CATALOG_JSON`. Cada entrada contiene `title`, `model`, `kind` (manual o diagram), `source` y `url` de archivo de Google Drive. Taller debe verificar edición, aplicación por equipo y permiso de lectura en Drive antes de publicar una entrada. El vínculo conserva los permisos existentes de Drive. El entorno sin catálogo indica biblioteca no disponible.
 
 La flota puede complementar marca, modelo y serie mediante `HERMES_PANAMA_EQUIPMENT_SHEET_ID`, con lectura de `EQUIPOS!A3:M` del Maestro de Equipos. Solo se unen filas de Panamá y TMF por código inequívoco. Los campos sin fuente, como horómetro actual y disponibilidad de despacho, requieren sus registros propios.
