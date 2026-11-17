@@ -151,25 +151,14 @@ function Profile({ userId }: { userId: string }) {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-border">
-        <h3 className="font-semibold text-text mb-2">Desempeño y certificaciones</h3>
-        <p className="text-sm text-text-secondary">Pendiente de conectar los registros de Panamá.</p>
-      </div>
-
       {/* ARCO: Exportar mis datos */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-border">
         <div className="flex items-center gap-3 mb-3">
           <div className="bg-blue-50 rounded-full p-2.5">
             <Shield size={20} className="text-blue-600" />
           </div>
-          <div>
-            <h3 className="font-semibold text-text">Mis datos</h3>
-            <p className="text-text-secondary text-xs">Consulta y descarga de tus registros</p>
-          </div>
+          <h3 className="font-semibold text-text">Mis datos</h3>
         </div>
-        <p className="text-xs text-text-secondary mb-3 leading-relaxed">
-          Descarga en JSON los registros que tienen tu identidad confirmada. El archivo señala las fuentes que no respondieron.
-        </p>
         {exportError && <p className="text-xs text-red-600 mb-2">{exportError}</p>}
         <button
           type="button"
@@ -188,11 +177,13 @@ function Profile({ userId }: { userId: string }) {
             </>
           )}
         </button>
-        <div className="mt-3 pt-3 border-t border-gray-100">
+        <details className="mt-3 border-t border-gray-100 pt-2 text-xs text-text-secondary">
+          <summary className="min-h-8 cursor-pointer py-2 font-semibold">Detalles de la descarga</summary>
+          <p>El archivo JSON incluye registros con tu identidad confirmada y fuentes sin respuesta.</p>
           <p className="text-xs text-text-secondary">
-            Consulta a Recursos Humanos de Panamá para actualizar tus datos.
+            Para actualizar tus datos, consulta a Recursos Humanos.
           </p>
-        </div>
+        </details>
       </div>
 
       {/* Historial de mis acciones */}
@@ -209,7 +200,6 @@ function Profile({ userId }: { userId: string }) {
           </div>
           <div className="flex-1">
             <p className="font-semibold text-text">Historial de mis acciones</p>
-            <p className="text-text-secondary text-xs">Últimos 30 registros en el sistema</p>
           </div>
           {historyOpen ? (
             <ChevronUp size={18} className="text-gray-400 shrink-0" />
@@ -219,6 +209,7 @@ function Profile({ userId }: { userId: string }) {
         </button>
         {historyOpen && (
           <div id="profile-history" className="border-t border-gray-100 px-4 pb-4">
+            <p className="pt-3 text-xs text-text-secondary">Últimos 30 registros</p>
             {historyLoading && (
               <div className="flex items-center gap-2 py-4 text-text-secondary text-sm">
                 <Loader2 size={16} className="animate-spin" /> Cargando historial...

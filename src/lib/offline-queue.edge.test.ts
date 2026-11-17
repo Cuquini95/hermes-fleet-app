@@ -58,6 +58,7 @@ function makeIDBStub(initialRecords: Array<Record<string, unknown>> = []) {
   };
 
   const fakeDB = {
+    close: vi.fn(),
     transaction: vi.fn((_name: string, mode: string) => makeTx(mode)),
   };
 

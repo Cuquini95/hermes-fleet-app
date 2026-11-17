@@ -1,6 +1,7 @@
 import { GoogleAuth } from 'google-auth-library';
 import { createHermesSheets } from './hermes-google-sheets.js';
 import { identityConfig, identityRequest } from './hermes-identity.js';
+import { resolveShiftBilling } from './hermes-panama-shift-billing.js';
 
 export const PANAMA_PROJECT = 'tmf-panama';
 const management = new Set(['jefe_taller', 'coordinador', 'supervisor', 'gerencia']);
@@ -54,10 +55,15 @@ async function getRows(spec) {
 }
 
 const cachedRows = new Map();
+const shiftReadTimes = new WeakMap();
 function readSource(spec) {
   const previous = cachedRows.get(spec.key);
   if (previous && Date.now() < previous.expiresAt) return previous.promise;
-  const entry = { expiresAt: Date.now() + 30000, promise: getRows(spec) };
+  const promise = getRows(spec);
+  const entry = { expiresAt: Date.now() + 30000, promise: spec.key === 'shifts' ? promise.then(rows => {
+    shiftReadTimes.set(rows, new Date().toISOString());
+    return rows;
+  }) : promise };
   cachedRows.set(spec.key, entry);
   entry.promise.catch(() => { if (cachedRows.get(spec.key) === entry) cachedRows.delete(spec.key); });
   return entry.promise;
@@ -69,16 +75,28 @@ export async function readOfficialPanamaShifts() {
   return {
     records: visibleRecords(rowsOf(source), { ...spec, limit: undefined }, { allUnits: true }),
     capturedAt: source.captured_at,
+    readAt: shiftReadTimes.get(source),
   };
+}
+
+const valuationSpec = { key: 'shiftValuation', env: 'HERMES_PANAMA_TMF_SHEET_ID', range: "'VALORIZACION'!A3:O" };
+const invoiceSpec = { key: 'shiftInvoice', env: 'HERMES_PANAMA_FINANCE_SHEET_ID', range: "'DOCUMENTOS COBRO'!A7:P" };
+
+export function readOfficialPanamaShiftBilling(part) {
+  const bridges = JSON.parse(process.env.HERMES_PANAMA_SHIFT_BILLING_LINKS_JSON || '[]');
+  const readWorkbook = async spec => ({ rows: await readSource(spec), workbookId: process.env[spec.env]?.trim() });
+  return resolveShiftBilling(part, {
+    bridges, readValuation: () => readWorkbook(valuationSpec), readInvoices: () => readWorkbook(invoiceSpec),
+  });
 }
 
 // Snapshots are read through the server identity and use the same scope
 // projection as the source sheets. Operational reconciliation still requires Sheets.
 const snapshots = new Map();
 
-function readSnapshot(spec) {
+function readSnapshot(spec, { fresh = false } = {}) {
   const previous = snapshots.get(spec.key);
-  if (previous && Date.now() < previous.expiresAt) return previous.promise;
+  if (!fresh && previous && Date.now() < previous.expiresAt) return previous.promise;
   const promise = (async () => {
     const config = identityConfig();
     if (config.project !== PANAMA_PROJECT) throw new Error('Panama snapshot project mismatch');
@@ -106,12 +124,44 @@ async function readSourceForConsultation(spec) {
   }
 }
 
+export async function readPanamaForPmScheduling(spec) {
+  try { return await getRows(spec); }
+  catch (error) {
+    if (process.env.VERCEL_ENV !== 'production') throw error;
+    return readSnapshot(spec, { fresh: true });
+  }
+}
+
 const rowsOf = source => Array.isArray(source) ? source : source.rows;
 
-export async function readPanamaWorkshopMasters({
+const publishedMastersAvailable = () => ['production', 'preview'].includes(process.env.VERCEL_ENV);
+
+async function readMaster(spec, project, {
   readLive = readSource,
   readCut = readSnapshot,
-  allowSnapshot = process.env.VERCEL_ENV === 'production',
+  allowSnapshot = publishedMastersAvailable(),
+  preferPublished = true,
+} = {}) {
+  const live = async () => project(await readLive(spec));
+  if (!allowSnapshot) return live();
+  const published = async () => {
+    const source = await readCut(spec);
+    const capturedAt = Date.parse(source?.captured_at);
+    if (!Array.isArray(source?.rows) || !Number.isFinite(capturedAt) || capturedAt > Date.now() + 300_000) {
+      throw new Error('Invalid Panama master capture');
+    }
+    return project(source);
+  };
+  const [primary, fallback] = preferPublished ? [published, live] : [live, published];
+  try { return await primary(); }
+  catch { return fallback(); }
+}
+
+export async function readPanamaWorkshopMasters({
+  preferPublished = false,
+  readLive = readSource,
+  readCut = readSnapshot,
+  allowSnapshot = preferPublished ? publishedMastersAvailable() : process.env.VERCEL_ENV === 'production',
 } = {}) {
   const specs = sourceSpecs.filter(spec => spec.key === 'failures' || spec.key === 'orders');
   const sections = await Promise.all(specs.map(async spec => {
@@ -120,12 +170,8 @@ export async function readPanamaWorkshopMasters({
       capturedAt: source.captured_at ?? null,
     });
     try {
-      return [spec.key, project(await readLive(spec))];
+      return [spec.key, await readMaster(spec, project, { readLive, readCut, allowSnapshot, preferPublished })];
     } catch {
-      if (allowSnapshot) {
-        try { return [spec.key, project(await readCut(spec))]; }
-        catch { /* A missing or invalid cut leaves this source unavailable. */ }
-      }
       return [spec.key, null];
     }
   }));
@@ -165,6 +211,31 @@ export async function readPanamaInventory(read = readSource) {
 }
 
 export const readPanamaConsultationInventory = () => readPanamaInventory(readSourceForConsultation);
+
+export async function readPanamaReportFleet({
+  readLive = readSource,
+  readCut = readSnapshot,
+  allowSnapshot = process.env.VERCEL_ENV === 'production',
+} = {}) {
+  const fleet = sourceSpecs[0];
+  const project = (rows, capturedAt) => {
+    const units = visibleRecords(rows, fleet, { allUnits: true })
+      .map(({ unit, model }) => ({ code: keyOf(unit), model }));
+    if (!units.length || new Set(units.map(unit => unit.code)).size !== units.length) {
+      throw new Error('Invalid Panama fleet roster');
+    }
+    return { units, capturedAt };
+  };
+  if (allowSnapshot) {
+    try {
+      const snapshot = await readCut(fleet);
+      const captured = Date.parse(snapshot.captured_at);
+      if (!Number.isFinite(captured) || captured > Date.now() + 300_000) throw new Error('Invalid Panama fleet capture');
+      return project(snapshot.rows, snapshot.captured_at);
+    } catch { /* Keep the fleet sheet available while a cut is missing or unreadable. */ }
+  }
+  return project(await readLive(fleet), null);
+}
 
 function visibleRecords(rows, spec, session) {
   const [header = [], ...data] = rows;
@@ -211,7 +282,32 @@ const componentSources = [
   }),
 ];
 
-async function componentDetails({ method, query, session, read }) {
+function componentHourTicks(value) {
+  const clean = String(value ?? '').trim();
+  if (!/^-?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,3})?$/.test(clean)) return null;
+  const ticks = Math.round(Number(clean.replaceAll(',', '')) * 1000);
+  return Number.isSafeInteger(ticks) ? ticks : null;
+}
+
+function componentLifeCalculation(record) {
+  const installed = componentHourTicks(record.installedMeter);
+  const reading = componentHourTicks(record.currentMeter);
+  const target = componentHourTicks(record.target);
+  if (installed === null || reading === null || target === null || installed < 0 || reading < 0 || target <= 0) {
+    return { status: 'incomplete' };
+  }
+  if (reading < installed) return { status: 'regressed' };
+  const elapsed = reading - installed;
+  const remaining = target - elapsed;
+  const recordedElapsed = componentHourTicks(record.elapsed);
+  const recordedRemaining = componentHourTicks(record.remaining);
+  const differs = (recordedElapsed !== null && recordedElapsed !== elapsed)
+    || (recordedRemaining !== null && recordedRemaining !== remaining);
+  const status = differs ? 'mismatch' : recordedElapsed === null || recordedRemaining === null ? 'reproduced' : 'verified';
+  return { status, elapsed: elapsed / 1000, remaining: remaining / 1000 };
+}
+
+async function componentDetails({ method, query, session, readSection }) {
   if (method !== 'GET') return { status: 405, body: { error: 'Consulta de componentes de solo lectura.' } };
   if (!management.has(session.role) && session.role !== 'mecanico') {
     return { status: 403, body: { error: 'Consulta reservada a Taller y Supervisión.' } };
@@ -223,10 +319,10 @@ async function componentDetails({ method, query, session, read }) {
     return { status: 403, body: { error: 'Unidad fuera del alcance de la sesión.' } };
   }
   const results = await Promise.allSettled(componentSources.map(async spec => {
-    const source = await read(spec);
-    const records = visibleRecords(rowsOf(source), spec, { ...session, allUnits: false, assignedUnits: [unit] })
+    const { records, capturedAt } = await readSection(spec, { ...session, allUnits: false, assignedUnits: [unit] });
+    const validRecords = records
       .filter(row => row.part && (!row.date || /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(row.date)));
-    return { records, capturedAt: source.captured_at };
+    return { records: validRecords, capturedAt };
   }));
   const changes = [], life = [], unavailable = [], snapshots = {};
   results.forEach((result, index) => {
@@ -234,15 +330,73 @@ async function componentDetails({ method, query, session, read }) {
     if (result.status === 'rejected') unavailable.push(spec.key);
     else {
       if (result.value.capturedAt) snapshots[spec.key] = result.value.capturedAt;
-      (spec.key.endsWith('Changes') ? changes : life).push(...result.value.records.map(record => ({ ...record, source: spec.range })));
+      const changeSource = spec.key.endsWith('Changes');
+      const rows = result.value.records.map(record => ({ ...record, source: spec.range,
+        ...(changeSource ? {} : { calculation: componentLifeCalculation(record) }),
+      }));
+      (changeSource ? changes : life).push(...rows);
     }
   });
   return { status: 200, body: { unit, changes, life, unavailable, snapshots, checkedAt: new Date().toISOString() } };
 }
 
-export async function dispatchPanama({ path, method, query, session, read = readSourceForConsultation }) {
+const publishedCutLabels = {
+  fleet: 'Flota TMF', equipmentDetails: 'Maestro de equipos', failures: 'Fallas TMF',
+  orders: 'Órdenes de Taller', shifts: 'Registro de turnos', maintenance: 'PM de flota',
+  maintenancePlan: 'Plan de PM', maintenanceAnchor: 'Anclas de PM', costs: 'Costos por máquina',
+  purchases: 'Compras de Panamá', dozers: 'Resumen de dozers', dozerLife: 'Vida de componentes de dozers',
+  dozerChanges: 'Cambios de componentes de dozers', excavators: 'Resumen de excavadoras',
+  excavatorLife: 'Vida de componentes de excavadoras', excavatorChanges: 'Cambios de componentes de excavadoras',
+};
+
+async function readPublishedCuts() {
+  const config = identityConfig();
+  if (config.project !== PANAMA_PROJECT) throw new Error('Panama snapshot project mismatch');
+  const response = await identityRequest(config, '/rest/v1/hermes_panama_source_snapshots', {
+    query: { select: 'source,captured_at', source: `in.(${Object.keys(publishedCutLabels).join(',')})` },
+  });
+  if (!response.ok) throw new Error('Panama cuts unavailable');
+  return response.json();
+}
+
+async function publishedCuts({ method, session, readCuts }) {
+  if (method !== 'GET') return { status: 405, body: { error: 'Consulta de cortes de solo lectura.' } };
+  if (session.role !== 'gerencia' || session.previewDemo) {
+    return { status: 403, body: { error: 'Consulta reservada a Gerencia Panamá.' } };
+  }
+  try {
+    const rows = await readCuts();
+    if (!Array.isArray(rows)) throw new Error('Invalid cuts response');
+    const cuts = new Map();
+    for (const row of rows) {
+      if (!Object.hasOwn(publishedCutLabels, row?.source) || !Number.isFinite(Date.parse(row?.captured_at))) continue;
+      const stamp = Date.parse(row.captured_at);
+      if (!cuts.has(row.source) || stamp > cuts.get(row.source)) cuts.set(row.source, stamp);
+    }
+    const latest = cuts.size ? Math.max(...cuts.values()) : null;
+    const sources = Object.entries(publishedCutLabels).map(([key, label]) => {
+      const stamp = cuts.get(key);
+      return { key, label, capturedAt: stamp === undefined ? null : new Date(stamp).toISOString(),
+        status: stamp === undefined ? 'missing' : stamp === latest ? 'latest' : 'previous' };
+    });
+    return { status: 200, body: { project: PANAMA_PROJECT,
+      latestCapturedAt: latest === null ? null : new Date(latest).toISOString(), sources } };
+  } catch {
+    return { status: 503, body: { error: 'No se pudieron verificar los cortes de los maestros.' } };
+  }
+}
+
+export async function dispatchPanama({
+  path, method, query, session, read, readCuts = readPublishedCuts, sourceReaders, preferPublished = true,
+}) {
   if (session.project !== PANAMA_PROJECT) return { status: 403, body: { error: 'Consulta reservada a TMF Panamá.' } };
-  if (path === 'api/panama/componentes') return componentDetails({ method, query, session, read });
+  if (path === 'api/panama/cortes') return publishedCuts({ method, session, readCuts });
+  const readSection = async (spec, scope = session) => {
+    const project = source => ({ records: visibleRecords(rowsOf(source), spec, scope), capturedAt: source.captured_at });
+    if (read || !preferPublished) return project(await (read ?? readSourceForConsultation)(spec));
+    return readMaster(spec, project, sourceReaders);
+  };
+  if (path === 'api/panama/componentes') return componentDetails({ method, query, session, readSection });
   if (path !== 'api/panama/summary' && path !== 'api/panama/maintenance') return { status: 404, body: { error: 'Ruta no disponible para Panamá.' } };
   if (method !== 'GET') return { status: 405, body: { error: 'Hermes Panamá está en modo consulta.' } };
   if (path === 'api/panama/maintenance' && !management.has(session.role)) {
@@ -258,9 +412,8 @@ export async function dispatchPanama({ path, method, query, session, read = read
   const snapshots = {};
   const sections = await Promise.all(visible.filter(spec => !requested || requested.has(spec.key)).map(async spec => {
     try {
-      const source = await read(spec);
-      const records = visibleRecords(rowsOf(source), spec, session);
-      if (source.captured_at) snapshots[spec.key] = source.captured_at;
+      const { records, capturedAt } = await readSection(spec);
+      if (capturedAt) snapshots[spec.key] = capturedAt;
       return [spec.key, records];
     } catch {
       return [spec.key, null];

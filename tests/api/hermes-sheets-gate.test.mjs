@@ -9,6 +9,46 @@ function response() {
 
 const operator = { userId: 'qa-operador', userName: 'Operador QA', role: 'operador', assignedUnits: ['CA20'], allUnits: false };
 
+test('el historial genérico de neumáticos conserva las inspecciones previas pero oculta los traslados de la bitácora', async () => {
+  const header = ['ID','UNIDAD'], legacy = ['vista','CA20','Modelo','I1'];
+  const transfer = Array(28).fill('');
+  Object.assign(transfer, { 0: 'traslado', 1: 'CA20', 3: 'I1', 10: '12345', 26: 'HERMES_TIRES_V1', 27: 'origen fuera de alcance' });
+  const result = response();
+  await createHermesGateway({ enablePanamaOperations: true,
+    sessionReader: async () => ({ ...operator, project: 'tmf-panama', role: 'coordinador' }),
+    sheets: { read: async () => [header, legacy, transfer] },
+  })({ method: 'GET', query: { path: 'api/sheets/read', tab: '13 Neumáticos' } }, result);
+  assert.deepEqual(result.body.data, [header, legacy, []]);
+});
+
+test('la pausa de la captura de neumáticos también detiene el registro por número de fuego', async () => {
+  const result = response();
+  await createHermesGateway({ enablePanamaOperations: true, writeEnabled: true, pausedOperations: new Set(['api/sheets/append:13 Neumáticos']),
+    sessionReader: async () => ({ ...operator, project: 'tmf-panama', role: 'coordinador' }),
+    sheets: { read: async () => assert.fail('La escritura debe quedar en pausa') },
+  })({ method: 'POST', query: { path: 'api/workshop/tires' }, body: {} }, result);
+  assert.equal(result.statusCode, 503);
+  assert.match(result.body.error, /pausa/);
+});
+
+test('la captura por unidad no puede contradecir la ubicación administrada de un número de fuego', async () => {
+  const tire = { id: 'a'.repeat(64), at: '2026-11-14T17:00:00Z', serial: 'F-OLD', actor: 'Taller QA',
+    body: { action: 'mount', unit: 'CA20', position: 'I1', basis: 'h', meter: '1000' } };
+  const tracked = Array(28).fill('');
+  Object.assign(tracked, { 0: tire.id, 1: 'CA20', 3: 'I1', 7: 'F-OLD', 26: 'HERMES_TIRES_V1', 27: JSON.stringify(tire) });
+  const gate = createHermesGateway({ enablePanamaOperations: true, writeEnabled: true,
+    sessionReader: async () => ({ ...operator, project: 'tmf-panama', role: 'coordinador', allUnits: true }),
+    sheets: { read: async () => [['ID','UNIDAD'], tracked], replay: async () => null,
+      commit: async () => assert.fail('Una inspección independiente no puede alterar la ubicación administrada') },
+  });
+  const result = response();
+  await gate({ method: 'POST', query: { path: 'api/sheets/append' }, body: {
+    tab: '13 Neumáticos', values: ['nueva','CA21','','D2','','','','F-OLD'],
+  } }, result);
+  assert.equal(result.statusCode, 409);
+  assert.match(result.body.error, /número de fuego/);
+});
+
 test('legacy data reads respect assigned units and role', async () => {
   const sheets = { read: async () => [['fecha', 'hora', 'UNIDAD'], ['2026-11-11', '22:01', 'CA20'], ['2026-11-11', '22:02', 'CV100']] };
   const gate = createHermesGateway({ sheets, sessionReader: async () => operator });
@@ -139,6 +179,66 @@ test('Panamá blocks TMF fuel capture until explicitly enabled in the isolated f
   assert.equal(writes, 1);
 });
 
+test('el cambio autorizado conserva lecturas brutas y horas acumuladas y muestra el corte oficial sin editarlo', async () => {
+  const tab = '04B Registro Horómetros';
+  const data = [
+    ['12/11/2026','07:00:00','CA20','Equipo QA','Operador QA','inicio','390'],
+    ['12/11/2026','07:00:00','OTRA','Equipo QA','Otro operario','inicio','9000'],
+  ];
+  const receipts = new Map();
+  const guards = [];
+  const caseSession = { ...operator, project: 'tmf-panama' };
+  let session = caseSession;
+  const sheets = {
+    read: async name => name === tab ? structuredClone(data) : [[], [], [], ['', 'CA20', '', 'Cat', '745']],
+    replay: async ({ key }) => receipts.get(key) ?? null,
+    commit: async ({ key, guard, writes, result }) => {
+      guards.push(guard);
+      for (const write of writes) {
+        assert.equal(write.tab, tab);
+        data.push(...write.append);
+      }
+      receipts.set(key, result);
+      return { result };
+    },
+  };
+  const gate = createHermesGateway({
+    sheets, sessionReader: async () => session, writeEnabled: true, enablePanamaOperations: true,
+    readOfficialShifts: async () => ({ capturedAt: '2026-11-13T04:00:00Z', records: [
+      { unit: 'CA20', id: 'REG-01', date: '12-Nov-2026', shift: 'Día', start: '390', end: '397' },
+      { unit: 'OTRA', id: 'REG-02', date: '12-Nov-2026', shift: 'Día', start: '9000', end: '9002' },
+    ] }),
+  });
+  const request = async (method, body, unit = 'CA20', path = 'api/panama/horometros') => {
+    const res = response();
+    await gate({ method, body, query: { path, unit } }, res);
+    return res;
+  };
+  const replacement = { unit: 'CA20', date: '2026-11-12', time: '14:00', previousHours: '397', newHours: '2', reference: 'OT-QA-123',
+    mutationId: 'cafebabe-0100-4000-9000-cafebabecafe' };
+  assert.equal((await request('GET')).body.official.shifts[0].start, 390);
+  assert.equal((await request('GET', undefined, 'OTRA')).statusCode, 403);
+  assert.equal((await request('POST', replacement)).statusCode, 403);
+  session = { ...caseSession, role: 'supervisor' };
+  assert.equal((await request('POST', { ...replacement, previousHours: '450' })).statusCode, 409);
+  assert.equal((await request('POST', replacement)).statusCode, 201);
+  assert.equal((await request('POST', replacement)).statusCode, 200);
+  session = caseSession;
+  const append = hours => request('POST', { tab, values: ['12/11/2026','16:00:00','CA20','Cat 745','QA','final',hours,'','','','spoof'] },
+    'CA20', 'api/sheets/append');
+  assert.equal((await append('1')).statusCode, 409);
+  assert.equal((await append('6')).statusCode, 409);
+  assert.equal((await append('4')).statusCode, 200);
+  const snapshot = (await request('GET')).body;
+  assert.deepEqual(snapshot.history.map(row => [row.kind,row.rawHours,row.totalHours]), [['final',4,399],['cambio',2,397],['inicio',390,390]]);
+  assert.equal(snapshot.history[1].reference, 'OT-QA-123');
+  assert.equal(snapshot.history[2].reconciliation, 'match');
+  assert.equal(snapshot.history[0].reconciliation, 'review');
+  assert.equal(snapshot.official.shifts.length, 1);
+  assert.deepEqual(guards, ['panama:meter:CA20:1','panama:meter:CA20:2']);
+  assert.equal(data.at(-1).length, 10);
+});
+
 function transport() {
   const existing = new Map([
     ['Averías', { properties: { sheetId: 11, title: 'Averías', gridProperties: { rowCount: 1000, columnCount: 26 } }, rows: [['folio']] }],
@@ -263,6 +363,29 @@ test('Panamá health distinguishes the official fleet from its writable workbook
     ['01 Inventario', { cached: true }],
     ['ORDENES_TRABAJO', { cached: true, requireExisting: true }],
   ]);
+});
+
+test('health identifies independent master and evidence failures, including consultation mode', async () => {
+  const sheets = { nativeOperations: true, read: async () => [[]],
+    readWorkshopMasters: async () => ({ failures: {}, orders: null }) };
+  const sessionReader = async () => ({ ...operator, project: 'tmf-panama' });
+  const request = { method: 'GET', query: { path: 'health' } };
+  const result = response();
+  await createHermesGateway({ sheets, sessionReader, enablePanamaOperations: false,
+    probeEvidence: async () => false })(request, result);
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.body.status, 'degraded');
+  assert.equal(result.body.writeEnabled, false);
+  assert.deepEqual(result.body.checks, {
+    identity: 'up', fleet: 'up', operations: 'up', masters: 'down', evidence: 'down',
+  });
+  sheets.readWorkshopMasters = async () => ({ failures: {}, orders: {} });
+  const recovered = response();
+  await createHermesGateway({ sheets, sessionReader, enablePanamaOperations: true,
+    probeEvidence: async () => true })(request, recovered);
+  assert.equal(recovered.body.checks.masters, 'up');
+  assert.equal(recovered.body.checks.evidence, 'up');
+  assert.equal(recovered.body.status, 'ok');
 });
 
 test('a failed Panama consultation reports an unavailable source rather than an uncertain write', async () => {

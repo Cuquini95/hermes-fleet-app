@@ -10,6 +10,7 @@ vi.mock('../lib/sheets-api', () => ({
 
 const { readRange } = await import('../lib/sheets-api');
 const { useEquipmentStore } = await import('./equipment-store');
+const { useAuthStore } = await import('./auth-store');
 
 // Minimal valid equipment row for "01 Inventario":
 // 0=# 1=COD1 2=Descripción 3=Marca 4=Modelo 5=Año
@@ -42,6 +43,7 @@ function withHeaders(dataRows: string[][]): string[][] {
 function resetStore() {
   useEquipmentStore.setState({
     equipment: [],
+    reportUnits: null,
     fetched: false,
     loading: false,
     error: null,
@@ -140,6 +142,19 @@ describe('useEquipmentStore — fetchEquipment', () => {
     await useEquipmentStore.getState().fetchEquipment();
     expect(useEquipmentStore.getState().equipment).toHaveLength(2);
   });
+});
+
+it('clears a cached report roster when the same operator is reassigned', () => {
+  const previous = useAuthStore.getState();
+  try {
+    useAuthStore.setState({ isAuthenticated: true, project: 'tmf-panama', userId: 'synthetic-operator',
+      role: 'operador', unitScope: 'assigned', assignedUnits: ['DZ203'] });
+    useEquipmentStore.setState({ reportUnits: [{ code: 'DZ203', model: 'D155' }] });
+    useAuthStore.setState({ assignedUnits: ['DZ205'] });
+    expect(useEquipmentStore.getState().reportUnits).toBeNull();
+  } finally {
+    useAuthStore.setState(previous);
+  }
 });
 
 describe('useEquipmentStore — refetch', () => {

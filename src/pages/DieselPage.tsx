@@ -160,10 +160,10 @@ export default function DieselPage() {
 
   if (isPanama && fuelCapture !== 'enabled') return (
     <section className="rounded-xl border border-border bg-white p-4">
-      <h1 className="text-xl font-bold text-text">Registro Diesel</h1>
-      <p className="mt-2 text-sm text-text-secondary" role="status">{fuelCapture === 'checking' ? 'Consultando la habilitación de captura…'
-        : fuelCapture === 'blocked' ? 'Operaciones debe confirmar el alcance y el responsable del registro de combustible en TMF.'
-          : 'No se pudo consultar la habilitación de combustible. Abre esta pantalla con conexión.'}</p>
+      <h1 className="text-xl font-bold text-text">Combustible</h1>
+      <p className="mt-2 text-sm text-text-secondary" role="status">{fuelCapture === 'checking' ? 'Verificando acceso…'
+        : fuelCapture === 'blocked' ? 'Registro sin habilitar. Consulta a Operaciones.'
+          : 'Acceso sin confirmar. Vuelve con conexión.'}</p>
       <button type="button" onClick={() => navigate(-1)} className="mt-4 font-semibold text-primary">Volver</button>
     </section>
   );
@@ -179,8 +179,8 @@ export default function DieselPage() {
 
       <ConfirmModal
         open={showConfirm}
-        title="Confirmar registro de combustible"
-        message={`¿Registrar ${litros}L de ${fuelType} para ${unidad || 'la unidad'}?`}
+        title="Confirmar combustible"
+        message={`¿Registrar ${litros} L de ${fuelType} para ${unidad || 'la unidad'}?`}
         onConfirm={handleConfirm}
         onCancel={() => setShowConfirm(false)}
       />
@@ -194,7 +194,7 @@ export default function DieselPage() {
         >
           <ArrowLeft size={20} className="text-text" />
         </button>
-        <h1 className="text-xl font-bold text-text">Registro Diesel</h1>
+        <h1 className="text-xl font-bold text-text">{isPanama ? 'Combustible' : 'Registro Diesel'}</h1>
       </div>
 
       {/* Anomaly warning */}
@@ -202,7 +202,7 @@ export default function DieselPage() {
         <div className="bg-amber-50 border border-amber rounded-xl p-3 flex items-center gap-2 mb-4">
           <AlertTriangle size={18} className="text-amber shrink-0" />
           <span className="text-sm font-medium text-amber">
-            Consumo anómalo detectado — más del 30% sobre el benchmark
+            Consumo más de 30 % por encima de la referencia
           </span>
         </div>
       )}
@@ -354,18 +354,18 @@ export default function DieselPage() {
             type="text"
             value={estacion}
             onChange={(e) => setEstacion(e.target.value)}
-            placeholder="PEMEX Km 12"
+            placeholder={isPanama ? undefined : 'PEMEX Km 12'}
             className="w-full rounded-xl border border-border p-3 text-text bg-white"
           />
         </div>
 
         {/* Observaciones */}
         <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-text-secondary">Observaciones</label>
+          <label htmlFor="fuel-notes" className="text-sm font-medium text-text-secondary">Observaciones</label>
           <textarea
+            id="fuel-notes"
             value={observaciones}
             onChange={(e) => setObservaciones(e.target.value)}
-            placeholder="Observaciones adicionales..."
             rows={3}
             className="w-full rounded-xl border border-border p-3 text-sm text-text resize-none bg-white"
           />

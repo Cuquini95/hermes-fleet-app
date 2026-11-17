@@ -17,7 +17,7 @@ function setup(t) {
       else process.env[k] = original[k];
     }
   });
-  const ledger = { [TAB.expenses]: [['ID']], [TAB.audit]: [['Fecha']] };
+  const ledger = { [TAB.expenses]: [['ID']], [TAB.audit]: [['Fecha']], ORDENES_TRABAJO: [['ROW_ID', 'OT_ID']] };
   const mutations = new Map();
   const guards = new Set();
   const sheets = {
@@ -101,4 +101,26 @@ test('Panamá requiere revisor designado e independiente, con trazabilidad y blo
   const open = await call('expense-save', expenseInput());
   process.env.HERMES_PANAMA_EXPENSE_CLOSED_THROUGH = '2026-11';
   assert.equal((await call('expense-delete', { operationId: randomUUID(), id: open.body.ids[0] }, operator)).status, 409);
+});
+
+test('un servicio externo vincula la factura al folio interno y exige la unidad de la OT', async (t) => {
+  const { ledger, call } = setup(t);
+  const order = Array(26).fill('');
+  Object.assign(order, { 1: 'OT-INTERNA-QA', 3: 'QA-DZ203', 25: 'OT-0100' });
+  ledger.ORDENES_TRABAJO.push(order);
+  const service = (unit, invoice = 'DOC-SERVICIO-QA', ruc = 'RUC-QA') => ({
+    ...expenseInput({ ot_id: 'OT-0100', folio_factura: invoice, rfc_proveedor: ruc }), allocations: [{ unit, amount: '214.00' }],
+  });
+  assert.equal((await call('expense-save', service('QA-EX401'))).status, 409);
+  assert.equal((await call('expense-save', service('QA-DZ203', ''))).status, 400);
+  assert.equal((await call('expense-save', service('QA-DZ203', 'DOC-SERVICIO-QA', ''))).status, 400);
+  const saved = await call('expense-save', service('QA-DZ203'));
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  assert.equal(ledger[TAB.expenses].length, 2);
+  assert.equal(ledger[TAB.expenses][1][11], 'OT-INTERNA-QA');
+  const duplicate = await call('expense-save', service('QA-DZ203', 'DOC-SERVICIO-QA', 'ruc.qa'));
+  assert.equal(duplicate.status, 200);
+  const approve = id => call('expense-review', { operationId: randomUUID(), id, status: 'Aprobado', reason: 'Factura conciliada' }, reviewer);
+  assert.equal((await approve(saved.body.ids[0])).status, 200);
+  assert.equal((await approve(duplicate.body.ids[0])).status, 409);
 });

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useWorkOrderStore } from '../stores/workorder-store';
 import OTCard from '../components/ui/OTCard';
 import EmptyState from '../components/ui/EmptyState';
@@ -15,12 +15,12 @@ const FILTER_OPTIONS: FilterKey[] = ['Todas', 'CRITICA', 'ALTA', 'MEDIA', 'Abier
 
 const FILTER_LABELS: Record<FilterKey, string> = {
   Todas: 'Todas',
-  CRITICA: 'Critica',
+  CRITICA: 'Crítica',
   ALTA: 'Alta',
   MEDIA: 'Media',
   Abierta: 'Abierta',
-  'En Reparación': 'En Reparación',
-  'Esperando Pieza': 'Esperando Pieza',
+  'En Reparación': 'En reparación',
+  'Esperando Pieza': 'Por repuesto',
   Resuelta: 'Resuelta',
   Completado: 'Cerradas',
 };
@@ -89,7 +89,11 @@ export default function WorkOrdersPage() {
         style={pullIndicatorStyle}
       />
 
-      <h2 className="font-semibold text-lg text-text mb-3">Órdenes de Trabajo</h2>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-lg font-semibold text-text">Órdenes de Trabajo</h2>
+        {showMaster && <Link className="inline-flex min-h-11 items-center rounded-lg border border-border bg-card px-3 text-sm font-semibold text-text"
+          to="/panama/tiempo-caido">Tiempo caído</Link>}
+      </div>
 
       {/* Filter pills */}
       <div className="flex gap-2 overflow-x-auto pb-3 -mx-1 px-1 mb-2">
@@ -114,7 +118,7 @@ export default function WorkOrdersPage() {
         <EmptyState
           type="workorders"
           title="Sin órdenes"
-          description="No hay órdenes de trabajo de Hermes con este filtro"
+          description="Prueba otro filtro."
         />
       ) : (
         filtered.map((ot) => (

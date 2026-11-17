@@ -25,10 +25,11 @@ export const fixturePassword = 'HermesSyntheticTestOnly!2026';
 export const photoPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg==', 'base64');
 
 export const tabs = {
-  fleet: '01 Inventario', failure: 'Averías', orders: 'ORDENES_TRABAJO', history: 'OT_STATUS_LOG',
+  fleet: '01 Inventario', failure: 'Averías', orders: 'ORDENES_TRABAJO', history: 'OT_STATUS_LOG', warranties: 'HERMES_PA_GARANTIAS',
   dvir: '14 Inspecciones', sticker: 'Inspeccion_Stickers', findings: 'Inspeccion_Hallazgos',
   pm: 'Ordenes Mantenimiento', pmHistory: '05 Historial PM', schedule: 'WORKSHOP_SCHEDULE',
   requests: 'Cotizaciones_Pendientes', purchases: 'Órdenes de Compra', lines: 'OC_Lineas',
+  apInvoices: 'HERMES_PA_FACTURAS_OC', apPayments: 'HERMES_PA_PAGOS_FACTURA',
   providers: 'Proveedores', parts: '12 Inventario Rep.', expenses: '02 Gastos', changes: '10 Control Cambios',
 };
 
@@ -56,6 +57,8 @@ function fixtureRows() {
       ['11/11/2026','14:15:00','DZ203','Llanta','Réplica sintética de incidente de llanta','ALTA','QA operador','','','Abierta','','','','OT-0004',''],
     ]],
     [tabs.history, [['TIMESTAMP','OT_ID','FIELD','OLD_VALUE','NEW_VALUE','CHANGED_BY','ROLE']]],
+    [tabs.warranties, [['TIMESTAMP','OT_ID','FIELD','CASE','EVENT','ACTOR','ROLE','ACTOR_ID']]],
+    ['HERMES_PA_ODOMETRO', [['UNIDAD','MEDIDO_EN','KILOMETROS','REFERENCIA','REGISTRADO_EN','AUTOR_ID']]],
     [tabs.schedule, [['ID','FECHA','OT_ID','UNIDAD','MECANICO','HORAS','NOTAS']]],
     [tabs.dvir, [['Fecha','Hora','Unidad','Tipo','Horometro','Operador','Resultado']]],
     [tabs.sticker, [['Fecha','Unidad','Tipo','Estado']]],
@@ -63,9 +66,13 @@ function fixtureRows() {
     [tabs.pm, [['OT_ID','FECHA','UNIDAD','NIVEL','ESTADO']]],
     [tabs.pmHistory, [['OT_ID','FECHA','UNIDAD','NIVEL','ESTADO']]],
     [tabs.requests, [['FECHA','PART_NUMBER','DESCRIPCION','CANTIDAD','PRECIO','EQUIPO','URGENCIA','NOTAS','ESTADO','FOLIO']]],
-    [tabs.providers, [['Nombre','RFC','Dirección','Ciudad','Estado','CP','Teléfono','Email','Contacto'], ['Proveedor QA','QAT000000000','Calle de prueba 10','Ciudad QA','Jalisco','00000','0000000000','proveedor@example.invalid','Contacto QA']]],
+    [tabs.providers, [['Nombre','RFC','Dirección','Ciudad','Estado','CP','Teléfono','Email','Contacto'],
+      ['Proveedor QA','QAT000000000','Calle de prueba 10','Ciudad QA','Jalisco','00000','0000000000','proveedor@example.invalid','Contacto QA'],
+      ['Segundo proveedor QA','QAT000000002','Calle de prueba 20']]],
     [tabs.purchases, [['OC_ID','FECHA','PROVEEDOR','RFC','DIRECCION','UNIDAD','SUBTOTAL','IVA','ENVIO','OTROS','TOTAL','ESTADO','COMENTARIOS','APROBADA_POR','FECHA_ENTREGA']]],
     [tabs.lines, [['OC_ID','ITEM','DESCRIPCION','CANTIDAD','PRECIO_UNITARIO','TOTAL'], ['OC-001','1','Partida histórica ficticia sin cabecera','1','12','12']]],
+    [tabs.apInvoices, [['ID','OC_ID','DETALLE_JSON']]],
+    [tabs.apPayments, [['ID','FACTURA_ID','DETALLE_JSON']]],
     ['Movimientos Repuestos PA', [['ID']]],
     [tabs.parts, [[], [], [], [], ['SKU','Descripción','OEM','Serie','Unidad','Stock','Mínimo','Precio','Ubicación','','Equipo','','','Proveedor'], ['QA-001','Filtro hidráulico de prueba','OEM-QA-001','','pza','8','3','123.45','Almacén QA','','DZ203','','','Proveedor QA'], ['QA-002','Sello de prueba','OEM-QA-002','','pza','1','2','21.50','Almacén QA','','EX401','','','Proveedor QA']]],
     [tabs.expenses, [
@@ -97,6 +104,9 @@ function columnNumber(letters) {
 export function makeSheetsFixture() {
   const tables = fixtureRows();
   const mutations = new Map();
+  const purchaseSignatures = new Map();
+  const signatureProfiles = new Map();
+  const signatureKey = ({ folio, approvedById, approvedAt }) => JSON.stringify([folio, approvedById, approvedAt]);
   const versions = new Set();
   const unavailable = new Set();
   const faults = [];
@@ -115,7 +125,7 @@ export function makeSheetsFixture() {
     return clone(prior.result);
   }
 
-  async function commit({ key, fingerprint, guard, guards, writes, result }) {
+  async function commit({ key, fingerprint, guard, guards, writes, result, purchaseSignature }) {
     if (mutations.has(key)) {
       const previous = replay({ key, fingerprint });
       commits.push({ key, replayed: true, rows: 0 });
@@ -125,7 +135,7 @@ export function makeSheetsFixture() {
     const fault = faultIndex >= 0 ? faults.splice(faultIndex, 1)[0] : null;
     if (fault?.delay) await wait(fault.delay);
     if (fault?.when === 'before') throw stateError(503, 'Persistencia de prueba no disponible');
-    if (mutations.has(key)) return commit({ key, fingerprint, guard, guards, writes, result });
+    if (mutations.has(key)) return commit({ key, fingerprint, guard, guards, writes, result, purchaseSignature });
     const keys = [guard, ...(guards ?? [])].filter(Boolean);
     if (keys.some(value => versions.has(value))) throw stateError(409, 'El registro de prueba fue actualizado');
     const draft = new Map();
@@ -153,6 +163,15 @@ export function makeSheetsFixture() {
       let lastNumber = Math.max(3000, ...purchaseRows.slice(1, firstNew).map(row => Number(row[27]) || 0));
       for (const row of purchaseRows.slice(firstNew)) row[27] = String(++lastNumber);
     }
+    if (purchaseSignature) {
+      const key = signatureKey(purchaseSignature);
+      if (purchaseSignatures.has(key)) throw stateError(409, 'La OC ya tiene firma archivada.');
+      const approved = (purchaseRows ?? tables.get(tabs.purchases)).find(row => row[0] === purchaseSignature.folio);
+      if (approved?.[17] !== purchaseSignature.approvedById || approved?.[18] !== purchaseSignature.approvedAt) {
+        throw stateError(409, 'La aprobación vigente no coincide con la firma.');
+      }
+      purchaseSignatures.set(key, purchaseSignature.png);
+    }
     for (const [tab, rows] of draft) tables.set(tab, rows);
     const number = purchaseRows?.find(row => row[0] === result.folio)?.[27];
     const reply = number ? { ...result, number } : result;
@@ -165,6 +184,13 @@ export function makeSheetsFixture() {
 
   return {
     read, commit, replay, commits,
+    async readPurchaseSignature(order) { return purchaseSignatures.get(signatureKey(order)); },
+    async registeredPurchaseSignatureSource(id) { return clone(signatureProfiles.get(id)); },
+    registerPurchaseSignature(source) {
+      if (!purchaseSignatures.has(signatureKey(source))) throw new Error('Falta la firma que se registrará.');
+      signatureProfiles.set(source.approvedById, clone(source));
+    },
+    clearRegisteredPurchaseSignature(id) { signatureProfiles.delete(id); },
     async readWorkshopMasters() {
       return clone(workshopMasters ?? { failures: { records: [] }, orders: { records: [] } });
     },
@@ -276,12 +302,34 @@ async function loopbackCertificate() {
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
 
-export async function startFixture({ repoDirectory, distDirectory, listenPort = 0, withGateway = true }) {
+export async function startFixture({ repoDirectory, distDirectory, listenPort = 0, withGateway = true, createOperationalSheets }) {
   const sheet = makeSheetsFixture();
+  let officialShiftCut = { capturedAt: '2026-11-13T04:00:00Z', records: [
+    { unit: 'DZ203', id: 'REG-QA-HOROMETRO', date: '12-Nov-2026', shift: 'Día', start: '390', end: '397' },
+  ] };
   const directory = [...accounts, account(101, 'operador', 'otro-proyecto-qa'), nonApprovingManager];
   const identities = new Map(directory.map(item => [item.user.email, item]));
   const memberships = new Map(directory.map(item => [item.user.id, item.membership]));
   const sessions = new Map();
+  // Dedicated load accounts keep the web scenarios' login quotas untouched.
+  function registerLoadAccounts(count) {
+    return accounts.slice(-count).map((original, index) => {
+      const actor = account(1000 + count * 100 + index, original.membership.role);
+      for (const key of ['can_approve_purchases', 'can_receive_purchases', 'can_record_purchase_invoices',
+        'can_record_purchase_payments', 'can_review_panama_hse']) actor.membership[key] = original.membership[key];
+      identities.set(actor.user.email, actor);
+      memberships.set(actor.user.id, actor.membership);
+      return actor;
+    });
+  }
+  function releaseLoadAccounts(actors) {
+    const ids = new Set(actors.map(actor => actor.user.id));
+    for (const actor of actors) {
+      identities.delete(actor.user.email);
+      memberships.delete(actor.user.id);
+    }
+    for (const [hash, session] of sessions) if (ids.has(session.user_id)) sessions.delete(hash);
+  }
   const photos = new Map();
   const evidence = new Map();
   const alerts = [];
@@ -422,10 +470,29 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
     HERMES_UPSTREAM_URL: '', HERMES_UPSTREAM_TOKEN: '', HERMES_GOOGLE_SERVICE_ACCOUNT_JSON: '',
     HERMES_GOOGLE_SHEET_ID: '', HERMES_GOOGLE_SHEETS_ID: '', TELEGRAM_BOT_TOKEN: '',
     HERMES_EXPENSE_PRICE_CURRENCY: 'USD',
-    HERMES_PANAMA_PM_CHECKLISTS_JSON: JSON.stringify(['PM-250', 'PM-1'].map(level => ({
-      model: 'Komatsu D65EX-16', level, reference: 'Checklist sintético QA, revisión 1',
-      tasks: [{ id: 'review-qa', label: 'Comprobación sintética de mantenimiento' }],
-    }))),
+    HERMES_PANAMA_DOWNTIME_SHIFT_STARTS: JSON.stringify({ day: '06:00', night: '18:00' }),
+    HERMES_PANAMA_INVENTORY_VALUATIONS_JSON: JSON.stringify([
+      { partNumber: 'QA-001', unitCost: '12.50', currency: 'USD', reference: 'VALUACIÓN-QA-01' },
+    ]),
+    HERMES_PANAMA_LABOR_VALUATIONS_JSON: JSON.stringify([
+      { ot: 'OT-COSTO-QA', unit: 'DZ203', executorId: 'mechanic-cost-qa', acceptedAt: '2026-11-14T16:00:00Z',
+        hours: '2.50', hourlyRate: '14.27', currency: 'USD', reference: 'HORAS-COSTO-QA' },
+    ]),
+    HERMES_PANAMA_PM_TRIGGER_RULES_JSON: JSON.stringify([{
+      unit: 'DZ205', level: 'PM-250', reference: 'Plan sintético QA rev1', dueDate: '2026-11-12',
+      condition: { source: 'dozers', minCritical: 1 },
+    }]),
+    HERMES_PANAMA_PM_CHECKLISTS_JSON: JSON.stringify([...['PM-250', 'PM-1'].flatMap(level => [
+      { model: 'Komatsu D65EX-16', level, reference: 'Checklist genérico QA',
+        tasks: [{ id: 'generic', label: 'Tarea genérica' }] },
+      { model: 'Komatsu D65EX-16', level, serial: 'QA-EX401', reference: 'Checklist sintético QA, revisión 1',
+        tasks: [{ id: 'review-qa', label: 'Comprobación sintética de mantenimiento', evidence: 'photo' }] },
+    ]),
+      { model: 'Caterpillar 745', level: 'PM-500', serial: 'QA-DZ203', reference: 'Checklist QA, articulado',
+        tasks: [{ id: 'axle', label: 'Revisar eje QA' }] },
+      { model: 'Mack Granite', level: 'PM-1000', reference: 'Checklist QA, volquete',
+        tasks: [{ id: 'filter', label: 'Revisar filtro QA' }] },
+    ]),
     HERMES_PURCHASE_ISSUERS_JSON: JSON.stringify([{ id: 'TP_PA_QA', name: 'Trans Plus Panamá QA', currency: 'USD', taxLabel: 'ITBMS', taxBps: 700, template: 'transplus' }]),
   });
   async function stop() {
@@ -442,17 +509,72 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
       withGateway ? moduleAt('api/hermes-sheets-gate.js') : null,
       withGateway ? moduleAt('api/parts/import.js') : null,
     ]);
+    const operationalSheets = withGateway && createOperationalSheets ? await createOperationalSheets(sheet) : sheet;
     auth = { '/api/auth/login': login.default, '/api/auth/session': validate.default, '/api/auth/logout': logout.default };
     if (withGateway) {
       if (typeof gate.createHermesGateway !== 'function') throw new Error('La versión no exporta createHermesGateway');
-      gateway = gate.createHermesGateway({ sheets: sheet, writeEnabled: true, panamaOnly: true, enablePanamaOperations: true, enablePanamaFuelCapture: true });
+      gateway = gate.createHermesGateway({ sheets: operationalSheets, writeEnabled: true, panamaOnly: true, enablePanamaOperations: true, enablePanamaFuelCapture: true,
+        panamaTelematicsConfig: () => ({
+          sources: [{ key: 'qa-telemetry', label: 'Telemática QA', maxAgeHours: 24, units: { DZ203: ['h'], DZ205: ['km'] } }],
+          odometerUnits: ['DZ205'],
+        }),
+        readTelematicsCut: async () => {
+          const capturedAt = new Date(Date.now() - 10_000).toISOString();
+          return { capturedAt, readings: [
+            { project: 'tmf-panama', source: 'qa-telemetry', unit: 'DZ203', measure: 'min', value: 48000,
+              measuredAt: capturedAt, reference: 'QA-C41-H' },
+            { project: 'tmf-panama', source: 'qa-telemetry', unit: 'DZ205', measure: 'mi', value: 100,
+              measuredAt: new Date(Date.now() - 48 * 3_600_000).toISOString(), reference: 'QA-C41-KM' },
+          ] };
+        },
+        readShiftBilling: async record => {
+          const { resolveShiftBilling } = await moduleAt('api/_lib/hermes-panama-shift-billing.js');
+          const bridge = { partId: 'TPA-C4300000000000000001', version: 2, unit: 'EX401', reviewedAt: '2026-11-15T17:00:00Z',
+            periodStart: '2026-11-01', periodEnd: '2026-11-15', reference: 'Cruce aprobado QA', documentLineId: 'DOC-QA-1' };
+          return resolveShiftBilling(record, {
+            bridges: [bridge],
+            readValuation: async () => ({ rows: [
+              ['Código','Fecha inicial','Fecha final','Horas reportadas','Ajuste','Horas a valorizar','Tarifa US$/h','Valor US$','Estado'],
+              ['EX401','01-Nov-26','15-Nov-26','100','-5','95','$45.00','$4,275.00','Listo'],
+            ] }),
+            readInvoices: async () => ({ rows: [
+              ['ID línea','Tipo','Fecha documento','Equipo','Inicio período','Fin período','Documento / factura referencia','Importe base USD','Verificación'],
+              ['DOC-QA-1','Factura','15-Nov-26','EX401','01-Nov-26','15-Nov-26','FAC-QA','$4,275.00','Verificado'],
+            ] }),
+          });
+        },
+        readPanama: async spec => {
+          const rows = {
+            maintenance: [
+              { unit: 'DZ205', status: 'VENCIDO', next: 'PM-250', remaining: '-2', reading: 'Actualizada', plan: 'Aprobado', due: '388', hours: '390' },
+              { unit: 'DZ203', status: 'PRÓXIMO', next: 'PM-500', remaining: '25', reading: 'Actualizada', due: '1500', hours: '1475', model: 'Caterpillar 745' },
+              { unit: 'EX410', status: 'PRÓXIMO', next: 'PM-1000', remaining: '20', reading: 'Actualizada', due: '440', hours: '420', model: 'Mack Granite' },
+            ],
+            maintenancePlan: [['DZ205', '250'], ['DZ203', '500'], ['EX410', '1000']]
+              .map(([unit, cycle]) => ({ unit, active: 'Sí', approved: 'Sí', cycle })),
+            dozers: [{ unit: 'DZ205', group: 'QA', critical: '2', upcoming: '0', noData: '0' }],
+          };
+          const row = rows[spec.key];
+          if (!row) throw new Error('Fuente sintética sin datos');
+          const columns = Object.entries({ ...spec.columns, ...spec.optionalColumns });
+          const values = [columns.map(([, name]) => name), ...row.map(item => columns.map(([property]) => item[property] ?? ''))];
+          return spec.key.startsWith('maintenance') ? values : { rows: values, captured_at: '2026-11-13T04:00:00Z' };
+        },
+        readOfficialShifts: async () => clone(officialShiftCut),
+      });
       if (typeof parts.createPartsHandler === 'function') auth['/api/parts/import'] = parts.createPartsHandler({
         readRows: sheet.readRange, readFleet: () => sheet.read(tabs.fleet), panama: true,
         sendAlert: async changes => { alerts.push(clone(changes)); return { sent: true }; },
       });
     }
     return {
-      origin, repoDirectory, sheet, photos, alerts, errors, outboundBlocked, stop, peakLogins: () => peakLogins,
+      origin, repoDirectory, sheet, operationalSheets, photos, alerts, errors, outboundBlocked, stop, peakLogins: () => peakLogins,
+      registerLoadAccounts, releaseLoadAccounts,
+      setOfficialShiftCut(cut) {
+        const previous = officialShiftCut;
+        officialShiftCut = clone(cut);
+        return () => { officialShiftCut = previous; };
+      },
       buildEnv: { VITE_HERMES_API_URL: '/hermes-api', VITE_SENTRY_DSN: '' },
     };
   } catch (error) {

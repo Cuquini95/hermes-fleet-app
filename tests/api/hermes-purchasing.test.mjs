@@ -16,6 +16,8 @@ function store({ vendors = [['NOMBRE'], ['Proveedor de prueba', 'RFC-QA', 'Direc
     [TAB.vendors]: vendors,
     [TAB.expenses]: [['Gasto_ID']],
     [TAB.audit]: [['Registro']],
+    HERMES_PA_FACTURAS_OC: [['ID', 'OC_ID', 'DETALLE_JSON']],
+    HERMES_PA_PAGOS_FACTURA: [['ID', 'FACTURA_ID', 'DETALLE_JSON']],
     '12 Inventario Rep.': [['SKU','Descripción','OEM','Serie','Unidad','Stock','Mínimo','Precio','Ubicación','','Equipo'], ['SKU-QA','Filtro QA','','','pza','4','2','5','','','QA-DZ203']],
     'Movimientos Repuestos PA': [['ID']],
     '01 Inventario': [['#','COD1','Descripción','Marca','Modelo'], ['1','QA-DZ203','Equipo QA','Komatsu','D65EX-16'], ['2','QA-EX401','Equipo QA','Doosan','DX360']],
@@ -33,6 +35,7 @@ function store({ vendors = [['NOMBRE'], ['Proveedor de prueba', 'RFC-QA', 'Direc
       return result;
     },
     setCatalogStockFormula(formula) { catalogStockFormula = formula; },
+    seed(tab, data) { rows[tab] = structuredClone(data); },
     failNext(mode) { failure = mode; },
     async replay({ key, fingerprint }) {
       const prior = replies.get(key);
@@ -73,12 +76,12 @@ function store({ vendors = [['NOMBRE'], ['Proveedor de prueba', 'RFC-QA', 'Direc
   };
 }
 
-function setup(options) {
+function setup(options, purchasingOptions = {}) {
   const sheets = store(options);
   const call = (action, body, session = manager, query) => dispatchPurchasing({
     path: 'api/purchasing/' + action,
     method: body ? 'POST' : 'GET',
-    body, query, session, sheets,
+    body, query, session, sheets, ...purchasingOptions,
   });
   async function readOrder(folio, session = manager) {
     const response = await call('order', null, session, { folio });
@@ -87,6 +90,98 @@ function setup(options) {
   }
   return { sheets, call, readOrder };
 }
+
+const costManager = { ...manager, project: 'tmf-panama' };
+const costOrder = 'OT-QA-01';
+const costUnit = 'QA-DZ203';
+const acceptedAt = '2026-11-14T16:00:00Z';
+
+function seedCostOrder(sheets) {
+  const orders = sheets.inspect('ORDENES_TRABAJO');
+  orders[1][9] = 'Completado';
+  orders[1][13] = '9999.00';
+  orders[1][20] = JSON.stringify({ userId: 'mechanic-qa', functionalTest: 'Prueba conforme', laborHours: 2.5, submittedAt: '2026-11-14T15:00:00Z' });
+  orders[1][21] = JSON.stringify({ userId: 'chief-qa', acceptedAt });
+  sheets.seed('ORDENES_TRABAJO', orders);
+}
+
+function costMovement(id, kind, quantity, delta, original = '', unit = costUnit) {
+  const row = [id, '2026-11-14T14:00:00Z', kind, 'SKU-QA', quantity, unit, '', '', costOrder, id, '', '', '', 'pza', original];
+  if (delta != null) row.push(JSON.stringify({ unitCost: '9.99', currency: 'USD', reference: 'COSTO-QA', delta }));
+  return row;
+}
+
+function costService(id, group, invoice, { status = 'Aprobado', unit = costUnit, order = costOrder, ruc = 'RUC-QA' } = {}) {
+  const row = Array(29).fill('');
+  Object.assign(row, { 0: id, 3: 'Servicio', 4: 'Proveedor QA', 5: ruc, 6: invoice, 7: '50.00', 8: '3.50', 9: '53.50',
+    10: unit, 11: order, 16: status, 17: group, 18: 'author-qa', 19: '53.50', 21: 'TP_PA', 22: 'PAB',
+    24: '14/11/2026', 25: 'reviewer-qa', 26: '2026-11-14T17:00:00Z', 27: 'Factura conciliada' });
+  return row;
+}
+
+test('costo real de OT concilia horas aceptadas, salida, devolución y factura agrupados por moneda', async () => {
+  const laborValuations = [{ ot: costOrder, unit: costUnit, executorId: 'mechanic-qa', acceptedAt,
+    hours: '2.50', hourlyRate: '14.27', currency: 'USD', reference: 'MO-QA-1' }];
+  const { sheets, call } = setup(undefined, { laborValuations });
+  seedCostOrder(sheets);
+  const issue = costMovement('ISSUE-QA', 'Salida', '2.500', '24.98');
+  sheets.seed(TAB.inventoryMovements, [['ID'], issue, costMovement('RETURN-QA', 'Devolución', '1.125', '-11.24', issue[0])]);
+  sheets.seed(TAB.expenses, [['ID'], costService('SVC-1', 'GRP-1', 'FACT-QA-1'),
+    costService('SVC-2', 'GRP-2', 'FACT-QA-2', { order: 'OT-OTRA' })]);
+  const { status, body } = await call('workorder-cost', null, costManager, { ot: costOrder });
+  assert.equal(status, 200, JSON.stringify(body));
+  assert.equal(body.ot, costOrder);
+  assert.equal(body.unit, costUnit);
+  assert.equal(body.project, 'tmf-panama');
+  assert.deepEqual(body.totals, [
+    { currency: 'PAB', labor: '0.00', parts: '0.00', returns: '0.00', services: '53.50', amount: '53.50' },
+    { currency: 'USD', labor: '35.68', parts: '24.98', returns: '-11.24', services: '0.00', amount: '49.42' },
+  ]);
+  assert.deepEqual(body.lines.map(({ kind, reference }) => [kind, reference]), [
+    ['labor', 'MO-QA-1'], ['parts', 'ISSUE-QA'], ['returns', 'RETURN-QA'], ['services', 'FACT-QA-1'],
+  ]);
+  assert.deepEqual(body.pending, []);
+});
+
+test('costo real de OT conserva lo verificado y omite tarifas ajenas, devoluciones inválidas y facturas duplicadas', async () => {
+  const laborValuations = [{ ot: costOrder, unit: costUnit, executorId: 'mechanic-qa', acceptedAt,
+    hours: '3.00', hourlyRate: '14.27', currency: 'USD', reference: 'TARIFA-AJENA' }];
+  const { sheets, call } = setup(undefined, { laborValuations });
+  seedCostOrder(sheets);
+  sheets.seed(TAB.inventoryMovements, [['ID'], costMovement('ISSUE-QA', 'Salida', '1', '9.99'),
+    costMovement('RETURN-QA', 'Devolución', '1', '-9.99', 'SIN-SALIDA'), costMovement('SIN-COSTO', 'Salida', '1', null)]);
+  sheets.seed(TAB.expenses, [['ID'], costService('SVC-1', 'GRP-1', 'DOBLE-QA'),
+    costService('SVC-2', 'GRP-2', 'DOBLE-QA', { order: 'OT-OTRA', ruc: '' }),
+    costService('SVC-3', 'GRP-3', 'PEND-QA', { status: 'Pendiente' }),
+    costService('SVC-4', 'GRP-4', 'AJENA-QA', { unit: 'QA-EX401' })]);
+  const result = await call('workorder-cost', null, costManager, { ot: costOrder });
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body.lines.map(line => line.reference), ['ISSUE-QA']);
+  assert.deepEqual(new Set(result.body.pending.map(item => item.kind)), new Set(['labor', 'returns', 'parts', 'services']));
+  assert.doesNotMatch(JSON.stringify(result.body), /AJENA-QA|OT-OTRA|TARIFA-AJENA/);
+  for (const actor of [{ ...costManager, role: 'mecanico' }, { ...costManager, project: 'QA' }]) {
+    const forbidden = await call('workorder-cost', null, actor, { ot: costOrder });
+    assert.equal(forbidden.status, 403);
+    assert.equal(forbidden.body.lines, undefined);
+  }
+  const scoped = { ...costManager, allUnits: false, assignedUnits: ['QA-EX401'] };
+  const [foreign, missing] = await Promise.all([costOrder, 'OT-INEXISTENTE'].map(ot => call('workorder-cost', null, scoped, { ot })));
+  assert.deepEqual(foreign, missing);
+  assert.equal(foreign.status, 404);
+});
+
+test('costo real de OT advierte una devolución de la salida etiquetada con otro folio', async () => {
+  const { sheets, call } = setup();
+  seedCostOrder(sheets);
+  const issue = costMovement('ISSUE-QA', 'Salida', '1', '9.99');
+  const returnRow = costMovement('DEV-AJENA', 'Devolución', '1', '-9.99', issue[0]);
+  returnRow[8] = 'OT-AJENA';
+  sheets.seed(TAB.inventoryMovements, [['ID'], issue, returnRow]);
+  const { status, body } = await call('workorder-cost', null, costManager, { ot: costOrder });
+  assert.equal(status, 200);
+  assert.ok(body.pending.some(item => item.kind === 'returns'));
+  assert.doesNotMatch(JSON.stringify(body), /DEV-AJENA|OT-AJENA/);
+});
 
 const requestInput = () => ({
   operationId: randomUUID(),
@@ -106,6 +201,163 @@ const newOrder = (input = {}) => ({
     { description: 'Tres', quantity: '1.200', unitPrice: '1.99' },
   ],
   ...input,
+});
+
+const warehouseLead = { ...manager, userId: 'almacen-qa', role: 'jefe_taller', project: 'tmf-panama', previewDemo: true,
+  canApprovePurchases: false, canReceivePurchases: true };
+
+function seedWarehouseCatalog(sheets) {
+  const [header, first] = sheets.inspect(TAB.catalog);
+  const second = [...first];
+  header[14] = 'Almacén';
+  first[14] = 'Patio A';
+  second[14] = 'Patio B';
+  second[5] = '10';
+  sheets.seed(TAB.catalog, [header, first, second]);
+}
+
+test('reservas simultáneas no exceden el stock por almacén y la salida consume solo su reserva', async () => {
+  const { sheets, call } = setup();
+  seedWarehouseCatalog(sheets);
+  const input = { ot: 'OT-QA-01', warehouse: 'Patio A', partNumber: 'SKU-QA' };
+  const reserve = reference => ({ ...input, operationId: randomUUID(), kind: 'Reserva', quantity: '3', reference });
+  const [first, second] = await Promise.all(['Reserva A', 'Reserva B'].map(reference => call('inventory-reservation', reserve(reference), warehouseLead)));
+  assert.deepEqual([first.status, second.status].sort(), [200, 409]);
+  const reservationId = (first.status === 200 ? first : second).body.id;
+  const view = async () => (await call('inventory-stock', null, warehouseLead)).body.items
+    .map(row => [row.warehouse, row.physical, row.reserved, row.available]);
+  assert.deepEqual(await view(), [['Patio A','4','3','1'],['Patio B','10','0','10']]);
+  const move = { ...input, operationId: randomUUID(), kind: 'Salida', quantity: '2', reference: 'Vale QA' };
+  assert.equal((await call('inventory-move', move, warehouseLead)).status, 409);
+  assert.equal((await call('inventory-move', { ...move, warehouse: 'Patio B', reservationId }, warehouseLead)).status, 409);
+  const consume = { ...move, reservationId };
+  const consumed = await call('inventory-move', consume, warehouseLead);
+  assert.equal(consumed.status, 200);
+  assert.deepEqual((await call('inventory-move', consume, warehouseLead)).body, consumed.body);
+  assert.deepEqual(await view(), [['Patio A','2','1','1'],['Patio B','10','0','10']]);
+  const release = { ...input, operationId: randomUUID(), kind: 'Liberación', quantity: '1', reference: 'Liberación QA', reservationId };
+  assert.equal((await call('inventory-reservation', release, warehouseLead)).status, 200);
+  assert.deepEqual(await view(), [['Patio A','2','0','2'],['Patio B','10','0','10']]);
+  const restricted = { ...warehouseLead, allUnits: false, assignedUnits: ['QA-EX401'] };
+  assert.equal((await call('inventory-reservation', reserve('Fuera de alcance'), restricted)).status, 403);
+  assert.deepEqual((await call('inventory-stock', null, restricted)).body.items, []);
+});
+
+test('la consulta desde una OT muestra serie y disponibilidad conciliada para su equipo', async () => {
+  const { sheets, call } = setup();
+  sheets.readMany = tabs => {
+    assert.ok(!tabs.includes('01 Inventario'), 'El maestro de equipos se consulta fuera del registro operativo');
+    return Promise.all(tabs.map(tab => sheets.read(tab)));
+  };
+  seedWarehouseCatalog(sheets);
+  const fleet = sheets.inspect('01 Inventario');
+  fleet[1][6] = 'SERIE-82136';
+  sheets.seed('01 Inventario', fleet);
+  const orderRows = sheets.inspect('ORDENES_TRABAJO');
+  orderRows[1][25] = 'OT-0142';
+  sheets.seed('ORDENES_TRABAJO', orderRows);
+  const query = { ot: 'OT-0142', partNumber: 'sku-qa' };
+  const read = (params = query, actor = warehouseLead) => call('ot-part', null, actor, params);
+  const details = await read({ ot: query.ot });
+  assert.equal(details.status, 200, JSON.stringify(details.body));
+  assert.deepEqual(details.body, { ot: 'OT-QA-01', folio: 'OT-0142', unit: 'QA-DZ203', serial: 'SERIE-82136' });
+  const before = await read();
+  assert.equal(before.status, 200);
+  assert.equal(before.body.partNumber, 'SKU-QA');
+  assert.deepEqual(before.body.items.map(item => [item.warehouse, item.available, item.reserved, item.inTransit]),
+    [['Patio A', '4', '0', '0'], ['Patio B', '10', '0', '0']]);
+  const reserve = { operationId: randomUUID(), kind: 'Reserva', ot: query.ot, partNumber: before.body.partNumber,
+    warehouse: 'Patio A', quantity: '2', reference: 'Reserva de prueba desde OT' };
+  const recorded = await call('inventory-reservation', reserve, warehouseLead);
+  assert.equal(recorded.status, 200, JSON.stringify(recorded.body));
+  assert.deepEqual((await call('inventory-reservation', reserve, warehouseLead)).body, recorded.body);
+  const [item] = (await read()).body.items;
+  assert.deepEqual([item.available, item.reserved, item.reservedForOt], ['2', '2', '2']);
+  assert.equal((await read({ ...query, partNumber: 'SKU-AUSENTE' })).body.match, 'unverified');
+  assert.equal((await read(query, { ...warehouseLead, allUnits: false, assignedUnits: ['QA-EX401'] })).status, 403);
+  assert.equal((await read(query, { ...warehouseLead, role: 'operador', canReceivePurchases: false })).status, 403);
+});
+
+test('pedido desde OT conserva fecha requerida y serie oficial aun tras perder la respuesta', async () => {
+  const { sheets, call } = setup();
+  const fleet = sheets.inspect('01 Inventario');
+  fleet[1][6] = 'SERIE-OFICIAL';
+  sheets.seed('01 Inventario', fleet);
+  const input = { operationId: randomUUID(), items: [{
+    equipment: 'QA-DZ203', ot: 'OT-QA-01', part_number: 'SKU-QA', description: 'Filtro desde OT',
+    quantity: '2', requiredDate: '2026-11-28', equipmentSerial: 'IGNORAR-SERIE-CLIENTE',
+  }] };
+  const variant = change => ({ operationId: randomUUID(), items: [{ ...input.items[0], ...change }] });
+  assert.equal((await call('request-submit', variant({ requiredDate: '2026-02-30' }), warehouseLead)).status, 400);
+  assert.equal((await call('request-submit', variant({ ot: '' }), warehouseLead)).status, 400);
+  assert.equal((await call('request-submit', variant({ equipment: 'QA-EX401' }), warehouseLead)).status, 404);
+  sheets.failNext('after');
+  assert.equal((await call('request-submit', input, warehouseLead)).status, 503);
+  const retry = await call('request-submit', input, warehouseLead);
+  assert.equal(retry.status, 200, JSON.stringify(retry.body));
+  const { items } = (await call('requests', null, warehouseLead)).body;
+  assert.deepEqual(items.map(item => [item.pedidoId, item.ot, item.equipo, item.requiredDate, item.equipmentSerial]), [
+    [retry.body.folio, 'OT-QA-01', 'QA-DZ203', '2026-11-28', 'SERIE-OFICIAL'],
+  ]);
+  const orders = sheets.inspect('ORDENES_TRABAJO');
+  orders[1][9] = 'Completado';
+  sheets.seed('ORDENES_TRABAJO', orders);
+  assert.equal((await call('request-submit', variant({ description: 'OT cerrada' }), warehouseLead)).status, 409);
+});
+
+test('solo un despacho confirmado entra en tránsito y su recepción parcial cuadra por partida y almacén', async () => {
+  const { sheets, call, readOrder } = setup();
+  seedWarehouseCatalog(sheets);
+  const buyer = { ...manager, project: 'tmf-panama', previewDemo: true };
+  const created = await call('order-save', newOrder({ entity: 'TP_PA_DEMO', unit: 'QA-DZ203',
+    lines: [{ partNumber: 'SKU-QA', description: 'Filtro QA', quantity: '5', unitPrice: '10' }] }), buyer);
+  assert.equal(created.status, 200);
+  const { folio, version } = created.body;
+  assert.equal((await call('order-status', { operationId: randomUUID(), folio, version, status: 'Aprobada', reason: 'QA' }, buyer)).status, 200);
+  const balances = async () => (await call('inventory-stock', null, warehouseLead)).body.items
+    .map(row => [row.warehouse, row.physical, row.inTransit]);
+  assert.deepEqual(await balances(), [['Patio A','4','0'],['Patio B','10','0']]);
+  let order = await readOrder(folio, buyer);
+  const lineId = order.lines[0].id;
+  const dispatch = { operationId: randomUUID(), folio, version: order.version, lineId, quantity: '4', warehouse: 'Patio B', reference: 'Guía QA' };
+  const shipped = await call('order-dispatch', dispatch, warehouseLead);
+  assert.equal(shipped.status, 200);
+  assert.deepEqual((await call('order-dispatch', dispatch, warehouseLead)).body, shipped.body);
+  assert.deepEqual(await balances(), [['Patio A','4','0'],['Patio B','10','4']]);
+  order = await readOrder(folio, buyer);
+  const receipt = { operationId: randomUUID(), folio, version: order.version, lineId, quantity: '2', reference: 'Remisión QA' };
+  assert.equal((await call('order-receive', receipt, warehouseLead)).status, 409);
+  assert.equal((await call('order-receive', { ...receipt, dispatchId: shipped.body.dispatchId, warehouse: 'Patio A' }, warehouseLead)).status, 409);
+  assert.equal((await call('order-receive', { ...receipt, dispatchId: shipped.body.dispatchId }, warehouseLead)).status, 200);
+  assert.deepEqual(await balances(), [['Patio A','4','0'],['Patio B','12','2']]);
+  const catalog = sheets.inspect(TAB.catalog);
+  catalog[2][10] = 'QA-DZ203, QA-EX401';
+  sheets.seed(TAB.catalog, catalog);
+  const restricted = { ...warehouseLead, allUnits: false, assignedUnits: ['QA-EX401'] };
+  const scoped = await call('inventory-stock', null, restricted);
+  assert.deepEqual(scoped.body.items.map(row => [row.warehouse, row.inTransit]), [['Patio B', '0']]);
+  order = await readOrder(folio, buyer);
+  const cancel = { operationId: randomUUID(), folio, version: order.version, lineId, cancelDispatchId: shipped.body.dispatchId,
+    reference: 'Proveedor canceló el remanente' };
+  assert.equal((await call('order-dispatch', cancel, warehouseLead)).status, 200);
+  assert.deepEqual(await balances(), [['Patio A','4','0'],['Patio B','12','0']]);
+  const track = sheets.inspect(TAB.inventoryMovements);
+  assert.deepEqual(track.slice(1).map(row => [row[2], row[4], row[16], row[18]]), [
+    ['Despacho', '4', 'Patio B', shipped.body.dispatchId],
+    ['Recepción', '2', 'Patio B', shipped.body.dispatchId],
+    ['Cancelación de despacho', '2', 'Patio B', shipped.body.dispatchId],
+  ]);
+  sheets.seed(TAB.inventoryMovements, track.filter(row => row[2] !== 'Despacho'));
+  assert.deepEqual(await balances(), [['Patio A','4','0'],['Patio B','12',null]]);
+});
+
+test('una ubicación de estante histórica nunca se usa para inventar un almacén', async () => {
+  const { sheets, call } = setup();
+  const catalog = sheets.inspect(TAB.catalog);
+  catalog[1][8] = 'Estante A-2';
+  sheets.seed(TAB.catalog, catalog);
+  const { body } = await call('inventory-stock', null, warehouseLead);
+  assert.deepEqual(body.items.map(row => [row.warehouse, row.physical, row.reserved, row.inTransit]), [['', '4', null, null]]);
 });
 
 test('mantiene la huérfana y guarda tres importes con el mismo folio después de un fallo', async () => {
@@ -294,6 +546,59 @@ test('impone roles y unidades en la lectura y escritura de Compras', async () =>
   assert.deepEqual((await call('orders', null, limited)).body.orders, []);
 });
 
+test('Panamá divide una partida entre proveedores sin perder la OT ni superar el saldo', async () => {
+  const { call, readOrder } = setup({ vendors: [
+    ['NOMBRE'], ['Proveedor de prueba', 'RFC-QA', 'Dirección QA'], ['Segundo proveedor', 'RFC-QA-2', 'Dirección QA 2'],
+  ] });
+  const buyer = { ...manager, project: 'tmf-panama', previewDemo: true };
+  const requester = { ...buyer, role: 'jefe_taller', userId: 'qa-jefe' };
+  const warehouse = { ...requester, userId: 'qa-almacen', canApprovePurchases: false, canReceivePurchases: true };
+  const requested = { operationId: randomUUID(), items: [
+    { part_number: 'SKU-QA', description: 'Filtro QA', quantity: '7', unit_price: '6.05', equipment: 'QA-DZ203', ot: 'OT-QA-01' },
+  ] };
+  assert.equal((await call('request-submit', { ...requested, items: [{ ...requested.items[0], ot: 'OT-NO-EXISTE' }] }, requester)).status, 404);
+  assert.equal((await call('request-submit', requested, requester)).status, 200);
+  const readRequest = async () => (await call('requests', null, buyer)).body.items[0];
+  const entry = await readRequest();
+  assert.equal(entry.ot, 'OT-QA-01');
+  assert.equal(entry.unallocatedQuantity, '7');
+  const entity = (await call('orders', null, buyer)).body.issuers[0].id;
+  const create = (amount, vendorName = 'Proveedor de prueba', vendorRfc = 'RFC-QA') => call('order-save', newOrder({
+    vendorName, vendorRfc, entity, unit: 'QA-DZ203', tax: '0.00',
+    lines: [{ requestLineId: entry.id, quantity: amount, unitPrice: '5.00' }],
+  }), buyer);
+  const first = await create('3');
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  assert.equal((await readRequest()).unallocatedQuantity, '4');
+  const disposable = await create('1', 'Segundo proveedor', 'RFC-QA-2');
+  assert.equal(disposable.status, 200);
+  const abandoned = await readOrder(disposable.body.folio, buyer);
+  assert.equal((await readRequest()).unallocatedQuantity, '3');
+  assert.equal((await call('order-delete', { operationId: randomUUID(), folio: abandoned.folio, version: abandoned.version }, buyer)).status, 200);
+  assert.equal((await readRequest()).unallocatedQuantity, '4');
+  const candidates = await Promise.all([create('4', 'Segundo proveedor', 'RFC-QA-2'), create('4', 'Segundo proveedor', 'RFC-QA-2')]);
+  assert.deepEqual(candidates.map(x => x.status).sort(), [200,409]);
+  const second = candidates.find(x => x.status === 200);
+  const full = await readRequest();
+  assert.equal(full.unallocatedQuantity, '0');
+  assert.equal(full.receivedQuantity, '0');
+  assert.equal(full.allocations.length, 2);
+  for (const creation of [first,second]) {
+    const folio = creation.body.folio;
+    let order = await readOrder(folio, buyer);
+    assert.equal(order.lines[0].ot, 'OT-QA-01');
+    assert.equal(order.lines[0].partNumber, 'SKU-QA');
+    assert.equal(order.lines[0].requestLineId, entry.id);
+    assert.equal((await call('order-status', { operationId: randomUUID(), folio, version: order.version, status: 'Aprobada', reason: 'QA soporte' }, buyer)).status, 200);
+    order = await readOrder(folio, buyer);
+    assert.equal((await call('order-receive', { operationId: randomUUID(), folio, version: order.version,
+      lineId: order.lines[0].id, quantity: order.lines[0].quantity, reference: 'Remisión ' + folio }, warehouse)).status, 200);
+    assert.equal((await readRequest()).estado, creation === first ? 'Pedido' : 'Completado');
+    assert.equal((await readOrder(folio,buyer)).lines[0].ot, 'OT-QA-01');
+  }
+  assert.equal((await readRequest()).receivedQuantity, '7');
+});
+
 test('Almacén de Panamá consulta y recibe por partida dentro de su asignación', async (t) => {
   const priorIssuers = process.env.HERMES_PURCHASE_ISSUERS_JSON;
   process.env.HERMES_PURCHASE_ISSUERS_JSON = JSON.stringify([{
@@ -453,10 +758,67 @@ test('Panamá separa aprobación Q25, recepción con remisión, factura y pago c
   assert.equal(order.receiptStatus, 'Recibida');
   assert.equal((await call('order-payment', input({ reference: 'P-01', amount: order.total }), treasury)).status, 409);
   assert.equal((await call('order-invoice', input({ reference: 'F-01', amount: '1' }), accounting)).status, 409);
-  assert.equal((await call('order-invoice', input({ reference: 'F-01', amount: order.total }), accounting)).status, 200);
+  const invoiceLines = [{ lineId: order.lines[0].id, quantity: '2', unitPrice: '10.00' }];
+  const fields = { reference: 'F-01', amount: order.total, currency: 'USD', tax: order.tax, lines: invoiceLines };
+  const inconsistent = await call('order-invoice', input({ ...fields, currency: 'PAB', tax: '0.04',
+    lines: [{ ...invoiceLines[0], quantity: '1', unitPrice: '20.00' }],
+  }), accounting);
+  assert.equal(inconsistent.status, 409);
+  assert.match(inconsistent.body.error, /moneda.*ITBMS.*cantidad.*precio/i);
+  assert.equal((await readOrder(folio, buyer)).invoice, null);
+  assert.equal((await call('order-invoice', input({ ...fields, lines: [...invoiceLines, ...invoiceLines] }), accounting)).status, 409);
+  const receivedLines = sheets.inspect(TAB.lines);
+  const unsupported = structuredClone(receivedLines);
+  const unsupportedLine = unsupported.find(row => row[6] === invoiceLines[0].lineId);
+  const unsupportedHistory = JSON.parse(unsupportedLine[11]);
+  unsupportedHistory[0].actorId = buyer.userId;
+  unsupportedLine[11] = JSON.stringify(unsupportedHistory);
+  sheets.seed(TAB.lines, unsupported);
+  assert.equal((await call('order-invoice', input(fields), accounting)).status, 409);
+  sheets.seed(TAB.lines, receivedLines);
+  assert.equal((await call('order-invoice', input(fields), accounting)).status, 200);
   order = await readOrder(folio, buyer);
   assert.equal(order.invoice.reference, 'F-01');
   assert.equal(order.invoice.actorId, accounting.userId);
+  assert.equal(order.invoice.match.tax, order.tax);
+  assert.deepEqual(order.invoice.match.lines.map(({ receiptEvidence, ...line }) => line), [{
+    lineId: order.lines[0].id, quantity: '2', unitPrice: '10.00', receiptIds: order.lines[0].receipts.map(receipt => receipt.id),
+  }]);
+  const historical = sheets.inspect(TAB.orders);
+  const invoiceRow = historical.find(row => row[0] === folio);
+  const { match, matchReviewedById, matchReviewedAt, ...previousInvoice } = JSON.parse(invoiceRow[23]);
+  assert.ok(match && matchReviewedById && matchReviewedAt);
+  previousInvoice.actorId = 'cuenta-historica-qa';
+  invoiceRow[23] = JSON.stringify(previousInvoice);
+  sheets.seed(TAB.orders, historical);
+  assert.equal((await call('order-payment', input({ reference: 'P-01', amount: order.total }), treasury)).status, 409);
+  assert.equal((await call('order-invoice', input({ ...fields, reference: 'F-OTRA' }), accounting)).status, 409);
+  assert.equal((await call('order-invoice', input(fields), accounting)).status, 200);
+  order = await readOrder(folio, buyer);
+  assert.equal(order.invoice.actorId, previousInvoice.actorId);
+  assert.equal(order.invoice.matchReviewedById, accounting.userId);
+  const changedLines = structuredClone(receivedLines);
+  const changedLine = changedLines.find(row => row[6] === invoiceLines[0].lineId);
+  const changedHistory = JSON.parse(changedLine[11]);
+  changedHistory[0].reference = 'Remisión corregida QA';
+  changedLine[11] = JSON.stringify(changedHistory);
+  sheets.seed(TAB.lines, changedLines);
+  assert.equal((await call('order-payment', input({ reference: 'P-01', amount: order.total }), treasury)).status, 409);
+  changedHistory[0].reference = 'R-01';
+  changedHistory[0].id = 'remision-sustituida-qa';
+  changedLine[11] = JSON.stringify(changedHistory);
+  sheets.seed(TAB.lines, changedLines);
+  assert.equal((await call('order-payment', input({ reference: 'P-01', amount: order.total }), treasury)).status, 409);
+  order = await readOrder(folio, buyer);
+  assert.equal(order.payment, null);
+  assert.equal(order.invoiceReconciled, false);
+  assert.equal((await call('order-invoice', input(fields), accounting)).status, 200);
+  order = await readOrder(folio, buyer);
+  assert.equal(order.invoiceReconciled, true);
+  assert.equal(order.invoice.actorId, previousInvoice.actorId);
+  assert.equal(order.invoice.match.lines[0].receiptIds[0], 'remision-sustituida-qa');
+  const previousMatchAudit = sheets.inspect(TAB.audit).find(row => row[4] === 'Conciliación anterior de factura');
+  assert.notEqual(JSON.parse(previousMatchAudit[5]).match.lines[0].receiptIds[0], 'remision-sustituida-qa');
   assert.equal(order.status, 'Recibida');
   assert.equal((await call('order-payment', input({ reference: 'P-01', amount: order.total }), { ...accounting, canRecordPurchasePayments: true })).status, 403);
   assert.equal((await call('order-payment', input({ reference: 'P-01', amount: order.total }), buyer)).status, 403);
@@ -467,6 +829,33 @@ test('Panamá separa aprobación Q25, recepción con remisión, factura y pago c
   assert.equal(order.payment.invoiceReference, 'F-01');
   assert.deepEqual(order.lines[0].receipts.map((receipt) => receipt.reference), ['R-01', 'R-02']);
   assert.equal(sheets.inspect(TAB.audit).filter((row) => row[4] === 'Pago de OC conciliado').length, 1);
+});
+
+test('Panamá exige el PIN indicado en catálogo aunque ambas unidades tengan el mismo modelo', async () => {
+  const { call, sheets } = setup();
+  sheets.seed('01 Inventario', [
+    ['#','COD1','Descripción','Marca','Modelo','Año','Serie'],
+    ['1','QA-DZ203','Equipo A','Komatsu','D65EX-16','2020','QA-A123'],
+    ['2','QA-DZ204','Equipo B','Komatsu','D65EX-16','2020','QA-B234'],
+    ['3','QA-DZ205','Equipo C','Komatsu','D65EX-16','2020',''],
+    ['4','QA-DZ206','Equipo D','Komatsu','D155','2020','QA-A123'],
+  ]);
+  const catalog = sheets.inspect(TAB.catalog);
+  catalog[1][10] = 'D65EX-16; PIN:QA-A123';
+  sheets.seed(TAB.catalog, catalog);
+  const buyer = { ...manager, role: 'jefe_taller', project: 'tmf-panama', projects: ['tmf-panama'], previewDemo: true };
+  const orderPart = equipment => ({ operationId: randomUUID(), items: [
+    { part_number: 'SKU-QA', description: 'Filtro restringido por serie', quantity: '1', equipment },
+  ] });
+  const accepted = await call('request-submit', orderPart('QA-DZ203'), buyer);
+  assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+  for (const equipment of ['QA-DZ204', 'QA-DZ205']) {
+    const rejected = await call('request-submit', orderPart(equipment), buyer);
+    assert.equal(rejected.status, 409);
+    assert.match(rejected.body.error, /PIN|serie/i);
+  }
+  assert.equal((await call('request-submit', orderPart('QA-DZ206'), buyer)).status, 409);
+  assert.equal(sheets.inspect(TAB.requests).length, 2);
 });
 
 test('Panamá valida la compatibilidad y registra movimientos de stock conciliables con la OT', async () => {
@@ -526,4 +915,244 @@ test('Panamá valida la compatibilidad y registra movimientos de stock conciliab
   const history = (await call('inventory-movements', null, warehouse, { ot: 'OT-QA-01' })).body.items;
   assert.deepEqual(history.map(item => [item.kind,item.quantity]), [['Devolución','1'],['Salida','2']]);
   assert.equal(sheets.inspect('Movimientos Repuestos PA').length, 5);
+});
+
+test('cada devolución debita la salida elegida y revierte su valuación original hasta el último centavo', async () => {
+  const inventoryValuations = [{ partNumber: 'SKU-QA', unitCost: '9.99', currency: 'USD', reference: 'COSTO-APROBADO-QA' }];
+  const { call, sheets } = setup(undefined, { inventoryValuations });
+  const warehouse = { ...manager, project: 'tmf-panama', role: 'jefe_taller', canApprovePurchases: false, canReceivePurchases: true };
+  const move = (kind, quantity, reference, originalIssueId) => call('inventory-move', {
+    operationId: randomUUID(), kind, quantity, reference, partNumber: 'SKU-QA', ot: 'OT-QA-01', originalIssueId,
+  }, warehouse);
+  const first = await move('Salida', '1.001', 'SAL-A');
+  assert.equal(first.status, 200);
+  assert.equal(first.body.valuation?.delta, '10.00');
+  inventoryValuations[0].unitCost = '14.00';
+  const second = await move('Salida', '1.001', 'SAL-B');
+  assert.equal(second.body.valuation?.delta, '14.01');
+  assert.equal((await move('Devolución', '0.5', 'SIN-ORIGEN')).status, 409);
+  assert.equal((await move('Devolución', '1.2', 'EXCESO', first.body.id)).status, 409);
+  assert.equal((await move('Devolución', '0.5', 'NO-EXISTE', 'abc')).status, 409);
+  const partial = await move('Devolución', '0.5', 'DEV-A1', first.body.id);
+  assert.equal(partial.body.valuation?.delta, '-5.00');
+  const remaining = () => call('inventory-movements', null, warehouse, { ot: 'OT-QA-01' }).then(r => r.body.items);
+  assert.equal((await remaining()).find(item => item.id === first.body.id)?.returnable, '0.501');
+  const attempts = await Promise.all([move('Devolución', '0.501', 'DEV-A2', first.body.id), move('Devolución', '0.501', 'DEV-A3', first.body.id)]);
+  assert.deepEqual(attempts.map(r => r.status).sort(), [200,409]);
+  const rows = await remaining();
+  const returned = rows.filter(item => item.originalIssueId === first.body.id);
+  assert.deepEqual(returned.map(item => [item.valuation.delta,item.valuation.unitCost,item.valuation.reference]), [
+    ['-5.00','9.99','COSTO-APROBADO-QA'], ['-5.00','9.99','COSTO-APROBADO-QA'],
+  ]);
+  assert.equal(rows.find(item => item.id === second.body.id)?.returnable, '1.001');
+  assert.equal(sheets.inspect(TAB.catalog)[1][5], '2.999');
+});
+
+test('C45: concilia una OC abierta por SKU y almacén sin duplicar tránsito ni recepción', async () => {
+  const { sheets, call, readOrder } = setup();
+  seedWarehouseCatalog(sheets);
+  const buyer = { ...manager, project: 'tmf-panama', previewDemo: true };
+  const created = await call('order-save', newOrder({ entity: 'TP_PA_DEMO', unit: 'QA-DZ203', deliveryDate: '2026-12-01',
+    lines: [{ partNumber: 'SKU-QA', description: 'Filtro QA', quantity: '5', unitPrice: '10' }] }), buyer);
+  assert.equal(created.status, 200);
+  const { folio, version } = created.body;
+  assert.equal((await call('order-status', { operationId: randomUUID(), folio, version, status: 'Aprobada', reason: 'QA' }, buyer)).status, 200);
+  const query = { partNumber: 'SKU-QA', unit: 'QA-DZ203', warehouse: 'Patio B' };
+  const read = (params = query, actor = warehouseLead) => call('inventory-replenishment', null, actor, params);
+  const unassigned = await read();
+  assert.equal(unassigned.status, 200);
+  assert.deepEqual(unassigned.body.issues.map(item => item.reason), ['Almacén de la partida por confirmar']);
+  const reserva = { operationId: randomUUID(), kind: 'Reserva', ot: 'OT-QA-01', quantity: '3',
+    warehouse: 'Patio B', partNumber: 'SKU-QA', reference: 'Reserva C45' };
+  assert.equal((await call('inventory-reservation', reserva, warehouseLead)).status, 200);
+  let order = await readOrder(folio, buyer);
+  const lineId = order.lines[0].id;
+  const shipped = await call('order-dispatch', { operationId: randomUUID(), folio, version: order.version, lineId,
+    quantity: '4', warehouse: 'Patio B', reference: 'Guía C45' }, warehouseLead);
+  assert.equal(shipped.status, 200);
+  order = await readOrder(folio, buyer);
+  const received = await call('order-receive', { operationId: randomUUID(), folio, version: order.version, lineId,
+    quantity: '2', reference: 'Remisión C45', dispatchId: shipped.body.dispatchId }, warehouseLead);
+  assert.equal(received.status, 200);
+  const response = await read();
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.stock, { physical: '12', reserved: '3', available: '9', minimum: '2', measure: 'pza' });
+  assert.deepEqual(response.body.openOrders, [{ folio, lineId, remaining: '3', inTransit: '2', due: '2026-12-01' }]);
+  assert.deepEqual(response.body.issues, []);
+  const other = await read({ ...query, warehouse: 'Patio A' });
+  assert.deepEqual(other.body.openOrders, []);
+  assert.deepEqual(other.body.issues, []);
+  const restricted = { ...warehouseLead, allUnits: false, assignedUnits: ['QA-DZ203'] };
+  assert.equal((await read(query, restricted)).status, 403);
+  assert.equal((await read(query, { ...buyer, project: 'mx' })).status, 403);
+  assert.equal((await read(query, { ...buyer, role: 'supervisor', canApprovePurchases: false })).status, 403);
+  assert.equal((await read({ ...query, warehouse: 'Inexistente' })).status, 404);
+  assert.equal((await read({ ...query, unit: 'QA-EX401' })).status, 409);
+
+  const headers = sheets.inspect(TAB.orders);
+  headers.find(row => row[0] === folio)[14] = '';
+  sheets.seed(TAB.orders, headers);
+  const undated = await read();
+  assert.equal(undated.body.openOrders[0].due, null);
+  assert.deepEqual(undated.body.issues.map(item => item.reason), ['Fecha de entrega de la OC por confirmar']);
+  const movements = sheets.inspect(TAB.inventoryMovements);
+  sheets.seed(TAB.inventoryMovements, movements.filter(row => row[2] !== 'Despacho'));
+  const mismatch = await read();
+  assert.deepEqual(mismatch.body.openOrders, []);
+  assert.deepEqual(mismatch.body.issues.map(item => item.reason), ['Saldo o movimientos de la partida por conciliar']);
+});
+
+test('firma una OC aprobada solo con la cuenta que la aprobó y conserva la aprobación al reintentar', async () => {
+  const { call, sheets } = setup();
+  const buyer = { ...manager, userId: randomUUID(), project: 'tmf-panama' };
+  const other = { ...buyer, userId: randomUUID() };
+  const folio = 'OC-FIRMA-QA';
+  const approvedAt = '2026-11-16T13:07:57.862Z';
+  const header = Array(28).fill('');
+  Object.assign(header, { 0: folio, 2: 'Proveedor QA', 5: 'QA-DZ203', 10: '107.00', 11: 'Aprobada',
+    13: buyer.userName, 15: 'version-qa', 16: JSON.stringify({ id: 'TP_PA', template: 'transplus', name: 'TRANSPLUS', currency: 'USD', taxLabel: 'ITBMS' }),
+    17: buyer.userId, 18: approvedAt, 27: '3002' });
+  sheets.seed(TAB.orders, [['OC_ID'], header]);
+  sheets.seed(TAB.lines, [['OC_ID'], [folio, '1', 'Parte QA', '1', '100', '100']]);
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+YRXsAAAAASUVORK5CYII=';
+  const signatures = [];
+  const commit = sheets.commit;
+  sheets.commit = async (args) => {
+    const saved = await commit(args);
+    if (args.purchaseSignature && !saved.replayed) signatures.push(args.purchaseSignature);
+    return saved;
+  };
+  sheets.readPurchaseSignature = async ({ folio: id, approvedById, approvedAt: at }) =>
+    signatures.find(item => item.folio === id && item.approvedById === approvedById && item.approvedAt === at)?.png;
+  const input = { operationId: randomUUID(), folio, version: 'version-qa', signature: png };
+  assert.equal((await call('order-sign', input, other)).status, 403);
+  assert.equal((await call('order-sign', { ...input, signature: 'no-es-PNG' }, buyer)).status, 400);
+  const saved = await call('order-sign', input, buyer);
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  assert.deepEqual(await call('order-sign', input, buyer), saved);
+  assert.equal(signatures.length, 1);
+  assert.deepEqual(sheets.inspect(TAB.orders)[1], header);
+  assert.equal((await call('order', null, buyer, { folio: '3002' })).body.approvalSignature, png);
+});
+
+test('AP concilia seis de diez unidades recibidas, conserva pagos parciales y evita reintentos duplicados', async () => {
+  const { sheets, call, readOrder } = setup();
+  const buyer = { ...manager, project: 'tmf-panama' };
+  const warehouse = { ...buyer, userId: 'ap-receiver', role: 'jefe_taller', canApprovePurchases: false, canReceivePurchases: true };
+  const accounting = { ...buyer, userId: 'ap-accountant', canApprovePurchases: false, canRecordPurchaseInvoices: true };
+  const treasury = { ...buyer, userId: 'ap-treasury', canApprovePurchases: false, canRecordPurchasePayments: true };
+  const folio = 'OC-AP-001';
+  const lineId = folio + '-L1';
+  const header = Array(28).fill('');
+  Object.assign(header, { 0: folio, 1: '14/11/2026', 2: 'Proveedor AP QA', 3: 'RUC-AP-QA', 5: 'QA-DZ203',
+    6: '1000.00', 7: '70.00', 10: '1070.00', 11: 'Aprobada', 13: buyer.userName, 15: 'v1',
+    16: JSON.stringify({ id: 'TP_PA', template: 'transplus', name: 'TRANSPLUS', currency: 'USD', taxLabel: 'ITBMS' }),
+    17: buyer.userId, 18: '2026-11-14T14:00:00Z', 27: '3002' });
+  sheets.seed(TAB.orders, [['OC_ID'], header]);
+  sheets.seed(TAB.lines, [['OC_ID'], [folio, '1', 'Filtro AP QA', '10', '100.00', '1000.00', lineId, '', '', '', '0', '[]']]);
+  const write = (action, body, role) => call(action, { operationId: randomUUID(), ...body }, role);
+  const version = async () => (await readOrder(folio, buyer)).version;
+  const receipt = async (quantity, reference) => write('order-receive', { folio, version: await version(), lineId, quantity, reference }, warehouse);
+  assert.equal((await receipt('6', 'REM-AP-6')).status, 200);
+  const detail = { folio, version: await version(), reference: 'FAC-AP-6', issueDate: '2026-11-14', dueDate: '2026-12-14',
+    amount: '642.00', currency: 'USD', tax: '42.00', lines: [{ lineId, quantity: '6', unitPrice: '100.00' }] };
+  const ap = async (role = accounting) => (await call('ap', null, role)).body;
+  assert.equal((await write('ap-invoice', detail, buyer)).status, 403);
+  assert.equal((await write('ap-invoice', { ...detail, lines: [{ lineId, quantity: '7', unitPrice: '100.00' }] }, accounting)).status, 409);
+  const invoiceAttempt = { ...detail, operationId: randomUUID() };
+  sheets.failNext('after');
+  await call('ap-invoice', invoiceAttempt, accounting);
+  const saved = await call('ap-invoice', invoiceAttempt, accounting);
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  const invoiceId = saved.body.id;
+  assert.equal((await readOrder(folio, buyer)).status, 'Recibida parcial');
+  assert.equal((await write('ap-invoice', { ...detail, version: await version(), reference: 'FAC-DUPLICADA' }, accounting)).status, 409);
+  assert.equal((await ap()).orders[0].lines[0].available, '0');
+  assert.equal((await ap()).invoices[0].dueDate, '2026-12-14');
+  assert.equal((await ap()).invoices.length, 1);
+  assert.deepEqual((await ap({ ...accounting, allUnits: false, assignedUnits: ['OTHER'] })).invoices, []);
+
+  const motion = { invoiceId, version: await version(), date: '2026-11-14', reference: 'BANCO-AP-1', amount: '200.00', operationId: randomUUID() };
+  assert.equal((await call('ap-payment', motion, accounting)).status, 403);
+  assert.equal((await call('ap-payment', { ...motion, amount: '643.00' }, treasury)).status, 409);
+  sheets.failNext('after');
+  await call('ap-payment', motion, treasury);
+  assert.equal((await call('ap-payment', motion, treasury)).status, 200);
+  let entry = (await ap(treasury)).invoices[0];
+  assert.deepEqual([entry.status, entry.balance, entry.paid, entry.payments.length], ['Parcial', '442.00', '200.00', 1]);
+  assert.equal((await write('ap-payment', { ...motion, version: await version(), amount: '1.00', operationId: randomUUID() }, treasury)).status, 409);
+  assert.equal((await write('ap-payment', { ...motion, version: await version(), reference: 'BANCO-AP-2', amount: '442.00', operationId: randomUUID() }, treasury)).status, 200);
+  assert.equal((await readOrder(folio, buyer)).status, 'Recibida parcial');
+
+  assert.equal((await receipt('4', 'REM-AP-4')).status, 200);
+  const remaining = { ...detail, version: await version(), reference: 'FAC-AP-4', amount: '428.00', tax: '28.00',
+    lines: [{ lineId, quantity: '4', unitPrice: '100.00' }] };
+  assert.equal((await write('order-invoice', { ...remaining, currency: 'USD' }, accounting)).status, 409);
+  const last = await write('ap-invoice', remaining, accounting);
+  assert.equal(last.status, 200, JSON.stringify(last.body));
+  assert.equal((await write('ap-payment', { invoiceId: last.body.id, version: await version(), date: '2026-11-14',
+    reference: 'BANCO-AP-3', amount: '428.00' }, treasury)).status, 200);
+  assert.equal((await readOrder(folio, buyer)).status, 'Pagada');
+  const ledger = (await ap()).invoices;
+  assert.equal(ledger.length, 2);
+  assert.ok(ledger.every(invoice => invoice.status === 'Pagada' && invoice.balance === '0.00'));
+});
+
+test('una firma registrada se archiva al aprobar y solo el aprobador puede aplicarla a una OC anterior', async () => {
+  const { call, sheets } = setup();
+  const owner = { ...manager, userId: randomUUID(), project: 'tmf-panama' };
+  const other = { ...owner, userId: randomUUID() };
+  const source = { folio: 'OC-FIRMA-ORIGEN-QA', approvedById: owner.userId, approvedAt: '2026-11-14T17:38:21.711Z' };
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+YRXsAAAAASUVORK5CYII=';
+  const signatures = [{ ...source, png }];
+  const row = (id, number, status = 'Borrador') => {
+    const values = Array(28).fill('');
+    Object.assign(values, { 0: id, 2: 'Proveedor QA', 5: 'QA-DZ203', 10: '107.00', 11: status,
+      15: 'signature-version', 16: JSON.stringify({ id: 'TP_PA', template: 'transplus', name: 'TRANSPLUS', currency: 'USD', taxLabel: 'ITBMS' }),
+      27: number });
+    if (status === 'Aprobada') Object.assign(values, { 13: owner.userName, 17: owner.userId, 18: '2026-11-16T13:07:57.862Z' });
+    return values;
+  };
+  const draft = row('OC-AUTO-FIRMA-QA', '3003');
+  const historical = row('OC-HIST-FIRMA-QA', '3002', 'Aprobada');
+  const otherDraft = row('OC-OTRO-APROBADOR', '3004');
+  const records = [draft, historical, otherDraft];
+  sheets.seed(TAB.orders, [['OC_ID'], ...records]);
+  sheets.seed(TAB.lines, [['OC_ID'], ...records.map(item => [item[0], '1', 'Parte QA', '1', '100', '100'])]);
+  sheets.registeredPurchaseSignatureSource = async id => id === owner.userId ? source : undefined;
+  sheets.readPurchaseSignature = async ({ folio, approvedById, approvedAt }) =>
+    signatures.find(item => item.folio === folio && item.approvedById === approvedById && item.approvedAt === approvedAt)?.png;
+  const commit = sheets.commit;
+  sheets.commit = async args => {
+    const saved = await commit(args);
+    if (args.purchaseSignature && !saved.replayed) signatures.push(args.purchaseSignature);
+    return saved;
+  };
+
+  assert.equal((await call('orders', null, owner)).body.usesRegisteredSignature, true);
+  assert.equal((await call('orders', null, other)).body.usesRegisteredSignature, undefined);
+  assert.equal((await call('order', null, owner, { folio: '3002' })).body.usesRegisteredSignature, true);
+  assert.equal((await call('order', null, other, { folio: '3002' })).body.usesRegisteredSignature, undefined);
+  const approve = {
+    operationId: randomUUID(), folio: draft[0], version: draft[15], status: 'Aprobada', reason: 'Soporte QA',
+  };
+  const [registered] = signatures.splice(0, 1);
+  const unavailable = await call('order-status', approve, owner);
+  assert.equal(unavailable.status, 503);
+  assert.equal(sheets.inspect(TAB.orders)[1][11], 'Borrador');
+  signatures.push(registered);
+  const signed = await call('order-status', { ...approve, signature: 'stale-client-value' }, owner);
+  assert.equal(signed.body.signed, true, JSON.stringify(signed));
+  assert.deepEqual(await call('order-status', { ...approve, signature: 'stale-client-value' }, owner), signed);
+  assert.equal((await call('order', null, owner, { folio: '3003' })).body.approvalSignature, png);
+  assert.equal(signatures.filter(item => item.folio === draft[0]).length, 1);
+
+  const retro = { operationId: randomUUID(), folio: historical[0], version: historical[15] };
+  assert.equal((await call('order-sign', retro, other)).status, 403);
+  assert.equal((await call('order-sign', retro, owner)).body.signed, true);
+  assert.deepEqual(sheets.inspect(TAB.orders)[2], historical);
+  assert.equal((await call('order', null, owner, { folio: '3002' })).body.approvalSignature, png);
+  const noProfile = await call('order-status', { ...approve, operationId: randomUUID(), folio: otherDraft[0] }, other);
+  assert.equal(noProfile.status, 200);
+  assert.equal((await call('order', null, other, { folio: '3004' })).body.approvalSignature, undefined);
 });

@@ -102,10 +102,10 @@ export default function AdminActivosPage() {
 
   return (
     <div className="p-4 max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold mb-1">Activos</h1>
-      <p className="text-sm text-gray-600 mb-6">
-        {isPanama ? 'Ficha de adquisición y vida útil de la flota de Panamá.' : 'Registra la flota para el dashboard de Ciclo de Vida de Activos en Power-GTP.'}
-      </p>
+      <h1 className={`text-2xl font-bold ${isPanama ? 'mb-5' : 'mb-1'}`}>Activos</h1>
+      {!isPanama && <p className="text-sm text-gray-600 mb-6">
+        Registra la flota para el dashboard de Ciclo de Vida de Activos en Power-GTP.
+      </p>}
 
       {tabMissing && (
         <div className="mb-6 rounded-lg border-2 border-amber-300 bg-amber-50 p-4">

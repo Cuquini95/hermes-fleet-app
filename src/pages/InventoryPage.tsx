@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
-import PanamaPartsMovements from '../components/workshop/PanamaPartsMovements';
+import PanamaWarehouseStock from '../components/workshop/PanamaWarehouseStock';
+import { useAuthStore } from '../stores/auth-store';
 import { parseInventoryRows, type InventoryItem } from '../lib/inventory-rows';
 
 interface StockItem extends InventoryItem {
@@ -64,6 +65,21 @@ function SkeletonCard() {
 }
 
 export default function InventoryPage() {
+  const project = useAuthStore(state => state.project);
+  const userId = useAuthStore(state => state.userId);
+  const navigate = useNavigate();
+  if (project !== 'tmf-panama') return <LegacyInventoryPage />;
+  return <div className="flex flex-col pb-4">
+    <div className="mb-4 flex items-center gap-3">
+      <button type="button" aria-label="Volver" onClick={() => navigate(-1)}
+        className="rounded-xl border border-border bg-white p-2"><ArrowLeft size={20} /></button>
+      <h1 className="text-xl font-bold">Inventario por almacén</h1>
+    </div>
+    <PanamaWarehouseStock key={userId} />
+  </div>;
+}
+
+function LegacyInventoryPage() {
   const navigate = useNavigate();
   const [filter, setFilter] = useState<FilterType>('all');
   const [items, setItems] = useState<StockItem[]>([]);
@@ -137,8 +153,6 @@ export default function InventoryPage() {
           </button>
         </div>
       )}
-
-      <PanamaPartsMovements onMoved={() => setRetryKey((key) => key + 1)} />
 
       {/* Summary pills */}
       {!error && (

@@ -1,18 +1,20 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import PanamaComponentHistory from '../components/workshop/PanamaComponentHistory';
+import PanamaSourceCuts from '../components/workshop/PanamaSourceCuts';
+import { visibleWorkOrderFolio } from '../lib/purchasing-api';
 import { useAuthStore } from '../stores/auth-store';
 
 const definitions = [
   { key: 'fleet', title: 'Flota', fields: [['equipment', 'Equipo'], ['model', 'Modelo'], ['group', 'Clase'], ['active', 'Activo en el maestro']] },
   { key: 'failures', title: 'Fallas TMF', fields: [['description', 'Falla'], ['status', 'Estado'], ['last', 'Último reporte'], ['order', 'OT vinculada']] },
-  { key: 'shifts', title: 'Últimos turnos registrados', fields: [['date', 'Fecha'], ['shift', 'Turno'], ['status', 'Estado'], ['start', 'Horómetro inicial'], ['end', 'Horómetro final']] },
+  { key: 'shifts', title: 'Turnos', fields: [['date', 'Fecha'], ['shift', 'Turno'], ['status', 'Estado'], ['start', 'Horómetro inicial'], ['end', 'Horómetro final']] },
   { key: 'orders', title: 'Órdenes de trabajo', fields: [['description', 'Trabajo'], ['status', 'Estado'], ['check', 'Control de integridad']] },
   { key: 'maintenance', title: 'Mantenimiento preventivo', fields: [['status', 'Estado de PM'], ['next', 'Próximo PM'], ['remaining', 'Horas restantes'], ['reading', 'Lectura'], ['plan', 'Plan']] },
   { key: 'dozers', title: 'Componentes · Dozers', fields: [['group', 'Clase'], ['critical', 'Críticos'], ['upcoming', 'Próximos'], ['noData', 'Sin dato']] },
   { key: 'excavators', title: 'Componentes · Excavadoras', fields: [['group', 'Clase'], ['critical', 'Críticos'], ['upcoming', 'Próximos'], ['noData', 'Sin dato']] },
-  { key: 'purchases', title: 'Compras · Panamá', fields: [['description', 'Compra'], ['amount', 'Monto'], ['currency', 'Moneda'], ['status', 'Estado'], ['order', 'OC'], ['check', 'Recepción']] },
-  { key: 'costs', title: 'Costos por máquina · Según el maestro', fields: [['hours', 'Horas TMF'], ['revenue', 'Ingreso USD'], ['purchases', 'Compras y reparto USD'], ['cost', 'Costo analítico parcial USD/h'], ['margin', 'Margen analítico parcial USD/h']] },
+  { key: 'purchases', title: 'Compras', fields: [['description', 'Compra'], ['amount', 'Monto'], ['currency', 'Moneda'], ['status', 'Estado'], ['order', 'OC'], ['check', 'Recepción']] },
+  { key: 'costs', title: 'Costos por equipo', fields: [['hours', 'Horas TMF'], ['revenue', 'Ingreso USD'], ['purchases', 'Compras y reparto USD'], ['cost', 'Costo parcial USD/h'], ['margin', 'Margen parcial USD/h']] },
 ] as const;
 
 type SourceRow = Record<string, string | undefined> & { unit: string };
@@ -24,6 +26,7 @@ export default function PanamaPage() {
   const canSeeComponents = useAuthStore(state => state.project === 'tmf-panama' && state.role !== 'operador');
   const canSeeShifts = useAuthStore(state => state.project === 'tmf-panama' && ['operador', 'supervisor', 'coordinador', 'gerencia'].includes(state.role ?? ''));
   const canReceive = useAuthStore(state => state.project === 'tmf-panama' && state.canReceivePurchases);
+  const canSeeCuts = useAuthStore(state => state.project === 'tmf-panama' && state.role === 'gerencia' && !state.previewDemo);
   const logout = useAuthStore(state => state.logout);
   const [sections, setSections] = useState<Sections>();
   const [snapshots, setSnapshots] = useState<Record<string, string>>({});
@@ -56,7 +59,7 @@ export default function PanamaPage() {
         <header className="flex flex-wrap items-center gap-3 rounded-2xl bg-[#162252] p-4 text-white">
           <img src="/logo-transplus.svg" alt="Trans Plus" className="h-10 w-10 rounded bg-white p-1" />
           <div className="mr-auto">
-            <h1 className="text-xl font-bold">Hermes Panamá</h1>
+            <h1 className="text-xl font-bold">Maestros TMF</h1>
             <p className="text-sm text-slate-200">TMF Minera Panamá · {name}</p>
           </div>
           <button className="rounded-lg border border-slate-400 px-3 py-2 text-sm" type="button" onClick={async () => setLogoutFailed(!(await logout()))}>Cerrar sesión</button>
@@ -71,29 +74,33 @@ export default function PanamaPage() {
           </label>
           <button type="button" onClick={() => setReload(value => value + 1)} className="rounded-lg bg-[#162252] px-4 py-2 font-semibold text-white">Actualizar</button>
         </div>
-        {failed ? <p role="alert">La consulta está temporalmente fuera de servicio.</p> : !sections && <p role="status">Consultando los maestros de Panamá…</p>}
-        {Object.keys(snapshots).length > 0 && (
-          <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="status">
-            Consulta con cortes de los maestros oficiales. La hora de captura figura en cada sección. Usa el maestro para consultar cambios posteriores.
-          </p>
-        )}
-        {canSeeComponents && <PanamaComponentHistory />}
+        {failed ? <p role="alert">No se pudieron cargar los maestros.</p> : !sections && <p role="status">Consultando maestros…</p>}
+        {canSeeCuts && <PanamaSourceCuts key={userId} reload={reload} />}
+        {canSeeComponents && <PanamaComponentHistory key={`componentes:${userId}`} />}
         {sections && definitions.filter(({ key }) => Object.hasOwn(sections, key)).map(({ key, title, fields }) => {
           const rows = sections[key]?.filter(row => row.unit.toUpperCase().includes(filter.trim().toUpperCase()));
           return (
             <section key={key} className="my-4 rounded-2xl border border-slate-200 bg-white p-4">
               <h2 className="mb-3 text-lg font-bold">{title}{rows && <span className="ml-2 text-sm text-slate-600">{rows.length}</span>}</h2>
               {snapshots[key] && <p className="mb-3 text-xs text-slate-600">Corte del {new Date(snapshots[key]).toLocaleString('es-PA', { timeZone: 'America/Panama', dateStyle: 'short', timeStyle: 'short' })} · hora de Panamá</p>}
-              {!rows ? <p className="text-amber-800">Fuente no disponible.</p> : rows.length === 0 ? <p className="text-slate-600">Sin registros para esta consulta.</p> : (
+              {!rows ? <p className="text-amber-800">Fuente no disponible.</p> : rows.length === 0 ? <p className="text-slate-600">Sin registros.</p> : (
                 <ul className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {rows.map((row, i) => (
-                    <li key={row.id || (row.unit + '-' + i)} className="min-w-0 rounded-xl border border-slate-200 p-3">
-                      <p className="font-semibold text-[#162252]">{row.unit}{row.id && <span className="ml-2 text-xs text-slate-600">{row.id}</span>}</p>
-                      <dl className="mt-1 space-y-1 text-sm">
-                        {fields.map(([field, label]) => row[field] && <div key={field}><dt className="inline font-medium">{label} </dt><dd className="inline break-words text-slate-700">{row[field]}</dd></div>)}
-                      </dl>
-                    </li>
-                  ))}
+                  {rows.map((row, i) => {
+                    const reference = row.id && row.id !== row.unit && row.id !== row.order ? row.id : '';
+                    const folio = key === 'orders' ? visibleWorkOrderFolio(reference) : /^\d{1,15}$/.test(reference) ? reference : undefined;
+                    return (
+                      <li key={row.id || (row.unit + '-' + i)} className="min-w-0 rounded-xl border border-slate-200 p-3">
+                        <p className="font-semibold text-[#162252]">{row.unit}{folio && <span className="ml-2 break-words text-sm text-slate-600">{folio}</span>}</p>
+                        <dl className="mt-1 space-y-1 text-sm">
+                          {fields.map(([field, label]) => row[field] && <div key={field}><dt className="inline font-medium">{label} </dt><dd className="inline break-words text-slate-700">{row[field]}</dd></div>)}
+                        </dl>
+                        {reference && !folio && <details className="mt-2 text-xs text-slate-600">
+                          <summary className="min-h-11 cursor-pointer py-3">Referencia</summary>
+                          <p className="mt-1 break-words">{reference}</p>
+                        </details>}
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </section>

@@ -24,8 +24,7 @@ export default function PanamaPurchaseDocument({ order, authorized, approvedAt, 
           {issuer?.phone && <p>Tel. {issuer.phone}</p>}
         </div>
         <div className="po-panama-brand">
-          <img src="/logo-transplus.svg" width={75} height={73} alt="" />
-          <span>TransPlus</span>
+          <img src="/logo-transplus-oc.png" width={217} height={150} alt="Trans Plus" />
         </div>
         <div className="po-panama-id">
           <h1>Orden de compra <span>N.º {number}</span></h1>
@@ -98,17 +97,23 @@ export default function PanamaPurchaseDocument({ order, authorized, approvedAt, 
 
       <footer className="po-section po-panama-footer">
         <div className="po-panama-signature">
-          {authorized && approvalSignature && <img src={`data:image/png;base64,${approvalSignature}`} alt={`Firma de ${order.approvedBy}`} />}
           <p>Firma autorizada</p>
         </div>
-        <div className="po-panama-approval" data-testid="purchase-approval-provenance">
-          {authorized ? (
-            <>
-              <strong>Autorización digital registrada</strong>
-              <p>{order.approvedBy}</p>
-              <p>{approvedAt} · OC {number}</p>
-            </>
-          ) : <strong>Aprobación digital pendiente de comprobar</strong>}
+        <div>
+          <div className="po-panama-signature">
+            {authorized && approvalSignature && <img src={`data:image/png;base64,${approvalSignature}`} alt={`Firma de ${order.approvedBy}`} />}
+            <p>Firma aprueba</p>
+          </div>
+          <div className="po-panama-approval" data-testid="purchase-approval-provenance">
+            {authorized ? (
+              <>
+                {!approvalSignature && <p>Firma pendiente</p>}
+                <strong>Autorización digital registrada</strong>
+                <p>{order.approvedBy}</p>
+                <p>{approvedAt} · OC {number}</p>
+              </>
+            ) : <strong>Aprobación digital pendiente de comprobar</strong>}
+          </div>
         </div>
       </footer>
     </article>

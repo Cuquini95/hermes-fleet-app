@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../../stores/auth-store';
+import { visibleWorkOrderFolio } from '../../lib/purchasing-api';
 
 const sources = {
   failures: { title: 'Fallas del maestro TMF', fields: [['description', 'Falla'], ['status', 'Estado'], ['last', 'Último reporte'], ['order', 'OT vinculada']] },
@@ -52,19 +53,27 @@ export default function PanamaSourceRecords({ source, search = '', limit }: { so
       {rows?.length === 0 && <p className="mt-2 text-sm text-text-secondary">{searchTerm ? 'Sin resultados para tu búsqueda.' : 'Sin registros en el maestro consultado.'}</p>}
       {rows && rows.length > 0 && (
         <ul className="mt-3 grid gap-2 sm:grid-cols-2">
-          {rows.slice(0, limit ?? rows.length).map((row, index) => (
-            <li key={`${row.id ?? row.unit}-${index}`} className="min-w-0 rounded-lg border border-border p-3 text-sm">
-              <p className="font-semibold text-text">{row.unit}{row.id && <span className="ml-2 break-words text-text-secondary">{row.id}</span>}</p>
-              <dl className="mt-1 space-y-1 text-text-secondary">
-                {fields.map(([field, label]) => row[field] && (
-                  <div key={field} className="break-words">
-                    <dt className="inline font-semibold">{label} </dt>
-                    <dd className="inline">{row[field]}{field === 'amount' && row.currency ? ` ${row.currency}` : ''}</dd>
-                  </div>
-                ))}
-              </dl>
-            </li>
-          ))}
+          {rows.slice(0, limit ?? rows.length).map((row, index) => {
+            const id = row.id ?? '';
+            const folio = source === 'orders' ? visibleWorkOrderFolio(id) : /^\d{1,15}$/.test(id) ? id : undefined;
+            return (
+              <li key={`${row.id ?? row.unit}-${index}`} className="min-w-0 rounded-lg border border-border p-3 text-sm">
+                <p className="font-semibold text-text">{row.unit}{folio && <span className="ml-2 break-words text-text-secondary">{folio}</span>}</p>
+                <dl className="mt-1 space-y-1 text-text-secondary">
+                  {fields.map(([field, label]) => row[field] && (
+                    <div key={field} className="break-words">
+                      <dt className="inline font-semibold">{label} </dt>
+                      <dd className="inline">{row[field]}{field === 'amount' && row.currency ? ` ${row.currency}` : ''}</dd>
+                    </div>
+                  ))}
+                </dl>
+                {id && !folio && <details className="mt-2 text-xs text-text-secondary">
+                  <summary className="min-h-11 cursor-pointer py-3 font-medium">Referencia del maestro</summary>
+                  <p className="break-words">{id}</p>
+                </details>}
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>

@@ -1,3 +1,5 @@
+import type { PanamaPmNextService } from '../lib/panama-pm-next-service.js';
+
 export type OTPriority = 'CRITICA' | 'ALTA' | 'MEDIA' | 'BAJA';
 export type OTEstado = 'Abierta' | 'En Espera de Asignación' | 'En Reparación' | 'Esperando Pieza' | 'Resuelta' | 'Completado';
 
@@ -8,7 +10,7 @@ export type OTStatusField = 'estado' | 'mecanico_asignado' | 'progreso' | 'obser
 export interface StatusLogEntry {
   timestamp: string;
   ot_id: string;
-  field: OTStatusField | 'programacion' | 'entrega_tecnica' | 'aceptacion_tecnica' | 'retorno_operativo';
+  field: OTStatusField | 'programacion' | 'entrega_tecnica' | 'aceptacion_tecnica' | 'retorno_operativo' | 'reincidencia';
   old_value: string;
   new_value: string;
   changed_by: string;
@@ -18,10 +20,12 @@ export interface StatusLogEntry {
 
 export interface WorkshopExecutionInput {
   functionalTest: string;
+  diagnosis?: string;
   laborHours?: string | number;
   performedOn?: string;
   meter?: string;
   completedItems?: string[];
+  taskEvidence?: Record<string, string>;
 }
 
 interface WorkshopActor {
@@ -31,14 +35,28 @@ interface WorkshopActor {
 
 export interface PMChecklist {
   reference: string;
-  tasks: { id: string; label: string }[];
+  tasks: { id: string; label: string; evidence?: 'photo' }[];
 }
 
 export interface PMChecklistDefinition {
   model: string;
   level: string;
+  serial?: string;
   initialMeter: string;
+  dueAt?: number;
   checklist: PMChecklist | null;
+  nextService?: PanamaPmNextService;
+  triggers?: PMTrigger[];
+}
+
+export interface PMTrigger {
+  kind: 'hours' | 'date' | 'condition';
+  state: 'due' | 'ok' | 'unknown' | 'not_configured';
+  actual: number | string | null;
+  threshold: number | string | null;
+  source?: string;
+  reference?: string;
+  cut?: string;
 }
 
 export interface OperationalReceipt extends WorkshopActor {

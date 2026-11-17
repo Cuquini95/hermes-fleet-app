@@ -1,14 +1,18 @@
 import { useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
-import { mechanicCoversUnit, requestWorkshop, WorkshopApiError, type WorkshopMechanic } from '../../lib/workshop-api';
+import { checkSchedule, mechanicCoversUnit, requestWorkshop, WorkshopApiError, type ScheduleAssessment,
+  type ScheduleResources, type WorkshopMechanic } from '../../lib/workshop-api';
 import type { WorkOrder } from '../../types/workorder';
+import ScheduleResourcesFields from './ScheduleResourcesFields';
 
 interface AssignWorkModalProps {
   mechanic: string;
   date: string;
   mechanics: WorkshopMechanic[];
   workorders: WorkOrder[];
+  panama: boolean;
+  previousResources: (otId: string) => ScheduleResources | undefined;
   onSave: (row: string[]) => void;
   onClose: () => void;
 }
@@ -16,7 +20,7 @@ interface AssignWorkModalProps {
 const ASSIGNABLE = new Set(['Abierta', 'En Espera de Asignación', 'En Reparación', 'Esperando Pieza']);
 const fieldStyle = 'min-w-0 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm';
 
-export default function AssignWorkModal({ mechanic, date, mechanics, workorders, onSave, onClose }: AssignWorkModalProps) {
+export default function AssignWorkModal({ mechanic, date, mechanics, workorders, panama, previousResources, onSave, onClose }: AssignWorkModalProps) {
   const title = useId();
   const mutationId = useRef('');
   const expectedVersion = useRef<string | undefined>(undefined);
@@ -29,32 +33,46 @@ export default function AssignWorkModal({ mechanic, date, mechanics, workorders,
   const [saving, setSaving] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
+  const [resources, setResources] = useState<ScheduleResources>({ shift: '', partsStatus: 'unknown', partsDetail: '' });
+  const [assessment, setAssessment] = useState<{ key: string; result: ScheduleAssessment } | null>(null);
 
   const assignable = workorders.filter((wo) => ASSIGNABLE.has(wo.estado));
   const selected = assignable.find((wo) => wo.ot_id === selectedOT);
   const available = selected ? mechanics.filter((item) => mechanicCoversUnit(item, selected.unidad)) : mechanics;
-  const canSave = !!selected && !!selectedDate && Number(hours) >= 0.25 && Number(hours) <= 24;
+  const canSave = !!selected && !!selectedDate && (!panama || !!resources.shift) && Number(hours) >= 0.25 && Number(hours) <= 24;
+  const schedule = { otId: selectedOT, date: selectedDate, hours, ...(mechanicId === null ? {} : { mechanicId }),
+    ...(panama && { ...resources, partsDetail: resources.partsStatus === 'not_required' ? '' : resources.partsDetail }) };
+  const assessmentKey = JSON.stringify(schedule);
+  const activeAssessment = assessment?.key === assessmentKey ? assessment.result : null;
 
   async function handleSave() {
     if (!canSave || submitting.current) return;
     submitting.current = true;
     setSaving(true);
     setError('');
-    if (!mutationId.current) {
-      mutationId.current = crypto.randomUUID();
-      expectedVersion.current = selected?.version;
-    }
     try {
-      const { schedule } = await requestWorkshop<{ schedule: string[] }>('schedule', {
-        mutationId: mutationId.current, otId: selectedOT, date: selectedDate, hours, notes,
-        ...(mechanicId === null ? {} : { mechanicId }),
+      const check = panama && !pending && !activeAssessment ? await checkSchedule(schedule) : activeAssessment;
+      if (check?.warnings.length && !activeAssessment) {
+        setAssessment({ key: assessmentKey, result: check });
+        return;
+      }
+      if (!mutationId.current) {
+        mutationId.current = crypto.randomUUID();
+        expectedVersion.current = selected?.version;
+      }
+      const response = await requestWorkshop<{ schedule: string[] }>('schedule', {
+        ...schedule, mutationId: mutationId.current, notes,
+        ...(panama && { scheduleConfirmation: check?.confirmation ?? null }),
         ...(expectedVersion.current && { expectedVersion: expectedVersion.current }),
       });
-      onSave(schedule);
+      onSave(response.schedule);
     } catch (err) {
       const definitive = err instanceof WorkshopApiError && [400, 403, 404, 409].includes(err.status);
-      if (definitive) mutationId.current = '';
-      setPending(!definitive);
+      if (definitive) {
+        mutationId.current = '';
+        setAssessment(null);
+      }
+      setPending(!definitive && !!mutationId.current);
       setError(err instanceof Error ? err.message : 'No se pudo confirmar la programación');
     } finally {
       submitting.current = false;
@@ -87,6 +105,7 @@ export default function AssignWorkModal({ mechanic, date, mechanics, workorders,
               onChange={(e) => {
                 const order = assignable.find((wo) => wo.ot_id === e.target.value);
                 setSelectedOT(e.target.value);
+                if (panama) setResources(previousResources(e.target.value) ?? { shift: '', partsStatus: 'unknown', partsDetail: '' });
                 if (order && mechanicId && !mechanics.some((item) => item.userId === mechanicId && mechanicCoversUnit(item, order.unidad))) setMechanicId(null);
               }}
             >
@@ -111,11 +130,15 @@ export default function AssignWorkModal({ mechanic, date, mechanics, workorders,
             Horas estimadas
             <input type="number" min="0.25" max="24" step="0.25" value={hours} onChange={(e) => setHours(e.target.value)} className={fieldStyle} />
           </label>
+          {panama && <ScheduleResourcesFields value={resources} onChange={setResources} />}
           <label className="block text-xs font-medium text-slate-700">
             Notas
             <input type="text" maxLength={1000} value={notes} onChange={(e) => setNotes(e.target.value)} className={fieldStyle} />
           </label>
         </fieldset>
+        {!!activeAssessment?.warnings.length && <ul role="alert" className="mt-3 rounded-lg bg-amber-50 p-2 text-xs text-amber-900">
+          {activeAssessment.warnings.map(item => <li key={item.code}>{item.message}</li>)}
+        </ul>}
         {error && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-2 text-xs text-red-700">{error}</p>}
 
         <div className="flex gap-3 mt-5">
@@ -123,7 +146,7 @@ export default function AssignWorkModal({ mechanic, date, mechanics, workorders,
             Cancelar
           </button>
           <button type="button" onClick={handleSave} disabled={!canSave || saving} className="flex-1 py-2.5 rounded-xl bg-[#162252] text-white text-sm font-semibold disabled:opacity-50">
-            {saving ? 'Guardando…' : pending ? 'Reintentar' : 'Programar'}
+            {saving ? 'Consultando…' : pending ? 'Reintentar' : activeAssessment?.warnings.length ? 'Confirmar programación' : 'Programar'}
           </button>
         </div>
       </div>

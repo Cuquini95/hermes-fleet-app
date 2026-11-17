@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useApiHealth } from '../../hooks/useApiHealth';
+import { useAuthStore } from '../../stores/auth-store';
 
 const STATUS_COLOR: Record<string, string> = {
   ok: '#22C55E',
@@ -8,7 +9,15 @@ const STATUS_COLOR: Record<string, string> = {
   loading: '#94A3B8',
 };
 
-const CHECK_LABELS = { identity: 'Sesión', fleet: 'Maestro de flota', operations: 'Registro operativo' };
+const CHECK_LABELS = { identity: 'Sesión', fleet: 'Maestro de flota', operations: 'Registro operativo',
+  masters: 'Maestros de Taller', evidence: 'Adjuntos privados' };
+const CHECK_ACTIONS: Record<keyof typeof CHECK_LABELS, string> = {
+  identity: 'Vuelve a iniciar sesión.',
+  fleet: 'Consulta el último corte disponible.',
+  operations: 'Conserva el borrador y comprueba si el folio existe antes de reintentar.',
+  masters: 'Usa el último corte visible con su fecha.',
+  evidence: 'Conserva el archivo y vuelve a intentar adjuntarlo cuando el servicio regrese.',
+};
 const CHECK_STATUS = { ok: 'Disponible', degraded: 'Servicio parcial', down: 'Fuera de servicio' };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -27,17 +36,21 @@ function UptimeStr({ seconds }: { seconds?: number }) {
 
 export default function ApiHealthDot() {
   const health = useApiHealth();
+  const isPanama = useAuthStore((state) => state.project === 'tmf-panama');
   const [open, setOpen] = useState(false);
 
   const color = STATUS_COLOR[health.status] ?? STATUS_COLOR.loading;
-  const label = STATUS_LABEL[health.status] ?? 'Desconocido';
+  const label = isPanama && health.status !== 'loading'
+    ? (health.status === 'ok' ? 'Conectado' : CHECK_STATUS[health.status])
+    : STATUS_LABEL[health.status] ?? 'Desconocido';
 
   return (
     <div className="relative">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        aria-label={`Estado de la API: ${label}`}
+        aria-label={`${isPanama ? 'Estado del servicio' : 'Estado de la API'}: ${label}`}
+        aria-expanded={open}
         className="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-white/10 transition-colors"
       >
         <span
@@ -58,7 +71,7 @@ export default function ApiHealthDot() {
           style={{ backgroundColor: '#162252', border: '1px solid rgba(255,255,255,0.1)' }}
         >
           <div className="flex justify-between items-center">
-            <span className="text-white font-semibold">Estado API</span>
+            <span className="text-white font-semibold">{isPanama ? 'Estado del servicio' : 'Estado API'}</span>
             <button
               type="button"
               onClick={() => setOpen(false)}
@@ -85,50 +98,64 @@ export default function ApiHealthDot() {
                     <div key={check} className="flex justify-between gap-3">
                       <dt className="text-white/80">{CHECK_LABELS[check as keyof typeof CHECK_LABELS] ?? check}</dt>
                       <dd className={state === 'up' ? 'text-green-300' : 'text-amber-300'}>
-                        {state === 'up' ? 'Disponible' : 'No disponible'}
+                        {state === 'up' ? 'Disponible' : <>
+                          <span>No disponible</span>
+                          <span className="block mt-1">{CHECK_ACTIONS[check as keyof typeof CHECK_LABELS]}</span>
+                        </>}
                       </dd>
                     </div>
                   ))}
                 </dl>
               )}
+              {health.status !== 'ok' && <button type="button" onClick={() => void health.refresh()}
+                className="mt-2 rounded-md border border-white/30 px-2 py-1 text-white">
+                {isPanama ? 'Reintentar' : 'Volver a comprobar'}
+              </button>}
 
-              {health.db && (
-                <div className="border-t border-white/10 pt-2">
-                  <p className="text-white/50 mb-1">Base de datos</p>
-                  {Object.entries(health.db).map(([k, v]) => (
-                    <div key={k} className="flex justify-between">
-                      <span className="text-white/70 capitalize">{k}</span>
-                      <span style={{ color: v === 'up' ? '#22C55E' : '#EF4444' }}>{v}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {health.integrations && (
-                <div className="border-t border-white/10 pt-2">
-                  <p className="text-white/50 mb-1">Integraciones</p>
-                  {Object.entries(health.integrations).map(([k, v]) => (
-                    <div key={k} className="flex justify-between">
-                      <span className="text-white/70 capitalize">{k}</span>
-                      <span style={{ color: v === 'up' ? '#22C55E' : '#EF4444' }}>{v}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {health.deployment && (
-                <dl className="space-y-1 break-all border-t border-white/10 pt-2 text-white/80">
-                  <div><dt>Proyecto y ambiente</dt><dd>{health.deployment.project} · {health.deployment.environment}</dd></div>
-                  {health.deployment.host && <div><dt>Despliegue</dt><dd>{health.deployment.host}</dd></div>}
-                  {health.deployment.id && <div><dt>ID de Vercel</dt><dd>{health.deployment.id}</dd></div>}
-                  {health.deployment.commit && <div><dt>Commit</dt><dd>{health.deployment.commit}</dd></div>}
-                  <div><dt>Datos</dt><dd>{health.dataMode === 'demo' ? 'Prueba' : 'Operativos'} · {health.writeEnabled ? 'Escritura habilitada' : 'Consulta'}</dd></div>
-                  {!!health.operationGroups?.length && <div><dt>Flujos habilitados</dt><dd>{health.operationGroups.join(', ')}</dd></div>}
-                </dl>
-              )}
-              <UptimeStr seconds={health.uptime_seconds} />
-              {health.version && (
-                <span className="text-white/30">v{health.version}</span>
+              {isPanama && health.deployment && <p className="text-white/80">
+                {health.dataMode === 'demo' ? 'Datos de prueba' : 'Datos operativos'}
+                {!health.writeEnabled && ' · Solo consulta'}
+              </p>}
+              {(health.db || health.integrations || health.deployment || health.uptime_seconds || health.version) && (
+                <details open={isPanama ? undefined : true} className={isPanama ? 'border-t border-white/10 pt-2 text-white/80' : 'contents'}>
+                  <summary className={isPanama ? 'cursor-pointer' : 'hidden'}>Detalles técnicos</summary>
+                  <div className="space-y-2">
+                    {health.db && (
+                      <div className="border-t border-white/10 pt-2">
+                        <p className="text-white/50 mb-1">Base de datos</p>
+                        {Object.entries(health.db).map(([name, status]) => (
+                          <div key={name} className="flex justify-between">
+                            <span className="text-white/70 capitalize">{name}</span>
+                            <span style={{ color: status === 'up' ? '#22C55E' : '#EF4444' }}>{status}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {health.integrations && (
+                      <div className="border-t border-white/10 pt-2">
+                        <p className="text-white/50 mb-1">Integraciones</p>
+                        {Object.entries(health.integrations).map(([name, status]) => (
+                          <div key={name} className="flex justify-between">
+                            <span className="text-white/70 capitalize">{name}</span>
+                            <span style={{ color: status === 'up' ? '#22C55E' : '#EF4444' }}>{status}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {health.deployment && (
+                      <dl className="space-y-1 break-all border-t border-white/10 pt-2 text-white/80">
+                        <div><dt>Proyecto y ambiente</dt><dd>{health.deployment.project} · {health.deployment.environment}</dd></div>
+                        {health.deployment.host && <div><dt>Despliegue</dt><dd>{health.deployment.host}</dd></div>}
+                        {health.deployment.id && <div><dt>ID de Vercel</dt><dd>{health.deployment.id}</dd></div>}
+                        {health.deployment.commit && <div><dt>Commit</dt><dd>{health.deployment.commit}</dd></div>}
+                        <div><dt>Datos</dt><dd>{health.dataMode === 'demo' ? 'Prueba' : 'Operativos'} · {health.writeEnabled ? 'Escritura habilitada' : 'Consulta'}</dd></div>
+                        {!!health.operationGroups?.length && <div><dt>Flujos habilitados</dt><dd>{health.operationGroups.join(', ')}</dd></div>}
+                      </dl>
+                    )}
+                    <UptimeStr seconds={health.uptime_seconds} />
+                    {health.version && <span className="text-white/30">v{health.version}</span>}
+                  </div>
+                </details>
               )}
               {health.lastChecked && (
                 <span className="text-white/30">

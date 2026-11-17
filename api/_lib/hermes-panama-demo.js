@@ -1,6 +1,8 @@
 import { identityConfig, identityRequest } from './hermes-identity.js';
 import { canonicalTab, PANAMA_READINESS_TAB } from './hermes-google-sheets.js';
 
+import { WARRANTY_TAB } from './hermes-panama-warranties.js';
+
 const route = '/rest/v1/hermes_preview_operations';
 const workspace = 'panama-demo';
 const date = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Panama', day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -15,7 +17,7 @@ function initialData() {
     ['3', 'QA-DZ205', 'Volteo de prueba', 'Mack', 'Granite', '2022', 'SERIE-QA-03', 'Frente de prueba', 'Operativo', '390'],
   ];
   const tables = Object.fromEntries([
-    'OT_STATUS_LOG', '14 Inspecciones', 'Inspeccion_Stickers', 'Inspeccion_Hallazgos', '04B Registro Horómetros',
+    'OT_STATUS_LOG', WARRANTY_TAB, '14 Inspecciones', 'Inspeccion_Stickers', 'Inspeccion_Hallazgos', '04B Registro Horómetros',
     '05 Historial PM', 'Ordenes Mantenimiento', 'WORKSHOP_SCHEDULE', 'Reporte_Fletes_Transporte', 'Reporte_Viajes_Peña',
     'Incidentes', 'Turnos', '13 Neumáticos', '02 Gastos', '10 Control Cambios', 'Activos', 'HERMES_PA_TURNOS', 'HERMES_PA_DESPACHO',
   ].map(tab => [tab, []]));
@@ -28,8 +30,8 @@ function initialData() {
     Combustible: [['ID', 'FECHA', 'HORA', 'UNIDAD', 'OPERADOR', 'TIPO', 'LITROS'],
       ['FUEL-DEMO-001', today, '07:00:00', 'QA-EX401', 'Operador QA', 'Diésel', '120'],
       ['FUEL-DEMO-002', today, '07:15:00', 'QA-DZ205', 'Operador QA', 'Diésel', '180']],
-    '12 Inventario Rep.': [[], [], [], [], ['SKU', 'Descripción', 'OEM', 'Serie', 'Unidad', 'Stock', 'Mínimo', 'Precio', 'Ubicación', '', 'Equipo', '', '', 'Proveedor'],
-      ['QA-FILTRO-001', 'Filtro hidráulico de prueba', 'OEM-QA-001', '', 'pza', '8', '3', '75', 'Almacén de prueba', '', 'QA-DZ203', '', '', 'Proveedor de prueba']],
+    '12 Inventario Rep.': [[], [], [], [], ['SKU', 'Descripción', 'OEM', 'Serie', 'Unidad', 'Stock', 'Mínimo', 'Precio', 'Ubicación', '', 'Equipo', '', '', 'Proveedor', 'Almacén'],
+      ['QA-FILTRO-001', 'Filtro hidráulico de prueba', 'OEM-QA-001', '', 'pza', '8', '3', '75', 'Almacén de prueba', '', 'QA-DZ203', '', '', 'Proveedor de prueba', 'Almacén de prueba']],
     Cotizaciones_Pendientes: [['FECHA', 'PART_NUMBER', 'DESCRIPCION', 'EQUIPO', 'CANTIDAD']],
     Proveedores: [['Nombre', 'Identificación', 'Dirección', 'Ciudad', 'Estado', 'CP', 'Teléfono', 'Email', 'Contacto'],
       ['Proveedor de prueba', 'RUC-QA-001', 'Almacén de prueba', 'Panamá', '', '', '', '', '']],
@@ -53,7 +55,19 @@ export function createPanamaDemoSheets(request = options => identityRequest(iden
     const response = await request({ query: properties });
     if (!response.ok) throw fail(503, 'Fuente de prueba no disponible');
     const [row] = await response.json();
-    return row ?? { revision: null, data: initialData() };
+    const state = row ?? { revision: null, data: initialData() };
+    const tables = state.data.tables;
+    tables.HERMES_PA_FACTURAS_OC ??= [['ID', 'OC_ID', 'DETALLE_JSON']];
+    tables.HERMES_PA_PAGOS_FACTURA ??= [['ID', 'FACTURA_ID', 'DETALLE_JSON']];
+    const parts = tables['12 Inventario Rep.'];
+    const catalogHeader = parts?.[4];
+    if (catalogHeader?.[0] === 'SKU' && !catalogHeader.includes('Almacén')) {
+      const index = catalogHeader.length;
+      catalogHeader[index] = 'Almacén';
+      const seededPart = parts.find(part => part[0] === 'QA-FILTRO-001' && part[8] === 'Almacén de prueba');
+      if (seededPart) seededPart[index] = 'Almacén de prueba';
+    }
+    return state;
   }
 
   function receipt(data, key, fingerprint) {
@@ -68,7 +82,7 @@ export function createPanamaDemoSheets(request = options => identityRequest(iden
     if (!Object.hasOwn(tables, tab) && tab === 'Movimientos Repuestos PA') {
       tables[tab] = [['ID', 'FECHA_UTC', 'TIPO', 'SKU', 'CANTIDAD', 'UNIDAD', 'OC', 'PARTIDA', 'OT', 'REFERENCIA', 'ACTOR', 'ACTOR_ID', 'EXISTENCIA', 'MEDIDA']];
     }
-    if (['HERMES_PA_DESPACHO', PANAMA_READINESS_TAB].includes(tab) && !Object.hasOwn(tables, tab)) tables[tab] = [];
+    if (['HERMES_PA_DESPACHO', PANAMA_READINESS_TAB, WARRANTY_TAB].includes(tab) && !Object.hasOwn(tables, tab)) tables[tab] = [];
     if (!Object.hasOwn(tables, tab)) throw fail(503, 'La tabla de prueba no está disponible.');
     if (change.append) {
       tables[tab].push(...change.append);

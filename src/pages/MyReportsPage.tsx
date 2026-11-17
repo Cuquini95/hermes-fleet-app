@@ -15,6 +15,9 @@ import {
 } from 'lucide-react';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
 import { mexicoDate } from '../lib/date-utils';
+import { visibleWorkOrderFolio } from '../lib/purchasing-api';
+import { pendingPanamaFaultReports, WORKSHOP_CAPTURE_CHANGED } from '../lib/offline-queue';
+import { requestWorkshop } from '../lib/workshop-api';
 import { useAuthStore } from '../stores/auth-store';
 import { SkeletonList } from '../components/ui/Skeleton';
 
@@ -48,11 +51,13 @@ interface HorometroRecord {
 
 interface AveriaRecord {
   id: string;
+  fecha?: string;
   hora: string;
   unidad: string;
   tipoFalla: string;
   prioridad: string;
   otId: string;
+  workshopStatus?: string;
 }
 
 interface ReportsData {
@@ -230,6 +235,7 @@ function HorometroCard({ record }: { record: HorometroRecord }) {
 }
 
 function AveriaCard({ record }: { record: AveriaRecord }) {
+  const publicOt = visibleWorkOrderFolio(record.otId ?? '');
   return (
     <div className="bg-white rounded-xl shadow-sm border border-border p-3 flex items-center gap-3">
       <div className="flex-1 min-w-0">
@@ -239,10 +245,13 @@ function AveriaCard({ record }: { record: AveriaRecord }) {
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-text-secondary">{record.hora}</span>
-          {record.otId && (
-            <span className="text-xs font-mono text-text-secondary">{record.otId}</span>
-          )}
+          {publicOt && <span className="text-xs text-text-secondary">{publicOt}</span>}
         </div>
+        {record.workshopStatus && <p className="mt-1 text-xs font-semibold text-blue-800">{record.workshopStatus}</p>}
+        {record.otId && !publicOt && <details className="text-xs text-text-secondary">
+          <summary className="cursor-pointer py-1">Referencia</summary>
+          <p className="break-words">{record.otId}</p>
+        </details>}
       </div>
       <PrioridadBadge prioridad={record.prioridad} />
     </div>
@@ -260,12 +269,13 @@ interface SectionProps {
 }
 
 function Section({ icon, title, count, iconColorClass, children }: SectionProps) {
+  if (!count) return null;
   return (
     <section>
       <div className="flex items-center gap-2 mb-3">
         <span className={iconColorClass}>{icon}</span>
-        <h2 className="font-bold text-text text-sm uppercase tracking-wide flex-1">{title}</h2>
-        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${count > 0 ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-text-secondary'}`}>
+        <h2 className="font-bold text-text text-sm flex-1">{title}</h2>
+        <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
           {count}
         </span>
       </div>
@@ -277,6 +287,12 @@ function Section({ icon, title, count, iconColorClass, children }: SectionProps)
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function MyReportsPage() {
+  const userId = useAuthStore((s) => s.userId);
+  const isPanama = useAuthStore((s) => s.project === 'tmf-panama');
+  return <Reports key={JSON.stringify([isPanama, userId])} actorId={isPanama ? userId : undefined} />;
+}
+
+function Reports({ actorId }: { actorId?: string }) {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
 
@@ -284,27 +300,42 @@ export default function MyReportsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [partial, setPartial] = useState(false);
+  const [localFaults, setLocalFaults] = useState<Awaited<ReturnType<typeof pendingPanamaFaultReports>>>([]);
+  const [revision, setRevision] = useState(0);
 
   const todayStr = mexicoDate();
 
-  const load = useCallback(async (signal: AbortSignal) => {
-    setLoading(true);
-    setError(null);
+  const load = useCallback(async (signal: AbortSignal, background = false) => {
+    if (!background) {
+      setLoading(true);
+      setError(null);
+    }
 
     try {
-      const [inspRows, fuelRows, horoRows, averiaRows] = await Promise.all([
+      const results = await Promise.allSettled([
         readRange(SHEET_TABS.INSPECCIONES, signal),
         readRange(SHEET_TABS.COMBUSTIBLE, signal),
         readRange(SHEET_TABS.HOROMETROS, signal),
-        readRange(SHEET_TABS.AVERIAS, signal),
-      ]);
+        actorId ? requestWorkshop<{ reports: AveriaRecord[] }>('myfaults') : readRange(SHEET_TABS.AVERIAS, signal),
+      ] as const);
 
       if (signal.aborted) return;
+      const failed = results.filter(item => item.status === 'rejected');
+      if (failed.length && (!actorId || failed.length === results.length)) throw failed[0]?.reason;
+      const [insp, fuel, horo, faults] = results;
+      const inspRows = insp.status === 'fulfilled' ? insp.value : [];
+      const fuelRows = fuel.status === 'fulfilled' ? fuel.value : [];
+      const horoRows = horo.status === 'fulfilled' ? horo.value : [];
+      const faultSource = faults.status === 'fulfilled' ? faults.value : [];
+      const faultsOn = (date: string) => Array.isArray(faultSource)
+        ? parseAverias(faultSource, userName, date)
+        : faultSource.reports.filter(report => report.fecha === date);
 
       let dvir = parseDvir(inspRows, userName, todayStr);
       let combustible = parseCombustible(fuelRows, userName, todayStr);
       let horometros = parseHorometros(horoRows, userName, todayStr);
-      let averias = parseAverias(averiaRows, userName, todayStr);
+      let averias = faultsOn(todayStr);
 
       // If today is completely empty, try yesterday
       const totalToday = dvir.length + combustible.length + horometros.length + averias.length;
@@ -315,34 +346,57 @@ export default function MyReportsPage() {
         dvir = parseDvir(inspRows, userName, yesterdayStr);
         combustible = parseCombustible(fuelRows, userName, yesterdayStr);
         horometros = parseHorometros(horoRows, userName, yesterdayStr);
-        averias = parseAverias(averiaRows, userName, yesterdayStr);
+        averias = faultsOn(yesterdayStr);
       }
 
       setData({ dvir, combustible, horometros, averias });
+      setPartial(failed.length > 0);
+      setError(null);
       setLastRefresh(new Date());
     } catch (err: unknown) {
       if (signal.aborted) return;
-      setError(err instanceof Error ? err.message : 'Error al cargar reportes');
+      if (!background) setError(err instanceof Error ? err.message : 'Error al cargar reportes');
     } finally {
       if (!signal.aborted) setLoading(false);
     }
-  }, [userName, todayStr]);
+  }, [actorId, userName, todayStr]);
 
   useEffect(() => {
-    const ctrl = new AbortController();
-    load(ctrl.signal);
-    return () => ctrl.abort();
-  }, [load]);
+    const controller = new AbortController();
+    let activeRequest = false;
+    const update = (background: boolean) => {
+      if (activeRequest || (background && (!navigator.onLine || document.visibilityState !== 'visible'))) return;
+      activeRequest = true;
+      void load(controller.signal, background).finally(() => { activeRequest = false; });
+    };
+    update(false);
+    if (!actorId) return () => controller.abort();
+    const refresh = () => {
+      void pendingPanamaFaultReports(actorId).then(items => {
+        if (!controller.signal.aborted) setLocalFaults(items);
+      }).catch(() => {});
+      update(true);
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 15_000);
+    window.addEventListener('online', refresh);
+    window.addEventListener(WORKSHOP_CAPTURE_CHANGED, refresh);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+      window.removeEventListener('online', refresh);
+      window.removeEventListener(WORKSHOP_CAPTURE_CHANGED, refresh);
+    };
+  }, [actorId, load, revision]);
 
   function handleRetry() {
-    const ctrl = new AbortController();
-    load(ctrl.signal);
+    setRevision(value => value + 1);
   }
 
   const total = data
     ? data.dvir.length + data.combustible.length + data.horometros.length + data.averias.length
     : 0;
-  const allEmpty = !loading && !error && data !== null && total === 0;
+  const allEmpty = !loading && !error && !partial && data !== null && total === 0 && localFaults.length === 0;
 
   // Format today's date for display: "lunes 13 de abril"
   const todayDisplay = new Date().toLocaleDateString('es-MX', {
@@ -360,11 +414,12 @@ export default function MyReportsPage() {
           type="button"
           onClick={() => navigate(-1)}
           className="p-2 rounded-xl bg-white border border-border shadow-sm"
+          aria-label="Volver"
         >
           <ArrowLeft size={20} className="text-text" />
         </button>
         <div className="flex-1 min-w-0">
-          <h1 className="text-xl font-bold text-text">Mis Reportes de Hoy</h1>
+          <h1 className="text-xl font-bold text-text">Mis reportes</h1>
           <p className="text-xs text-text-secondary capitalize">{todayDisplay}</p>
         </div>
         <button
@@ -381,11 +436,20 @@ export default function MyReportsPage() {
       {/* Last sync */}
       {lastRefresh && !loading && (
         <p className="text-xs text-text-secondary mb-4 pl-1">
-          Último sync:{' '}
-          {lastRefresh.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}
+          Actualizado{' '}
+          {lastRefresh.toLocaleTimeString('es-PA', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Panama' })}
         </p>
       )}
       {!lastRefresh && !loading && <div className="mb-4" />}
+      {!loading && !error && partial && <p role="status" className="mb-3 text-sm text-amber-800">Algunos reportes están pendientes de consulta.</p>}
+
+      {localFaults.length > 0 && <section aria-label="Reportes guardados en el teléfono" className="mb-4 space-y-2">
+        {localFaults.map(report => <article key={report.id} className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+          <p className="text-sm font-semibold text-amber-950">Guardado en el teléfono</p>
+          <p className="break-words text-sm">{report.unit} · {report.type}</p>
+          <p className="text-xs text-amber-900">Pendiente de enviar a Taller</p>
+        </article>)}
+      </section>}
 
       {/* Loading skeleton */}
       {loading && <SkeletonList count={4} />}
@@ -411,10 +475,7 @@ export default function MyReportsPage() {
         <div className="bg-green-50 border border-green-200 rounded-xl p-5 flex items-center gap-4">
           <CheckCircle size={28} className="text-success shrink-0" />
           <div>
-            <p className="font-semibold text-text text-sm">Todo en orden</p>
-            <p className="text-xs text-text-secondary mt-0.5">
-              Sin actividad registrada hoy ni ayer.
-            </p>
+            <p className="font-semibold text-text text-sm">Sin actividad registrada hoy ni ayer.</p>
           </div>
         </div>
       )}
@@ -426,17 +487,13 @@ export default function MyReportsPage() {
           {/* Checklists DVIR */}
           <Section
             icon={<ClipboardCheck size={16} />}
-            title="Checklists DVIR"
+            title="Inspecciones"
             count={data.dvir.length}
             iconColorClass="text-blue-600"
           >
-            {data.dvir.length === 0 ? (
-              <p className="text-xs text-text-secondary pl-1">Sin registros hoy</p>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {data.dvir.map((r) => <DvirCard key={r.id} record={r} />)}
-              </div>
-            )}
+            <div className="flex flex-col gap-2">
+              {data.dvir.map((r) => <DvirCard key={r.id} record={r} />)}
+            </div>
           </Section>
 
           {/* Combustible */}
@@ -446,13 +503,9 @@ export default function MyReportsPage() {
             count={data.combustible.length}
             iconColorClass="text-amber"
           >
-            {data.combustible.length === 0 ? (
-              <p className="text-xs text-text-secondary pl-1">Sin registros hoy</p>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {data.combustible.map((r) => <CombustibleCard key={r.id} record={r} />)}
-              </div>
-            )}
+            <div className="flex flex-col gap-2">
+              {data.combustible.map((r) => <CombustibleCard key={r.id} record={r} />)}
+            </div>
           </Section>
 
           {/* Horómetros */}
@@ -462,13 +515,9 @@ export default function MyReportsPage() {
             count={data.horometros.length}
             iconColorClass="text-text-secondary"
           >
-            {data.horometros.length === 0 ? (
-              <p className="text-xs text-text-secondary pl-1">Sin registros hoy</p>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {data.horometros.map((r) => <HorometroCard key={r.id} record={r} />)}
-              </div>
-            )}
+            <div className="flex flex-col gap-2">
+              {data.horometros.map((r) => <HorometroCard key={r.id} record={r} />)}
+            </div>
           </Section>
 
           {/* Averías */}
@@ -478,13 +527,9 @@ export default function MyReportsPage() {
             count={data.averias.length}
             iconColorClass="text-critical"
           >
-            {data.averias.length === 0 ? (
-              <p className="text-xs text-text-secondary pl-1">Sin registros hoy</p>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {data.averias.map((r) => <AveriaCard key={r.id} record={r} />)}
-              </div>
-            )}
+            <div className="flex flex-col gap-2">
+              {data.averias.map((r) => <AveriaCard key={r.id} record={r} />)}
+            </div>
           </Section>
 
         </div>

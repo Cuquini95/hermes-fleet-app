@@ -5,12 +5,14 @@ const documentSchema = z.object({
   kind: z.enum(['manual', 'diagram']),
   model: z.string().trim().min(1).max(100),
   source: z.string().trim().min(1).max(180),
+  revision: z.string().trim().min(1).max(80).optional(),
+  serials: z.array(z.string().trim().regex(/^[A-Za-z0-9-]{2,60}$/)).min(1).max(100).optional(),
   url: z.string().regex(/^https:\/\/drive\.google\.com\/file\/d\/[A-Za-z0-9_-]+\/view$/),
 });
 const catalogSchema = z.array(documentSchema).max(250);
 const normalize = value => value.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
-export function technicalDocuments(configured, query = {}) {
+export function technicalDocuments(configured, query = {}, asset) {
   let documents;
   try {
     documents = catalogSchema.parse(JSON.parse(configured || 'null'));
@@ -27,8 +29,10 @@ export function technicalDocuments(configured, query = {}) {
     status: 200,
     body: { documents: documents.filter(doc => {
       if (kind && doc.kind !== kind) return false;
+      if (asset && normalize(doc.model) !== normalize(asset.model)) return false;
+      if (doc.serials && (!asset?.serial || !doc.serials.some(serial => normalize(serial) === normalize(asset.serial)))) return false;
       const searchable = normalize([doc.title, doc.model, doc.source].join(' '));
       return words.every(word => searchable.includes(word));
-    }) },
+    }).map(({ serials: _, ...document }) => document) },
   };
 }

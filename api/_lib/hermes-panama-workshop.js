@@ -20,9 +20,10 @@ const clean = value => String(value ?? '').trim();
 const key = value => clean(value).toUpperCase();
 const plain = value => key(value).normalize('NFD').replace(/\p{Diacritic}/gu, '').replace(/\s+/g, ' ');
 const state = value => equivalents.get(plain(value)) ?? plain(value);
+const priorityKey = value => plain(value).replace(/^CRITICO$/, 'CRITICA');
 const isOrder = value => /^OT-[A-Z0-9]+(?:-[A-Z0-9]+)*$/.test(key(value));
 
-function dateOf(value) {
+export function panamaWorkshopDate(value) {
   const raw = clean(value);
   if (/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/i.test(raw) && Number.isFinite(Date.parse(raw))) {
     return panamaDay.format(new Date(raw));
@@ -38,12 +39,16 @@ function dateOf(value) {
   return Number.isFinite(+date) && date.toISOString().slice(0, 10) === iso ? iso : null;
 }
 
+export function panamaWorkshopFailureOrder(row) {
+  return isOrder(row[13]) ? key(row[13])
+    : key(clean(row[11]).match(/(?:^|\|)\s*OT:\s*(OT-[A-Z0-9]+(?:-[A-Z0-9]+)*)\b/i)?.[1]);
+}
+
 function operationalFailures(rows) {
   return rows?.flatMap(row => {
-    const id = isOrder(row[13]) ? key(row[13])
-      : key(clean(row[11]).match(/(?:^|\|)\s*OT:\s*(OT-[A-Z0-9]+(?:-[A-Z0-9]+)*)\b/i)?.[1]);
+    const id = panamaWorkshopFailureOrder(row);
     const unit = key(row[2]);
-    const date = dateOf(row[0]);
+    const date = panamaWorkshopDate(row[0]);
     if (!unit || !date) return [];
     return [{ id, order: id, unit, status: clean(row[9]), date }];
   }) ?? null;
@@ -57,7 +62,8 @@ function operationalOrders(rows) {
 function masterRecord(row, failures) {
   return {
     id: key(row.id), unit: key(row.unit), status: clean(row.status), source: 'master',
-    ...(failures ? { date: dateOf(row.last), order: key(row.order) } : { priority: clean(row.priority) }),
+    ...(row.description ? { description: clean(row.description) } : {}),
+    ...(failures ? { date: panamaWorkshopDate(row.last), order: key(row.order) } : { priority: clean(row.priority) }),
   };
 }
 
@@ -103,7 +109,11 @@ function reconcileSection(master, operational, failures, allows) {
     for (const record of matches) {
       if (matches.length > 1 || row.needsReview || record.unit !== row.unit || state(record.status) !== state(row.status)) {
         record.needsReview = true;
-        if (allows(row.unit)) record.operationalStatus = row.status;
+        if (record.unit === row.unit && allows(row.unit)) record.operationalStatus = row.status;
+      }
+      if (!failures && record.unit === row.unit && priorities.has(plain(record.priority))
+        && priorities.has(plain(row.priority)) && priorityKey(record.priority) !== priorityKey(row.priority)) {
+        record.priorityConflict = true;
       }
     }
     if (matches.some(record => record.unit !== row.unit)) {
@@ -145,19 +155,26 @@ export function reconcilePanamaWorkshop(masters, failureRows, orderRows, allows,
   const today = panamaDay.format(now);
   const cases = failures.records.filter(record => !record.excludedFromCount);
   const todayVerified = failures.masterAvailable && (failures.operationalAvailable || cases.length > 0)
-    && (!failures.capturedAt || dateOf(failures.capturedAt) === today)
+    && (!failures.capturedAt || panamaWorkshopDate(failures.capturedAt) === today)
     && cases.every(record => record.date);
   const orderRecords = orders.records.filter(record => !record.excludedFromCount);
   const openOrders = orderRecords.filter(record => openOrderStates.has(state(record.status)));
   const ordersVerified = orders.masterAvailable && (orders.operationalAvailable || orderRecords.length > 0)
     && orderRecords.every(record => openOrderStates.has(state(record.status)) || finalStates.has(state(record.status)));
-  const prioritiesVerified = ordersVerified && openOrders.every(record => priorities.has(plain(record.priority)));
+  const criticalOrders = openOrders.filter(record => priorityKey(record.priority) === 'CRITICA'
+    && !record.needsReview && !record.priorityConflict);
+  const ordersWithoutPriority = orderRecords.filter(record => record.needsReview || record.priorityConflict
+    || (openOrderStates.has(state(record.status)) && !priorities.has(plain(record.priority))));
+  const prioritiesVerified = ordersVerified && ordersWithoutPriority.length === 0
+    && (orders.operationalAvailable || criticalOrders.length > 0);
   return {
     workshop: {
       failures, orders,
       alertsToday: todayVerified ? cases.filter(record => record.date === today).length : null,
       openOrders: ordersVerified ? openOrders.length : null,
-      criticalOTs: prioritiesVerified ? openOrders.filter(record => /^CRITIC[AO]$/.test(plain(record.priority))).length : null,
+      criticalOTs: prioritiesVerified ? criticalOrders.length : null,
+      criticalOrders,
+      ordersWithoutPriority,
     },
     masterRestrictions: restrictionsFor(failures, orders),
   };

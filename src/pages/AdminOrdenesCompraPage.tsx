@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { Plus, Printer, Trash2 } from 'lucide-react';
 import {
-  displayMoney, formatPanamaReceiptDate, isApprovalRecorded, pendingQuantity, purchaseRead, purchaseRequests, purchaseWrite,
+  canAwardRequest, displayMoney, formatPanamaReceiptDate, isApprovalRecorded, pendingQuantity, purchaseRead, purchaseRequests, purchaseWrite,
   type PurchaseOrder, type PurchaseOverview, type PurchaseRequestLine,
 } from '../lib/purchasing-api';
+import { validateQuoteOrderPrefill } from '../lib/panama-quote-comparison';
+import PurchaseSignaturePad from '../components/purchasing/PurchaseSignaturePad';
 import { useAuthStore } from '../stores/auth-store';
 
 interface DraftLine {
@@ -15,6 +17,7 @@ interface DraftLine {
   quantity: string;
   unitPrice: string;
   requestLineId?: string;
+  ot?: string;
 }
 
 interface Draft {
@@ -56,9 +59,10 @@ const linkedLine = (line: PurchaseRequestLine): DraftLine => ({
   key: crypto.randomUUID(),
   description: line.descripcion,
   partNumber: line.partNum,
-  quantity: line.cantidad,
+  quantity: line.unallocatedQuantity ?? line.cantidad,
   unitPrice: line.precioUnit || line.unitPrice || '0',
   requestLineId: line.id,
+  ot: line.ot,
 });
 
 function cents(value: string) {
@@ -71,6 +75,9 @@ export default function AdminOrdenesCompraPage() {
   const requiresDocumentTax = isPanama && !previewDemo;
   const [params, setParams] = useSearchParams();
   const initialLine = params.get('partida') ?? '';
+  const location = useLocation();
+  const quoteState: unknown = location.state?.quoteOrder;
+  const quoteNavigation = isPanama && quoteState !== undefined ? location.key : '';
   const [data, setData] = useState<PurchaseOverview | null>(null);
   const [requests, setRequests] = useState<PurchaseRequestLine[]>([]);
   const [draft, setDraft] = useState<Draft>(blankDraft);
@@ -82,8 +89,10 @@ export default function AdminOrdenesCompraPage() {
   const [confirmDelete, setConfirmDelete] = useState('');
   const [decision, setDecision] = useState<{ folio: string; status: 'Aprobada' | 'Rechazada' }>();
   const [reason, setReason] = useState('');
+  const [signature, setSignature] = useState('');
   const [reconciliation, setReconciliation] = useState<{ folio: string; action: 'order-invoice' | 'order-payment' }>();
-  const [document, setDocument] = useState({ reference: '', amount: '' });
+  const [document, setDocument] = useState({ reference: '', amount: '', currency: '', tax: '' });
+  const [invoiceLines, setInvoiceLines] = useState<Record<string, { quantity: string; unitPrice: string }>>({});
   const locked = useRef(false);
   const converted = useRef('');
   const form = useRef<HTMLFormElement>(null);
@@ -116,11 +125,24 @@ export default function AdminOrdenesCompraPage() {
   }, [load]);
 
   useEffect(() => {
-    const selected = requests.find((line) => line.id === initialLine && !line.ocFolio && line.estado !== 'Completado');
-    if (!selected || converted.current === initialLine) return;
-    converted.current = initialLine;
-    setDraft((old) => ({ ...blankDraft(old.entity), unit: selected.equipo || 'FLOTA', lines: [linkedLine(selected)] }));
-  }, [initialLine, requests]);
+    const selected = requests.find((line) => line.id === initialLine && canAwardRequest(line));
+    const convertedKey = initialLine + (quoteNavigation ? ':' + quoteNavigation : '');
+    if (!selected || !data || converted.current === convertedKey) return;
+    converted.current = convertedKey;
+    const quote = quoteNavigation ? validateQuoteOrderPrefill(quoteState, selected, data.issuers, data.vendors) : undefined;
+    if (quoteNavigation && !quote) setError('Cambió la partida o la cotización. Revisa el borrador antes de guardarlo.');
+    const line = linkedLine(selected);
+    setDraft((old) => ({
+      ...blankDraft(quote?.issuer.id ?? old.entity),
+      unit: selected.equipo || 'FLOTA',
+      lines: [quote ? { ...line, unitPrice: quote.unitPrice } : line],
+      ...(quote && {
+        vendor: vendorKey(quote.vendor.name, quote.vendor.rfc),
+        shipping: quote.shipping, other: quote.other, deliveryDate: quote.deliveryDate,
+        comments: `Cotización ${quote.reference} · ${quote.rationale}`,
+      }),
+    }));
+  }, [data, initialLine, quoteNavigation, quoteState, requests]);
 
   const issuer = data?.issuers.find((entry) => entry.id === draft.entity);
   const currency = issuer?.currency || 'USD';
@@ -134,12 +156,19 @@ export default function AdminOrdenesCompraPage() {
   const total = tax === null || netSubtotal < 0 ? null : netSubtotal + tax + cents(draft.shipping) + cents(draft.other);
   const openOrder = data?.orders.find((order) => order.folio === receiving);
   const candidateLines = requests.filter((line) =>
-    line.estado !== 'Completado' && !line.ocFolio &&
+    canAwardRequest(line) &&
     (line.equipo || 'FLOTA').toUpperCase() === draft.unit.trim().toUpperCase() &&
     !draft.lines.some((part) => part.requestLineId === line.id));
 
   function setField<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((old) => ({ ...old, [key]: value }));
+  }
+
+  function maxAward(line: DraftLine): number | undefined {
+    const request = isPanama && requests.find(item => item.id === line.requestLineId);
+    if (!request || request.unallocatedQuantity === undefined) return undefined;
+    const current = request.allocations?.find(item => item.folio === draft.folio);
+    return (Math.round(Number(request.unallocatedQuantity) * 1000) + Math.round(Number(current?.quantity || 0) * 1000)) / 1000;
   }
 
   function updateLine(key: string, patch: Partial<DraftLine>) {
@@ -208,8 +237,8 @@ export default function AdminOrdenesCompraPage() {
     });
   }
 
-  function changeStatus(order: PurchaseOrder, status: string, reason?: string) {
-    return run('order-status', { folio: order.folio, version: order.version, status, reason }, (reply) => {
+  function changeStatus(order: PurchaseOrder, status: string, reason?: string, approvalSignature?: string) {
+    return run('order-status', { folio: order.folio, version: order.version, status, reason, ...(approvalSignature && { signature: approvalSignature }) }, (reply) => {
       setDecision(undefined);
       setMessage((reply.number || reply.folio) + ' · ' + status);
     });
@@ -218,16 +247,22 @@ export default function AdminOrdenesCompraPage() {
   function decide(order: PurchaseOrder, status: 'Aprobada' | 'Rechazada') {
     if (!isPanama) return void changeStatus(order, status);
     setReason('');
+    setSignature('');
     setDecision({ folio: order.folio, status });
   }
 
   function openReconciliation(order: PurchaseOrder, action: 'order-invoice' | 'order-payment') {
-    setDocument({ reference: '', amount: '' });
+    setDocument({ reference: action === 'order-invoice' ? order.invoice?.reference ?? '' : '', amount: '', currency: '', tax: '' });
+    setInvoiceLines({});
+    setError('');
     setReconciliation({ folio: order.folio, action });
   }
 
   function reconcileOrder(order: PurchaseOrder, action: 'order-invoice' | 'order-payment') {
-    return run(action, { folio: order.folio, version: order.version, ...document }, (reply) => {
+    const fields = { reference: document.reference, amount: document.amount };
+    const invoice = action === 'order-invoice' ? { currency: document.currency, tax: document.tax,
+      lines: order.lines.map(line => ({ lineId: line.id, ...invoiceLines[line.id] })) } : {};
+    return run(action, { folio: order.folio, version: order.version, ...fields, ...invoice }, (reply) => {
       setReconciliation(undefined);
       setMessage((reply.number || reply.folio) + (action === 'order-invoice' ? ' · factura conciliada' : ' · pago conciliado'));
     });
@@ -245,7 +280,10 @@ export default function AdminOrdenesCompraPage() {
     <div className="mx-auto max-w-5xl p-3 pb-24 sm:p-4">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <h1 className="text-xl font-bold">Órdenes de Compra</h1>
-        <Link to="/admin/proveedores" className={button}>Proveedores</Link>
+        <div className="flex flex-wrap gap-2">
+          {isPanama && !previewDemo && <Link to="/panama/cuentas-por-pagar" className={button + ' inline-flex min-h-11 items-center'}>Cuentas por pagar</Link>}
+          <Link to="/admin/proveedores" className={button}>Proveedores</Link>
+        </div>
       </div>
       {error && <p role="alert" className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
       {message && <p role="status" className="mb-3 rounded-lg bg-green-50 p-3 text-sm text-green-800">{message}</p>}
@@ -300,11 +338,13 @@ export default function AdminOrdenesCompraPage() {
               <select className={input} value="" onChange={(event) => {
                 const selected = candidateLines.find((line) => line.id === event.target.value);
                 if (!selected) return;
-                const prior = draft.lines.length === 1 && !draft.lines[0]?.description ? [] : draft.lines;
+                const first = draft.lines[0];
+                const emptyLine = !first?.description.trim() && !first?.partNumber.trim();
+                const prior = draft.lines.length === 1 && emptyLine ? [] : draft.lines;
                 setField('lines', [...prior, linkedLine(selected)]);
               }}>
                 <option value="">Seleccionar partida</option>
-                {candidateLines.map((line) => <option key={line.id} value={line.id}>{line.partNum} · {line.pedidoId || line.descripcion}</option>)}
+                {candidateLines.map((line) => <option key={line.id} value={line.id}>{line.partNum} · {line.pedidoId || line.descripcion}{line.unallocatedQuantity !== undefined && ` · saldo ${line.unallocatedQuantity}`}</option>)}
               </select>
             </label>
           )}
@@ -312,13 +352,23 @@ export default function AdminOrdenesCompraPage() {
             {draft.lines.map((line, index) => (
               <fieldset key={line.key} className="space-y-2 rounded-lg border border-gray-200 p-3">
                 <legend className="px-1 text-sm font-semibold">Partida {index + 1}</legend>
-                {line.requestLineId && <p className="break-all text-xs text-blue-700">Partida de pedido · {line.partNumber} · {line.requestLineId}</p>}
+                {line.requestLineId && <p className="break-words text-xs text-blue-700">
+                  Partida de pedido · {line.partNumber} · {line.requestLineId}{line.ot && ` · ${line.ot}`}
+                  {maxAward(line) !== undefined && ` · Disponible para esta OC: ${maxAward(line)}`}
+                </p>}
                 <label className="block text-sm">Descripción
                   <input aria-label={'Descripción ' + (index + 1)} required className={input} readOnly={Boolean(line.requestLineId)} value={line.description} onChange={(event) => updateLine(line.key, { description: event.target.value })} />
                 </label>
+                {isPanama && (
+                  <label className="block text-sm">N.º de parte
+                    <input aria-label={'N.º de parte ' + (index + 1)} maxLength={120} className={input}
+                      readOnly={Boolean(line.requestLineId)} autoCapitalize="off" spellCheck={false}
+                      value={line.partNumber} onChange={(event) => updateLine(line.key, { partNumber: event.target.value })} />
+                  </label>
+                )}
                 <div className="grid grid-cols-2 gap-2">
                   <label className="text-sm">Cantidad
-                    <input aria-label={'Cantidad ' + (index + 1)} type="number" min="0.001" step="0.001" required className={input} readOnly={Boolean(line.requestLineId)} value={line.quantity} onChange={(event) => updateLine(line.key, { quantity: event.target.value })} />
+                    <input aria-label={'Cantidad ' + (index + 1)} type="number" min="0.001" max={maxAward(line)} step="0.001" required className={input} readOnly={!isPanama && Boolean(line.requestLineId)} value={line.quantity} onChange={(event) => updateLine(line.key, { quantity: event.target.value })} />
                   </label>
                   <label className="text-sm">Precio unitario
                     <input aria-label={'Precio unitario ' + (index + 1)} type="number" min="0" step="0.01" required className={input} value={line.unitPrice} onChange={(event) => updateLine(line.key, { unitPrice: event.target.value })} />
@@ -379,6 +429,7 @@ export default function AdminOrdenesCompraPage() {
             </div>
             <p className="text-sm text-gray-600">{order.vendorName} · {order.unit} · {order.status} · Recepción {order.receiptStatus.toLowerCase()}</p>
             {order.lines.some((line) => line.requestId) && <p className="break-all text-xs text-blue-700">Pedidos vinculados · {[...new Set(order.lines.map((line) => line.requestId).filter(Boolean))].join(', ')}</p>}
+            {order.lines.some(line => line.ot) && <p className="break-words text-xs text-blue-700">OT vinculadas · {[...new Set(order.lines.map(line => line.ot).filter(Boolean))].join(', ')}</p>}
             <div className="flex flex-wrap gap-2">
               <Link className={button} to={'/admin/ordenes-compra/' + encodeURIComponent(order.number || order.folio)}><Printer size={15} className="inline" /> Ver / Imprimir</Link>
               {order.status === 'Borrador' && <button type="button" className={button} disabled={saving} onClick={() => edit(order)}>Editar</button>}
@@ -390,9 +441,9 @@ export default function AdminOrdenesCompraPage() {
               )}
               {!isPanama && data.canApprove && isApprovalRecorded(order) && order.status !== 'Pagada' && <button type="button" className={button} disabled={saving} onClick={() => void changeStatus(order, 'Pagada')}>Marcar pagada</button>}
               {isApprovalRecorded(order) && <button type="button" className={button} disabled={saving} onClick={() => setReceiving(receiving === order.folio ? '' : order.folio)}>{isPanama ? 'Ver recepciones' : 'Recepciones'}</button>}
-              {data.canRecordInvoice && order.status === 'Recibida' && !order.invoice && <button type="button" className={button} disabled={saving}
-                onClick={() => openReconciliation(order, 'order-invoice')}>Vincular factura</button>}
-              {data.canRecordPayment && order.status === 'Recibida' && order.invoice && !order.payment && <button type="button" className={button} disabled={saving}
+              {data.canRecordInvoice && (!isPanama || order.invoice) && order.status === 'Recibida' && !order.invoiceReconciled && <button type="button" className={button} disabled={saving}
+                onClick={() => openReconciliation(order, 'order-invoice')}>{order.invoice ? 'Verificar factura' : 'Vincular factura'}</button>}
+              {data.canRecordPayment && order.status === 'Recibida' && order.invoiceReconciled && !order.payment && <button type="button" className={button} disabled={saving}
                 onClick={() => openReconciliation(order, 'order-payment')}>Registrar pago conciliado</button>}
               {['Borrador', 'Rechazada'].includes(order.status) && <button type="button" className={button} disabled={saving} onClick={() => setConfirmDelete(order.folio)}>Eliminar orden</button>}
             </div>
@@ -400,17 +451,26 @@ export default function AdminOrdenesCompraPage() {
               <p className="text-xs text-gray-600">Selecciona el proveedor del catálogo en el borrador antes de aprobar.</p>
             )}
             {order.approvalReason && <p className="break-words text-sm text-gray-600">Decisión · {order.approvalReason}</p>}
-            {order.invoice && <p className="break-words text-sm text-gray-600">Factura {order.invoice.reference} · {order.invoice.by}</p>}
+            {order.invoice && <p className="break-words text-sm text-gray-600">Factura {order.invoice.reference} · {order.invoice.by}
+              {order.invoiceReconciled ? ' · Partidas y remisiones conciliadas' : order.status === 'Recibida' ? ' · Pendiente de verificar partidas' : ''}
+            </p>}
             {order.payment && <p className="break-words text-sm text-gray-600">Pago conciliado {order.payment.reference} · {order.payment.by}</p>}
             {decision?.folio === order.folio && (
               <form className="space-y-2 rounded-lg bg-slate-50 p-3" onSubmit={(event) => {
                 event.preventDefault();
-                void changeStatus(order, decision.status, reason.trim());
+                const needsDrawing = decision.status === 'Aprobada' && !previewDemo && !data.usesRegisteredSignature
+                  && order.issuer?.template === 'transplus';
+                if (needsDrawing && !signature) return;
+                void changeStatus(order, decision.status, reason.trim(), needsDrawing ? signature : undefined);
               }}>
                 <label className="block text-sm">{decision.status === 'Aprobada' ? 'Soporte de la aprobación Q25' : 'Motivo del rechazo'}
                   <textarea className={input} maxLength={1000} required value={reason} onChange={(event) => setReason(event.target.value)} />
                 </label>
-                <button type="submit" className={primary} disabled={saving || !reason.trim()}>Confirmar {decision.status === 'Aprobada' ? 'aprobación' : 'rechazo'}</button>
+                {decision.status === 'Aprobada' && !previewDemo && !data.usesRegisteredSignature && order.issuer?.template === 'transplus' && <PurchaseSignaturePad onChange={setSignature} />}
+                <button type="submit" className={primary}
+                  disabled={saving || !reason.trim() || (decision.status === 'Aprobada' && !previewDemo && !data.usesRegisteredSignature && order.issuer?.template === 'transplus' && !signature)}>
+                  {decision.status === 'Rechazada' ? 'Confirmar rechazo' : !previewDemo && order.issuer?.template === 'transplus' ? 'Aprobar y firmar' : 'Confirmar aprobación'}
+                </button>
                 <button type="button" className={button + ' ml-2'} onClick={() => setDecision(undefined)}>Cancelar</button>
               </form>
             )}
@@ -423,9 +483,39 @@ export default function AdminOrdenesCompraPage() {
                 <label className="block text-sm">{reconciliation.action === 'order-invoice' ? 'Folio de factura' : 'Referencia de pago'}
                   <input className={input} maxLength={160} required value={document.reference} onChange={(event) => setDocument({ ...document, reference: event.target.value })} />
                 </label>
-                <label className="block text-sm">Importe confirmado ({order.issuer?.currency})
+                <label className="block text-sm">{reconciliation.action === 'order-invoice' ? 'Total de factura' : 'Importe confirmado (' + order.issuer?.currency + ')'}
                   <input className={input} inputMode="decimal" type="number" min="0.01" step="0.01" required value={document.amount} onChange={(event) => setDocument({ ...document, amount: event.target.value })} />
                 </label>
+                {reconciliation.action === 'order-invoice' && <>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <label className="block text-sm">Moneda de factura
+                      <select className={input} required value={document.currency} onChange={event => setDocument({ ...document, currency: event.target.value })}>
+                        <option value="">Selecciona</option><option>USD</option><option>PAB</option>
+                      </select>
+                    </label>
+                    <label className="block text-sm">{order.issuer?.taxLabel ?? 'Impuesto'} de factura
+                      <input className={input} type="number" inputMode="decimal" min="0" step="0.01" required value={document.tax}
+                        onChange={event => setDocument({ ...document, tax: event.target.value })} />
+                    </label>
+                  </div>
+                  {order.lines.map(line => {
+                    const captured = invoiceLines[line.id] ?? { quantity: '', unitPrice: '' };
+                    return <fieldset className="min-w-0 rounded-lg border border-slate-300 p-2" key={line.id}>
+                      <legend className="max-w-full break-words px-1 text-sm font-semibold">Partida {line.number} · {line.description}</legend>
+                      <p className="mb-2 text-xs text-slate-700">OC {line.quantity} · Recibido {line.received} · Precio OC {displayMoney(line.unitPrice, order.issuer?.currency)}</p>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <label className="block text-sm">Cantidad facturada
+                          <input className={input} type="number" inputMode="decimal" min="0.001" step="0.001" required value={captured.quantity}
+                            onChange={event => setInvoiceLines({ ...invoiceLines, [line.id]: { ...captured, quantity: event.target.value } })} />
+                        </label>
+                        <label className="block text-sm">Precio unitario facturado
+                          <input className={input} type="number" inputMode="decimal" min="0" step="0.01" required value={captured.unitPrice}
+                            onChange={event => setInvoiceLines({ ...invoiceLines, [line.id]: { ...captured, unitPrice: event.target.value } })} />
+                        </label>
+                      </div>
+                    </fieldset>;
+                  })}
+                </>}
                 <button type="submit" className={primary} disabled={saving || !document.reference.trim()}>Confirmar registro</button>
                 <button type="button" className={button + ' ml-2'} onClick={() => setReconciliation(undefined)}>Cancelar</button>
               </form>
@@ -465,6 +555,7 @@ function ReceptionForm({ order, saving, readOnly, onReceive }: {
   return (
     <div className="space-y-3 rounded-lg border border-gray-200 p-3">
       <h4 className="text-sm font-semibold">Recepción por partida</h4>
+      {line && readOnly && <p className="text-sm text-gray-600">Almacén registra las entregas en Más → Recepciones.</p>}
       {order.lines.map((entry) => (
         <div key={entry.id} className="text-sm">
           <p>{entry.description} · Recibidas {entry.received} de {entry.quantity} · Pendientes {pendingQuantity(entry)}</p>

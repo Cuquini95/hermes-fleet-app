@@ -1,27 +1,20 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { hermesApiUrl } from '../../lib/hermes-api-base';
+import { fetchPanamaComponents, type ComponentHistory, type ComponentRow } from '../../lib/panama-components';
 import { useAuthStore } from '../../stores/auth-store';
+import { requestWorkshop } from '../../lib/workshop-api';
+import { ComponentInterventionList, type ComponentInterventionHistory } from './ComponentInterventions';
 
-interface ComponentRow {
-  part: string;
-  position: string;
-  source: string;
-  status: string;
-  date?: string;
-  meter?: string;
-  reason?: string;
-  target?: string;
-  currentMeter?: string;
-  remaining?: string;
-  installedMeter?: string;
-  elapsed?: string;
-}
-interface ComponentHistory {
-  unit: string;
-  changes: ComponentRow[];
-  life: ComponentRow[];
-  unavailable: string[];
-  snapshots?: Record<string, string>;
+const formatHours = (value: number) => value.toLocaleString('es-PA', { maximumFractionDigits: 3 });
+
+function LifeCalculation({ calculation }: Pick<ComponentRow, 'calculation'>) {
+  if (!calculation || calculation.status === 'verified') return null;
+  if (calculation.status === 'incomplete') return <p className="mt-1 text-slate-600">Faltan lecturas para comprobar la vida.</p>;
+  if (calculation.status === 'regressed') return <p className="mt-1 text-amber-800">El horómetro actual es menor al de montaje. Revisa el historial del medidor.</p>;
+  if ('elapsed' in calculation) return <p className={calculation.status === 'mismatch' ? 'mt-1 text-amber-800' : 'mt-1 text-slate-600'}>
+    {calculation.status === 'mismatch' && 'Difiere del maestro. '}
+    Recálculo · {formatHours(calculation.elapsed)} h de uso · {formatHours(calculation.remaining)} h restantes
+  </p>;
+  return null;
 }
 
 function Records({ items, history }: { items: ComponentRow[]; history: boolean }) {
@@ -40,6 +33,7 @@ function Records({ items, history }: { items: ComponentRow[]; history: boolean }
             </>
           )}
           <p>Horas de uso {row.elapsed || 'sin dato'} · {row.status || 'Estado sin dato'}</p>
+          {!history && <LifeCalculation calculation={row.calculation} />}
           <p className="mt-1 text-slate-600">{row.source}</p>
         </li>
       ))}
@@ -51,26 +45,32 @@ export default function PanamaComponentHistory() {
   const [unit, setUnit] = useState('');
   const [request, setRequest] = useState<{ unit: string }>();
   const [record, setRecord] = useState<ComponentHistory>();
+  const [interventions, setInterventions] = useState<ComponentInterventionHistory>();
+  const [interventionError, setInterventionError] = useState(false);
   const [error, setError] = useState('');
   const userId = useAuthStore(state => state.userId);
+  const maySeeInterventions = useAuthStore(state => ['jefe_taller', 'coordinador', 'supervisor', 'gerencia'].includes(state.role ?? ''));
   useEffect(() => {
     if (!request || !userId) return;
     const controller = new AbortController();
-    fetch(hermesApiUrl('/api/panama/componentes?' + new URLSearchParams({ unit: request.unit })), {
-      signal: controller.signal, cache: 'no-store', credentials: 'same-origin',
-    }).then(async res => {
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Consulta no disponible');
+    fetchPanamaComponents(request.unit, controller.signal).then(data => {
       if (!controller.signal.aborted) setRecord(data);
     }).catch((e: unknown) => {
       if (!controller.signal.aborted) setError(e instanceof Error ? e.message : 'Consulta no disponible');
     });
+    if (maySeeInterventions) {
+      void requestWorkshop<ComponentInterventionHistory>(`componentinterventions?${new URLSearchParams({ unit: request.unit })}`)
+        .then(result => { if (!controller.signal.aborted) setInterventions(result); })
+        .catch(() => { if (!controller.signal.aborted) setInterventionError(true); });
+    }
     return () => controller.abort();
-  }, [request, userId]);
+  }, [request, userId, maySeeInterventions]);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setRecord(undefined);
+    setInterventions(undefined);
+    setInterventionError(false);
     setError('');
     setRequest({ unit: unit.trim().toUpperCase() });
   }
@@ -92,6 +92,11 @@ export default function PanamaComponentHistory() {
       </form>
       {request && !record && !error && <p role="status">Consultando componentes…</p>}
       {error && <p role="alert" className="text-red-700">{error}</p>}
+      {request && maySeeInterventions && <div className="space-y-2">
+        <h3 className="font-semibold">{request.unit} · Intervenciones en Hermes</h3>
+        {interventionError ? <p role="alert" className="text-sm text-amber-900">Historial de intervenciones de Hermes no disponible.</p>
+          : interventions ? <ComponentInterventionList history={interventions} linkOrders /> : <p role="status" className="text-sm">Consultando intervenciones…</p>}
+      </div>}
       {record && (
         <>
           <h3 className="font-semibold">{record.unit} · Cambios registrados</h3>
@@ -106,7 +111,7 @@ export default function PanamaComponentHistory() {
           <Records items={record.life} history={false} />
         </>
       )}
-      <p className="text-sm text-slate-600">Registra el reemplazo por pieza y posición en «ANOTAR CAMBIO» del maestro correspondiente.</p>
+      <p className="text-sm text-slate-600">La OT aceptada permite registrar el trabajo por pieza y posición. La vida según el maestro conserva su propio corte.</p>
     </section>
   );
 }

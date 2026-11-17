@@ -33,6 +33,12 @@ describe('Panama maintenance sources', () => {
     expect(maintenanceFullyVerified(result)).toBe(false);
   });
 
+  it('blocks provisional readings in the PM batch picker even when a numeric threshold exists', () => {
+    expect(buildPanamaMaintenance(master, []).entries?.[0]?.batchBlock).toBe('Lectura o estado por verificar');
+    const current = { ...official, status: 'VENCIDO', reading: 'Actualizada', plan: 'Aprobado' };
+    expect(buildPanamaMaintenance({ ...master, maintenance: [current] }, []).entries?.[0]?.batchBlock).toBeNull();
+  });
+
   it('exposes source outages, stale readings and unknown plans without inventing catalog values', () => {
     const result = buildPanamaMaintenance({ maintenance: null, dozers: [], excavators: null }, null);
     expect(result).toMatchObject({ entries: null, historyAvailable: false, components: [], componentSourcesAvailable: false });

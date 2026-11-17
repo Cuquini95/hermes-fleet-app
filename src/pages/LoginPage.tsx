@@ -1,13 +1,13 @@
 import { useState, type FormEvent } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import PasswordRecovery from '../components/auth/PasswordRecovery';
-import { ROLE_HOME } from '../types/roles';
+import { sessionHome } from '../lib/purchasing-home';
 import { useAuthStore } from '../stores/auth-store';
 
 const errorMessages = {
-  credentials: 'Verifica tus datos o consulta al responsable para confirmar que tu cuenta esté habilitada.',
-  unavailable: 'El servicio de acceso no está disponible. Intenta de nuevo o contacta a TI si el problema continúa.',
-  'rate-limited': 'Se alcanzó el límite de intentos. Espera antes de volver a ingresar.',
+  credentials: 'Revisa tus datos o consulta a TI por el acceso.',
+  unavailable: 'Acceso no disponible. Reintenta o contacta a TI.',
+  'rate-limited': 'Demasiados intentos. Espera y vuelve a intentar.',
 };
 
 export default function LoginPage() {
@@ -19,6 +19,7 @@ export default function LoginPage() {
   const loginFailure = useAuthStore((state) => state.loginFailure);
   const role = useAuthStore((state) => state.role);
   const authenticated = useAuthStore((state) => state.isAuthenticated);
+  const home = useAuthStore((state) => sessionHome(state, location.state?.returnTo));
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -29,11 +30,7 @@ export default function LoginPage() {
     setPending(false);
   }
 
-  if (authenticated && role) {
-    const target: unknown = location.state?.returnTo;
-    const internal = typeof target === 'string' && /^\/(?![/\\])[^\\\x00-\x20]*$/.test(target);
-    return <Navigate to={internal ? target : ROLE_HOME[role]} replace />;
-  }
+  if (authenticated && role) return <Navigate to={home} replace />;
 
   return (
     <main className="min-h-screen flex flex-col items-center bg-white px-4 py-10 text-navy">

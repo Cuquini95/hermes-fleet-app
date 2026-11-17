@@ -15,6 +15,7 @@
 import React, { useMemo } from 'react';
 import type { ScheduleEntry } from '../../pages/CalendarPage';
 import type { WorkOrder, OTPriority } from '../../types/workorder';
+import { visibleWorkOrderFolio } from '../../lib/purchasing-api';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -36,6 +37,7 @@ interface CalendarGridProps {
   mechanics: string[];
   entries: ScheduleEntry[];
   workorders: WorkOrder[];
+  panama: boolean;
   onCellClick?: (mechanic: string, date: Date) => void;
   onCardClick: (entry: ScheduleEntry) => void;
 }
@@ -58,16 +60,20 @@ function totalHours(cellEntries: ScheduleEntry[]): number {
 interface OTCardProps {
   entry: ScheduleEntry;
   ot: WorkOrder | undefined;
+  panama: boolean;
   onClick: (e: React.MouseEvent) => void;
 }
 
-function OTCard({ entry, ot, onClick }: OTCardProps) {
+function OTCard({ entry, ot, panama, onClick }: OTCardProps) {
   const priority = (ot?.prioridad ?? entry.prioridad) as OTPriority;
   const styles = PRIORITY_STYLES[priority] ?? PRIORITY_STYLES.MEDIA;
+  const reference = ot?.folio ?? entry.ot_id;
+  const folio = panama ? visibleWorkOrderFolio(reference) : reference;
 
   return (
     <button
       type="button"
+      data-ot={reference}
       onClick={onClick}
       className={[
         'w-full text-left rounded border-l-4 px-1.5 py-1 mb-1 text-xs leading-tight',
@@ -77,7 +83,7 @@ function OTCard({ entry, ot, onClick }: OTCardProps) {
         styles.text,
       ].join(' ')}
     >
-      <div className="font-semibold truncate">{entry.ot_id}</div>
+      {folio && <div className="font-semibold truncate">{folio}</div>}
       <div className="truncate opacity-80">{entry.unidad}</div>
       {entry.horas_estimadas ? (
         <div className="opacity-60">{entry.horas_estimadas}h</div>
@@ -93,6 +99,7 @@ export default function CalendarGrid({
   mechanics,
   entries,
   workorders,
+  panama,
   onCellClick,
   onCardClick,
 }: CalendarGridProps) {
@@ -219,6 +226,7 @@ export default function CalendarGrid({
                       key={`${entry.ot_id}-${ei}`}
                       entry={entry}
                       ot={woMap.get(entry.ot_id)}
+                      panama={panama}
                       onClick={(e) => {
                         e.stopPropagation();
                         onCardClick(entry);

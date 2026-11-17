@@ -1,46 +1,81 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
+import PanamaShiftBilling from '../components/dashboard/PanamaShiftBilling';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { mexicoDateInput } from '../lib/date-utils';
 import { downloadBlob } from '../lib/download-blob';
 import { shiftHandoffCsv } from '../lib/finance-handoff';
+import { requestPanamaDispatch, ShiftRequestError, type DispatchAssignment, type DispatchFields, type DispatchOperator } from '../lib/panama-dispatch';
 import { useAuthStore } from '../stores/auth-store';
 
 type ShiftFields = Record<'unit' | 'date' | 'shift' | 'initialHours' | 'finalHours' | 'equipmentStatus' | 'support' | 'trips' | 'tonnes' | 'stops' | 'client', string>;
 type Actor = { id: string; name: string };
 type ShiftAction = 'deliver' | 'correct' | 'accept' | 'return';
-type ShiftPart = Omit<ShiftFields, 'initialHours' | 'finalHours' | 'trips' | 'tonnes'> & {
-  id: string; version: number; hours: number; initialHours: number; finalHours: number; trips: number; tonnes: number;
+type ShiftHours = { initialHours: number; finalHours: number; hours: number };
+type ShiftPart = Omit<ShiftFields, 'initialHours' | 'finalHours' | 'trips' | 'tonnes'> & ShiftHours & {
+  id: string; version: number; trips: number; tonnes: number;
   status: 'Pendiente de revisión' | 'Aceptado por Supervisión' | 'Devuelto';
-  officialStatus: string; officialReference?: string; officialCut?: string;
+  officialStatus: string; officialReference?: string; officialCut?: string; officialReadAt?: string;
+  officialComparison?: ShiftHours & { differences: ShiftHours };
   createdBy: Actor; createdAt: string; reviewedBy: Actor | null; reviewedAt: string | null; comment: string;
   history: { action: ShiftAction; actor: Actor; at: string; comment: string }[];
 };
 type Mutation = { endpoint: 'entregar' | 'revisar'; data: Record<string, unknown> };
-type DispatchFields = Record<'unit' | 'date' | 'shift' | 'site' | 'operatorId', string>;
-type DispatchOperator = { userId: string; userName: string; allUnits: boolean; assignedUnits: string[] };
-type DispatchAssignment = { id: string; unit: string; date: string; shift: string; site: string; operator: Actor; assignedBy: Actor; assignedAt: string;
-  readiness: { level: 'ok' | 'restricted' | 'blocked'; reason: string } };
 
 const inputClass = 'w-full rounded-lg border border-slate-400 bg-white px-3 py-2 text-base font-normal';
 const labelClass = 'flex min-w-0 flex-col gap-1 text-sm font-semibold';
 const buttonClass = 'inline-flex min-h-11 items-center justify-center rounded-lg border border-slate-400 bg-white px-4 py-2 text-sm font-semibold text-[#162252] disabled:opacity-50';
 const primaryClass = 'inline-flex min-h-11 items-center justify-center rounded-lg bg-[#162252] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50';
 const localTime = new Intl.DateTimeFormat('es-PA', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Panama' });
+const cutTime = new Intl.DateTimeFormat('es', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Panama' });
+const hourNumber = new Intl.NumberFormat('es-PA', { maximumFractionDigits: 3 });
+const hourDifference = new Intl.NumberFormat('es-PA', { maximumFractionDigits: 3, signDisplay: 'exceptZero' });
 const actionLabels: Record<ShiftAction, string> = { deliver: 'Entregó', correct: 'Corrigió', accept: 'Aceptó', return: 'Devolvió' };
+
+function ShiftRegisterComparison({ part }: { part: ShiftPart }) {
+  const official = part.officialComparison;
+  const provenance = part.officialCut
+    ? { label: 'Corte de REGISTRO', at: part.officialCut }
+    : part.officialReadAt ? { label: 'Consulta de REGISTRO', at: part.officialReadAt } : null;
+  return (
+    <section aria-label="Conciliación con REGISTRO" className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+      <h4 className="font-semibold">Conciliación con REGISTRO</h4>
+      <p className={`break-words font-semibold ${official && Object.values(official.differences).every(value => value === 0) ? 'text-emerald-900' : 'text-amber-900'}`}>{part.officialStatus}</p>
+      {provenance && <p className="text-xs text-slate-700">
+        {provenance.label} · <time dateTime={provenance.at}>{cutTime.format(new Date(provenance.at))}</time> · Panamá
+      </p>}
+      <dl className="grid gap-2 text-slate-700 sm:grid-cols-3">
+        <div className="min-w-0">
+          <dt className="font-semibold">Hermes</dt>
+          <dd>{hourNumber.format(part.hours)} h del turno</dd>
+          <dd className="break-words text-xs">Horómetro {hourNumber.format(part.initialHours)} → {hourNumber.format(part.finalHours)} h</dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="font-semibold">REGISTRO TMF</dt>
+          {official ? <>
+            <dd>{hourNumber.format(official.hours)} h del turno</dd>
+            <dd className="break-words text-xs">Horómetro {hourNumber.format(official.initialHours)} → {hourNumber.format(official.finalHours)} h</dd>
+          </> : <dd>Horas no disponibles</dd>}
+        </div>
+        <div className="min-w-0">
+          <dt className="font-semibold">Diferencia (REGISTRO − Hermes)</dt>
+          {official ? <>
+            <dd>{hourDifference.format(official.differences.hours)} h</dd>
+            <dd className="break-words text-xs">Inicial {hourDifference.format(official.differences.initialHours)} h · Final {hourDifference.format(official.differences.finalHours)} h</dd>
+          </> : <dd>Pendiente de conciliación</dd>}
+        </div>
+      </dl>
+      {part.officialReference && <details className="text-xs text-slate-700">
+        <summary className="min-h-11 cursor-pointer py-3">Referencia en REGISTRO</summary>
+        <p className="mt-1 break-words">{part.officialReference}</p>
+      </details>}
+    </section>
+  );
+}
 
 function emptyFields(): ShiftFields {
   return { unit: '', date: mexicoDateInput(), shift: '', initialHours: '', finalHours: '', equipmentStatus: '',
     support: '', trips: '', tonnes: '', stops: '', client: '' };
-}
-
-class ShiftRequestError extends Error {
-  readonly status: number;
-
-  constructor(message: string, status: number) {
-    super(message);
-    this.status = status;
-  }
 }
 
 async function requestShifts<T>(mutation?: Mutation, signal?: AbortSignal): Promise<T> {
@@ -56,27 +91,12 @@ async function requestShifts<T>(mutation?: Mutation, signal?: AbortSignal): Prom
   return result;
 }
 
-async function requestDispatch(data?: DispatchFields & { mutationId: string; expectedUserId: string }, signal?: AbortSignal) {
-  const response = await fetch('/hermes-api/api/panama/turnos/despacho', {
-    method: data ? 'POST' : 'GET', cache: 'no-store', credentials: 'same-origin',
-    headers: data ? { 'Content-Type': 'application/json' } : undefined,
-    body: data ? JSON.stringify(data) : undefined,
-    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000),
-  });
-  const result = await response.json().catch(() => null);
-  if (!response.ok) throw new ShiftRequestError(result?.error ?? 'No se pudo confirmar el despacho.', response.status);
-  if (data ? !result?.assignment?.id : !Array.isArray(result?.assignments) || !Array.isArray(result?.operators)) {
-    throw new Error('El servidor no confirmó el despacho.');
-  }
-  return result as { assignment: DispatchAssignment; assignments: DispatchAssignment[]; operators: DispatchOperator[]; captureAvailable?: boolean };
-}
-
 function DispatchPanel({ userId, canAssign, units }: { userId: string; canAssign: boolean; units: { unit_id: string; model: string }[] }) {
   const [assignments, setAssignments] = useState<DispatchAssignment[]>([]);
   const [operators, setOperators] = useState<DispatchOperator[]>([]);
   const [captureAvailable, setCaptureAvailable] = useState<boolean>();
   const [fields, setFields] = useState<DispatchFields>({ unit: '', date: mexicoDateInput(), shift: '', site: '', operatorId: '' });
-  const [retry, setRetry] = useState<Parameters<typeof requestDispatch>[0]>();
+  const [retry, setRetry] = useState<Parameters<typeof requestPanamaDispatch>[0]>();
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
@@ -86,7 +106,7 @@ function DispatchPanel({ userId, canAssign, units }: { userId: string; canAssign
 
   useEffect(() => {
     const controller = new AbortController();
-    requestDispatch(undefined, controller.signal)
+    requestPanamaDispatch(undefined, controller.signal)
       .then(result => {
         if (controller.signal.aborted) return;
         setAssignments(result.assignments);
@@ -114,11 +134,11 @@ function DispatchPanel({ userId, canAssign, units }: { userId: string; canAssign
     setError('');
     setMessage('');
     try {
-      const { assignment } = await requestDispatch(data);
+      const { assignment } = await requestPanamaDispatch(data);
       setAssignments(current => [assignment, ...current.filter(item => item.id !== assignment.id)]);
       setMessage(assignment.readiness.level === 'ok'
-        ? `Asignación ${assignment.id} confirmada para ${assignment.operator.name}.`
-        : `Asignación ${assignment.id} guardada. El equipo tiene una restricción vigente.`);
+        ? `${assignment.unit} asignado a ${assignment.operator.name}.`
+        : 'Asignación guardada. Equipo con restricción.');
       setRetry(undefined);
       setFields(current => ({ ...current, operatorId: '', unit: '' }));
     } catch (cause) {
@@ -134,38 +154,42 @@ function DispatchPanel({ userId, canAssign, units }: { userId: string; canAssign
   const eligible = operators.filter(person => person.allUnits || person.assignedUnits.includes(fields.unit));
   return <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4" aria-labelledby="dispatch-heading">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <h2 id="dispatch-heading" className="text-lg font-bold">Asignaciones de despacho</h2>
-      <button type="button" className={buttonClass} disabled={loading || saving || !!retry}
-        onClick={() => { setLoading(true); setError(''); setReload(value => value + 1); }}>Actualizar asignaciones</button>
+      <h2 id="dispatch-heading" className="text-lg font-bold">Despacho</h2>
+      <button type="button" className={buttonClass} aria-label="Actualizar asignaciones" disabled={loading || saving || !!retry}
+        onClick={() => { setLoading(true); setError(''); setReload(value => value + 1); }}>Actualizar</button>
     </div>
     {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
     {message && <p role="status" className="text-sm text-emerald-900">{message}</p>}
     {captureAvailable === false && <p className="text-sm text-amber-800">Despacho pendiente de validar con HSE.</p>}
     {canAssign && captureAvailable && <form className="space-y-3" onSubmit={assign}>
       <fieldset disabled={loading || saving || !!retry} className="grid min-w-0 gap-3 sm:grid-cols-2">
-        <label className={labelClass}>Unidad para despacho<select className={inputClass} required {...bind('unit')}>
-          <option value="">Selecciona una unidad</option>
+        <label className={labelClass}>Equipo<select className={inputClass} required {...bind('unit')}>
+          <option value="">Selecciona equipo</option>
           {units.map(item => <option key={item.unit_id} value={item.unit_id}>{item.unit_id} · {item.model}</option>)}
         </select></label>
-        <label className={labelClass}>Operador para despacho<select className={inputClass} required {...bind('operatorId')}>
-          <option value="">Selecciona un operador habilitado</option>
+        <label className={labelClass}>Operador<select className={inputClass} required {...bind('operatorId')}>
+          <option value="">Selecciona operador</option>
           {eligible.map(person => <option key={person.userId} value={person.userId}>{person.userName}</option>)}
         </select></label>
-        <label className={labelClass}>Fecha de despacho<input className={inputClass} type="date" required {...bind('date')} /></label>
-        <label className={labelClass}>Turno de despacho<input className={inputClass} required maxLength={32} {...bind('shift')} /></label>
-        <label className={`${labelClass} sm:col-span-2`}>Sitio o frente<input className={inputClass} required maxLength={160} {...bind('site')} /></label>
+        <label className={labelClass}>Fecha<input className={inputClass} type="date" required {...bind('date')} /></label>
+        <label className={labelClass}>Turno<input aria-label="Turno de despacho" className={inputClass} required maxLength={32} {...bind('shift')} /></label>
+        <label className={`${labelClass} sm:col-span-2`}>Frente<input className={inputClass} required maxLength={160} {...bind('site')} /></label>
       </fieldset>
       <button type="submit" className={primaryClass} disabled={saving || loading || (!retry && !eligible.length)}>
-        {saving ? 'Confirmando despacho…' : retry ? 'Reintentar la misma asignación' : 'Confirmar asignación'}
+        {saving ? 'Guardando…' : retry ? 'Reintentar asignación' : 'Asignar equipo'}
       </button>
     </form>}
     {loading ? <p role="status" className="text-sm text-slate-600">Consultando asignaciones…</p>
-      : !assignments.length && !error && <p className="text-sm text-slate-600">Sin asignaciones en tu alcance.</p>}
+      : !assignments.length && !error && <p className="text-sm text-slate-600">Sin asignaciones para tu puesto.</p>}
     {assignments.map(item => <article key={item.id} className="space-y-1 rounded-lg border border-slate-200 p-3 text-sm">
       <h3 className="font-semibold">{item.unit} · {item.date} · {item.shift}</h3>
-      <p className="break-words">{item.id} · {item.site} · {item.operator.name}</p>
-      <p className="text-slate-700">Asignó {item.assignedBy.name} · {localTime.format(new Date(item.assignedAt))}</p>
+      <p className="break-words">{item.operator.name} · {item.site}</p>
       {item.readiness.level !== 'ok' && <p className="font-semibold text-red-800">No despachar. {item.readiness.reason}</p>}
+      <details className="text-slate-700">
+        <summary className="min-h-11 cursor-pointer py-3">Detalles</summary>
+        <p className="mt-1 break-words">Referencia {item.id}</p>
+        <p>Asignó {item.assignedBy.name} · {localTime.format(new Date(item.assignedAt))}</p>
+      </details>
     </article>)}
   </section>;
 }
@@ -173,18 +197,29 @@ function DispatchPanel({ userId, canAssign, units }: { userId: string; canAssign
 export default function PanamaShiftsPage() {
   const project = useAuthStore(state => state.project);
   const userId = useAuthStore(state => state.userId);
+  const [search] = useSearchParams();
+  const unit = (search.get('unit') ?? '').trim().toUpperCase();
+  const shift = (search.get('shift') ?? '').trim().slice(0, 32);
+  const acceptedOnly = search.get('estado') === 'aceptados';
   if (project !== 'tmf-panama') return <Navigate to="/" replace />;
-  return <ShiftQueue key={userId} userId={userId} />;
+  return <ShiftQueue key={JSON.stringify([userId, unit, shift, acceptedOnly])} userId={userId}
+    requestedUnit={unit} requestedShift={shift} acceptedOnly={acceptedOnly} />;
 }
 
-function ShiftQueue({ userId }: { userId: string }) {
+function ShiftQueue({ userId, requestedUnit, requestedShift, acceptedOnly }: {
+  userId: string; requestedUnit: string; requestedShift: string; acceptedOnly: boolean;
+}) {
   const role = useAuthStore(state => state.role);
+  const mayPrefill = useAuthStore(state => requestedUnit && (
+    state.allUnits || state.assignedUnits.some(unit => unit.toUpperCase() === requestedUnit)));
   const equipment = useEquipmentList();
   const [records, setRecords] = useState<ShiftPart[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [reload, setReload] = useState(0);
-  const [fields, setFields] = useState(emptyFields);
+  const [fields, setFields] = useState(() => ({
+    ...emptyFields(), ...(mayPrefill ? { unit: requestedUnit, shift: requestedShift } : {}),
+  }));
   const [correction, setCorrection] = useState<ShiftPart>();
   const [returnPart, setReturnPart] = useState<string>();
   const [comment, setComment] = useState('');
@@ -195,6 +230,8 @@ function ShiftQueue({ userId }: { userId: string }) {
   const writeLock = useRef(false);
   const form = useRef<HTMLFormElement>(null);
   const allowDelivery = role === 'operador' || role === 'supervisor';
+  const visibleRecords = records.filter(record => (!requestedUnit || record.unit.toUpperCase() === requestedUnit)
+    && (!acceptedOnly || record.status === 'Aceptado por Supervisión'));
   const hours = Number(fields.finalHours) - Number(fields.initialHours);
   const invalidReading = fields.initialHours !== '' && fields.finalHours !== '' && (hours < 0 || hours > 24);
 
@@ -223,13 +260,14 @@ function ShiftQueue({ userId }: { userId: string }) {
       const { record } = await requestShifts<{ record: ShiftPart }>(mutation);
       setRetry(undefined);
       setRecords(items => [record, ...items.filter(item => item.id !== record.id)]);
-      setMessage(`${record.id} · ${record.status}.`);
+      setMessage(`${record.unit} · ${record.status}.`);
       if (mutation.endpoint === 'entregar') {
         setFields(emptyFields());
         setCorrection(undefined);
       } else {
         setReturnPart(undefined);
         setComment('');
+        if (record.status === 'Aceptado por Supervisión') refresh();
       }
     } catch (cause) {
       if (cause instanceof ShiftRequestError && cause.status < 500 && ![408, 429].includes(cause.status)) {
@@ -238,7 +276,7 @@ function ShiftQueue({ userId }: { userId: string }) {
         if (cause.status === 409) refresh();
       } else {
         setRetry(mutation);
-        setError('El servidor no confirmó la operación. Reintenta el mismo envío para recuperar su comprobante.');
+        setError('Falta confirmar el envío. Reinténtalo para recuperar el comprobante.');
       }
     } finally {
       writeLock.current = false;
@@ -278,10 +316,9 @@ function ShiftQueue({ userId }: { userId: string }) {
         <header className="rounded-2xl bg-[#162252] p-4 text-white">
           <Link to="/panama" className="inline-flex min-h-11 items-center text-sm text-slate-200 underline underline-offset-4">Volver a Maestros TMF</Link>
           <h1 className="text-xl font-bold">Relevo de turno</h1>
-          <p className="mt-1 text-sm text-slate-200">TMF Minera Panamá · Parte de producción F07</p>
+          <p className="mt-1 text-sm text-slate-200">TMF Minera Panamá</p>
         </header>
 
-        <p className="rounded-xl border border-slate-200 bg-white p-4 text-sm">Supervisión revisa la entrega en Hermes. El controlador verifica una sola captura en REGISTRO TMF y conserva la referencia del parte.</p>
         <DispatchPanel userId={userId} canAssign={role === 'supervisor' || role === 'coordinador'} units={equipment} />
         {message && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm font-semibold text-emerald-900">{message}</p>}
         {error && <div className="rounded-xl bg-red-50 p-3 text-sm text-red-900">
@@ -290,7 +327,7 @@ function ShiftQueue({ userId }: { userId: string }) {
         </div>}
 
         {allowDelivery && <form ref={form} onSubmit={deliver} className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-lg font-bold">{correction ? `Corregir ${correction.id}` : 'Entregar parte'}</h2>
+          <h2 className="mb-3 text-lg font-bold">{correction ? `Corregir parte de ${correction.unit}` : 'Entregar parte'}</h2>
           <fieldset disabled={saving || !!retry} className="grid min-w-0 gap-3 sm:grid-cols-2">
             <div className={labelClass}>
               <label htmlFor="shift-unit">Unidad</label>
@@ -300,12 +337,12 @@ function ShiftQueue({ userId }: { userId: string }) {
               </select>
             </div>
             <label className={labelClass}>Fecha del turno<input className={inputClass} type="date" required readOnly={!!correction} {...bind('date')} /></label>
-            <label className={labelClass}>Turno<input className={inputClass} required maxLength={32} placeholder="Como figura en REGISTRO TMF" readOnly={!!correction} {...bind('shift')} /></label>
+            <label className={labelClass}>Turno<input className={inputClass} required maxLength={32} placeholder="Según REGISTRO TMF" readOnly={!!correction} {...bind('shift')} /></label>
             <label className={labelClass}>Estado del equipo<input className={inputClass} required maxLength={100} {...bind('equipmentStatus')} /></label>
             <label className={labelClass}>Horómetro inicial (h)<input className={inputClass} type="number" inputMode="decimal" required min="0" max="99999999.999" step="0.001" {...bind('initialHours')} /></label>
             <label className={labelClass}>Horómetro final (h)<input className={inputClass} type="number" inputMode="decimal" required min="0" max="99999999.999" step="0.001" {...bind('finalHours')} /></label>
             {invalidReading && <p role="alert" className="text-sm font-semibold text-red-800 sm:col-span-2">
-              {hours < 0 ? 'El horómetro final es inferior al inicial.' : 'La diferencia del horómetro supera 24 horas.'} Verifica la lectura en su origen.
+              {hours < 0 ? 'El horómetro final es inferior al inicial.' : 'El turno supera 24 h.'} Verifica las lecturas.
             </p>}
             <label className={labelClass}>Viajes<input className={inputClass} type="number" inputMode="numeric" required min="0" max="99999999" step="1" {...bind('trips')} /></label>
             <label className={labelClass}>Toneladas<input className={inputClass} type="number" inputMode="decimal" required min="0" max="99999999.999" step="0.001" {...bind('tonnes')} /></label>
@@ -323,39 +360,44 @@ function ShiftQueue({ userId }: { userId: string }) {
 
         <section className="space-y-3" aria-labelledby="turnos-heading">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 id="turnos-heading" className="text-lg font-bold">Partes de turno</h2>
+            <h2 id="turnos-heading" className="text-lg font-bold">
+              {acceptedOnly ? 'Partes aceptados' : 'Partes de turno'}{requestedUnit && ` · ${requestedUnit}`}
+            </h2>
             <button type="button" className={buttonClass} onClick={refresh} disabled={loading || saving || !!retry}>Actualizar</button>
           </div>
           {loading && <p role="status" className="text-sm text-slate-600">Consultando partes…</p>}
           {loadError && <p role="alert" className="text-sm text-red-800">{loadError}</p>}
-          {!loading && !loadError && records.length === 0 && <p className="text-sm text-slate-600">Sin partes de turno en tu alcance.</p>}
-          {records.map(record => (
+          {!loading && !loadError && visibleRecords.length === 0 && <p className="text-sm text-slate-600">Sin partes de turno en esta consulta.</p>}
+          {visibleRecords.map(record => (
             <article key={record.id} className="min-w-0 space-y-2 rounded-xl border border-slate-200 bg-white p-4">
               <h3 className="font-bold text-[#162252]">{record.unit} · {record.date} · {record.shift}</h3>
-              <p className="break-words text-sm font-semibold">{record.id} · {record.status}</p>
-              <p className="text-sm text-slate-700">{record.initialHours} → {record.finalHours} h · {record.hours} h del turno · {record.trips} viajes · {record.tonnes} t</p>
+              <p className="break-words text-sm font-semibold">{record.status}</p>
+              <p className="text-sm text-slate-700">{record.status !== 'Aceptado por Supervisión'
+                && `${record.initialHours} → ${record.finalHours} h · ${record.hours} h del turno · `}{record.trips} viajes · {record.tonnes} t</p>
               <dl className="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-2">
                 <div><dt className="font-semibold">Estado del equipo</dt><dd className="break-words">{record.equipmentStatus}</dd></div>
                 <div><dt className="font-semibold">Cliente</dt><dd className="break-words">{record.client}</dd></div>
-                <div><dt className="font-semibold">Soporte</dt><dd className="break-words">{record.support}</dd></div>
                 <div><dt className="font-semibold">Paradas</dt><dd className="break-words">{record.stops}</dd></div>
               </dl>
-              <p className="text-sm text-slate-700">Entregó {record.createdBy.name} · {localTime.format(new Date(record.createdAt))}</p>
-              {record.reviewedBy && record.reviewedAt && <p className="break-words text-sm text-slate-700">Revisó {record.reviewedBy.name} · {localTime.format(new Date(record.reviewedAt))}{record.comment ? ` · ${record.comment}` : ''}</p>}
-              <p className="break-words text-sm font-semibold text-amber-900">{record.officialStatus}{record.officialReference && ` · ${record.officialReference}`}</p>
-              {record.officialCut && <p className="text-xs text-slate-600">Corte de REGISTRO {localTime.format(new Date(record.officialCut))}</p>}
+              {record.status === 'Devuelto' && record.comment && <p className="break-words text-sm text-amber-900">{record.comment}</p>}
+              {record.status === 'Aceptado por Supervisión' && <ShiftRegisterComparison part={record} />}
               {(role === 'gerencia' || role === 'coordinador') && record.status === 'Aceptado por Supervisión' && record.reviewedAt && record.reviewedBy && (
                 <button type="button" className={buttonClass} onClick={() => downloadBlob(
                   new Blob([shiftHandoffCsv(record)], { type: 'text/csv;charset=utf-8' }),
                   `Hermes-valorizacion-${record.id}.csv`,
                 )}>Descargar parte para conciliación</button>
               )}
-              {record.history.length > 1 && <details className="text-sm text-slate-700">
-                <summary>Actividad del parte</summary>
-                <ol className="mt-1 list-inside list-decimal space-y-1">
+              {role === 'gerencia' && record.status === 'Aceptado por Supervisión' && record.reviewedAt && record.reviewedBy && (
+                <PanamaShiftBilling key={record.version} folio={record.id} hours={record.hours} />
+              )}
+              <details className="text-sm text-slate-700">
+                <summary className="min-h-11 cursor-pointer py-3">Detalles del parte</summary>
+                <p className="mt-1 break-words">Referencia {record.id}</p>
+                <p className="break-words">Soporte {record.support}</p>
+                <ul className="mt-1 space-y-1">
                   {record.history.map((entry, index) => <li key={index} className="break-words">{actionLabels[entry.action]} {entry.actor.name} · {localTime.format(new Date(entry.at))}{entry.comment ? ` · ${entry.comment}` : ''}</li>)}
-                </ol>
-              </details>}
+                </ul>
+              </details>
               {allowDelivery && record.createdBy.id === userId && record.status === 'Devuelto' && <button type="button" className={buttonClass} disabled={loading || saving || !!retry} onClick={() => edit(record)}>Corregir parte</button>}
               {role === 'supervisor' && record.createdBy.id !== userId && record.status === 'Pendiente de revisión' && (
                 returnPart === record.id ? <form className="space-y-2" onSubmit={event => { event.preventDefault(); review(record, 'return'); }}>

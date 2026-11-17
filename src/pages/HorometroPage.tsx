@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Clock, RefreshCw } from 'lucide-react';
 import { useEquipmentList } from '../hooks/useEquipmentList';
+import { usePanamaCaptureUnit } from '../hooks/usePanamaCaptureUnit';
 import { getNextPM } from '../data/pm-rules';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
 import { appendRow, handoffMeterReadings, SheetAppendError, SHEET_TABS, syncExistingHorometros } from '../lib/sheets-api';
@@ -11,6 +12,7 @@ import { queueSubmission, flushQueue } from '../lib/offline-queue';
 import { useAuthStore } from '../stores/auth-store';
 import ConfirmModal from '../components/ui/ConfirmModal';
 import SuccessToast, { type ToastType } from '../components/ui/SuccessToast';
+import PanamaMeterHistory from '../components/workshop/PanamaMeterHistory';
 
 type TurnoType = 'inicio' | 'final';
 
@@ -30,7 +32,7 @@ export default function HorometroPage() {
   }, [isOnline]);
 
   const [turno, setTurno] = useState<TurnoType>('inicio');
-  const [unidad, setUnidad] = useState('');
+  const [unidad, setUnidad] = usePanamaCaptureUnit(equipment);
   const [horometro, setHorometro] = useState('');
   const [showConfirm, setShowConfirm] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
@@ -40,6 +42,7 @@ export default function HorometroPage() {
   const [retry, setRetry] = useState<{ row: string[]; meterReading: CmmsMeterReading; label: string }>();
   const [syncingExisting, setSyncingExisting] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
+  const [meterRevision, setMeterRevision] = useState(0);
 
   const selectedEquipment = equipment.find((eq) => eq.unit_id === unidad);
   const horasActual = horometro ? parseFloat(horometro) : null;
@@ -148,7 +151,8 @@ export default function HorometroPage() {
       }
       setRetry(undefined);
       if (isPanama) {
-        show(`Horómetro ${label} registrado en Hermes. Conciliación con REGISTRO TMF y enlace CMMS pendientes.`, 'info');
+        setMeterRevision(value => value + 1);
+        show(`Horómetro ${label} registrado en Hermes.`, 'success');
         return;
       }
       try {
@@ -198,11 +202,11 @@ export default function HorometroPage() {
         >
           <ArrowLeft size={20} className="text-text" />
         </button>
-        <h1 className="text-xl font-bold text-text">Registro Horómetro</h1>
+        <h1 className="text-xl font-bold text-text">{isPanama ? 'Horómetro' : 'Registro Horómetro'}</h1>
       </div>
 
       {isPanama && <p className="mb-4 rounded-xl border border-border bg-white p-3 text-sm text-text-secondary">
-        Registra una lectura excepcional cuando falte en el origen automático. Para entregar lecturas y producción al cierre, abre{' '}
+        Registra la lectura si falta la automática. Para cerrar el turno, usa{' '}
         <Link to="/panama/turnos" className="font-semibold text-primary underline">Relevo de turno</Link>.
       </p>}
 
@@ -251,8 +255,9 @@ export default function HorometroPage() {
 
       {/* Unit selector */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-border mb-4">
-        <label className="text-sm font-medium text-text-secondary block mb-2">Unidad</label>
+        <label htmlFor="meter-unit" className="text-sm font-medium text-text-secondary block mb-2">Unidad</label>
         <select
+          id="meter-unit"
           value={unidad}
           onChange={(e) => setUnidad(e.target.value)}
           className="w-full rounded-xl border border-border p-4 bg-white text-text text-lg font-semibold"
@@ -266,10 +271,13 @@ export default function HorometroPage() {
         </select>
       </div>
 
+      {isPanama && unidad && userId && <PanamaMeterHistory key={`${userId}:${unidad}`} unit={unidad} actorId={userId} refresh={meterRevision} />}
+
       {/* Horómetro large input */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-border mb-4">
-        <label className="text-sm font-medium text-text-secondary block mb-2">Horómetro</label>
+        <label htmlFor="meter-reading" className="text-sm font-medium text-text-secondary block mb-2">Horómetro</label>
         <input
+          id="meter-reading"
           type="number"
           value={horometro}
           onChange={(e) => setHorometro(e.target.value)}

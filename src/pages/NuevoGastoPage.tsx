@@ -3,7 +3,7 @@
  * Expense entry form with OCR, multi-unit allocation, and photo capture. Shared form state across steps — splitting creates prop-drill burden without reuse upside.
  */
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Camera,
   Upload,
@@ -46,9 +46,11 @@ export default function NuevoGastoPage() {
   const actorId = useAuthStore(state => state.userId);
   const allUnits = useAuthStore(state => state.allUnits);
   const isPanama = project === 'tmf-panama';
+  const [search] = useSearchParams();
+  const fromOrder = isPanama ? search.get('ot')?.trim() ?? '' : '';
 
   // ── Form state
-  const [tipo, setTipo] = useState<GastoTipo>('Refaccion');
+  const [tipo, setTipo] = useState<GastoTipo>(fromOrder ? 'Servicio' : 'Refaccion');
   const [proveedor, setProveedor] = useState('');
   const [rfcProveedor, setRfcProveedor] = useState('');
   const [folioFactura, setFolioFactura] = useState('');
@@ -64,7 +66,7 @@ export default function NuevoGastoPage() {
       setOptions(data);
       if (data.entities.length === 1) setEntityId(data.entities[0]!.id);
     }).catch(() => {
-      if (!ctrl.signal.aborted) setOptionsError('No se pudieron verificar las entidades de captura. Actualiza e inténtalo de nuevo.');
+      if (!ctrl.signal.aborted) setOptionsError('No se pudo verificar la entidad. Actualiza la página.');
     });
     return () => ctrl.abort();
   }, []);
@@ -73,10 +75,11 @@ export default function NuevoGastoPage() {
   const [total, setTotal] = useState(0);
   // ── Unit mode
   const [unitMode, setUnitMode] = useState<'single' | 'multi'>('single');
-  const [unidad, setUnidad] = useState('');
+  const [unidad, setUnidad] = useState(fromOrder ? search.get('unit') ?? '' : '');
   const [splitEntries, setSplitEntries] = useState<{ unitId: string; amount: number }[]>([]);
   const [splitPickerValue, setSplitPickerValue] = useState('');
-  const [otId, setOtId] = useState('');
+  const [otId, setOtId] = useState(fromOrder);
+  const linkedService = isPanama && tipo === 'Servicio' && Boolean(otId.trim());
   const [metodoPago, setMetodoPago] = useState<MetodoPago>('Efectivo');
   const [lineItems, setLineItems] = useState<OcrLineItem[]>([emptyLine()]);
   const receipt = useRef<{ file: File; operationId: string; uploadedUrl: string; unitScope: string } | null>(null);
@@ -153,7 +156,7 @@ export default function NuevoGastoPage() {
       setOcrDone(true);
     } catch {
       if (receipt.current?.file === file) {
-        setOcrError('No se pudo leer el recibo. El archivo sigue adjunto y puedes capturar los datos manualmente.');
+        setOcrError('No se leyó el recibo. Completa los datos a mano.');
       }
     } finally {
       setOcrLoading(false);
@@ -230,7 +233,7 @@ export default function NuevoGastoPage() {
 
     try {
       if (!entity || !documentDate) throw new Error('Indica la entidad y la fecha del documento.');
-      if (isPanama && iva === null) throw new Error('Indica el ITBMS del documento. Escribe 0 si es exento.');
+      if (isPanama && iva === null) throw new Error('Indica el ITBMS. Si es exento, escribe 0.');
       const allocations = unitMode === 'single'
         ? [{ unit: unidad, amount: total.toFixed(2) }]
         : splitEntries.map(({ unitId, amount }) => ({ unit: unitId, amount: amount.toFixed(2) }));
@@ -276,7 +279,7 @@ export default function NuevoGastoPage() {
             return;
           }
         } catch {
-          setPriceMessage('El gasto se guardó. La verificación de precios está pendiente.');
+          setPriceMessage('Gasto guardado. Precios por verificar.');
           setSubmitDone(true);
           return;
         }
@@ -289,7 +292,7 @@ export default function NuevoGastoPage() {
       const pending = isPanama && (uncertain || (confirmationPending && err instanceof PurchaseApiError && [401, 403, 404, 409, 429].includes(err.status)));
       setConfirmationPending(pending);
       setSubmitError(pending
-        ? 'El registro está pendiente de confirmación. Usa Reintentar registro para verificar el mismo gasto.'
+        ? 'Falta confirmar el gasto. Pulsa Reintentar registro.'
         : err instanceof Error ? err.message : 'Error al guardar');
     } finally {
       submitLock.current = false;
@@ -426,7 +429,7 @@ export default function NuevoGastoPage() {
             {ocrDone && !ocrLoading && (
               <div className="flex items-center gap-2 mt-3 text-sm text-success">
                 <CheckCircle size={16} />
-                Datos extraídos — revisa y corrige si es necesario
+                Datos extraídos. Revísalos antes de guardar.
               </div>
             )}
             {ocrError && (
@@ -439,7 +442,7 @@ export default function NuevoGastoPage() {
             <div className="mt-3 border-t border-border pt-3">
               {attachmentName ? (
                 <div className="flex items-center justify-between gap-3 text-xs text-text-secondary">
-                  <span className="min-w-0 break-words">Recibo seleccionado {attachmentName}</span>
+                  <span className="min-w-0 break-words">{attachmentName}</span>
                   <button type="button" className="shrink-0 font-semibold text-red-700" onClick={handleReceiptRemove}>Quitar recibo</button>
                 </div>
               ) : (
@@ -449,14 +452,14 @@ export default function NuevoGastoPage() {
           </>
         ) : (
           <p className="mt-2 rounded-lg bg-amber-50 p-2 text-xs text-amber-900">
-            Adjuntos pendientes de activar. Conserva el recibo en el canal vigente de Compras y registra los datos del gasto aquí.
+            Adjuntos sin habilitar. Entrega el recibo a Compras por el canal habitual.
           </p>
         )}
       </div>
 
       {/* ── General info ────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-border p-4 shadow-sm flex flex-col gap-3">
-        <p className="text-sm font-semibold text-text">Datos Generales</p>
+        <p className="text-sm font-semibold text-text">Datos del gasto</p>
 
         {/* Tipo */}
         <div>
@@ -487,8 +490,10 @@ export default function NuevoGastoPage() {
 
         {/* RFC */}
         <div>
-          <label className="text-xs text-text-secondary mb-1 block">RUC o identificación fiscal del proveedor (opcional)</label>
+          <label htmlFor="expense-vendor-id" className="text-xs text-text-secondary mb-1 block">RUC o identificación fiscal del proveedor{linkedService ? '' : ' (opcional)'}</label>
           <input
+            id="expense-vendor-id"
+            required={linkedService}
             value={rfcProveedor}
             onChange={(e) => setRfcProveedor(e.target.value.toUpperCase())}
             placeholder="Identificación del documento"
@@ -498,8 +503,10 @@ export default function NuevoGastoPage() {
 
         {/* Folio */}
         <div>
-          <label className="text-xs text-text-secondary mb-1 block">Folio / Factura (opcional)</label>
+          <label htmlFor="expense-invoice" className="text-xs text-text-secondary mb-1 block">Folio / Factura{linkedService ? '' : ' (opcional)'}</label>
           <input
+            id="expense-invoice"
+            required={linkedService}
             value={folioFactura}
             onChange={(e) => setFolioFactura(e.target.value)}
             placeholder="A-04821"
@@ -604,8 +611,9 @@ export default function NuevoGastoPage() {
 
         {/* OT (optional) */}
         <div>
-          <label className="text-xs text-text-secondary mb-1 block">OT relacionada (opcional)</label>
+          <label htmlFor="expense-work-order" className="text-xs text-text-secondary mb-1 block">OT relacionada (opcional)</label>
           <input
+            id="expense-work-order"
             value={otId}
             onChange={(e) => setOtId(e.target.value.toUpperCase())}
             placeholder="OT-2026-044"
@@ -630,9 +638,9 @@ export default function NuevoGastoPage() {
 
       {/* ── Totales ──────────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-border p-4 shadow-sm flex flex-col gap-3">
-        <p className="text-sm font-semibold text-text">Totales del documento</p>
+        <p className="text-sm font-semibold text-text">Importes</p>
         {optionsError && <p role="alert" className="text-sm text-red-700">{optionsError}</p>}
-        {options && options.entities.length === 0 && <p role="alert" className="text-sm text-amber-900">Contabilidad debe confirmar la entidad de Panamá antes de capturar.</p>}
+        {options && options.entities.length === 0 && <p role="alert" className="text-sm text-amber-900">Entidad sin confirmar. Consulta a Contabilidad.</p>}
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <label className="text-xs text-text-secondary">
             Entidad y moneda
@@ -689,7 +697,7 @@ export default function NuevoGastoPage() {
 
       {/* ── Line items ───────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-border p-4 shadow-sm flex flex-col gap-3">
-        <p className="text-sm font-semibold text-text">Líneas del Recibo</p>
+        <p className="text-sm font-semibold text-text">Partidas del recibo</p>
 
         {lineItems.map((item, i) => (
           <div key={i} className="border border-border rounded-lg p-3 flex flex-col gap-2">

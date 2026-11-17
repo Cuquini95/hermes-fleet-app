@@ -4,7 +4,8 @@ import { ArrowLeft, Bell, LogOut, ShoppingCart } from 'lucide-react';
 import { useAuthStore } from '../../stores/auth-store';
 import { useCartStore } from '../../stores/cart-store';
 import { useWorkOrderStore } from '../../stores/workorder-store';
-import { ROLE_HOME, ROLE_LABELS } from '../../types/roles';
+import { ROLE_LABELS } from '../../types/roles';
+import { purchasingEntry, sessionHome } from '../../lib/purchasing-home';
 import ApiHealthDot from '../ui/ApiHealthDot';
 
 export default function Header() {
@@ -13,6 +14,8 @@ export default function Header() {
   const userName = useAuthStore((s) => s.userName);
   const role = useAuthStore((s) => s.role);
   const previewDemo = useAuthStore((s) => s.previewDemo);
+  const position = useAuthStore((s) => purchasingEntry(s)?.positionName);
+  const home = useAuthStore(sessionHome);
   const logout = useAuthStore((s) => s.logout);
   const [leaving, setLeaving] = useState(false);
   const [logoutError, setLogoutError] = useState(false);
@@ -21,13 +24,13 @@ export default function Header() {
   // either loop or take you to /login). The arrow uses navigate(-1) which
   // walks history back; if there's no history (deep-link), it falls back to
   // the role-home so the user is never stranded.
-  const roleHome = role ? ROLE_HOME[role] : '/';
+  const roleHome = home.split(/[?#]/, 1)[0];
   const isRoleHome = location.pathname === roleHome || location.pathname === '/';
   function goBack() {
     if (window.history.length > 1) {
       navigate(-1);
     } else {
-      navigate(roleHome, { replace: true });
+      navigate(home, { replace: true });
     }
   }
   const cartCount = useCartStore((s) => s.items.length);
@@ -76,7 +79,7 @@ export default function Header() {
         <div className="flex min-w-0 flex-col leading-tight">
           <span className="truncate text-white font-semibold text-sm">{userName}</span>
           {role && (
-            <span className="truncate text-xs text-white/75">{ROLE_LABELS[role]}{previewDemo ? ' · Datos de prueba' : ''}</span>
+            <span className="truncate text-xs text-white/75">{position ?? ROLE_LABELS[role]}{previewDemo ? ' · Datos de prueba' : ''}</span>
           )}
         </div>
       </div>

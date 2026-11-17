@@ -2,6 +2,8 @@ import { Wrench, Clock, ChevronRight } from 'lucide-react';
 import type { WorkOrder } from '../../types/workorder';
 import { PRIORITY_CONFIG, ESTADO_CONFIG } from '../../types/workorder';
 import { useEquipmentById } from '../../hooks/useEquipmentList';
+import { visibleWorkOrderFolio } from '../../lib/purchasing-api';
+import { useAuthStore } from '../../stores/auth-store';
 
 interface OTCardProps {
   workorder: WorkOrder;
@@ -47,6 +49,9 @@ export function timeSince(dateStr: string): string {
 
 export default function OTCard({ workorder, onClick }: OTCardProps) {
   const equipment = useEquipmentById(workorder.unidad);
+  const panama = useAuthStore(state => state.project === 'tmf-panama');
+  const reference = workorder.folio ?? workorder.ot_id;
+  const folio = panama ? visibleWorkOrderFolio(reference) : reference;
   const DEFAULT_PRIORITY = { color: '#6B7280', bg: '#F3F4F6', label: workorder.prioridad, time: '' };
   const DEFAULT_ESTADO = { color: '#6B7280', bg: '#F3F4F6' };
 
@@ -58,6 +63,7 @@ export default function OTCard({ workorder, onClick }: OTCardProps) {
 
   return (
     <div
+      data-ot={reference}
       className={`bg-card rounded-xl shadow-sm border border-border mb-3 overflow-hidden${onClick ? ' cursor-pointer hover:bg-gray-50 transition-colors card-lift' : ''}`}
       style={{ borderLeft: `4px solid ${borderColor}` }}
       onClick={onClick}
@@ -65,7 +71,7 @@ export default function OTCard({ workorder, onClick }: OTCardProps) {
       <div className="p-4">
         {/* Row 1: OT ID + priority pill + estado pill */}
         <div className="flex items-center gap-2 flex-wrap mb-1.5">
-          <span className="font-mono font-semibold text-amber text-sm">{workorder.folio ?? workorder.ot_id}</span>
+          {folio && <span className="font-mono font-semibold text-amber text-sm">{folio}</span>}
           <span
             className="text-xs font-semibold px-2 py-0.5 rounded-full"
             style={{ color: priorityConfig.color, backgroundColor: priorityConfig.bg }}

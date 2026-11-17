@@ -2,11 +2,36 @@ import { useAuthStore } from '../stores/auth-store';
 
 export const PANAMA_PM_CHECKLIST_SOURCE = 'https://docs.google.com/spreadsheets/d/1AeTvqR052hJHhEQ7jbkJ3_VIxwPa5ftwGKeVxVlasYw/edit';
 
+export interface ReportUnit {
+  code: string;
+  model: string;
+}
+
 export interface WorkshopMechanic {
   userId: string;
   userName: string;
   allUnits?: boolean;
   assignedUnits?: string[];
+}
+
+export const PARTS_STATUS_LABELS: Record<string, string> = {
+  confirmed: 'Confirmados por Taller', pending: 'Pendientes', unknown: 'Por confirmar', not_required: 'No requiere',
+};
+
+export interface ScheduleResources {
+  shift: string;
+  partsStatus: string;
+  partsDetail: string;
+}
+
+export interface ScheduleAssessment {
+  warnings: { code: string; message: string }[];
+  plannedHours: number | null;
+  confirmation: string | null;
+}
+
+export function checkSchedule(values: Record<string, string>): Promise<ScheduleAssessment> {
+  return requestWorkshop<ScheduleAssessment>(`schedulecheck?${new URLSearchParams(values)}`);
 }
 
 export class WorkshopApiError extends Error {

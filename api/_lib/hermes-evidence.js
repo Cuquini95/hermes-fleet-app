@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { hasIdentityUnit, identityConfig, identityRequest, isIdentityUserId } from './hermes-identity.js';
+import { WARRANTY_TAB, warrantyEvidenceLinked, warrantyReaders, warrantyWriters } from './hermes-panama-warranties.js';
 import { isSameOriginAuthRequest } from './session-auth.js';
 
 const PROJECT = 'tmf-panama';
@@ -19,6 +20,7 @@ const ACTIONS = new Map([
   ['dvir', { path: 'api/workshop/dvir', roles: ['operador', 'supervisor', 'gerencia'] }],
   ['sticker', { path: 'api/workshop/sticker', roles: ALL }],
   ['order', { path: 'api/workshop/transition', roles: WORKSHOP }],
+  ['warranty', { path: 'api/workshop/warranties', roles: [...warrantyWriters] }],
   ['receipt', { path: 'api/purchasing/expense-save', roles: ['jefe_taller', 'coordinador', 'gerencia'] }],
 ]);
 const FORMATS = new Map([
@@ -45,6 +47,18 @@ const unitCode = value => typeof value === 'string' ? value.trim().toUpperCase()
 const linked = (cell, url) => typeof cell === 'string' && cell.split(/,\s*/).includes(url);
 const scopeUnits = units => [...new Set(units.map(unitCode))].sort();
 const sameUnits = (a, b) => Array.isArray(a) && a.length === b.length && a.every((unit, index) => unit === b[index]);
+
+export async function checkEvidenceAvailability() {
+  const config = identityConfig();
+  if (config.project !== PROJECT) return false;
+  const [metadata, bucket] = await Promise.all([
+    identityRequest(config, METADATA, { query: { select: 'id', limit: '1' } }),
+    identityRequest(config, `/storage/v1/bucket/${BUCKET}`),
+  ]);
+  if (!metadata.ok || !bucket.ok) return false;
+  const details = await bucket.json();
+  return details.id === BUCKET && details.public === false;
+}
 
 function linkId(value) {
   if (typeof value !== 'string' || !value.startsWith(LINK)) return null;
@@ -127,7 +141,7 @@ export async function verifyEvidence(input, { kind, units, operationId, recordId
 
 function parseBytes(body, kind) {
   const format = FORMATS.get(body.mimeType);
-  requireThat(format && (body.mimeType !== 'application/pdf' || kind === 'receipt'), 415, 'Adjunta una imagen JPG, PNG o WebP. Los recibos también admiten PDF.');
+  requireThat(format && (body.mimeType !== 'application/pdf' || ['receipt', 'warranty'].includes(kind)), 415, 'Adjunta una imagen JPG, PNG o WebP. Recibos y garantías también admiten PDF.');
   requireThat(typeof body.data === 'string' && body.data.length > 0, 400, 'El archivo está vacío o incompleto.');
   requireThat(body.data.length <= Math.ceil(LIMIT / 3) * 4, 413, 'El archivo supera 3 MB.');
   const bytes = Buffer.from(body.data, 'base64');
@@ -157,19 +171,20 @@ async function upload(req, session, sheets, canUpload, storage) {
   requireThat(body.expectedUserId === session.userId && action.roles.includes(session.role), 403, 'Acción no autorizada para esta sesión.');
   requireThat(canUpload(action.path), 503, 'Los adjuntos de este flujo están en consulta.');
   requireThat(isIdentityUserId(body.operationId) && Number.isInteger(body.slot) && body.slot >= 0
-    && body.slot < (kind === 'receipt' ? 1 : MAX_PHOTOS), 400, 'La referencia del adjunto es inválida.');
+    && body.slot < (kind === 'receipt' ? 1 : kind === 'warranty' ? 4 : MAX_PHOTOS), 400, 'La referencia del adjunto es inválida.');
   const operationId = body.operationId.toLowerCase();
   const recordId = body.recordId ?? '';
-  requireThat(kind === 'order' ? typeof recordId === 'string' && ORDER_ID.test(recordId) : recordId === '', 400, 'El folio del adjunto es inválido.');
+  const tiedToOrder = kind === 'order' || kind === 'warranty';
+  requireThat(tiedToOrder ? typeof recordId === 'string' && ORDER_ID.test(recordId) : recordId === '', 400, 'El folio del adjunto es inválido.');
   requireThat(Array.isArray(body.units) && body.units.length >= 1 && body.units.length <= (kind === 'receipt' ? 100 : 1), 400, 'Indica la unidad correspondiente.');
   const units = scopeUnits(body.units);
   requireThat(units.length === body.units.length && units.every(unit => UNIT.test(unit)), 400, 'Unidad inválida.');
   requireThat(units.every(unit => hasIdentityUnit(session, unit) && (unit !== 'FLOTA' || (kind === 'receipt' && session.allUnits === true))), 403, 'Unidad fuera de tu alcance.');
   const bytes = parseBytes(body, kind);
-  if (kind === 'order') {
+  if (tiedToOrder) {
     const row = await findOrder(sheets, order => order[1] === recordId);
     requireThat(row && unitCode(row[3]) === units[0] && canReadOrder(session, row), 404, 'OT no disponible.');
-    requireThat(row[9] !== 'Completado', 409, 'La orden está cerrada.');
+    requireThat(kind === 'warranty' || row[9] !== 'Completado', 409, 'La orden está cerrada.');
   } else if (units.some(unit => unit !== 'FLOTA')) {
     const inventory = await sheets.read('01 Inventario');
     const knownUnits = new Set(inventory.slice(3).map(row => unitCode(row[1])));
@@ -200,6 +215,11 @@ async function canReadLinked(sheets, session, row, url) {
         ? order[0] === row.operation_id && order[19] === row.actor_id
         : order[1] === row.record_id);
       return order && unitCode(order[3]) === unit && linked(order[10], url) && canReadOrder(session, order, { authorMayRead: report });
+    }
+    case 'warranty': {
+      const order = await findOrder(sheets, order => order[1] === row.record_id);
+      if (!order || unitCode(order[3]) !== unit || !canReadOrder(session, order)) return false;
+      return warrantyEvidenceLinked(await sheets.read(WARRANTY_TAB), row, url, session.role);
     }
     case 'dvir': {
       const inspections = await sheets.read('14 Inspecciones');
@@ -234,7 +254,7 @@ async function download(req, res, session, sheets, storage) {
   requireThat(typeof id === 'string' && ID.test(id), 404, notFound);
   const source = storage ?? createEvidenceStorage();
   const row = await source.find(id);
-  const roles = row?.kind === 'dvir' ? ALL : ACTIONS.get(row?.kind)?.roles;
+  const roles = row?.kind === 'warranty' ? [...warrantyReaders] : row?.kind === 'dvir' ? ALL : ACTIONS.get(row?.kind)?.roles;
   requireThat(row?.ready === true && row.preview_demo === (session.previewDemo === true) && roles?.includes(session.role)
     && row.units.length > 0 && row.units.every(unit => hasIdentityUnit(session, unit) && (unit !== 'FLOTA' || session.allUnits === true)), 404, notFound);
   requireThat(await canReadLinked(sheets, session, row, LINK + id), 404, notFound);

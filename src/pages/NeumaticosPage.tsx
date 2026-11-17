@@ -15,7 +15,7 @@ import {
   Ruler,
   Loader2,
 } from 'lucide-react';
-import { appendRow, SHEET_TABS } from '../lib/sheets-api';
+import { appendRow, SheetAppendError, SHEET_TABS } from '../lib/sheets-api';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { mexicoDate } from '../lib/date-utils';
 import SuccessToast from '../components/ui/SuccessToast';
@@ -147,6 +147,22 @@ function nextSeq() { return String(_seq++); }
 
 // ════════════════════════════════════════════════════════════════════════════
 export default function NeumaticosPage() {
+  const project = useAuthStore(state => state.project);
+  const userId = useAuthStore(state => state.userId);
+  return project === 'tmf-panama' ? <PanamaTirePage key={userId} /> : <LegacyTireInspection />;
+}
+
+function PanamaTirePage() {
+  const [byUnit, setByUnit] = useState(false);
+  return <>
+    <button type="button" onClick={() => setByUnit(value => !value)} className="mt-2 min-h-11 rounded-lg border border-border bg-white px-3 text-sm font-semibold">
+      {byUnit ? 'Volver a número de fuego' : 'Inspección por unidad'}
+    </button>
+    {byUnit ? <LegacyTireInspection /> : <PanamaTireHistory />}
+  </>;
+}
+
+function LegacyTireInspection() {
   const navigate = useNavigate();
   const equipmentList = useEquipmentList();
   const project = useAuthStore(state => state.project);
@@ -233,8 +249,8 @@ export default function NeumaticosPage() {
       setToastMessage(`Llanta ${llanta.posicion} registrada ✓`);
       setToastType('success');
       setToastVisible(true);
-    } catch {
-      setToastMessage('Error al guardar. Reintenta.');
+    } catch (error) {
+      setToastMessage(error instanceof SheetAppendError && error.status === 409 ? 'Abre la ficha por número de fuego para inspeccionar esta llanta.' : 'Error al guardar. Reintenta.');
       setToastType('error');
       setToastVisible(true);
     } finally {
@@ -257,9 +273,6 @@ export default function NeumaticosPage() {
           <Disc3 size={24} color="#162252" />
           <h1 className="text-xl font-bold text-text">Reporte de Neumáticos</h1>
         </div>
-
-        {project === 'tmf-panama' && <PanamaTireHistory key={project} />}
-        <p className="text-sm text-text-secondary mb-4">Selecciona la unidad a inspeccionar</p>
 
         <div className="flex flex-col gap-2 mb-6">
           {wheeled.map((eq) => (
@@ -301,9 +314,6 @@ export default function NeumaticosPage() {
               placeholder={String(equipment?.current_horometro ?? '')}
               className="w-full border border-border rounded-xl px-4 py-3 text-text bg-white"
             />
-            <p className="text-xs text-text-secondary mt-1">
-              Se registra como "Horómetro Actual" en el Sheet
-            </p>
           </div>
         )}
 
@@ -313,7 +323,7 @@ export default function NeumaticosPage() {
           className="w-full py-3 rounded-xl font-semibold text-white"
           style={{ backgroundColor: selectedUnit ? '#162252' : '#9CA3AF' }}
         >
-          Continuar → {selectedUnit && `(${positions.length} posiciones)`}
+          {selectedUnit ? `Inspeccionar ${positions.length} posiciones` : 'Seleccionar equipo'}
         </button>
       </div>
     );
@@ -326,7 +336,7 @@ export default function NeumaticosPage() {
         <CheckCircle2 size={64} color="#16A34A" />
         <h2 className="text-2xl font-bold text-text text-center">Reporte Completado</h2>
         <p className="text-text-secondary text-center">
-          {registradas.length} llanta{registradas.length !== 1 ? 's' : ''} guardada{registradas.length !== 1 ? 's' : ''} en el Sheet
+          {registradas.length} llanta{registradas.length !== 1 ? 's' : ''} registrada{registradas.length !== 1 ? 's' : ''}
         </p>
         <div className="w-full bg-white rounded-xl p-4 border border-border">
           {registradas.map((pos) => (
@@ -579,7 +589,6 @@ export default function NeumaticosPage() {
                   onChange={(e) => setLlanta((f) => ({ ...f, presionRec: e.target.value }))}
                   className="w-full border border-border rounded-xl px-3 py-2.5 text-text bg-gray-50 text-sm"
                 />
-                <p className="text-xs text-text-secondary mt-0.5">Auto por tipo/posición</p>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-text-secondary mb-1">

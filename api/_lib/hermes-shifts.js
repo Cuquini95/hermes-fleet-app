@@ -34,40 +34,16 @@ function quantity(value, label, decimalPlaces) {
   return number;
 }
 
-function meterSample(row) {
-  const date = String(row[0] ?? '').trim().split('/');
-  const day = date.length === 3 ? `${date[2]}-${date[1].padStart(2, '0')}-${date[0].padStart(2, '0')}` : String(row[0] ?? '').trim();
-  const time = String(row[1] ?? '').trim();
-  const hours = String(row[6] ?? '').trim();
-  const timestamp = Date.parse(`${day}T${time}-05:00`);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !/^\d{2}:\d{2}(?::\d{2})?$/.test(time)
-    || !/^\d{1,8}(?:\.\d{1,3})?$/.test(hours) || !Number.isFinite(timestamp)) return null;
-  const local = new Date(timestamp - 5 * 3600000).toISOString();
-  if (local.slice(0, 16) !== `${day}T${time.slice(0, 5)}`) return null;
-  return { timestamp, hours: Number(hours) };
-}
-
-export async function validatePanamaMeterAppend(sheets, tab, row) {
-  const sample = meterSample(row);
-  requireValue(sample && ['inicio', 'final'].includes(row[5]), 400, 'Registra una lectura, turno, fecha y hora válidos.');
-  const unit = canonical(String(row[2]));
-  const samples = (await sheets.read(tab)).filter(previous => canonical(String(previous[2] ?? '')) === unit)
-    .map(meterSample).filter(Boolean);
-  const chronological = samples.every(previous => {
-    if (previous.timestamp === sample.timestamp) return previous.hours === sample.hours;
-    const seconds = (sample.timestamp - previous.timestamp) / 1000;
-    const difference = sample.hours - previous.hours;
-    return seconds * difference >= 0 && Math.abs(difference) <= Math.abs(seconds) / 3600 + 0.1;
-  });
-  requireValue(chronological, 409, 'El horómetro no concuerda con las lecturas de la unidad. Verifica el medidor o concilia el cambio con Supervisión.');
-  return samples.length;
-}
-
-function shiftFields(body) {
-  const date = text(body.date, 'Fecha', 10);
+function shiftDate(value) {
+  const date = text(value, 'Fecha', 10);
   const asDate = new Date(`${date}T00:00:00Z`);
   requireValue(/^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(asDate.valueOf()) && asDate.toISOString().slice(0, 10) === date,
     400, 'Fecha del turno inválida.');
+  return date;
+}
+
+function shiftFields(body) {
+  const date = shiftDate(body.date);
   const unit = text(body.unit, 'Unidad', 40).toUpperCase();
   const shift = text(body.shift, 'Turno', 32).replace(/\s+/g, ' ');
   return { unit, date, shift };
@@ -150,13 +126,14 @@ function assignmentReadiness(inventory, readiness) {
   return { level: readiness?.level ?? 'ok', reason: readiness?.reason ?? 'Sin restricción activa registrada.' };
 }
 
-async function dispatchAssignment({ method, body, session, sheets, listShiftOperators }) {
+async function dispatchAssignment({ method, body, query, session, sheets, listShiftOperators }) {
   const operatorsFor = async unit => listShiftOperators(session, unit);
   if (method === 'GET') {
+    const date = query?.date === undefined ? null : shiftDate(query.date);
     const [rows, operators] = await Promise.all([
       sheets.read(PANAMA_DISPATCH_TAB, { cached: true }), ASSIGN.has(session.role) ? operatorsFor() : [],
     ]);
-    const assignments = dispatchRecords(rows).filter(item => hasIdentityUnit(session, item.unit)
+    const assignments = dispatchRecords(rows).filter(item => (!date || item.date === date) && hasIdentityUnit(session, item.unit)
       && (session.role !== 'operador' || item.operator.id === session.userId));
     return { status: 200, body: { assignments: await assignmentsWithReadiness(sheets, assignments.reverse()), operators } };
   }
@@ -201,7 +178,7 @@ async function dispatchAssignment({ method, body, session, sheets, listShiftOper
 
 const officialMonths = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
-function officialShiftDate(value) {
+export function officialShiftDate(value) {
   const date = String(value ?? '').trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(date)) return date;
   const formatted = /^(\d{1,2})-([a-z]{3})-(\d{4})$/i.exec(date);
@@ -211,11 +188,16 @@ function officialShiftDate(value) {
 }
 
 const shiftKey = ({ unit, date, shift }) => JSON.stringify([canonical(unit), date, canonical(shift)]);
-const officialReading = value => /^\d[\d,]*(?:\.\d+)?$/.test(String(value).trim()) ? Number(String(value).replaceAll(',', '')) : NaN;
+export const officialReading = value => /^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$/.test(String(value).trim())
+  ? Number(String(value).replaceAll(',', '')) : NaN;
+const roundedHours = value => Number(value.toFixed(3)) || 0;
+const sourceTime = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : undefined;
 
 function reconcileAccepted(records, official) {
-  const { records: shiftRows, capturedAt } = Array.isArray(official) ? { records: official } : official;
-  const cut = capturedAt ? { officialCut: capturedAt } : {};
+  const { records: shiftRows, capturedAt, readAt } = Array.isArray(official) ? { records: official } : official;
+  const officialCut = sourceTime(capturedAt);
+  const officialReadAt = sourceTime(readAt);
+  const source = officialCut ? { officialCut } : officialReadAt ? { officialReadAt } : {};
   const byShift = new Map();
   for (const row of shiftRows) {
     const key = shiftKey({ ...row, date: officialShiftDate(row.date) });
@@ -226,19 +208,51 @@ function reconcileAccepted(records, official) {
   return records.map(record => {
     if (record.status !== ACCEPTED) return record;
     const matches = byShift.get(shiftKey(record)) ?? [];
-    if (!matches.length) return capturedAt ? { ...record, ...cut, officialStatus: 'Sin coincidencia en el corte de REGISTRO' } : record;
-    if (matches.length > 1) return { ...record, ...cut, officialStatus: 'Duplicado en REGISTRO. Requiere revisión.' };
+    if (!matches.length) {
+      if (!officialCut && !officialReadAt) return record;
+      return { ...record, ...source, officialStatus: officialCut ? 'Sin coincidencia en el corte de REGISTRO' : 'Sin coincidencia en REGISTRO' };
+    }
+    if (matches.length > 1) return { ...record, ...source, officialStatus: 'Duplicado en REGISTRO. Requiere revisión.' };
     const [match] = matches;
-    const readingsMatch = officialReading(match.start) === record.initialHours && officialReading(match.end) === record.finalHours;
-    return { ...record, ...cut, officialReference: match.id, officialStatus: readingsMatch
-      ? (capturedAt ? 'Coincide con el corte de REGISTRO' : 'Lecturas conciliadas con REGISTRO')
+    const initial = officialReading(match.start);
+    const final = officialReading(match.end);
+    const reference = { ...record, ...source, officialReference: match.id };
+    if (![record.initialHours, record.finalHours, record.hours].every(Number.isFinite)) {
+      return { ...reference, officialStatus: 'Lecturas del parte inválidas. Requiere revisión.' };
+    }
+    if (!Number.isFinite(initial) || !Number.isFinite(final) || final < initial || roundedHours(final - initial) > 24) {
+      return { ...reference, officialStatus: 'Lecturas inválidas en REGISTRO. Requiere revisión.' };
+    }
+    const initialHours = roundedHours(initial);
+    const finalHours = roundedHours(final);
+    const hours = roundedHours(finalHours - initialHours);
+    const differences = {
+      initialHours: roundedHours(initialHours - record.initialHours),
+      finalHours: roundedHours(finalHours - record.finalHours),
+      hours: roundedHours(hours - record.hours),
+    };
+    return { ...reference, officialComparison: { initialHours, finalHours, hours, differences },
+      officialStatus: differences.initialHours === 0 && differences.finalHours === 0 && differences.hours === 0
+      ? (officialCut ? 'Coincide con el corte de REGISTRO' : 'Lecturas conciliadas con REGISTRO')
       : 'Lecturas distintas en REGISTRO. Requiere revisión.' };
   });
 }
 
-export async function dispatchShifts({ path, method, body, session, sheets, listShiftOperators = async () => [], readOfficialShifts }) {
+export async function dispatchShifts({ path, method, body, query, session, sheets, listShiftOperators = async () => [], readOfficialShifts, readShiftBilling }) {
   requireValue(session.project === PANAMA_PROJECT && READ.has(session.role), 403, 'Relevo reservado a los roles autorizados de TMF Panamá.');
-  if (path === 'api/panama/turnos/despacho') return dispatchAssignment({ method, body, session, sheets, listShiftOperators });
+  if (path === 'api/panama/turnos/despacho') return dispatchAssignment({ method, body, query, session, sheets, listShiftOperators });
+  if (path === 'api/panama/turnos/valorizacion') {
+    requireValue(session.role === 'gerencia', 403, 'Valorización y facturas reservadas a Gerencia.');
+    requireValue(method === 'GET', 405, 'Método no permitido.');
+    const id = query?.parte;
+    requireValue(typeof id === 'string' && FOLIO.test(id), 400, 'Folio del parte inválido.');
+    const record = rowsToRecords(await sheets.read(PANAMA_SHIFT_TAB, { cached: true })).get(id);
+    requireValue(record && visible(session, record), 404, 'Parte no encontrado.');
+    requireValue(record.status === ACCEPTED && record.reviewedBy?.id && record.reviewedBy.id !== record.createdBy.id
+      && Number.isFinite(Date.parse(record.reviewedAt)) && Number.isSafeInteger(record.version), 409, 'Se requiere un parte aceptado por Supervisión.');
+    const result = await readShiftBilling?.(record);
+    return { status: 200, body: result ?? { status: 'unavailable', message: 'La consulta de valorización no está disponible.', valuation: null, invoice: null } };
+  }
   if (path === 'api/panama/turnos') {
     requireValue(method === 'GET', 405, 'Método no permitido.');
     const records = rowsToRecords(await sheets.read(PANAMA_SHIFT_TAB, { cached: true }));

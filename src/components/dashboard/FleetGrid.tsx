@@ -23,7 +23,7 @@ interface SelectedUnit {
 export default function FleetGrid({ equipment, dispatch, operatingOnly = false, selectedUnit, onClearSelectedUnit }: FleetGridProps) {
   const [selected, setSelected] = useState<SelectedUnit | null>(null)
   const fallback = useFleetDispatch(equipment, !dispatch)
-  const { effectiveEquipment, readiness: dispatchReadiness, verified, loading, message, operatingStatuses } = dispatch ?? fallback
+  const { effectiveEquipment, readiness: dispatchReadiness, verified, loading, message, operatingStatuses, operatingCheckedAt, workshop } = dispatch ?? fallback
 
   const sorted = operatingOnly ? equipment : [...effectiveEquipment].sort(
     (a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status),
@@ -36,6 +36,13 @@ export default function FleetGrid({ equipment, dispatch, operatingOnly = false, 
     <>
       {!operatingOnly && message && <p role="status" className="mb-2 text-sm text-text-secondary">{message}</p>}
       {!operatingOnly && loading && !verified && !message && <p className="mb-2 text-sm text-text-secondary">Verificando bloqueos…</p>}
+      {operatingOnly && operatingCheckedAt && Number.isFinite(Date.parse(operatingCheckedAt)) && (
+        <p className="mb-2 text-xs text-text-secondary" role="status">
+          {verified ? 'Consulta confirmada' : 'Última consulta'} · <time dateTime={operatingCheckedAt}>{new Date(operatingCheckedAt).toLocaleString('es-PA', {
+            timeZone: 'America/Panama', dateStyle: 'short', timeStyle: 'short',
+          })}</time> · Panamá
+        </p>
+      )}
       <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
         {sorted.map((unit) => {
           const readiness = dispatchReadiness.get(normalizeUnitId(unit.unit_id))
@@ -75,6 +82,9 @@ export default function FleetGrid({ equipment, dispatch, operatingOnly = false, 
         <UnitDetailModal
           unit={active.unit}
           dispatchReadiness={operatingOnly ? undefined : active.readiness}
+          workshop={workshop}
+          workshopRestriction={operatingOnly && operatingStatuses?.get(normalizeUnitId(active.unit.unit_id)) === 'inoperativo'
+            ? dispatchReadiness.get(normalizeUnitId(active.unit.unit_id)) : undefined}
           operatingOnly={operatingOnly}
           operatingStatus={operatingStatuses?.get(normalizeUnitId(active.unit.unit_id))}
           verified={verified}

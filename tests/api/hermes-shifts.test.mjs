@@ -15,7 +15,7 @@ const input = (changes = {}) => ({
   support: 'Parte EX401-20261112-D', trips: '2', tonnes: '30.5', stops: 'Sin paradas', client: 'TMF QA', ...changes,
 });
 
-function isolatedGateway(readOfficialShifts) {
+function isolatedGateway(readOfficialShifts, readShiftBilling) {
   const tabs = new Map([['01 Inventario', [[], [], ['#', 'COD1'], ['1', 'EX401', '', '', '', '', '', '', 'Operativo'], ['2', 'EX405']]]]);
   const receipts = new Map();
   const guards = new Set();
@@ -46,13 +46,13 @@ function isolatedGateway(readOfficialShifts) {
       return { replayed: false, result };
     },
   };
-  const gateway = createHermesGateway({ sheets, writeEnabled: true, enablePanamaOperations: true, readOfficialShifts,
+  const gateway = createHermesGateway({ sheets, writeEnabled: true, enablePanamaOperations: true, readOfficialShifts, readShiftBilling,
     sessionReader: async req => req.session,
     listShiftOperators: async (_session, unit) => !unit || operator.assignedUnits.includes(unit) ? [operator] : [] });
-  async function request(endpoint, session, body, prefix = 'api/panama/turnos') {
+  async function request(endpoint, session, body, prefix = 'api/panama/turnos', query = {}) {
     const output = {};
     const res = { setHeader() {}, status(value) { output.status = value; return this; }, json(value) { output.body = value; return this; } };
-    await gateway({ query: { path: `${prefix}${endpoint ? '/' + endpoint : ''}` }, session, method: body ? 'POST' : 'GET', body }, res);
+    await gateway({ query: { ...query, path: `${prefix}${endpoint ? '/' + endpoint : ''}` }, session, method: body ? 'POST' : 'GET', body }, res);
     return output;
   }
   return { request, tabs, fail: value => { failCommit = value; }, interrupt: hook => { beforeCommit = hook; } };
@@ -221,6 +221,90 @@ test('accepted shifts reconcile with the official TMF day and meter readings wit
   assert.match((await next()).officialStatus, /no disponible/);
 });
 
+test('Operador y Supervisión consultan los mismos tres folios y sus diferencias con el corte de REGISTRO', async () => {
+  const capturedAt = '2026-11-14T02:30:00.000Z';
+  const { request, tabs } = isolatedGateway(async () => ({ capturedAt, records: [
+    { id: 'REG-12-D', unit: 'EX401', date: '12-Nov-2026', shift: '  dia  ', start: '5,520.000', end: '5,528.000' },
+    { id: 'REG-13-D', unit: 'EX401', date: '13-Nov-2026', shift: 'Día', start: '5,530.025', end: '5,538.325' },
+    { id: 'REG-14-OTRA-UNIDAD', unit: 'EX405', date: '14-Nov-2026', shift: 'Día', start: '5540', end: '5548' },
+  ] }));
+  const parts = [
+    input(),
+    input({ date: '2026-11-13', initialHours: '5530', finalHours: '5538' }),
+    input({ date: '2026-11-14', initialHours: '5540', finalHours: '5548' }),
+  ];
+  const folios = [];
+  for (const part of parts) {
+    const { status, body: { record } } = await request('entregar', operator, part);
+    assert.equal(status, 201);
+    const accepted = await request('revisar', supervisor,
+      { mutationId: randomUUID(), id: record.id, version: record.version, action: 'accept' });
+    assert.equal(accepted.status, 200);
+    folios.push(record.id);
+  }
+  const operatorParts = (await request('', operator)).body.records;
+  const supervisorParts = (await request('', supervisor)).body.records;
+  assert.deepEqual(operatorParts, supervisorParts);
+  assert.deepEqual((await request('', account('operador', 'other'))).body.records, []);
+  const [match, mismatch, unmatched] = folios.map(id => operatorParts.find(part => part.id === id));
+  assert.deepEqual([match.officialCut, mismatch.officialCut, unmatched.officialCut], [capturedAt, capturedAt, capturedAt]);
+  assert.deepEqual([match.hours, mismatch.hours, unmatched.hours], [8, 8, 8]);
+  assert.equal(match.officialReference, 'REG-12-D');
+  assert.deepEqual(match.officialComparison, {
+    initialHours: 5520, finalHours: 5528, hours: 8, differences: { initialHours: 0, finalHours: 0, hours: 0 },
+  });
+  assert.equal(mismatch.officialReference, 'REG-13-D');
+  assert.deepEqual(mismatch.officialComparison, {
+    initialHours: 5530.025, finalHours: 5538.325, hours: 8.3,
+    differences: { initialHours: 0.025, finalHours: 0.325, hours: 0.3 },
+  });
+  assert.match(unmatched.officialStatus, /Sin coincidencia/);
+  assert.equal(unmatched.officialReference, undefined);
+  assert.equal(unmatched.officialComparison, undefined);
+  assert.equal(tabs.get('HERMES_PA_TURNOS').length, 6);
+});
+
+test('el relevo diferencia hora de consulta de un corte publicado y descarta lecturas inválidas', async () => {
+  const readAt = '2026-11-14T02:30:00.000Z';
+  let rows = [{ id: 'REG-D', unit: 'EX401', date: '12-Nov-2026', shift: 'Día', start: '5,52,0', end: '5528' }];
+  const { request } = isolatedGateway(async () => ({ readAt, records: rows }));
+  const { body: { record } } = await request('entregar', operator, input());
+  assert.equal((await request('revisar', supervisor, {
+    mutationId: randomUUID(), id: record.id, version: record.version, action: 'accept',
+  })).status, 200);
+  const read = async () => (await request('', operator)).body.records[0];
+  const invalid = await read();
+  assert.match(invalid.officialStatus, /Lecturas inválidas/);
+  assert.equal(invalid.officialComparison, undefined);
+  assert.equal(invalid.officialCut, undefined);
+  assert.equal(invalid.officialReadAt, readAt);
+
+  rows = [{ ...rows[0], start: '5521', end: '5529' }];
+  const sameHours = await read();
+  assert.match(sameHours.officialStatus, /Lecturas distintas/);
+  assert.deepEqual(sameHours.officialComparison.differences, { initialHours: 1, finalHours: 1, hours: 0 });
+
+  rows = [];
+  const missing = await read();
+  assert.match(missing.officialStatus, /Sin coincidencia/);
+  assert.equal(missing.officialReadAt, readAt);
+});
+
+test('un parte histórico con las mismas lecturas pero otro total conserva su diferencia', async () => {
+  const { request, tabs } = isolatedGateway(async () => ({
+    capturedAt: '2026-11-14T02:30:00.000Z',
+    records: [{ id: 'REG-D', unit: 'EX401', date: '12-Nov-2026', shift: 'Día', start: '5520', end: '5528' }],
+  }));
+  const { body: { record } } = await request('entregar', operator, input());
+  assert.equal((await request('revisar', supervisor, {
+    mutationId: randomUUID(), id: record.id, version: record.version, action: 'accept',
+  })).status, 200);
+  tabs.get('HERMES_PA_TURNOS').at(-1)[8] = '7.5';
+  const part = (await request('', operator)).body.records[0];
+  assert.deepEqual(part.officialComparison.differences, { initialHours: 0, finalHours: 0, hours: 0.5 });
+  assert.match(part.officialStatus, /Lecturas distintas/);
+});
+
 
 test('despacho exige estado operativo conocido aunque la unidad exista en el maestro', async () => {
   const { request, tabs } = isolatedGateway();
@@ -229,4 +313,79 @@ test('despacho exige estado operativo conocido aunque la unidad exista en el mae
   const result = await request('despacho', supervisor, dispatch);
   assert.equal(result.status, 409);
   assert.match(result.body.error, /No hay estado operativo verificado/);
+});
+
+test('solo Gerencia con alcance abre el cruce financiero del folio aceptado y su versión', async () => {
+  const manager = account('gerencia', 'manager');
+  const calls = [];
+  const { request } = isolatedGateway(undefined, async record => {
+    calls.push(record);
+    return { status: 'linked', reference: 'Cruce autorizado QA' };
+  });
+  const { body: { record } } = await request('entregar', operator, input());
+  const consult = (session, parte = record.id) => request('valorizacion', session, undefined, 'api/panama/turnos', { parte });
+
+  assert.equal((await consult(manager)).status, 409);
+  assert.equal((await consult(operator)).status, 403);
+  assert.equal((await consult(coordinator)).status, 403);
+  assert.equal((await consult(account('gerencia', 'other', ['EX405']))).status, 404);
+  assert.equal((await consult(account('gerencia', 'manager-mx', ['EX401'], 'mexico'))).status, 403);
+  assert.equal((await consult(manager, ['wrong'])).status, 400);
+  assert.equal(calls.length, 0);
+
+  const { body: { record: accepted } } = await request('revisar', supervisor,
+    { mutationId: randomUUID(), id: record.id, version: record.version, action: 'accept' });
+  const result = await consult(manager);
+  assert.deepEqual(result, { status: 200, body: { status: 'linked', reference: 'Cruce autorizado QA' } });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].id, accepted.id);
+  assert.equal(calls[0].version, accepted.version);
+  assert.equal(calls[0].reviewedAt, accepted.reviewedAt);
+  const list = await request('', manager);
+  assert(!JSON.stringify(list.body).includes('Cruce autorizado QA'));
+  assert.equal(calls.length, 1);
+});
+
+test('el cruce financiero exige una asociación explícita y reconcilia horas, período y factura', async () => {
+  const { resolveShiftBilling } = await import('../../api/_lib/hermes-panama-shift-billing.js');
+  const part = { id: 'TPA-DEADBEEFDEADBEEFDEAD', version: 2, unit: 'EX401', date: '2026-11-12', reviewedAt: '2026-11-13T01:00:00.000Z' };
+  const bridge = { partId: part.id, version: part.version, unit: part.unit, reviewedAt: part.reviewedAt,
+    periodStart: '2026-11-01', periodEnd: '2026-11-15', documentLineId: 'DOC-QA-1', reference: 'Conciliación QA' };
+  const valuationHeader = ['Código','Fecha inicial','Fecha final','Horas reportadas','Ajuste','Horas a valorizar','Tarifa US$/h','Valor US$','Estado'];
+  const invoiceHeader = ['ID línea','Tipo','Fecha documento','Equipo','Inicio período','Fin período','Documento / factura referencia','Importe base USD','Verificación'];
+  const valuation = ['EX401','01-Nov-26','15-Nov-26','100.25','-5.25','95','$45.00','$4,275.00','Listo'];
+  const invoice = ['DOC-QA-1','Factura','15-Nov-26','EX401','01-Nov-26','15-Nov-26','FAC-QA','$4,250.00','Verificado'];
+  let sourceReads = 0;
+  const sources = { bridges: [bridge], readValuation: async () => { sourceReads++; return { rows: [valuationHeader, valuation] }; },
+    readInvoices: async () => { sourceReads++; return { rows: [invoiceHeader, invoice] }; } };
+
+  const unlinked = await resolveShiftBilling(part, { ...sources, bridges: [{ ...bridge, version: 1 }] });
+  assert.equal(unlinked.status, 'unlinked');
+  assert.equal(sourceReads, 0);
+  assert.equal((await resolveShiftBilling(part, { ...sources, bridges: [bridge, bridge] })).status, 'review');
+  assert.equal(sourceReads, 0);
+  const record = await resolveShiftBilling(part, sources);
+  assert.equal(record.status, 'linked');
+  assert.deepEqual(record.valuation, { periodStart: '2026-11-01', periodEnd: '2026-11-15', reportedHours: '100.25',
+    adjustmentHours: '-5.25', valuedHours: '95', rate: '45.00', total: '4275.00', currency: 'USD', status: 'Listo', reference: 'VALORIZACION · fila 4' });
+  assert.deepEqual(record.invoice, { id: 'DOC-QA-1', reference: 'FAC-QA', date: '2026-11-15', baseAmount: '4250.00',
+    currency: 'USD', verification: 'Verificado' });
+  assert.equal(record.reference, 'Conciliación QA');
+
+  const multiple = await resolveShiftBilling(part, { ...sources, readValuation: async () => ({ rows: [valuationHeader, valuation, valuation] }) });
+  assert.equal(multiple.status, 'review');
+  assert.equal(multiple.valuation, null);
+  const wrongInvoice = [...invoice]; wrongInvoice[3] = 'EX405';
+  const crossed = await resolveShiftBilling(part, { ...sources, readInvoices: async () => ({ rows: [invoiceHeader, wrongInvoice] }) });
+  assert.equal(crossed.status, 'linked');
+  assert.equal(crossed.invoiceStatus, 'review');
+  assert.equal(crossed.invoice, null);
+  const pending = await resolveShiftBilling(part, { ...sources, readInvoices: async () => ({ rows: [invoiceHeader] }) });
+  assert.equal(pending.invoiceStatus, 'missing');
+  assert.equal(pending.invoice, null);
+  const down = await resolveShiftBilling(part, { ...sources, readInvoices: async () => { throw Error('offline'); } });
+  assert.equal(down.invoiceStatus, 'unavailable');
+  assert.equal(down.valuation.total, record.valuation.total);
+  const badTotal = [...valuation]; badTotal[7] = '$4,200.00';
+  assert.equal((await resolveShiftBilling(part, { ...sources, readValuation: async () => ({ rows: [valuationHeader, badTotal] }) })).status, 'review');
 });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dispatchPanama } from '../../api/_lib/hermes-panama.js';
+import { dispatchPanama, readPanamaReportFleet } from '../../api/_lib/hermes-panama.js';
 import { createHermesGateway } from '../../api/hermes-sheets-gate.js';
 
 const teamMember = { userId: 'qa-panama', project: 'tmf-panama', role: 'jefe_taller', assignedUnits: ['dz203'], allUnits: false };
@@ -94,6 +94,22 @@ test('fleet projection joins the official equipment master by Panama TMF code wi
   assert.equal(inventory[4][6], '');
 });
 
+test('the report roster falls back to the fleet sheet when the database cut is missing or invalid', async () => {
+  const units = [{ code: 'DZ203', model: 'D155' }, { code: 'EX401', model: 'DX360' }];
+  const missing = async () => { throw new Error('Unavailable'); };
+  const publishedAt = new Date(Date.now() - 3000).toISOString();
+  for (const readCut of [missing, async () => ({ captured_at: 'unknown', rows: fixtures.fleet }),
+    async () => ({ captured_at: publishedAt, rows: [fixtures.fleet[0]] }),
+    async () => ({ captured_at: publishedAt, rows: [...fixtures.fleet, fixtures.fleet[1]] })]) {
+    const readLive = async ({ key }) => {
+      assert.equal(key, 'fleet');
+      return fixtures.fleet;
+    };
+    assert.deepEqual(await readPanamaReportFleet({ readCut, readLive, allowSnapshot: true }), { units, capturedAt: null });
+  }
+  await assert.rejects(readPanamaReportFleet({ readCut: missing, readLive: missing, allowSnapshot: true }), /Unavailable/);
+});
+
 test('maintenance exposes PM FLOTA and its scoped interval and component sources independently', async () => {
   const result = await dispatchPanama({ ...query, path: 'api/panama/maintenance', read: async spec => {
     if (spec.key === 'maintenance') return [
@@ -150,6 +166,43 @@ test('snapshot sections retain their timestamp and scope; unavailable sources st
   assert.equal(body.snapshots.shifts, undefined);
 });
 
+test('las consultas de Maestros TMF priorizan el corte publicado y conservan el alcance de la sesión', async () => {
+  const captured_at = new Date().toISOString();
+  let liveReads = 0;
+  const { body } = await dispatchPanama({ ...query, read: undefined, query: { sections: 'fleet,costs' },
+    sourceReaders: {
+      allowSnapshot: true,
+      readCut: async ({ key }) => {
+        assert.equal(key, 'fleet');
+        return { captured_at, rows: fixtures.fleet };
+      },
+      readLive: async () => { liveReads++; throw new Error('Hoja no disponible'); },
+    },
+  });
+  assert.equal(liveReads, 0);
+  assert.deepEqual(Object.keys(body.sections), ['fleet']);
+  assert.deepEqual(body.sections.fleet.map(row => row.unit), ['DZ203']);
+  assert.equal(body.snapshots.fleet, captured_at);
+});
+
+test('una consulta vuelve a la hoja si el corte tiene columnas inválidas o fecha futura', async () => {
+  const captured_at = new Date().toISOString();
+  const future = new Date(Date.now() + 600_000).toISOString();
+  for (const cut of [{ captured_at, rows: [['Columna movida']] }, { captured_at: future, rows: fixtures.fleet }]) {
+    let liveReads = 0;
+    const { body } = await dispatchPanama({ ...query, read: undefined, query: { sections: 'fleet' },
+      sourceReaders: {
+        allowSnapshot: true,
+        readCut: async () => cut,
+        readLive: async () => { liveReads++; return fixtures.fleet; },
+      },
+    });
+    assert.equal(liveReads, 1);
+    assert.deepEqual(body.sections.fleet.map(row => row.unit), ['DZ203']);
+    assert.equal(body.snapshots.fleet, undefined);
+  }
+});
+
 test('a focused master consultation reads only the requested source permitted by the session', async () => {
   const result = await dispatchPanama({ ...query, query: { sections: 'failures,costs' }, read: async ({ key }) => {
     assert.equal(key, 'failures');
@@ -157,4 +210,30 @@ test('a focused master consultation reads only the requested source permitted by
   } });
   assert.deepEqual(Object.keys(result.body.sections), ['failures']);
   assert.equal(result.body.sections.failures[0].order, 'OT-QA-1');
+});
+
+test('diagnóstico enumera los 16 cortes y conserva el corte anterior de una fuente omitida', async () => {
+  const newest = '2026-11-15T01:16:43.960Z';
+  const older = '2026-11-14T21:18:02.050Z';
+  const readCuts = async () => [
+    { source: 'fleet', captured_at: newest, rows: ['private'] },
+    { source: 'orders', captured_at: older },
+    { source: 'failures', captured_at: 'invalid' },
+    { source: 'extraneous', captured_at: '2027-02-01T01:00:00Z' },
+  ];
+  const request = { ...query, path: 'api/panama/cortes', session: { ...teamMember, role: 'gerencia' }, readCuts };
+  const { status, body } = await dispatchPanama(request);
+  assert.equal(status, 200);
+  assert.equal(body.sources.length, 16);
+  assert.equal(body.latestCapturedAt, newest);
+  assert.deepEqual(body.sources.find(row => row.key === 'orders'), {
+    key: 'orders', label: 'Órdenes de Taller', capturedAt: older, status: 'previous',
+  });
+  assert.equal(body.sources.find(row => row.key === 'fleet').status, 'latest');
+  assert.equal(body.sources.find(row => row.key === 'failures').status, 'missing');
+  assert.doesNotMatch(JSON.stringify(body), /private|extraneous/);
+  const blocked = async () => assert.fail('Una sesión fuera de alcance no accede a los cortes');
+  for (const session of [teamMember, { ...request.session, project: 'mx' }, { ...request.session, previewDemo: true }]) {
+    assert.equal((await dispatchPanama({ ...request, session, readCuts: blocked })).status, 403);
+  }
 });

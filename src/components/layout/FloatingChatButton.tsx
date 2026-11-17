@@ -12,7 +12,7 @@ export default function FloatingChatButton() {
   if (location.pathname === '/chat' || location.pathname === '/sticker-inspection') return null
 
   return (
-    <div style={{ position: 'fixed', bottom: '84px', left: '16px', zIndex: 45 }}>
+    <div data-mobile-toolbar style={{ position: 'fixed', bottom: '84px', left: '16px', zIndex: 45 }}>
       {/* Pulse ring */}
       <span
         style={{

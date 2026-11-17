@@ -5,9 +5,11 @@ import { z } from 'zod';
 import type { DVIRCheck, CheckStatus } from '../types/dvir';
 import { DVIR_SYSTEMS } from '../data/dvir-systems';
 import { useEquipmentList } from '../hooks/useEquipmentList';
+import { usePanamaCaptureUnit } from '../hooks/usePanamaCaptureUnit';
 import { mexicoDateInput, mexicoTimeInput } from '../lib/date-utils';
 import { saveWorkshopCapture } from '../lib/offline-queue';
 import { WorkshopApiError } from '../lib/workshop-api';
+import { useEquipmentStore } from '../stores/equipment-store';
 import SystemCheckRow from '../components/dvir/SystemCheckRow';
 import DVIRResultBanner from '../components/dvir/DVIRResultBanner';
 import ConfirmModal from '../components/ui/ConfirmModal';
@@ -39,6 +41,10 @@ function buildInitialChecks(): CheckState[] {
 export default function DVIRPage() {
   const navigate = useNavigate();
   const equipment = useEquipmentList();
+  const reportUnits = useEquipmentStore(state => state.reportUnits);
+  const units = equipment.length === 0 && reportUnits
+    ? reportUnits.map(({ code, model }) => ({ unit_id: code, model }))
+    : equipment;
   const mutationId = useRef('');
   const sending = useRef(false);
   const [saving, setSaving] = useState(false);
@@ -46,7 +52,7 @@ export default function DVIRPage() {
   const [saved, setSaved] = useState(false);
   const [fecha, setFecha] = useState(mexicoDateInput());
   const [hora, setHora] = useState(mexicoTimeInput());
-  const [unit_id, setUnitId] = useState('');
+  const [unit_id, setUnitId] = usePanamaCaptureUnit(units);
   const [type, setType] = useState<'pre-operacion' | 'post-operacion'>('pre-operacion');
   const [horometro, setHorometro] = useState('');
   const [checks, setChecks] = useState<CheckState[]>(buildInitialChecks);
@@ -114,7 +120,7 @@ export default function DVIRPage() {
     setShowConfirm(false);
     mutationId.current ||= crypto.randomUUID();
     try {
-      const response = await saveWorkshopCapture<{ otId?: string; inspectionId: string; score: string }>({
+      const response = await saveWorkshopCapture<{ otId?: string }>({
         endpoint: 'dvir',
         mutationId: mutationId.current,
         input: {
@@ -129,9 +135,7 @@ export default function DVIRPage() {
       }
       setPending('');
       setSaved(true);
-      showToast(response.result.otId
-        ? `Inspección registrada. OT creada ${response.result.otId}`
-        : `Inspección registrada. ${response.result.inspectionId} (${response.result.score})`);
+      showToast(response.result.otId ? 'Inspección registrada. OT creada.' : 'Inspección registrada.');
     } catch (error) {
       if (error instanceof WorkshopApiError && [400, 413, 415].includes(error.status)) {
         mutationId.current = '';
@@ -175,7 +179,7 @@ export default function DVIRPage() {
         >
           <ArrowLeft size={20} className="text-text" />
         </button>
-        <h1 className="text-xl font-bold text-text">Checklist</h1>
+        <h1 className="text-xl font-bold text-text">Inspección</h1>
       </div>
 
       <fieldset disabled={saving || !!pending || saved} className="min-w-0">
@@ -211,9 +215,9 @@ export default function DVIRPage() {
             className="w-full rounded-xl border border-border p-3 bg-white text-text"
           >
             <option value="">Seleccionar unidad...</option>
-            {equipment.map((eq) => (
+            {units.map((eq) => (
               <option key={eq.unit_id} value={eq.unit_id}>
-                {eq.unit_id} — {eq.model}
+                {eq.unit_id}{eq.model && ` — ${eq.model}`}
               </option>
             ))}
           </select>
@@ -282,13 +286,13 @@ export default function DVIRPage() {
 
       {/* Observations */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-border mt-2">
-        <label className="text-sm font-medium text-text-secondary block mb-2">
-          Observaciones generales
+        <label htmlFor="inspection-notes" className="text-sm font-medium text-text-secondary block mb-2">
+          Observaciones
         </label>
         <textarea
+          id="inspection-notes"
           value={observations}
           onChange={(e) => setObservations(e.target.value)}
-          placeholder="Observaciones adicionales..."
           rows={3}
           className="w-full rounded-xl border border-border p-3 text-sm text-text resize-none bg-white"
         />
@@ -312,7 +316,7 @@ export default function DVIRPage() {
         className="mt-4 w-full bg-amber text-white rounded-xl py-4 font-semibold text-lg disabled:opacity-40 disabled:cursor-not-allowed transition-opacity btn-press"
         style={{ minHeight: 52 }}
       >
-        {saving ? 'Guardando…' : pending ? 'Reintentar' : 'Enviar Inspección'}
+        {saved ? 'Inspección guardada' : saving ? 'Guardando…' : pending ? 'Reintentar' : 'Enviar Inspección'}
       </button>
     </div>
   );

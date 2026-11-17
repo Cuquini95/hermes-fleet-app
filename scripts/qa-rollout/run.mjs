@@ -1,7 +1,7 @@
 // Run `node scripts/qa-rollout/run.mjs` after installing the repository dependencies.
 // HERMES_QA_REPO may point to a different local checkout and HERMES_QA_EVIDENCE to a writable output directory.
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,8 @@ import { promisify } from 'node:util';
 import { checkAuth, checkLoad, checkPurchasing, checkWorkshop } from './api-cases.mjs';
 import { checkBrowser } from './browser-cases.mjs';
 import { startFixture } from './fixture.mjs';
+import { checkAlertDelivery } from './alert-delivery-case.mjs';
+import { checkOfflineRestart } from './offline-restart-case.mjs';
 
 const exec = promisify(execFile);
 const harnessDirectory = fileURLToPath(new URL('../../', import.meta.url));
@@ -48,6 +50,20 @@ async function record(id, check) {
 
 let fixture;
 try {
+  if (withGateway) await checkAlertDelivery(record, repoDirectory);
+  if (withGateway && process.env.HERMES_PGLITE_ENTRY) {
+    await record('POSTGRES-CARGA-28-Y-100-SESIONES', async () => {
+      const concurrencyOut = join(out, 'concurrencia');
+      await exec(process.execPath, [join(repoDirectory, 'scripts/qa-rollout/verify-panama-concurrency.mjs')], {
+        cwd: repoDirectory, env: { ...process.env, HERMES_QA_EVIDENCE: concurrencyOut }, timeout: 60000,
+      });
+      const evidence = JSON.parse(await readFile(join(concurrencyOut, 'concurrencia-postgres.json'), 'utf8'));
+      if (evidence.source.commit !== initial.source || evidence.source.dirtyTree !== initial.dirtyTree) {
+        throw new Error('La prueba de carga no corresponde a la candidata.');
+      }
+      return { postgres: evidence.postgres, cohorts: evidence.results };
+    });
+  }
   const started = await record('FIXTURE-LOOPBACK', async () => {
     fixture = await startFixture({ repoDirectory, distDirectory, withGateway });
     return { host: '127.0.0.1', identityProvider: 'sintético', sheets: 'sintético' };
@@ -56,6 +72,16 @@ try {
     await checkAuth(fixture, record, { withGateway, withPurchasing });
     await checkLoad(fixture, record, withGateway);
     if (withGateway) await checkWorkshop(fixture, record);
+    if (withGateway && process.env.HERMES_PGLITE_ENTRY && process.env.HERMES_QA_PREVIOUS_REPO) {
+      await record('POSTGRES-RESTAURACIÓN-REVERSIÓN', async () => {
+        const result = await exec(process.execPath, [join(repoDirectory, 'scripts/qa-rollout/verify-panama-restore.mjs')], {
+          cwd: repoDirectory, timeout: 60000,
+        });
+        const evidence = JSON.parse(result.stdout);
+        if (!evidence.rollback?.olderCodeRanOnRestoredSchema) throw new Error('Falta el ensayo con la candidata anterior.');
+        return evidence;
+      });
+    }
     if (withPurchasing) await checkPurchasing(fixture, record);
     if (withBrowser) {
       const built = await record('BUILD-APP', async () => {
@@ -64,7 +90,10 @@ try {
         });
         return { line: output.stdout.split('\n').filter(Boolean).at(-1) };
       });
-      if (built) await record('NAVEGADOR-ARRANQUE', async () => ({ browserEgressBlocked: await checkBrowser(fixture, record, out, { withGateway, withPurchasing }) }));
+      if (built) {
+        await record('NAVEGADOR-ARRANQUE', async () => ({ browserEgressBlocked: await checkBrowser(fixture, record, out, { withGateway, withPurchasing }) }));
+        if (withGateway) await record('MÓVIL-REINICIO-SIN-SEÑAL', () => checkOfflineRestart(fixture, out));
+      }
     }
     report.serverEgressBlocked = [...new Set(fixture.outboundBlocked)];
     report.fixtureErrors = fixture.errors;

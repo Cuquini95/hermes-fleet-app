@@ -34,6 +34,7 @@ describe('flushQueue mutex guard', () => {
       onsuccess: null as ((e: { target: { result: unknown } }) => void) | null,
       onerror: null,
       result: {
+        close: vi.fn(),
         transaction: vi.fn(() => ({
           objectStore: vi.fn(() => ({
             getAll: vi.fn(() => {

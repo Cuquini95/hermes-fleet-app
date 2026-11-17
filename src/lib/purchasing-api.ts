@@ -10,10 +10,17 @@ export interface InventoryMovement {
   order: string;
   orderNumber?: string;
   ot: string;
+  otFolio?: string;
   reference: string;
   by: string;
   stockAfter: string;
   measurementUnit: string;
+  originalIssueId?: string;
+  warehouse?: string;
+  reservationId?: string;
+  dispatchId?: string;
+  returnable?: string | null;
+  valuation?: { unitCost: string; currency: string; reference: string; delta: string } | null;
 }
 
 export interface PurchaseIssuer {
@@ -54,6 +61,7 @@ export interface PurchaseLine {
   partNumber: string;
   requestId: string;
   requestLineId: string;
+  ot?: string;
   received: string;
   receipts: PurchaseReceipt[];
 }
@@ -66,6 +74,10 @@ export interface PurchaseReconciliation {
   by: string;
   actorId: string;
   invoiceReference?: string;
+  match?: {
+    tax: string;
+    lines: { lineId: string; quantity: string; unitPrice: string; receiptIds: string[]; receiptEvidence: string[] }[];
+  };
 }
 
 export interface PurchaseOrder {
@@ -94,6 +106,7 @@ export interface PurchaseOrder {
   requestedBy: string;
   approvalReason?: string;
   invoice?: PurchaseReconciliation | null;
+  invoiceReconciled?: boolean;
   payment?: PurchaseReconciliation | null;
   version: string;
   lines: PurchaseLine[];
@@ -102,6 +115,8 @@ export interface PurchaseOrder {
 export interface PurchaseDocument {
   order: PurchaseOrder;
   approvalSignature?: string;
+  canSign?: boolean;
+  usesRegisteredSignature?: boolean;
 }
 
 export interface PurchaseRequestLine {
@@ -124,6 +139,19 @@ export interface PurchaseRequestLine {
   estado: string;
   ocFolio: string;
   ocNumber?: string;
+  ot?: string;
+  requiredDate?: string;
+  equipmentSerial?: string;
+  allocationReview?: boolean;
+  allocatedQuantity?: string;
+  receivedQuantity?: string;
+  unallocatedQuantity?: string;
+  allocations?: { folio: string; number?: string; vendor: string; quantity: string; received: string; status: string }[];
+}
+
+export function canAwardRequest(line: PurchaseRequestLine) {
+  return !line.allocationReview && line.estado !== 'Completado'
+    && (line.unallocatedQuantity === undefined ? !line.ocFolio : Number(line.unallocatedQuantity) > 0);
 }
 
 export interface PurchaseOverview {
@@ -132,13 +160,46 @@ export interface PurchaseOverview {
   issuers: PurchaseIssuer[];
   orphanFolios: string[];
   canApprove: boolean;
+  usesRegisteredSignature?: boolean;
   canRecordInvoice?: boolean;
   canRecordPayment?: boolean;
 }
 
 export type PurchaseReceivingLine = Pick<PurchaseLine, 'id' | 'number' | 'description' | 'partNumber' | 'quantity' | 'received'> & {
   receipts: Omit<PurchaseReceipt, 'actorId'>[];
+  warehouse?: string;
+  warehouses?: string[];
+  dispatches?: { id: string; reference: string; remaining: string }[];
+  dispatchReview?: boolean;
 };
+
+export interface WarehouseStock {
+  partNumber: string;
+  description: string;
+  oem: string;
+  warehouse: string;
+  measure: string;
+  minimum: string | null;
+  physical: string | null;
+  reserved: string | null;
+  available: string | null;
+  inTransit: string | null;
+  review?: string;
+  reservations: { id: string; unit: string; ot: string; folio?: string; reference: string; remaining: string }[];
+}
+
+export type WorkOrderStock = Omit<WarehouseStock, 'reservations'> & { reservedForOt: string | null };
+
+export interface WorkOrderPartContext {
+  ot: string;
+  folio: string;
+  unit: string;
+  serial: string;
+  partNumber?: string;
+  match?: 'verified' | 'ambiguous' | 'unverified';
+  items?: WorkOrderStock[];
+  transitScoped?: boolean;
+}
 
 export type PurchaseReceivingOrder = Pick<PurchaseOrder, 'folio' | 'number' | 'unit' | 'vendorName' | 'deliveryDate' | 'receiptStatus' | 'version'> & {
   lines: PurchaseReceivingLine[];
@@ -152,8 +213,13 @@ const receiptUploadPath = String(import.meta.env.VITE_HERMES_EXPENSE_RECEIPT_UPL
 const legacyReceiptUpload = /^\/(?!\/)[a-zA-Z0-9/_-]+$/.test(receiptUploadPath);
 export const canAttachExpenseReceipt = (project: string) => project === 'tmf-panama' || legacyReceiptUpload;
 
+export const panamaApPendingKey = (owner: string) => 'hermes:panama:ap:' + owner;
+
 export function setPurchaseSession(owner: string) {
   if (sessionOwner === owner) return;
+  if (sessionOwner) {
+    try { sessionStorage.removeItem(panamaApPendingKey(sessionOwner)); } catch { /* Session storage can be disabled. */ }
+  }
   sessionOwner = owner;
   sessionGeneration++;
   pending.clear();
@@ -223,6 +289,11 @@ export async function purchaseWrite<T>(
 
 export function purchaseOrder(folio: string, signal?: AbortSignal) {
   return purchaseRead<PurchaseDocument>('order', { folio }, signal);
+}
+
+export function visibleWorkOrderFolio(value: string): string | undefined {
+  const folio = value.trim().toUpperCase();
+  return /^OT-\d{4,15}$/.test(folio) ? folio : undefined;
 }
 
 export function purchaseRequests(signal?: AbortSignal) {

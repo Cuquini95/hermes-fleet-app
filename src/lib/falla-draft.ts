@@ -6,6 +6,9 @@ export interface FallaDraft {
   clienteAfectado: string;
   ubicacion: string;
   downtime: string;
+  stopped?: boolean;
+  stopStartedAt?: string;
+  reportedAt?: string;
   previousOtId: string;
   photos: File[];
   mutationId: string;

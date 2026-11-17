@@ -1,9 +1,11 @@
 import { Link } from 'react-router-dom';
+import { useAuthStore } from '../../stores/auth-store';
 
 const APP_VERSION = '0.0.0'; // Kept in sync with package.json at build time
 const LAST_UPDATED = 'Abr 2026';
 
 export default function LegalFooter() {
+  const isPanama = useAuthStore((state) => state.project === 'tmf-panama');
   return (
     <footer
       className="py-4 px-4 flex flex-col items-center gap-1"
@@ -31,9 +33,9 @@ export default function LegalFooter() {
           Contacto
         </a>
       </nav>
-      <p className="text-xs text-gray-300">
+      {!isPanama && <p className="text-xs text-gray-300">
         Hermes v{APP_VERSION} · {LAST_UPDATED}
-      </p>
+      </p>}
     </footer>
   );
 }

@@ -177,16 +177,24 @@ export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
       set(emptyState);
     });
     const refresh = () => {
-      if (get().fetched && !get().loading && document.visibilityState === 'visible') void get().fetchWorkOrders();
+      const state = get();
+      if ((state.fetched || state.error) && !state.loading && navigator.onLine && document.visibilityState === 'visible') void state.fetchWorkOrders();
     };
     const interval = window.setInterval(refresh, 60_000);
+    const inboxInterval = window.setInterval(() => {
+      if (useAuthStore.getState().project === 'tmf-panama'
+        && ['/coordinator', '/workshop', '/workorders'].includes(window.location.pathname)) refresh();
+    }, 10_000);
     window.addEventListener('focus', refresh);
     window.addEventListener('online', refresh);
+    document.addEventListener('visibilitychange', refresh);
     return () => {
       unsubscribe();
       window.clearInterval(interval);
+      window.clearInterval(inboxInterval);
       window.removeEventListener('focus', refresh);
       window.removeEventListener('online', refresh);
+      document.removeEventListener('visibilitychange', refresh);
     };
   },
 }));

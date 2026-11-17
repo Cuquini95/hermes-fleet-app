@@ -15,7 +15,7 @@ export interface HealthIntegrations {
 export interface ApiHealth {
   status: 'ok' | 'degraded' | 'down' | 'loading';
   uptime_seconds?: number;
-  checks?: { identity: 'up' | 'down'; fleet: 'up' | 'down'; operations: 'up' | 'down' };
+  checks?: Partial<Record<'identity' | 'fleet' | 'operations' | 'masters' | 'evidence', 'up' | 'down'>>;
   dataMode?: 'demo' | 'operational';
   writeEnabled?: boolean;
   operationGroups?: string[];
@@ -29,7 +29,7 @@ export interface ApiHealth {
 
 const POLL_INTERVAL_MS = 60_000;
 
-export function useApiHealth(): ApiHealth {
+export function useApiHealth(): ApiHealth & { refresh: () => Promise<void> } {
   const [health, setHealth] = useState<ApiHealth>({ status: 'loading' });
 
   const check = useCallback(async () => {
@@ -38,7 +38,8 @@ export function useApiHealth(): ApiHealth {
         signal: AbortSignal.timeout(8000),
       });
       if (!res.ok) {
-        setHealth({ status: 'down', lastChecked: new Date() });
+        setHealth({ status: 'down', lastChecked: new Date(),
+          ...(res.status === 401 || res.status === 403 ? { checks: { identity: 'down' } } : {}) });
         return;
       }
       const data = await res.json();
@@ -54,5 +55,5 @@ export function useApiHealth(): ApiHealth {
     return () => clearInterval(id);
   }, [check]);
 
-  return health;
+  return { ...health, refresh: check };
 }

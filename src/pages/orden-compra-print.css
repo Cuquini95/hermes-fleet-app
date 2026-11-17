@@ -34,18 +34,7 @@
 .po-panama-tax-id { margin-bottom: 5px; font-weight: 700; }
 .po-panama-issuer p { margin: 0 0 2px; }
 
-.po-panama-brand {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  color: var(--po-blue);
-  font-size: 25px;
-  font-weight: 900;
-  letter-spacing: .035em;
-  line-height: 1;
-}
-.po-panama-brand img { display: block; width: 66px; height: auto; }
+.po-panama-brand img { display: block; width: 158px; height: auto; }
 
 .po-panama-id h1 {
   margin: 0 0 8px;
@@ -124,7 +113,7 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 24px;
-  align-items: end;
+  align-items: start;
   margin-top: 16px;
   color: var(--po-blue);
 }
@@ -148,13 +137,12 @@
   font-size: .88em;
   font-weight: 700;
 }
-.po-panama-approval { text-align: center; font-size: .9em; overflow-wrap: anywhere; }
+.po-panama-approval { margin-top: 5px; text-align: center; font-size: .9em; overflow-wrap: anywhere; }
 
 @media screen and (max-width: 639px) {
   .po-panama { padding: 15px 9px 18px; font-size: 10.5px; }
   .po-panama-header { grid-template-columns: minmax(0, 1fr) auto; gap: 9px; padding-bottom: 12px; }
-  .po-panama-brand img { width: 44px; }
-  .po-panama-brand { font-size: 16px; }
+  .po-panama-brand img { width: 96px; }
   .po-panama-issuer > strong { font-size: 14px; margin-bottom: 4px; }
   .po-panama-id { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
   .po-panama-id h1 { margin: 0; text-align: left; font-size: 11px; }

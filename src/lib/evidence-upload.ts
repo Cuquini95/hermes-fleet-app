@@ -5,7 +5,7 @@ import { WorkshopApiError } from './workshop-api';
 const MAX_BYTES = 3 * 1024 * 1024;
 
 export interface EvidenceUpload {
-  kind: 'report' | 'dvir' | 'sticker' | 'order' | 'receipt';
+  kind: 'report' | 'dvir' | 'sticker' | 'order' | 'receipt' | 'warranty';
   units: string[];
   operationId: string;
   expectedUserId: string;
@@ -14,9 +14,9 @@ export interface EvidenceUpload {
 }
 
 export async function uploadEvidence(file: File, scope: EvidenceUpload): Promise<string> {
-  const pdf = file.type === 'application/pdf' && scope.kind === 'receipt';
+  const pdf = file.type === 'application/pdf' && ['receipt', 'warranty'].includes(scope.kind);
   if (!file.size || !['image/jpeg', 'image/png', 'image/webp'].includes(file.type) && !pdf) {
-    throw new WorkshopApiError('Adjunta una imagen JPG, PNG o WebP. Los recibos también admiten PDF.', 415);
+    throw new WorkshopApiError('Adjunta una imagen JPG, PNG o WebP. Recibos y garantías también admiten PDF.', 415);
   }
   let attachment: Blob = file;
   if (!pdf && file.size > MAX_BYTES) {

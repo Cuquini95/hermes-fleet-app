@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { exerciseConcurrentRoles, latencies } from './concurrency-cases.mjs';
 import { firstAccount, fixturePassword, loadAccounts, nonApprovingManager, photoPng, tabs } from './fixture.mjs';
 
 export function requester(origin) {
@@ -47,25 +48,48 @@ function purchasing(request, cookie) {
 
 export async function checkLoad(fixture, record, withGateway) {
   const request = requester(fixture.origin);
-  await record('HTTP-100', async () => {
+  for (const count of [28, 100]) await record(`HTTP-${count}`, async () => {
     const durations = [];
-    const actors = await Promise.all(loadAccounts.map(async account => {
-      const start = performance.now();
-      const cookie = await loginAs(request, account);
-      const session = good(await request('/api/auth/session', { cookie }), 'Restaurar sesión');
-      assert.equal(session.userId, account.user.id);
-      assert.equal(session.role, account.membership.role);
-      if (withGateway) {
-        const fleet = good(await request('/hermes-api/api/sheets/read?tab=01%20Inventario', { cookie }), 'Primera consulta de inventario');
-        assert(Array.isArray(fleet.data) && fleet.data.some(row => row.includes('DZ203')), 'El inventario de prueba no llegó a la sesión');
-        if (!session.allUnits) assert(!fleet.data.some(row => row.includes('EX410')), 'Se mostró una unidad de prueba fuera del alcance');
-      }
-      durations.push(performance.now() - start);
-      return session.userId;
-    }));
-    assert.equal(new Set(actors).size, 100);
-    const sorted = durations.toSorted((a, b) => a - b);
-    return { sessions: actors.length, peakProviderLogins: fixture.peakLogins(), firstInventory: withGateway, p95Ms: Math.round(sorted[94]), maxMs: Math.round(sorted[99]) };
+    const ordersExpected = ['coordinador', 'gerencia', 'jefe_taller', 'mecanico', 'supervisor'];
+    let orderReads = 0;
+    let inconsistentOrders = 0;
+    const cohort = fixture.registerLoadAccounts(count);
+    try {
+      const attempts = await Promise.allSettled(cohort.map(async account => {
+        const start = performance.now();
+        const cookie = await loginAs(request, account);
+        const session = good(await request('/api/auth/session', { cookie }), 'Restaurar sesión');
+        assert.equal(session.userId, account.user.id);
+        assert.equal(session.role, account.membership.role);
+        if (withGateway) {
+          const fleet = good(await request('/hermes-api/api/sheets/read?tab=01%20Inventario', { cookie }), 'Primera consulta de inventario');
+          assert(Array.isArray(fleet.data) && fleet.data.some(row => row.includes('DZ203')), 'El inventario de prueba no llegó a la sesión');
+          if (!session.allUnits) assert(!fleet.data.some(row => row.includes('EX410')), 'Se mostró una unidad de prueba fuera del alcance');
+          if (ordersExpected.includes(session.role)) {
+            const orders = async () => good(await workshop(request, cookie)('orders'), 'Consulta concurrente de órdenes')
+              .orders.map(row => row[1]).sort();
+            const [first, second] = await Promise.all([orders(), orders()]);
+            orderReads += 2;
+            if (new Set(first).size !== first.length || JSON.stringify(first) !== JSON.stringify(second)) inconsistentOrders++;
+          }
+        }
+        durations.push(performance.now() - start);
+        return { ...session, cookie, account };
+      }));
+      const errors = attempts.filter(outcome => outcome.status === 'rejected');
+      assert.equal(errors.length, 0, `${errors.length}/${count} sesiones fallaron: ${errors[0]?.reason?.message ?? ''}`);
+      assert.equal(inconsistentOrders, 0, 'Los folios deben permanecer estables entre lecturas concurrentes');
+      const actors = attempts.flatMap(outcome => outcome.status === 'fulfilled' ? [outcome.value] : []);
+      assert.equal(new Set(actors.map(actor => actor.userId)).size, count);
+      const sheets = fixture.operationalSheets ?? fixture.sheet;
+      return { sessions: actors.length, synthetic: true, syntheticSessions: actors.length, realSessions: 0,
+        dependencies: { identity: 'fixture HTTPS loopback', gateway: withGateway ? 'Hermes real' : 'sin gateway',
+          operations: withGateway ? sheets.nativeOperations ? 'Postgres PGlite en memoria' : 'registro sintético en memoria' : 'sin escrituras',
+          externalNetwork: 'bloqueada' },
+        firstInventory: withGateway, orderReads, inconsistentOrders, errors: errors.length, peakIdentityRequests: fixture.peakLogins(),
+        ...latencies(durations),
+        ...(withGateway && { operations: await exerciseConcurrentRoles(fixture, request, actors) }) };
+    } finally { fixture.releaseLoadAccounts(cohort); }
   });
 }
 
@@ -220,15 +244,26 @@ export async function checkWorkshop(fixture, record) {
     assert(sheet.read(tabs.pmHistory).some(row => row[1] === pm.otId));
     const calendar = good(await sup('schedule'), 'Consultar calendario de Taller');
     assert(calendar.schedule.some(row => row[1] === date && row[2] === pm.otId && row[3] === 'EX401'));
-    const tech = workshop(request, await loginAs(request, firstAccount('mecanico')));
+    const mechanic = firstAccount('mecanico');
+    const techCookie = await loginAs(request, mechanic);
+    const tech = workshop(request, techCookie);
     const execution = { functionalTest: 'Prueba funcional sintética PM', performedOn: date, meter: '1963', completedItems: ['review-qa'] };
     const status = (api, value, submitted) => api('transition', { mutationId: randomUUID(), otId: pm.otId, field: 'estado', value, execution: submitted });
     const checklist = good(await tech(`pmchecklist?otId=${pm.otId}`), 'Consultar checklist por modelo');
     assert.equal(checklist.model, 'Komatsu D65EX-16');
+    assert.equal(checklist.serial, 'QA-EX401');
     assert.deepEqual(checklist.checklist.tasks.map(task => task.id), ['review-qa']);
     good(await status(tech, 'En Reparación'), 'Iniciar PM');
     assert.equal((await status(tech, 'Resuelta', { ...execution, completedItems: [] })).status, 400);
-    good(await status(tech, 'Resuelta', execution), 'Entregar PM');
+    assert.equal((await status(tech, 'Resuelta', execution)).status, 400);
+    const mutationId = randomUUID();
+    const photo = good(await request('/hermes-api/api/evidence', { cookie: techCookie, body: {
+      kind: 'order', expectedUserId: mechanic.user.id, units: ['EX401'], recordId: pm.otId, operationId: mutationId,
+      slot: 0, mimeType: 'image/png', data: photoPng.toString('base64'),
+    } }), 'Adjuntar evidencia al paso PM').url;
+    good(await tech('transition', { mutationId, otId: pm.otId, field: 'estado', value: 'Resuelta',
+      execution: { ...execution, taskEvidence: { 'review-qa': photo } } }), 'Entregar PM');
+    assert.equal(JSON.parse(sheet.read(tabs.orders).find(row => row[1] === pm.otId)[20]).taskEvidence['review-qa'], photo);
     assert.equal(sheet.read(tabs.pm).find(row => row[0] === pm.otId)[11], 'Programada');
     good(await status(sup, 'Completado'), 'Aceptar PM');
     const synchronized = [sheet.read(tabs.pm).find(row => row[0] === pm.otId)[11], sheet.read(tabs.pmHistory).find(row => row[1] === pm.otId)[10], sheet.read(tabs.schedule).find(row => row[2] === pm.otId)[7]];
@@ -472,14 +507,24 @@ export async function checkPurchasing(fixture, record) {
     assert.equal(received.status, 'Recibida');
     assert.equal((await api('order-status', { ...base, operationId: randomUUID(), version: received.version, status: 'Pagada' })).status, 403);
     assert.equal((await treasury('order-payment', { ...base, operationId: randomUUID(), version: received.version, reference: 'BANCO-QA-OC', amount: received.total })).status, 409);
-    good(await accounting('order-invoice', { ...base, operationId: randomUUID(), version: received.version, reference: 'FAC-QA-OC', amount: received.total }), 'Conciliar factura');
+    const invoice = { ...base, version: received.version, reference: 'FAC-QA-OC', amount: received.total, currency: received.issuer.currency,
+      tax: received.tax, lines: received.lines.map(item => ({ lineId: item.id, quantity: item.quantity, unitPrice: item.unitPrice })) };
+    const mismatch = await accounting('order-invoice', { ...invoice, operationId: randomUUID(), currency: 'PAB', tax: '0',
+      lines: invoice.lines.map((item, index) => index === 0 ? { ...item, quantity: '1', unitPrice: '999.99' } : item) });
+    assert.equal(mismatch.status, 409);
+    assert.match(mismatch.data.error, /moneda.*ITBMS.*cantidad.*precio/i);
+    assert.equal((await getOrder()).invoice, null);
+    good(await accounting('order-invoice', { ...invoice, operationId: randomUUID() }), 'Conciliar factura');
     const invoiced = await getOrder();
+    assert.equal(invoiced.invoice.match.lines.length, received.lines.length);
+    assert.deepEqual(invoiced.invoice.match.lines[0].receiptIds, received.lines[0].receipts.map(receipt => receipt.id));
     good(await treasury('order-payment', { ...base, operationId: randomUUID(), version: invoiced.version, reference: 'BANCO-QA-OC', amount: invoiced.total }), 'Registrar pago externo conciliado');
     const paid = await getOrder();
     assert.equal(paid.status, 'Pagada');
     assert.equal(paid.payment.invoiceReference, paid.invoice.reference);
     assert.equal(new Set([paid.approvedById, receiver.user.id, paid.invoice.actorId, paid.payment.actorId]).size, 4);
-    return { folio: created.folio, approvedById: manager.user.id, received: 2, remaining: 0, receipts: 2, partialStatus: final.status, finalStatus: paid.status, invoice: paid.invoice.reference, payment: paid.payment.reference };
+    return { folio: created.folio, approvedById: manager.user.id, received: 2, remaining: 0, receipts: 2, partialStatus: final.status, finalStatus: paid.status,
+      invoice: paid.invoice.reference, payment: paid.payment.reference, lineMatching: true, mismatchesRejected: ['moneda', 'impuesto', 'cantidad', 'precio'] };
   });
 
   await record('API-GASTOS-REPARTO-RECIBO', async () => {

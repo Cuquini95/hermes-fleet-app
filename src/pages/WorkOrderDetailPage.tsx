@@ -1,4 +1,5 @@
 import PanamaPartsMovements from '../components/workshop/PanamaPartsMovements';
+import PanamaWorkOrderPartRequest from '../components/workshop/PanamaWorkOrderPartRequest';
 /**
  * @fileoverview Monolithic by design (> 400 LOC).
  * Work-order detail: tasks, parts, signatures, photos in one timeline view.
@@ -18,6 +19,13 @@ import { uploadPhoto } from '../lib/photo-upload';
 import { uploadEvidence } from '../lib/evidence-upload';
 import PhotoCapture from '../components/ui/PhotoCapture';
 import OperationalReturnCard from '../components/workshop/OperationalReturnCard';
+import PmTriggerList from '../components/workshop/PmTriggerList';
+import PanamaWorkOrderCost from '../components/workshop/PanamaWorkOrderCost';
+import OrderWarranties from '../components/workshop/OrderWarranties';
+import OrderComponentInterventions from '../components/workshop/ComponentInterventions';
+import PanamaPmNextService from '../components/workshop/PanamaPmNextService';
+import { parsePanamaPmNextService } from '../lib/panama-pm-next-service.js';
+import { visibleWorkOrderFolio } from '../lib/purchasing-api';
 
 const FIELD_LABELS: Record<StatusLogEntry['field'], string> = {
   estado: 'Estado',
@@ -31,6 +39,7 @@ const FIELD_LABELS: Record<StatusLogEntry['field'], string> = {
   entrega_tecnica: 'Entrega técnica',
   aceptacion_tecnica: 'Aceptación técnica',
   retorno_operativo: 'Retorno de Operaciones',
+  reincidencia: 'Reincidencia',
 };
 
 const ASSIGN = ['jefe_taller', 'coordinador', 'gerencia'];
@@ -42,8 +51,10 @@ function canEditField(role: string | null, field: OTStatusField): boolean {
   return (['mecanico_asignado', 'costo_estimado', 'prioridad'].includes(field) ? ASSIGN : UPDATE).includes(role);
 }
 
-function StatusPillRow({ current }: { current: OTEstado }) {
-  const allStatuses: OTEstado[] = [current === 'En Espera de Asignación' ? current : 'Abierta', 'En Reparación', 'Esperando Pieza', 'Resuelta', 'Completado'];
+function StatusPillRow({ current, compact }: { current: OTEstado; compact: boolean }) {
+  const allStatuses: OTEstado[] = compact ? [current] : [
+    current === 'En Espera de Asignación' ? current : 'Abierta', 'En Reparación', 'Esperando Pieza', 'Resuelta', 'Completado',
+  ];
   const currentIdx = allStatuses.indexOf(current);
 
   return (
@@ -71,6 +82,7 @@ function StatusPillRow({ current }: { current: OTEstado }) {
 
 function TimelineEntry({ entry }: { entry: StatusLogEntry }) {
   const label = FIELD_LABELS[entry.field] ?? entry.field;
+  const previousOrder = entry.field === 'reincidencia';
   return (
     <div className="flex gap-3 py-2.5 border-b border-gray-100 last:border-0">
       <div className="flex flex-col items-center shrink-0 pt-0.5">
@@ -79,9 +91,11 @@ function TimelineEntry({ entry }: { entry: StatusLogEntry }) {
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-text">
-          {label}: <span className="text-text-secondary">{entry.field === 'foto_url' ? '' : entry.old_value || '(vacío)'}</span>
-          {' '}<ChevronRight size={12} className="inline text-text-secondary" />{' '}
-          <span className="text-amber font-semibold break-words">{entry.field === 'foto_url' ? 'Evidencia adjuntada' : entry.new_value}</span>
+          {label}{previousOrder ? ' · OT anterior vinculada' : <>
+            : <span className="text-text-secondary">{entry.field === 'foto_url' ? '' : entry.old_value || '(vacío)'}</span>
+            {' '}<ChevronRight size={12} className="inline text-text-secondary" />{' '}
+            <span className="text-amber font-semibold break-words">{entry.field === 'foto_url' ? 'Evidencia adjuntada' : entry.new_value}</span>
+          </>}
         </p>
         <p className="text-xs text-text-secondary mt-0.5">
           {entry.changed_by} &middot; {entry.role} &middot; {entry.timestamp}
@@ -93,6 +107,11 @@ function TimelineEntry({ entry }: { entry: StatusLogEntry }) {
 
 export default function WorkOrderDetailPage() {
   const { otId: requestedFolio } = useParams<{ otId: string }>();
+  const actorId = useAuthStore((state) => state.userId);
+  return <WorkOrderDetail key={JSON.stringify([actorId, requestedFolio])} requestedFolio={requestedFolio} />;
+}
+
+function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
   const navigate = useNavigate();
   const { statusLog, loading, error, fetched, fetchWorkOrders, updateOTField, getWorkOrderById } = useWorkOrderStore();
   const role = useAuthStore((s) => s.role);
@@ -110,12 +129,16 @@ export default function WorkOrderDetailPage() {
   const [mechanicsError, setMechanicsError] = useState('');
   const [evidence, setEvidence] = useState<{ file: File; preview: string }[]>([]);
   const [functionalTest, setFunctionalTest] = useState('');
+  const [diagnosis, setDiagnosis] = useState('');
   const [laborHours, setLaborHours] = useState('');
+  const [costRevision, setCostRevision] = useState(0);
   const [performedOn, setPerformedOn] = useState(mexicoDateInput);
   const [meter, setMeter] = useState('');
   const [completedItems, setCompletedItems] = useState<string[]>([]);
-  const [pmState, setPmState] = useState<{ otId: string; definition?: PMChecklistDefinition; error?: string }>();
+  const [taskPhotos, setTaskPhotos] = useState<Record<string, File>>({});
+  const [pmState, setPmState] = useState<{ otId: string; acceptedAt?: string; definition?: PMChecklistDefinition; error?: string }>();
   const uploadAttempt = useRef<{ actorId: string; otId: string; operationId: string; urls: Map<File, string> } | null>(null);
+  const pmUpload = useRef<{ key: string; operationId: string; urls: Map<string, string> } | null>(null);
   const submitting = useRef(false);
 
   useEffect(() => {
@@ -125,19 +148,21 @@ export default function WorkOrderDetailPage() {
   }, [fetched, fetchWorkOrders]);
 
   const wo = requestedFolio ? getWorkOrderById(requestedFolio) : undefined;
+  const previous = wo?.previousOtId ? getWorkOrderById(wo.previousOtId) : undefined;
   const otId = wo?.ot_id ?? requestedFolio;
   const equipment = useEquipmentById(wo?.unidad ?? '');
   const panamaWorkflow = project === 'tmf-panama';
   const isPM = wo?.tipo_averia === 'PM';
+  const acceptedAt = wo?.technical?.acceptedAt;
 
   useEffect(() => {
     if (!otId || !isPM || !panamaWorkflow) return;
     let active = true;
     requestWorkshop<PMChecklistDefinition>(`pmchecklist?otId=${encodeURIComponent(otId)}`)
-      .then((definition) => { if (active) setPmState({ otId, definition }); })
-      .catch((err: unknown) => { if (active) setPmState({ otId, error: err instanceof Error ? err.message : 'Checklist no disponible' }); });
+      .then((definition) => { if (active) setPmState({ otId, acceptedAt, definition }); })
+      .catch((err: unknown) => { if (active) setPmState({ otId, acceptedAt, error: err instanceof Error ? err.message : 'Checklist no disponible' }); });
     return () => { active = false; };
-  }, [otId, isPM, panamaWorkflow, actorId]);
+  }, [otId, isPM, panamaWorkflow, actorId, acceptedAt]);
 
   useEffect(() => {
     if (!canEditField(role, 'mecanico_asignado')) return;
@@ -190,15 +215,39 @@ export default function WorkOrderDetailPage() {
         uploadAttempt.current = null;
       } else {
         let execution: WorkshopExecutionInput | undefined;
+        let operationId: string | undefined;
         if (panamaWorkflow && field === 'estado' && value === 'Resuelta') {
-          execution = { functionalTest, ...(laborHours !== '' && { laborHours }), ...(isPM && { performedOn, meter, completedItems }) };
+          execution = { functionalTest, ...(diagnosis.trim() && { diagnosis }),
+            ...(laborHours !== '' && { laborHours }), ...(isPM && { performedOn, meter, completedItems }) };
+          const required = pm?.checklist?.tasks.filter(task => task.evidence === 'photo') ?? [];
+          if (isPM && required.length) {
+            const key = JSON.stringify([actorId, otId, wo.version, execution]);
+            const attempt = pmUpload.current?.key === key ? pmUpload.current
+              : { key, operationId: crypto.randomUUID(), urls: new Map<string, string>() };
+            pmUpload.current = attempt;
+            for (const [slot, task] of required.entries()) {
+              const file = Object.hasOwn(taskPhotos, task.id) ? taskPhotos[task.id] : undefined;
+              if (!file) throw new Error(`Adjunta evidencia para ${task.label}.`);
+              if (useAuthStore.getState().userId !== actorId) throw new Error('Cambió la sesión.');
+              const url = attempt.urls.get(task.id) ?? await uploadEvidence(file, {
+                kind: 'order', recordId: otId, units: [wo.unidad], slot, operationId: attempt.operationId, expectedUserId: actorId,
+              });
+              attempt.urls.set(task.id, url);
+            }
+            execution.taskEvidence = Object.fromEntries(attempt.urls);
+            operationId = attempt.operationId;
+            if (useAuthStore.getState().userId !== actorId) throw new Error('Cambió la sesión.');
+          }
         }
-        await updateOTField(otId, field, value, execution);
+        await updateOTField(otId, field, value, execution, operationId);
         if (execution) {
           setFunctionalTest('');
+          setDiagnosis('');
           setLaborHours('');
           setMeter('');
           setCompletedItems([]);
+          setTaskPhotos({});
+          pmUpload.current = null;
         }
       }
     } catch (err: unknown) {
@@ -210,7 +259,7 @@ export default function WorkOrderDetailPage() {
     }
   }
 
-  if (loading && !fetched) {
+  if (loading && !wo) {
     return (
       <div className="flex items-center justify-center py-20">
         <div className="animate-spin rounded-full h-8 w-8 border-2 border-amber border-t-transparent" />
@@ -228,7 +277,7 @@ export default function WorkOrderDetailPage() {
           <h1 className="text-xl font-bold text-text">{error ? 'Taller no disponible' : 'OT no encontrada'}</h1>
         </div>
         <div className="bg-white rounded-xl p-6 shadow-sm border border-border text-center">
-          <p className="text-text-secondary">{error ?? `La orden ${otId} no está disponible en esta sesión.`}</p>
+          <p className="text-text-secondary">{error ?? 'Esta orden no está disponible para tu cuenta.'}</p>
           <button type="button" onClick={() => void fetchWorkOrders()} className="mt-3 text-sm font-medium text-amber">Actualizar</button>
         </div>
       </div>
@@ -249,9 +298,11 @@ export default function WorkOrderDetailPage() {
   const pmError = pmState?.otId === otId ? pmState?.error : undefined;
   const isSubmittingProof = panamaWorkflow && editEstado === 'Resuelta' && wo.estado !== 'Resuelta';
   const proofReady = !!functionalTest.trim() && (!isPM || (!!pm?.checklist && !!performedOn && meter !== ''
-    && pm.checklist.tasks.every(task => completedItems.includes(task.id))));
+    && pm.checklist.tasks.every(task => completedItems.includes(task.id)
+      && (task.evidence !== 'photo' || Object.hasOwn(taskPhotos, task.id)))));
   const unitMechanics = mechanics.filter((mechanic) => mechanicCoversUnit(mechanic, wo.unidad));
   const photos = photoUrls(wo.foto_url);
+  const folio = panamaWorkflow ? visibleWorkOrderFolio(wo.folio ?? wo.ot_id) : wo.folio ?? wo.ot_id;
 
   return (
     <div className="flex flex-col gap-4 pb-6 animate-fade-up">
@@ -266,7 +317,7 @@ export default function WorkOrderDetailPage() {
           <ArrowLeft size={20} className="text-text" />
         </button>
         <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-bold text-text truncate">{wo.folio ?? wo.ot_id}</h1>
+          <h1 className="text-lg font-bold text-text truncate">{folio ?? 'Orden de trabajo'}</h1>
           <p className="text-xs text-text-secondary">{wo.fecha}</p>
           {wo.fecha_cierre && <p className="text-xs text-text-secondary">Cierre {wo.fecha_cierre}</p>}
         </div>
@@ -282,7 +333,11 @@ export default function WorkOrderDetailPage() {
 
       {/* Status flow */}
       <div className="bg-white rounded-xl p-3 shadow-sm border border-border">
-        <StatusPillRow current={wo.estado} />
+        <StatusPillRow current={wo.estado} compact={panamaWorkflow} />
+        {panamaWorkflow && !folio && <details className="text-xs text-text-secondary">
+          <summary className="min-h-11 cursor-pointer py-3 font-medium">Referencia de la OT</summary>
+          <p className="break-words">{wo.folio ?? wo.ot_id}</p>
+        </details>}
       </div>
 
       {/* Info card */}
@@ -307,7 +362,7 @@ export default function WorkOrderDetailPage() {
             </p>
           </div>
           <div>
-            <p className="text-xs text-text-secondary">Mecanico</p>
+            <p className="text-xs text-text-secondary">Mecánico</p>
             <div className="flex items-center gap-1">
               <Wrench size={12} className="text-text-secondary" />
               <p className="text-sm font-semibold text-text">
@@ -322,13 +377,19 @@ export default function WorkOrderDetailPage() {
         </div>
 
         <div>
-          <p className="text-xs text-text-secondary mb-1">Descripcion</p>
+          <p className="text-xs text-text-secondary mb-1">Descripción</p>
           <p className="text-sm text-text break-words">{wo.descripcion}</p>
-          {wo.previousOtId && <Link className="mt-2 inline-flex min-h-11 items-center text-sm font-semibold text-amber underline"
-            to={`/workorders/${encodeURIComponent(wo.previousOtId)}`}>Reincidencia de {wo.previousOtId}</Link>}
+          {wo.previousOtId && (previous ? <Link className="mt-2 inline-flex min-h-11 items-center text-sm font-semibold text-amber underline"
+            to={`/workorders/${encodeURIComponent(previous.folio ?? previous.ot_id)}`}>Reincidencia de {previous.folio ?? previous.ot_id}</Link>
+            : <p className="mt-2 text-sm text-text-secondary">OT anterior disponible para Taller y Coordinación.</p>)}
         </div>
 
-        <PanamaPartsMovements ot={wo.ot_id} />
+        {panamaWorkflow && wo.estado !== 'Completado' && <PanamaWorkOrderPartRequest ot={wo.ot_id} />}
+        <PanamaPartsMovements ot={wo.ot_id} onMoved={() => setCostRevision(revision => revision + 1)} />
+        {panamaWorkflow && <Link to={`/manuals?unit=${encodeURIComponent(wo.unidad)}`}
+          className="inline-flex min-h-11 items-center text-sm font-semibold text-amber underline">
+          Manuales de {wo.unidad}
+        </Link>}
 
         {wo.partes_necesarias && (
           <div>
@@ -368,15 +429,29 @@ export default function WorkOrderDetailPage() {
         )}
       </div>
 
+      {panamaWorkflow && role === 'gerencia' && <PanamaWorkOrderCost ot={wo.ot_id} folio={wo.folio ?? wo.ot_id} unit={wo.unidad} revision={costRevision} />}
+
+      {panamaWorkflow && isPM && !!pm?.triggers?.length && (
+        <section aria-label="Motivo del mantenimiento" className="space-y-2 rounded-xl border border-border bg-white p-4">
+          <h2 className="text-sm font-semibold">Motivo del mantenimiento</h2>
+          <PmTriggerList rules={pm.triggers} />
+        </section>
+      )}
       {panamaWorkflow && isPM && (
         <section className="flex flex-col gap-2 rounded-xl border border-border bg-white p-4 shadow-sm" aria-label="Checklist del modelo">
           <h2 className="text-sm font-semibold text-text">Checklist del modelo</h2>
           {pm && <p className="text-sm text-text">{pm.model} · {pm.level}</p>}
+          {typeof pm?.dueAt === 'number' && <p className="text-sm text-text">Vencimiento oficial: {pm.dueAt.toLocaleString('es-PA')} h</p>}
           {pmError && <p role="alert" className="text-sm text-red-700">{pmError}</p>}
           {!pm && !pmError && <p className="text-sm text-text-secondary">Consultando checklist…</p>}
-          {pm && !pm.checklist && <p className="text-sm text-text-secondary">Checklist pendiente de validar para este modelo y nivel. La entrega permanece pendiente.</p>}
+          {pm && !pm.checklist && <p className="text-sm text-text-secondary">Valida el checklist antes de entregar.</p>}
           {pm?.checklist && <>
-            <p className="text-xs text-text-secondary">{pm.checklist.reference}</p>
+            <details className="text-xs text-text-secondary">
+              <summary className="min-h-11 cursor-pointer py-3 font-medium">Datos del checklist</summary>
+              <p>{pm.checklist.reference}</p>
+              {pm.serial && <p className="break-words">Serie {pm.serial}</p>}
+              <a href={PANAMA_PM_CHECKLIST_SOURCE} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center font-medium underline">Ver checklist oficial</a>
+            </details>
             <ul className="space-y-2 text-sm text-text">
               {pm.checklist.tasks.map((task) => (
                 <li key={task.id}>
@@ -385,22 +460,58 @@ export default function WorkOrderDetailPage() {
                       onChange={(event) => setCompletedItems((items) => event.target.checked ? [...items, task.id] : items.filter((id) => id !== task.id))} />
                     {task.label}
                   </label> : <>{task.label}{wo.execution?.completedItems?.includes(task.id) && ' · Realizada'}</>}
+                  {isSubmittingProof && task.evidence === 'photo' && <label className="mt-1 block text-xs text-text-secondary">
+                    Foto de evidencia · {task.label}
+                    <input type="file" accept="image/jpeg,image/png,image/webp" disabled={!!saving} className="mt-1 block w-full text-xs"
+                      onChange={event => {
+                        const file = event.target.files?.[0];
+                        pmUpload.current = null;
+                        setTaskPhotos(current => {
+                          const next = { ...current };
+                          if (file) return { ...next, [task.id]: file };
+                          delete next[task.id];
+                          return next;
+                        });
+                      }} />
+                  </label>}
+                  {!isSubmittingProof && wo.execution?.taskEvidence?.[task.id] && <a
+                    href={wo.execution.taskEvidence[task.id]} target="_blank" rel="noreferrer" className="ml-2 underline">
+                    Ver foto
+                  </a>}
                 </li>
               ))}
             </ul>
           </>}
-          <a href={PANAMA_PM_CHECKLIST_SOURCE} target="_blank" rel="noreferrer" className="text-sm font-medium text-text underline underline-offset-2">Consultar Flota Checklists PM</a>
+          {!pm?.checklist && <a href={PANAMA_PM_CHECKLIST_SOURCE} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center text-sm font-medium text-text underline underline-offset-2">Ver checklist oficial</a>}
         </section>
       )}
 
       {panamaWorkflow && wo.execution && (
         <section className="rounded-xl border border-border bg-white p-4 shadow-sm" aria-label="Prueba funcional entregada">
           <h2 className="text-sm font-semibold text-text">Prueba funcional de {wo.execution.userName}</h2>
+          {wo.execution.diagnosis && <p className="mt-1 break-words text-sm text-text"><strong>Causa confirmada:</strong> {wo.execution.diagnosis}</p>}
           <p className="mt-1 break-words text-sm text-text">{wo.execution.functionalTest}</p>
           {wo.execution.laborHours != null && <p className="mt-1 text-sm text-text-secondary">{wo.execution.laborHours} h de trabajo registradas</p>}
           {wo.execution.performedOn && <p className="mt-1 text-sm text-text-secondary">Ejecución {wo.execution.performedOn} · {wo.execution.meter} h</p>}
           {wo.technical && <p className="mt-1 text-sm text-text-secondary">Aceptación técnica de {wo.technical.userName}.</p>}
+          {isPM && wo.estado === 'Completado' && wo.technical && (
+            <div className="mt-3 border-t border-border pt-3" role="group" aria-label="Próximo servicio PM">
+              {pmState?.otId !== otId || pmState?.acceptedAt !== acceptedAt
+                ? <p className="text-sm text-text-secondary">Consultando próximo servicio…</p>
+                : pmError ? <p className="text-sm text-amber-800">No se pudo consultar el próximo servicio registrado.</p>
+                  : <PanamaPmNextService service={parsePanamaPmNextService(pm?.nextService)} />}
+            </div>
+          )}
         </section>
+      )}
+
+      {panamaWorkflow && <OrderComponentInterventions otId={wo.ot_id} version={wo.version}
+        mayRegister={wo.estado === 'Completado' && Boolean(role && CLOSE.includes(role) && actorId === wo.technical?.userId)}
+        onSave={fetchWorkOrders} />}
+
+      {panamaWorkflow && actorId && role && ['jefe_taller', 'coordinador', 'supervisor', 'gerencia'].includes(role) && (
+        <OrderWarranties otId={wo.ot_id} unit={wo.unidad} actorId={actorId} mayWrite={role !== 'supervisor'}
+          mayRecover={role === 'gerencia'} onSaved={fetchWorkOrders} />
       )}
 
       {panamaWorkflow && !isPM && <OperationalReturnCard key={wo.ot_id} order={wo}
@@ -431,12 +542,17 @@ export default function WorkOrderDetailPage() {
                   type="button"
                   disabled={editEstado === wo.estado || !!saving || (isSubmittingProof && !proofReady)}
                   onClick={() => handleSave('estado', editEstado)}
-                  className="px-4 py-2 bg-amber text-white rounded-xl text-sm font-medium disabled:opacity-40"
+                  className="min-h-11 px-4 py-2 bg-amber text-white rounded-xl text-sm font-medium disabled:opacity-40"
                 >
                   {saving === 'estado' ? '...' : 'Guardar'}
                 </button>
               </div>
               {isSubmittingProof && <>
+                {!isPM && <label className="flex flex-col gap-1 text-xs font-medium text-text-secondary">
+                  Causa confirmada (si se identificó)
+                  <textarea className="rounded-xl border border-border p-2.5 text-sm text-text" rows={2} maxLength={1500}
+                    value={diagnosis} onChange={(event) => setDiagnosis(event.target.value)} />
+                </label>}
                 <label className="flex flex-col gap-1 text-xs font-medium text-text-secondary">
                   Resultado de la prueba funcional
                   <textarea className="rounded-xl border border-border p-2.5 text-sm text-text" rows={2} maxLength={1500}

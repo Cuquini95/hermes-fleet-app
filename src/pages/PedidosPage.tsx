@@ -3,7 +3,7 @@
  * Parts-orders workflow page — one cohesive list+detail flow with shared inventory lookup state.
  */
 import { useCallback, useState, useEffect, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ShoppingCart,
   Plus,
@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { useCartStore, type CartItem } from '../stores/cart-store';
-import { PurchaseApiError, purchaseRequests, purchaseWrite, type PurchaseRequestLine } from '../lib/purchasing-api';
+import { canAwardRequest, PurchaseApiError, purchaseRequests, purchaseWrite, visibleWorkOrderFolio, type PurchaseRequestLine } from '../lib/purchasing-api';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { useCatalogoStore } from '../stores/catalogo-store';
 import { masterPurchaseState, readPanamaPurchaseMaster, type MasterPurchase, type PurchaseMaster } from '../lib/panama-purchase-master';
@@ -80,6 +80,7 @@ const cutFormatter = new Intl.DateTimeFormat('es-PA', {
 // ════════════════════════════════════════════════════════════════════════════
 export default function PedidosPage() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const role = useAuthStore((s) => s.role);
   const isPanama = useAuthStore((s) => s.project === 'tmf-panama');
   const identity = useAuthStore((s) => `${s.userId}|${s.project}|${s.role}`);
@@ -102,6 +103,7 @@ export default function PedidosPage() {
   const historialQuery = useRef<AbortController | null>(null);
   const [history, setHistory] = useState<OrderHistory>();
   const [submitError, setSubmitError] = useState('');
+  const [requestOt, setRequestOt] = useState(() => params.get('ot') ?? '');
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
 
   const scoped = history?.identity === identity ? history : undefined;
@@ -194,8 +196,12 @@ export default function PedidosPage() {
     setSubmitting(true);
     setSubmitError('');
     try {
-      const { folio } = await purchaseWrite<{ folio: string }>('request-submit', { items });
+      const ot = isPanama ? requestOt.trim().toUpperCase() : '';
+      const { folio } = await purchaseWrite<{ folio: string }>('request-submit', {
+        items: ot ? items.map(item => ({ ...item, ot })) : items,
+      });
       clearCart();
+      setRequestOt('');
       setSubmitted(folio);
     } catch (cause) {
       setSubmitError(cause instanceof Error ? cause.message : 'No se confirmó el envío. Reintenta con las mismas partidas.');
@@ -239,7 +245,10 @@ export default function PedidosPage() {
         <ShoppingCart size={24} color="#162252" />
         <h1 className="text-xl font-bold text-text">Pedidos de Refacciones</h1>
       </div>
-      {isPanama && isGerencia && <Link to="/admin/ordenes-compra" className="mb-4 inline-flex min-h-11 items-center rounded-lg border border-slate-400 bg-white px-4 text-sm font-semibold text-[#162252]">Órdenes de compra</Link>}
+      {isPanama && isGerencia && <div className="mb-4 flex flex-wrap gap-2">
+        <Link to="/panama/comparar-cotizaciones" className="inline-flex min-h-11 items-center rounded-lg bg-[#162252] px-4 text-sm font-semibold text-white">Comparar cotizaciones</Link>
+        <Link to="/admin/ordenes-compra" className="inline-flex min-h-11 items-center rounded-lg border border-slate-400 bg-white px-4 text-sm font-semibold text-[#162252]">Órdenes de compra</Link>
+      </div>}
       {canReceive && <Link to="/panama/recepciones" className="mb-4 inline-flex min-h-11 items-center rounded-lg border border-slate-400 bg-white px-4 text-sm font-semibold text-[#162252]">Recepciones de compras</Link>}
 
       {/* ── Tabs ── */}
@@ -405,6 +414,11 @@ export default function PedidosPage() {
                 </div>
               )}
 
+              {isPanama && <label className="mb-3 block text-sm font-semibold">
+                OT del pedido (opcional)
+                <input value={requestOt} onChange={event => setRequestOt(event.target.value)} maxLength={90}
+                  className="mt-1 w-full rounded-lg border border-border p-2" placeholder="OT-0100" />
+              </label>}
               <button
                 disabled={submitting}
                 onClick={handleSubmit}
@@ -450,7 +464,10 @@ export default function PedidosPage() {
           {loadingMaster && <p role="status" className="text-sm text-text-secondary">Consultando el Maestro de Compras…</p>}
           {loadingHistorial && hasRows && <p role="status" className="text-sm text-text-secondary">Consultando pedidos de Hermes…</p>}
           {master?.capturedAt && (
-            <p className="text-xs text-text-secondary">Corte del Maestro de Compras: {cutFormatter.format(new Date(master.capturedAt))} · hora de Panamá</p>
+            <details className="text-xs text-text-secondary">
+              <summary className="min-h-8 cursor-pointer py-2">Fuente y fecha</summary>
+              <p>Corte del Maestro de Compras: {cutFormatter.format(new Date(master.capturedAt))} · Panamá</p>
+            </details>
           )}
           {unknownMaster && (
             <p role="status" className="text-sm text-amber-900">Hay compras con estado sin verificar. Consúltalas en Historial.</p>
@@ -848,6 +865,9 @@ function PedidoRowCard({
   const urgCfg = (URGENCIA_CONFIG as Record<string, { color: string; bg: string }>)[row.urgencia] ?? URGENCIA_CONFIG.Normal;
   const sCfg = STATUS_STYLE[row.estado] ?? STATUS_STYLE.Pendiente ?? { color: '#000', bg: '#fff', border: '#ccc' };
   const nextStatus = STATUS_NEXT[row.estado] ?? null;
+  const publicOt = visibleWorkOrderFolio(row.ot ?? '');
+  const showAllocation = row.unallocatedQuantity !== undefined
+    && (!showOrigin || Number(row.allocatedQuantity) > 0 || Number(row.receivedQuantity) > 0 || row.allocationReview);
 
   async function handleAdvance() {
     if (!nextStatus || updateLock.current || row.ocFolio) return;
@@ -880,38 +900,64 @@ function PedidoRowCard({
         </span>
         <div className="flex flex-wrap justify-end gap-2">
           {showOrigin && <span className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-slate-700">Hermes</span>}
-          <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ color: urgCfg.color, backgroundColor: urgCfg.bg }}>
+          {(!showOrigin || row.urgencia !== 'Normal') && <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ color: urgCfg.color, backgroundColor: urgCfg.bg }}>
             {row.urgencia}
-          </span>
+          </span>}
         </div>
       </div>
 
       {/* Body */}
       <div className="p-4">
-        <div className="mb-2">
+        {showOrigin ? <div className="mb-2 space-y-1">
+          <p className="break-words font-semibold text-text">{row.descripcion}</p>
+          <p className="break-words text-sm text-text-secondary">
+            {[row.partNum, row.equipo, `Cantidad ${row.cantidad}`].filter(Boolean).join(' · ')}
+          </p>
+          <div className="flex flex-wrap items-center gap-x-3 text-sm">
+            {row.ot && <Link className="inline-flex min-h-11 items-center font-medium text-blue-800 underline"
+              to={'/workorders/' + encodeURIComponent(row.ot)}>{publicOt ?? 'Ver OT'}</Link>}
+            {row.requiredDate && <span>Fecha requerida {row.requiredDate}</span>}
+          </div>
+        </div> : <div className="mb-2">
           <p className="font-mono text-sm font-semibold text-amber">{row.partNum}</p>
           <p className="text-sm text-text font-medium">{row.descripcion}</p>
           <p className="text-xs text-text-secondary mt-0.5">
             {row.pedidoId} · {row.fecha} · {row.solicitante}
           </p>
-        </div>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-secondary mb-3">
+        </div>}
+        {!showOrigin && <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-secondary mb-3">
           {row.equipo && <span>📍 {row.equipo}</span>}
           <span>×{row.cantidad}</span>
           {row.total && <span className="font-semibold text-text">${row.total}</span>}
           {row.fuente && <span>{row.fuente}</span>}
-        </div>
-        {row.notas && <p className="text-xs text-text-secondary mb-3 italic">{row.notas}</p>}
+        </div>}
+        {!showOrigin && row.notas && <p className="text-xs text-text-secondary mb-3 italic">{row.notas}</p>}
 
         {updateError && <p role="alert" className="mb-2 text-xs text-red-700">{updateError}</p>}
-        {row.ocFolio && (isGerencia ? (
+        {!showOrigin && row.ot && <p className="text-sm font-medium">OT {row.ot}</p>}
+        {row.allocationReview && <p role="alert" className="text-sm text-amber-800">Saldo por conciliar con las órdenes vinculadas.</p>}
+        {showAllocation && <p className="py-2 text-sm text-text">
+          Asignado {row.allocatedQuantity} · Recibido {row.receivedQuantity} · Saldo por asignar {row.unallocatedQuantity}
+        </p>}
+        {row.allocations?.map(award => <div key={award.folio} className="my-1 rounded-lg border border-border p-2 text-sm">
+          {isGerencia
+            ? <Link className="font-semibold text-blue-800 underline" to={`/admin/ordenes-compra/${encodeURIComponent(award.number || award.folio)}`}>Ver OC {award.number || award.folio}</Link>
+            : <p className="font-medium">OC {award.number || award.folio}</p>}
+          <p>{award.vendor} · {award.status}</p>
+          <p>Asignado {award.quantity} · Recibido {award.received}</p>
+        </div>)}
+        {row.ocFolio && !row.allocations?.length && (isGerencia ? (
           <Link className="block py-2 text-sm font-semibold text-blue-800" to={`/admin/ordenes-compra/${encodeURIComponent(row.ocNumber || row.ocFolio)}`}>
             Ver OC {row.ocNumber || row.ocFolio}
           </Link>
         ) : <p className="py-2 text-sm text-text-secondary">OC {row.ocNumber || row.ocFolio}</p>)}
-        {isGerencia && nextStatus && !row.ocFolio && (
+        {showOrigin && isGerencia && canAwardRequest(row) && (
+          <Link className="mb-2 flex min-h-11 items-center justify-center rounded-lg border border-slate-400 px-3 py-2 text-center text-sm font-semibold text-[#162252]"
+            to={`/panama/comparar-cotizaciones?partida=${encodeURIComponent(row.id)}`}>Comparar cotizaciones</Link>
+        )}
+        {isGerencia && canAwardRequest(row) && (
           <Link className="block rounded-lg bg-slate-900 px-3 py-2 mb-2 text-center text-sm font-semibold text-white" to={`/admin/ordenes-compra?partida=${encodeURIComponent(row.id)}`}>
-            Convertir a OC
+            {row.allocations?.length ? 'Crear OC por el saldo' : 'Convertir a OC'}
           </Link>
         )}
         {isGerencia && nextStatus && !row.ocFolio && (
@@ -944,6 +990,15 @@ function PedidoRowCard({
             Pedido completado
           </div>
         )}
+        {showOrigin && <details className="mt-2 space-y-1 break-words text-xs text-text-secondary">
+          <summary className="min-h-9 cursor-pointer py-2 font-semibold">Detalles del pedido</summary>
+          <p>{[row.pedidoId, row.fecha, row.solicitante].filter(Boolean).join(' · ')}</p>
+          {row.ot && !publicOt && <p>Referencia OT {row.ot}</p>}
+          {row.equipmentSerial && <p>Serie {row.equipmentSerial}</p>}
+          {row.fuente && <p>{row.fuente}</p>}
+          {row.total && Number(row.total) > 0 && <p>Monto ${row.total}</p>}
+          {row.notas && <p>{row.notas}</p>}
+        </details>}
       </div>
     </div>
   );
@@ -958,10 +1013,13 @@ function MasterPurchaseCard({ row }: { row: MasterPurchase }) {
       </div>
       <div className="space-y-1 break-words p-4 text-sm text-text">
         {row.description && <p className="font-medium">{row.description}</p>}
-        <p className="text-xs text-text-secondary">{row.unit} · Folio {row.id}</p>
-        {row.amount && <p className="text-xs">Monto: {row.amount}{row.currency && ` ${row.currency}`}</p>}
-        {row.order && <p className="text-xs">OC vinculada: {row.order}</p>}
-        {row.check && <p className="text-xs text-text-secondary">{row.check}</p>}
+        <p className="text-xs text-text-secondary">{row.unit}{row.order && ` · ${row.order}`}</p>
+        {row.amount && <p className="text-xs">Monto {row.amount}{row.currency && ` ${row.currency}`}</p>}
+        <details className="text-xs text-text-secondary">
+          <summary className="min-h-8 cursor-pointer py-2">Detalles</summary>
+          <p>Folio {row.id}</p>
+          {row.check && <p>{row.check}</p>}
+        </details>
       </div>
     </article>
   );

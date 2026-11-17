@@ -1,10 +1,11 @@
 import { identityConfig, identityRequest } from './hermes-identity.js';
 import { canonicalTab, HermesSheetError } from './hermes-google-sheets.js';
-import { PANAMA_PROJECT, readPanamaConsultationInventory, readPanamaWorkshopMasters } from './hermes-panama.js';
+import { PANAMA_PROJECT, readPanamaConsultationInventory, readPanamaReportFleet, readPanamaWorkshopMasters } from './hermes-panama.js';
 
 const tables = '/rest/v1/hermes_panama_operational_tables';
 const receipts = '/rest/v1/hermes_panama_commit_receipts';
 const transaction = '/rest/v1/rpc/hermes_panama_commit';
+const signedPurchaseTransaction = '/rest/v1/rpc/hermes_panama_commit_signed_purchase';
 const unavailable = () => new HermesSheetError(503, 'El registro operativo de Panamá no está disponible.');
 
 function database(path, options) {
@@ -18,7 +19,16 @@ export function readPurchaseNumber(row) {
   return /^[1-9][0-9]{3,14}$/.test(number) ? number : undefined;
 }
 
-export function createPanamaOperationalStore({ request = database, readInventory = readPanamaConsultationInventory } = {}) {
+export function isPurchaseSignature(png) {
+  if (typeof png !== 'string' || png.length < 44 || png.length > 44_000) return false;
+  const bytes = Buffer.from(png, 'base64');
+  return bytes.toString('base64') === png && bytes.subarray(0, 8).toString('hex') === '89504e470d0a1a0a'
+    && bytes.subarray(-8, -4).toString('ascii') === 'IEND';
+}
+
+export function createPanamaOperationalStore({
+  request = database, readInventory = readPanamaConsultationInventory, readReportFleet = readPanamaReportFleet,
+} = {}) {
   async function read(tab) {
     const name = canonicalTab(tab);
     if (name === '01 Inventario') return readInventory();
@@ -50,12 +60,19 @@ export function createPanamaOperationalStore({ request = database, readInventory
       if (!response.ok) return undefined;
       const [attachment] = await response.json();
       const png = attachment?.png_base64;
-      if (typeof png !== 'string' || png.length < 44 || png.length > 44_000) return undefined;
-      const bytes = Buffer.from(png, 'base64');
-      if (bytes.toString('base64') === png && bytes.subarray(0, 8).toString('hex') === '89504e470d0a1a0a'
-          && bytes.subarray(-8, -4).toString('ascii') === 'IEND') return png;
+      if (isPurchaseSignature(png)) return png;
     } catch { /* The recorded approval can still be printed. */ }
     return undefined;
+  }
+
+  async function registeredPurchaseSignatureSource(approvedById) {
+    const response = await request('/rest/v1/hermes_panama_purchase_signature_profiles', {
+      query: { approver_id: 'eq.' + approvedById, select: 'source_folio,source_approved_at', limit: '1' },
+    });
+    if (!response.ok) throw unavailable();
+    const [profile] = await response.json();
+    if (!profile) return undefined;
+    return { folio: profile.source_folio, approvedById, approvedAt: profile.source_approved_at };
   }
 
   async function withPurchaseNumber(result, includePurchaseNumber) {
@@ -76,14 +93,15 @@ export function createPanamaOperationalStore({ request = database, readInventory
     return withPurchaseNumber(receipt.result, includePurchaseNumber);
   }
 
-  async function commit({ key, fingerprint, guard, guards = [], writes, result, includePurchaseNumber }) {
+  async function commit({ key, fingerprint, guard, guards = [], writes, result, includePurchaseNumber, purchaseSignature }) {
     try {
-      const response = await request(transaction, {
+      const response = await request(purchaseSignature ? signedPurchaseTransaction : transaction, {
         method: 'POST',
         body: {
           operation_key: key, operation_fingerprint: fingerprint,
           guards: [...new Set([guard, ...guards].filter(Boolean))],
           changes: writes.map(change => ({ ...change, tab: canonicalTab(change.tab) })), outcome: result,
+          ...(purchaseSignature && { purchase_signature: purchaseSignature }),
         },
       });
       if (response.ok) {
@@ -108,7 +126,8 @@ export function createPanamaOperationalStore({ request = database, readInventory
     }
   }
 
-  return { read, readMany, replay, commit, readPurchaseSignature, readWorkshopMasters: readPanamaWorkshopMasters, nativeOperations: true };
+  return { read, readMany, replay, commit, readPurchaseSignature, registeredPurchaseSignatureSource,
+    readReportFleet, readWorkshopMasters: readPanamaWorkshopMasters, nativeOperations: true };
 }
 
 export const panamaOperationalStore = createPanamaOperationalStore();

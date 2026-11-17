@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
 import type { Equipment } from '../types/equipment';
 import { mexicoDate } from '../lib/date-utils';
@@ -6,10 +6,12 @@ import { buildAvailabilityTrend, type AvailabilityPoint } from '../lib/availabil
 import { parseAveriaRow } from '../lib/averias';
 import { useEquipmentStore } from '../stores/equipment-store';
 import type { WorkshopSummary } from './useFleetDispatch';
+import { reconcileDieselDispatches } from '../lib/panama-fuel-reconciliation';
 
 export interface DashboardData {
   criticalOTs: number | null;
   avgConsumption: string;
+  fuelReconciliation: ReturnType<typeof reconcileDieselDispatches> | null;
   alertsToday: number | null;
   availabilityTrend: AvailabilityPoint[];
   loading: boolean;
@@ -32,8 +34,7 @@ async function fetchCriticalOTs(signal?: AbortSignal, offset?: number): Promise<
   return count;
 }
 
-async function fetchAvgConsumption(signal?: AbortSignal, offset?: number): Promise<string> {
-  const rows = await readRange(SHEET_TABS.COMBUSTIBLE, signal, undefined, offset);
+function averagePerDispatch(rows: string[][]): string {
   let total = 0;
   let count = 0;
   for (const row of rows) {
@@ -56,6 +57,7 @@ function countAlertsToday(rows: string[][]): number {
 export function useDashboardData(equipmentList: Equipment[], useWorkshopMaster = false, workshop?: WorkshopSummary): DashboardData {
   const [criticalOTs, setCriticalOTs] = useState<number | null>(null);
   const [avgConsumption, setAvgConsumption] = useState('—');
+  const [fuelRows, setFuelRows] = useState<string[][] | null>(null);
   const [averiaRows, setAveriaRows] = useState<string[][] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -79,19 +81,23 @@ export function useDashboardData(equipmentList: Equipment[], useWorkshopMaster =
   const availabilityTrend = hasAvailability ? buildAvailabilityTrend(equipmentList, scopedRows) : [];
   const alertsToday = useWorkshopMaster ? workshop?.alertsToday ?? null
     : averiaRows === null ? null : countAlertsToday(averiaRows);
+  const fuelReconciliation = useMemo(() => useWorkshopMaster && fuelRows && !equipmentError
+    ? reconcileDieselDispatches(fuelRows, equipmentList.map(unit => unit.unit_id)) : null,
+  [useWorkshopMaster, fuelRows, equipmentList, equipmentError]);
 
   const fetchAll = useCallback(async (signal: AbortSignal, refresh = false) => {
     const offset = refresh ? 0 : undefined;
     const results = await Promise.allSettled([
       useWorkshopMaster ? Promise.resolve(null) : fetchCriticalOTs(signal, offset),
-      fetchAvgConsumption(signal, offset),
+      readRange(SHEET_TABS.COMBUSTIBLE, signal, undefined, offset),
       useWorkshopMaster ? Promise.resolve(null) : readRange(SHEET_TABS.AVERIAS, signal, undefined, offset),
     ]);
     if (signal.aborted) return;
 
     const [orders, fuel, breakdowns] = results;
     setCriticalOTs(orders.status === 'fulfilled' ? orders.value : null);
-    setAvgConsumption(fuel.status === 'fulfilled' ? fuel.value : '—');
+    setAvgConsumption(fuel.status === 'fulfilled' ? averagePerDispatch(fuel.value) : '—');
+    setFuelRows(fuel.status === 'fulfilled' ? fuel.value : null);
     setAveriaRows(breakdowns.status === 'fulfilled' ? breakdowns.value : null);
     setError(results.some((result) => result.status === 'rejected') ? 'Algunos indicadores no se pudieron cargar.' : null);
     setLoading(false);
@@ -122,6 +128,7 @@ export function useDashboardData(equipmentList: Equipment[], useWorkshopMaster =
   return {
     criticalOTs: useWorkshopMaster ? workshop?.criticalOTs ?? null : criticalOTs,
     avgConsumption,
+    fuelReconciliation,
     alertsToday,
     availabilityTrend,
     loading,

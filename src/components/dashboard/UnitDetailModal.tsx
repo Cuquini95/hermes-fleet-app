@@ -6,13 +6,16 @@
 
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { Link } from 'react-router-dom'
 import { X, AlertCircle, FileText, Clock, User as UserIcon, Wrench } from 'lucide-react'
 import { readRange, SHEET_TABS } from '../../lib/sheets-api'
 import StatusDot from '../ui/StatusDot'
 import type { Equipment } from '../../types/equipment'
-import type { OperatingStatus } from '../../hooks/useFleetDispatch'
+import type { OperatingStatus, WorkshopRecord, WorkshopSummary } from '../../hooks/useFleetDispatch'
 import { firstPhotoUrl, isOpenAveria, parseAveriaRow, type AveriaEntry } from '../../lib/averias'
-import { applyDispatchReadiness, type UnitDispatchReadiness } from '../../lib/dispatch-readiness'
+import { applyDispatchReadiness, normalizeUnitId, type UnitDispatchReadiness } from '../../lib/dispatch-readiness'
+import { useAuthStore } from '../../stores/auth-store'
+import PanamaUnitOperations from './PanamaUnitOperations'
 
 interface UnitDetailModalProps {
   unit: Equipment
@@ -20,6 +23,8 @@ interface UnitDetailModalProps {
   verified?: boolean
   operatingOnly?: boolean
   operatingStatus?: OperatingStatus
+  workshop?: WorkshopSummary
+  workshopRestriction?: UnitDispatchReadiness
   onClose: () => void
 }
 
@@ -38,9 +43,18 @@ const SEV_BADGE: Record<string, string> = {
   BAJA: 'bg-yellow-100 text-yellow-700 border-yellow-200',
 }
 
-export default function UnitDetailModal({ unit, dispatchReadiness, verified = true, operatingOnly = false, operatingStatus, onClose }: UnitDetailModalProps) {
+const panamaCut = new Intl.DateTimeFormat('es-PA', {
+  timeZone: 'America/Panama', dateStyle: 'medium', timeStyle: 'short',
+})
+
+export default function UnitDetailModal({ unit, dispatchReadiness, verified = true, operatingOnly = false, operatingStatus, workshop, workshopRestriction, onClose }: UnitDetailModalProps) {
+  const isPanama = useAuthStore(state => state.project === 'tmf-panama')
+  const role = useAuthStore(state => state.role)
+  const userId = useAuthStore(state => state.userId)
+  const canSeeOperations = isPanama && ['jefe_taller', 'coordinador', 'supervisor', 'gerencia'].includes(role ?? '')
   const [averias, setAverias] = useState<AveriaEntry[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const refreshedFailures = workshop?.failures
 
   useEffect(() => {
     let cancelled = false
@@ -51,7 +65,10 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
           .filter((r) => (r[2] ?? '').trim().toUpperCase() === unit.unit_id.toUpperCase())
           .map(parseAveriaRow)
           .filter((a): a is AveriaEntry => a !== null)
-        if (!cancelled) setAverias(matches)
+        if (!cancelled) {
+          setError(null)
+          setAverias(matches)
+        }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err))
       }
@@ -59,10 +76,21 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
     return () => {
       cancelled = true
     }
-  }, [unit.unit_id])
+  }, [unit.unit_id, refreshedFailures])
 
   const open = averias?.filter(isOpenAveria) ?? []
   const closed = averias?.filter((a) => !isOpenAveria(a)) ?? []
+  const unitId = normalizeUnitId(unit.unit_id)
+  const workshopFailures = workshop?.failures.records.filter(record => normalizeUnitId(record.unit) === unitId) ?? []
+  const workshopOrders = workshop?.orders.records.filter(record => normalizeUnitId(record.unit) === unitId) ?? []
+  const linkedFailures = new Map((averias ?? []).filter(row => row.ot_id.trim())
+    .map(row => [row.ot_id.trim().toUpperCase(), row]))
+  const reconciledLinks = new Set(workshopFailures.flatMap(row => [row.id, row.order ?? '']).filter(Boolean))
+  const unlinkedReport = (row: AveriaEntry) => !reconciledLinks.has(row.ot_id.trim().toUpperCase())
+  const localOpen = open.filter(unlinkedReport)
+  const localClosed = closed.filter(unlinkedReport)
+  const workshopIncomplete = (operatingOnly || !!workshop) && (!workshop || !workshop.failures.masterAvailable || !workshop.orders.masterAvailable
+    || !workshop.failures.operationalAvailable || !workshop.orders.operationalAvailable)
   const status = applyDispatchReadiness(unit, dispatchReadiness).status
   const effectiveStatus = !verified && open.length > 0 && status !== 'inactivo'
     ? 'taller'
@@ -123,9 +151,21 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
 
         {/* Body */}
         <div className="p-5">
+          {isPanama && <Link to={`/falla?unit=${encodeURIComponent(unit.unit_id)}`}
+            className="mb-4 inline-flex min-h-11 items-center rounded-lg border border-gray-200 px-3 text-sm font-semibold text-gray-900">
+            Reportar falla
+          </Link>}
           {error && (
             <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 mb-4">
-              No se pudo cargar la información de averías: {error}
+              {isPanama ? (
+                <>
+                  <p>No se pudieron cargar las averías. Vuelve a abrir el equipo para reintentar.</p>
+                  <details className="mt-1 break-words text-xs">
+                    <summary className="cursor-pointer">Detalle del error</summary>
+                    <p>{error}</p>
+                  </details>
+                </>
+              ) : <>No se pudo cargar la información de averías: {error}</>}
             </div>
           )}
 
@@ -149,7 +189,24 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
             <p className="text-sm text-gray-500">Cargando reporte de averías…</p>
           )}
 
-          {!error && averias !== null && open.length === 0 && closed.length === 0 && (
+          {workshopRestriction && workshopRestriction.level !== 'ok' && (
+            <div className={`mb-4 rounded-lg border px-4 py-3 text-sm ${workshopRestriction.level === 'blocked'
+              ? 'border-red-200 bg-red-50 text-red-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+              <p className="font-semibold">Restricción registrada</p>
+              <p>{workshopRestriction.reason}</p>
+            </div>
+          )}
+          {canSeeOperations && <PanamaUnitOperations key={JSON.stringify([userId, role, unitId])}
+            unit={unit.unit_id.trim().toUpperCase()} showFinancials={role === 'gerencia'} />}
+          {workshopIncomplete && (
+            <p className="mb-4 text-sm text-amber-800">{isPanama ? 'Historial de Taller incompleto.' : 'Historial de Taller incompleto. Parte de la información no está disponible.'}</p>
+          )}
+          <WorkshopHistory label="Averías en Taller" records={workshopFailures.filter(row => row.id || !averias?.length)}
+            cut={workshop?.failures.capturedAt} linkedFailures={linkedFailures} />
+          <WorkshopHistory label="Órdenes de trabajo" records={workshopOrders} cut={workshop?.orders.capturedAt} />
+
+          {!error && averias !== null && open.length === 0 && closed.length === 0
+            && !workshopIncomplete && !workshopFailures.length && !workshopOrders.length && (
             <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 text-sm text-gray-600 flex items-start gap-2">
               <AlertCircle size={16} className="flex-shrink-0 mt-0.5 text-gray-400" />
               <div>
@@ -158,35 +215,37 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
                   : 'Sin reporte de avería registrado'}</p>
                 {!operatingOnly && unit.status !== 'operativo' && dispatchReadiness?.source !== 'averia' && (
                   <p className="text-xs text-gray-500 mt-1">
-                    El estado en "01 Inventario" indica{' '}
-                    <strong>{(STATUS_LABEL[unit.status] ?? unit.status).toLowerCase()}</strong> pero
-                    no hay un registro asociado en la pestaña <code>Averías</code>.
+                    {isPanama ? <>Inventario · <strong>{STATUS_LABEL[unit.status] ?? unit.status}</strong></> : <>
+                      El estado en "01 Inventario" indica{' '}
+                      <strong>{(STATUS_LABEL[unit.status] ?? unit.status).toLowerCase()}</strong> pero
+                      no hay un registro asociado en la pestaña <code>Averías</code>.
+                    </>}
                   </p>
                 )}
               </div>
             </div>
           )}
 
-          {open.length > 0 && (
+          {localOpen.length > 0 && (
             <>
               <h3 className="text-xs font-semibold uppercase tracking-wide text-red-700 mb-2">
-                Averías abiertas ({open.length})
+                Averías abiertas ({localOpen.length})
               </h3>
               <div className="space-y-3 mb-4">
-                {open.map((a, i) => (
+                {localOpen.map((a, i) => (
                   <AveriaCard key={`open-${i}`} averia={a} />
                 ))}
               </div>
             </>
           )}
 
-          {closed.length > 0 && (
+          {localClosed.length > 0 && (
             <>
               <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
                 Histórico ({closed.length})
               </h3>
               <div className="space-y-3">
-                {closed.slice(0, 5).map((a, i) => (
+                {localClosed.slice(0, 5).map((a, i) => (
                   <AveriaCard key={`closed-${i}`} averia={a} muted />
                 ))}
               </div>
@@ -199,12 +258,49 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
   )
 }
 
+function WorkshopHistory({ label, records, cut, linkedFailures }: {
+  label: string
+  records: WorkshopRecord[]
+  cut?: string | null
+  linkedFailures?: ReadonlyMap<string, AveriaEntry>
+}) {
+  if (!records.length) return null
+  return (
+    <section aria-label={label} className="mb-4">
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-600">{label}</h3>
+      {cut && Number.isFinite(Date.parse(cut)) && <details className="mb-2 text-xs text-gray-600">
+        <summary className="cursor-pointer">Corte del Maestro</summary>
+        <p><time dateTime={cut}>{panamaCut.format(new Date(cut))}</time> · Panamá</p>
+      </details>}
+      <ul className="space-y-2">
+        {records.map((record, index) => {
+          const detail = linkedFailures?.get(record.order || record.id)
+          return (
+          <li key={`${record.source}-${record.id}-${index}`} className="rounded-lg border border-gray-200 px-3 py-2 text-sm break-words">
+            {record.id && <p className="font-semibold text-gray-900">{record.id}</p>}
+            <p className="text-gray-600">{record.source === 'master' ? 'Maestro de Taller' : 'Hermes'} · {record.status || 'Estado sin verificar'}</p>
+            {record.date && <p className="text-gray-600">{record.date}</p>}
+            {record.order && record.order !== record.id && <p className="text-gray-600">OT vinculada: {record.order}</p>}
+            {record.description && <p className="text-gray-700">{record.description}</p>}
+            {record.needsReview && <p className="text-amber-800">
+              Por conciliar{record.operationalStatus !== undefined ? ` · Hermes: ${record.operationalStatus || 'Estado sin verificar'}` : ''}
+            </p>}
+            {detail && <div className="mt-2"><AveriaCard averia={detail} muted hideStatus /></div>}
+          </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
+}
+
 interface AveriaCardProps {
   averia: AveriaEntry
   muted?: boolean
+  hideStatus?: boolean
 }
 
-function AveriaCard({ averia, muted }: AveriaCardProps) {
+function AveriaCard({ averia, muted, hideStatus }: AveriaCardProps) {
   const sevClass =
     SEV_BADGE[averia.severidad] ?? 'bg-gray-100 text-gray-600 border-gray-200'
   const photoUrl = firstPhotoUrl(averia.foto_url)
@@ -305,7 +401,7 @@ function AveriaCard({ averia, muted }: AveriaCardProps) {
             <Clock size={11} /> {averia.tiempo_paro}
           </span>
         )}
-        {averia.estado && (
+        {!hideStatus && averia.estado && (
           <span className={`inline-flex items-center gap-1 font-medium ${isOpenAveria(averia) ? 'text-red-700' : 'text-gray-500'}`}>
             <FileText size={11} /> {averia.estado}
           </span>

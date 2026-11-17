@@ -42,7 +42,24 @@ function readiness(sheets, session = manager) {
   return dispatchWorkshop({ path: 'api/workshop/readiness', method: 'GET', session, sheets, now });
 }
 
-test('shows confirmed operating units separately from dispatch restrictions and keeps documented stops', async () => {
+test('Mis reportes devuelve el folio y el estado de Taller del autor y unidad autorizados', async () => {
+  const session = { ...manager, role: 'operador', allUnits: false, assignedUnits: ['QA01'] };
+  const failures = [
+    Object.assign(fault('QA01', 'OT-INTERNA-A', 'Abierta', '1/11/2026'), { 6: 'Nombre anterior', 15: session.userId }),
+    Object.assign(fault('QA01', 'OT-INTERNA-B', 'Abierta', '1/11/2026'), { 6: session.userName, 15: 'otro-id' }),
+    Object.assign(fault('QA02', 'OT-INTERNA-C', 'Abierta', '1/11/2026'), { 6: session.userName, 15: session.userId }),
+    Object.assign(fault('QA01', 'OT-SIN-ORDEN', 'Abierta', '1/11/2026'), { 6: session.userName, 15: session.userId }),
+  ];
+  const orders = [Object.assign(order('QA01', 'OT-INTERNA-A', 'En Reparación'), { 19: session.userId, 25: 'OT-0120' })];
+  const result = await dispatchWorkshop({ path: 'api/workshop/myfaults', method: 'GET', session, sheets: sheetsWith({ failures, orders }) });
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body.reports.map(row => [row.fecha, row.unidad, row.otId, row.workshopStatus]), [
+    ['01/11/2026', 'QA01', 'OT-0120', 'En reparación'],
+    ['01/11/2026', 'QA01', 'OT-SIN-ORDEN', undefined],
+  ]);
+});
+
+test('an enforced Sticker restriction overrides an operating confirmation while a non-stopping report does not', async () => {
   const store = sheetsWith({
     masters: {
       failures: section([{ id: 'CASE-1', unit: 'QA02', status: 'Detenido reportado', last: date }]),
@@ -52,7 +69,8 @@ test('shows confirmed operating units separately from dispatch restrictions and 
   const read = store.read;
   store.nativeOperations = true;
   store.read = async tab => {
-    if (tab === 'HERMES_PA_CONFIRMACION_OPERATIVA') return [['UNIDAD'], ['QA01', 'operativo'], ['QA02', 'operativo']];
+    if (tab === 'HERMES_PA_CONFIRMACION_OPERATIVA') return [['UNIDAD'], ['QA01', 'operativo'], ['QA02', 'operativo'], ['QA03', 'operativo']];
+    if (tab === 'Averias') return [fault('QA03', 'OT-0120', 'Abierta')];
     if (tab === 'Inspeccion_Stickers') {
       const red = Array(18).fill('');
       red[5] = 'QA01';
@@ -63,7 +81,8 @@ test('shows confirmed operating units separately from dispatch restrictions and 
   };
 
   const { body } = await readiness(store);
-  assert.deepEqual(body.operatingStatuses, [['QA01', 'operativo'], ['QA02', 'inoperativo']]);
+  assert.deepEqual(body.operatingStatuses, [['QA01', 'inoperativo'], ['QA02', 'inoperativo'], ['QA03', 'operativo']]);
+  assert.equal(body.operatingCheckedAt, now.toISOString());
   assert.equal(body.stickers[0][12], 'Rojo');
   assert.deepEqual(body.inspections, []);
   const limited = { ...manager, allUnits: false, assignedUnits: ['QA02'] };
@@ -118,6 +137,18 @@ test('una avería y una OT con estados equivalentes no generan discrepancia', as
   assert.equal(body.workshop.failures.records.length, 1);
   assert.equal(body.workshop.failures.records[0].operationalStatus, undefined);
   assert.equal(body.workshop.criticalOTs, 0);
+});
+
+test('distingue los folios críticos confirmados de las órdenes abiertas sin prioridad', async () => {
+  const { body } = await readiness(sheetsWith({
+    masters: { failures: section([]), orders: section([
+      { id: 'OT-0001', unit: 'DZ203', status: 'Abierta' },
+    ], capturedAt) },
+    orders: [order('DZ204', 'OT-0100', 'Abierta'), order('DZ205', 'OT-0101', 'Completado')],
+  }));
+  assert.equal(body.workshop.criticalOTs, null);
+  assert.deepEqual(body.workshop.criticalOrders.map(row => row.id), ['OT-0100']);
+  assert.deepEqual(body.workshop.ordersWithoutPriority.map(row => row.id), ['OT-0001']);
 });
 
 test('un corte faltante deja los indicadores sin verificar y conserva la fuente que sí respondió', async () => {
@@ -182,6 +213,38 @@ test('el lector conserva el corte privado si la lectura del Maestro falla o pier
   assert.equal(review.orders.records[0].priority, undefined);
 });
 
+test('la consulta de Taller prioriza el corte y la verificación operativa prioriza la hoja', async () => {
+  const failures = [['CASO', 'EQUIPO', 'FALLA REPORTADA', 'ESTADO', 'ÚLTIMO REPORTE', 'OT VINCULADA'],
+    ['TMF-42', 'DZ203', 'Revisar', 'DETENIDO REPORTADO', '14-nov-2026 07:32', '']];
+  const orders = [['Nº OT', 'EQUIPO', 'FALLA / TRABAJO A REALIZAR', 'ESTADO', 'CONTROL INTEGRIDAD OT'],
+    ['OT-0042', 'DZ203', 'Revisar', 'Abierta', 'Pendiente']];
+  const reads = [];
+  const options = {
+    allowSnapshot: true,
+    readLive: async ({ key }) => { reads.push('live'); return key === 'failures' ? failures : orders; },
+    readCut: async ({ key }) => { reads.push('cut'); return { captured_at: capturedAt, rows: key === 'failures' ? failures : orders }; },
+  };
+  const display = await panamaMaster.readPanamaWorkshopMasters({ ...options, preferPublished: true });
+  assert.deepEqual(reads, ['cut', 'cut']);
+  assert.equal(display.failures.capturedAt, capturedAt);
+  reads.length = 0;
+  const operational = await panamaMaster.readPanamaWorkshopMasters(options);
+  assert.deepEqual(reads, ['live', 'live']);
+  assert.equal(operational.failures.capturedAt, null);
+
+  const store = sheetsWith({ masters: display });
+  const preferences = [];
+  store.readWorkshopMasters = async ({ preferPublished = false } = {}) => {
+    preferences.push(preferPublished);
+    return preferPublished ? display : operational;
+  };
+  const { body } = await readiness(store);
+  assert.equal(body.workshop.failures.capturedAt, capturedAt);
+  await readiness(store, { ...manager, role: 'operador' });
+  assert.equal((await verifyUnitsReadiness(store, new Set(['DZ203']))).get('DZ203')?.level, 'blocked');
+  assert.deepEqual(preferences, [true, false, false]);
+});
+
 test('un detenido oficial bloquea esa unidad y un estado por verificar no se cuenta como detenido', async () => {
   const store = sheetsWith({
     masters: {
@@ -204,6 +267,27 @@ test('un folio asignado a equipos diferentes exige conciliación en ambos, inclu
   });
   assert.equal((await verifyUnitsReadiness(store, new Set(['DZ203']))).get('DZ203')?.label, 'Por conciliar');
   assert.equal((await verifyUnitsReadiness(store, new Set(['EX401']))).get('EX401')?.label, 'Por conciliar');
+  const { body } = await readiness(store);
+  assert.equal(body.workshop.orders.records.find(row => row.unit === 'EX401')?.operationalStatus, undefined);
+});
+
+test('un libro operativo caído no convierte cero críticas conocidas en cero verificadas', async () => {
+  const { body } = await readiness(sheetsWith({
+    masters: { failures: section([]), orders: section([{ id: 'OT-0042', unit: 'DZ203', status: 'Cerrada' }], capturedAt) },
+    unavailable: ['ORDENES_TRABAJO'],
+  }));
+  assert.equal(body.workshop.criticalOTs, null);
+});
+
+test('prioridades distintas en la misma orden requieren conciliación antes de contar', async () => {
+  const { body } = await readiness(sheetsWith({
+    masters: { failures: section([]), orders: section([
+      { id: 'OT-0042', unit: 'DZ203', status: 'Abierta', priority: 'Alta' },
+    ], capturedAt) },
+    orders: [order('DZ203', 'OT-0042', 'Abierta')],
+  }));
+  assert.equal(body.workshop.criticalOTs, null);
+  assert.deepEqual(body.workshop.ordersWithoutPriority.map(row => row.id), ['OT-0042']);
 });
 
 test('una prioridad de Hermes no reemplaza la prioridad ausente de una OT oficial', async () => {

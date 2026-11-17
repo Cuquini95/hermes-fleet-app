@@ -1,16 +1,19 @@
 import { createHash } from 'node:crypto';
 import { isSameOriginAuthRequest, requireSession } from './_lib/session-auth.js';
 import { canonicalTab, createHermesSheets } from './_lib/hermes-google-sheets.js';
-import { dispatchEvidence } from './_lib/hermes-evidence.js';
+import { checkEvidenceAvailability, dispatchEvidence } from './_lib/hermes-evidence.js';
 import { panamaOperationalStore } from './_lib/hermes-operational-store.js';
 import { rejectIfRateLimited } from './_lib/rate-limit.js';
 import meterHandler from './_lib/cmms-meter.js';
-import { dispatchPanama, PANAMA_PROJECT, readOfficialPanamaShifts } from './_lib/hermes-panama.js';
+import { dispatchPanama, PANAMA_PROJECT, readOfficialPanamaShifts, readOfficialPanamaShiftBilling, readPanamaForPmScheduling } from './_lib/hermes-panama.js';
 import { createPanamaDemoSheets } from './_lib/hermes-panama-demo.js';
 import { technicalDocuments } from './_lib/hermes-technical-library.js';
-import { validatePanamaMeterAppend } from './_lib/hermes-shifts.js';
+import { dispatchPanamaMeter, METER_TAB, validatePanamaMeterAppend } from './_lib/hermes-panama-meter.js';
+import { readPanamaTelematicsCut } from './_lib/hermes-panama-telematics.js';
 import { readPersonalHistory } from './_lib/hermes-profile.js';
 import { visiblePanamaParts } from './_lib/hermes-part-prices.js';
+import { COMPONENT_INTERVENTION } from './_lib/hermes-panama-components.js';
+import { dispatchPanamaTires, isTireEventRow, prepareLegacyTireInspection, TIRE_TAB } from './_lib/hermes-panama-tires.js';
 
 const ADMIN = ['jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
 const WORKSHOP = ['mecanico', ...ADMIN];
@@ -58,24 +61,38 @@ const APPEND = new Map([
 ]);
 
 const PANAMA_OPERATION_GROUPS = new Map([
-  ['taller', ['api/workshop/report', 'api/workshop/transition', 'api/workshop/returns']],
+  ['taller', ['api/workshop/report', 'api/workshop/transition', 'api/workshop/returns', 'api/workshop/componentinterventions', 'api/workshop/warranties']],
   ['inspecciones', ['api/workshop/dvir', 'api/workshop/sticker', 'api/workshop/stickerreview']],
-  ['pm', ['api/workshop/pm', 'api/workshop/schedule']],
+  ['pm', ['api/workshop/pm', 'api/workshop/schedule', 'api/workshop/pmbatchcheck', 'api/workshop/pmbatch']],
   ['turnos', ['api/panama/turnos/entregar', 'api/panama/turnos/revisar']],
   ['despacho', ['api/panama/turnos/despacho']],
   ['compras', ['api/purchasing/request-submit', 'api/purchasing/request-status', 'api/purchasing/order-save',
-    'api/purchasing/order-status', 'api/purchasing/order-delete']],
-  ['recepcion', ['api/purchasing/order-receive', 'api/purchasing/inventory-move']],
-  ['finanzas', ['api/purchasing/order-invoice', 'api/purchasing/order-payment']],
-  ['gastos', ['api/purchasing/expense-save', 'api/purchasing/expense-delete', 'api/purchasing/expense-review']],
-  ['horometro', ['api/sheets/append:04B Registro Horómetros']],
+    'api/purchasing/order-status', 'api/purchasing/order-sign', 'api/purchasing/order-delete']],
+  ['recepcion', ['api/purchasing/order-receive', 'api/purchasing/order-dispatch', 'api/purchasing/inventory-move', 'api/purchasing/inventory-reservation']],
+  ['finanzas', ['api/purchasing/order-invoice', 'api/purchasing/order-payment', 'api/purchasing/ap-invoice', 'api/purchasing/ap-payment']],
+  ['gastos', ['api/purchasing/expense-save', 'api/purchasing/expense-delete', 'api/purchasing/expense-review',
+    'api/purchasing/expense-adjustment-propose', 'api/purchasing/expense-adjustment-review']],
+  ['horometro', [`api/sheets/append:${METER_TAB}`, 'api/panama/horometros']],
   ['combustible', ['api/sheets/append:Combustible']],
   ['fletes', ['api/sheets/append:Reporte_Fletes_Transporte']],
-  ['llantas', ['api/sheets/append:13 Neumáticos']],
+  ['llantas', ['api/sheets/append:13 Neumáticos', 'api/workshop/tires']],
   ['proveedores', ['api/sheets/append:Proveedores']],
   ['activos', ['api/sheets/append:Activos']],
 ]);
 const operationGroup = new Map([...PANAMA_OPERATION_GROUPS].flatMap(([group, routes]) => routes.map(route => [route, group])));
+const relatedPause = new Map([
+  ['api/workshop/tires', `api/sheets/append:${TIRE_TAB}`],
+  ['api/workshop/componentinterventions', 'api/workshop/transition'],
+  ['api/workshop/warranties', 'api/workshop/transition'],
+  ['api/workshop/pmbatch', 'api/workshop/pm'], ['api/workshop/pmbatchcheck', 'api/workshop/pm'],
+  ['api/purchasing/ap-invoice', 'api/purchasing/order-invoice'],
+  ['api/purchasing/ap-payment', 'api/purchasing/order-payment'],
+  ['api/purchasing/order-sign', 'api/purchasing/order-status'],
+  ['api/purchasing/inventory-reservation', 'api/purchasing/inventory-move'],
+  ['api/purchasing/order-dispatch', 'api/purchasing/order-receive'],
+  ['api/purchasing/expense-adjustment-propose', 'api/purchasing/expense-save'],
+  ['api/purchasing/expense-adjustment-review', 'api/purchasing/expense-review'],
+]);
 const liveGroups = 'taller,inspecciones,pm,turnos,compras,recepcion,finanzas,gastos,horometro,combustible,fletes,llantas,proveedores,activos';
 
 function enabledPanamaGroups(value) {
@@ -96,6 +113,14 @@ const unitCode = value => String(value ?? '').trim().toUpperCase();
 const supportsUnit = (session, unit) => session.allUnits === true || (Boolean(unitCode(unit)) && session.assignedUnits?.some(value => unitCode(value) === unitCode(unit)) === true);
 const invalid = (res, status, error) => res.status(status).json({ error });
 const knownPath = value => (Array.isArray(value) ? value.join('/') : String(value ?? '')).replace(/^\/+|\/+$/g, '');
+
+function healthProbe(operation) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('Health check timed out')), 4000);
+  });
+  return Promise.race([Promise.resolve().then(operation), deadline]).finally(() => clearTimeout(timer));
+}
 
 const workshop = context => import('./_lib/hermes-workshop.js').then(module => module.dispatchWorkshop(context));
 const purchasing = context => import('./_lib/hermes-purchasing.js').then(module => module.dispatchPurchasing(context));
@@ -132,7 +157,9 @@ async function sheetRead(req, res, sheets, session) {
     return invalid(res, 400, 'Paginación inválida.');
   }
   const rows = await visibleRows(sheets, tab, rule, session);
-  return res.status(200).json({ data: rows.slice(offset, offset + limit) });
+  const data = rows.slice(offset, offset + limit);
+  if (tab === TIRE_TAB && session.project === PANAMA_PROJECT) return res.status(200).json({ data: data.map(row => isTireEventRow(row) ? [] : row.slice(0, 26)) });
+  return res.status(200).json({ data: tab === 'OT_STATUS_LOG' ? data.map(row => row[2] === COMPONENT_INTERVENTION ? [] : row) : data });
 }
 
 async function sheetAppend(req, res, sheets, session) {
@@ -152,7 +179,8 @@ async function sheetAppend(req, res, sheets, session) {
       return invalid(res, 400, 'La unidad no figura en el inventario TMF.');
     }
   }
-  const row = values.slice();
+  const row = session.project === PANAMA_PROJECT && tab === METER_TAB ? values.slice(0, 10)
+    : session.project === PANAMA_PROJECT && tab === TIRE_TAB ? values.slice(0, 26) : values.slice();
   if (rule.actor !== undefined) row[rule.actor] = session.userName;
   if (session.project === PANAMA_PROJECT && rule.actorId !== undefined) {
     while (row.length < rule.actorId) row.push('');
@@ -161,13 +189,20 @@ async function sheetAppend(req, res, sheets, session) {
   const fingerprint = createHash('sha256').update(JSON.stringify([tab, row])).digest('hex');
   const key = `append:${session.userId}:${fingerprint}`;
   let guard;
-  if (session.project === PANAMA_PROJECT && tab === '04B Registro Horómetros') {
+  if (session.project === PANAMA_PROJECT && tab === METER_TAB) {
     const previous = await sheets.replay({ key, fingerprint });
     if (previous) return res.status(200).json(previous);
-    const version = await validatePanamaMeterAppend(sheets, tab, row);
-    guard = `panama:meter:${String(row[2]).trim().toUpperCase()}:${version}`;
+    guard = await validatePanamaMeterAppend(sheets, row);
   }
-  await sheets.commit({ key, fingerprint, guard, writes: [{ tab, append: [row] }], result: { success: true } });
+  let append = row;
+  if (session.project === PANAMA_PROJECT && tab === TIRE_TAB) {
+    const previous = await sheets.replay({ key, fingerprint });
+    if (previous) return res.status(200).json(previous);
+    const inspection = prepareLegacyTireInspection(await sheets.read(TIRE_TAB, { requireExisting: true }), row);
+    append = inspection.row;
+    guard = inspection.guard;
+  }
+  await sheets.commit({ key, fingerprint, guard, writes: [{ tab, append: [append] }], result: { success: true } });
   return res.status(200).json({ success: true });
 }
 
@@ -204,6 +239,11 @@ export function createHermesGateway({
   dispatchPurchasing = purchasing,
   readPanama,
   readOfficialShifts,
+  readShiftBilling,
+  readTelematicsCut = readPanamaTelematicsCut,
+  panamaTelematicsConfig = () => process.env.HERMES_PANAMA_TELEMATICS_SOURCES_JSON,
+  meterClock,
+  probeEvidence = checkEvidenceAvailability,
   panamaTechnicalCatalog = () => process.env.HERMES_PANAMA_TECHNICAL_CATALOG_JSON,
   panamaOnly = false,
   enablePanamaOperations = false,
@@ -231,7 +271,7 @@ export function createHermesGateway({
         && (!permittedGroups || permittedGroups.has('despacho'));
       if (path === 'api/evidence') {
         return await dispatchEvidence({ req, res, session, sheets,
-          canUpload: domainPath => enablePanamaOperations && writeEnabled && !pausedOperations.has(domainPath)
+          canUpload: domainPath => enablePanamaOperations && writeEnabled && !pausedOperations.has(domainPath) && !pausedOperations.has(relatedPause.get(domainPath))
             && (!permittedGroups || permittedGroups.has(operationGroup.get(domainPath))) });
       }
       if (path === 'api/panama/capacidades') {
@@ -244,11 +284,25 @@ export function createHermesGateway({
       if (path === 'api/panama/documentos-tecnicos') {
         if (session.project !== PANAMA_PROJECT || !WORKSHOP.includes(session.role)) return invalid(res, 403, 'Consulta no autorizada.');
         if (req.method !== 'GET') return invalid(res, 405, 'Método no permitido.');
-        const result = technicalDocuments(panamaTechnicalCatalog(), req.query);
+        let asset;
+        if (req.query?.unit !== undefined) {
+          if (typeof req.query.unit !== 'string' || !/^[A-Z0-9][A-Z0-9 -]{0,39}$/i.test(req.query.unit.trim())) {
+            return invalid(res, 400, 'Unidad inválida.');
+          }
+          const unit = unitCode(req.query.unit);
+          if (!supportsUnit(session, unit)) return invalid(res, 403, 'Consulta no autorizada.');
+          const inventory = await sheets.read('01 Inventario', { cached: true });
+          const matches = inventory.filter(row => unitCode(row[1]) === unit);
+          if (matches.length !== 1 || !matches[0][4]?.trim()) return invalid(res, 404, 'No se pudo confirmar el modelo de esta unidad.');
+          asset = { model: matches[0][4], serial: matches[0][6] };
+        }
+        const result = technicalDocuments(panamaTechnicalCatalog(), req.query, asset);
         return res.status(result.status).json(result.body);
       }
       const shiftRoute = path === 'api/panama/turnos' || path.startsWith('api/panama/turnos/');
-      if ((path.startsWith('api/panama/') && !shiftRoute) || (session.project === PANAMA_PROJECT && !enablePanamaOperations)) {
+      const meterRoute = path === 'api/panama/horometros';
+      if ((path.startsWith('api/panama/') && !shiftRoute && !meterRoute)
+        || (session.project === PANAMA_PROJECT && !enablePanamaOperations && path !== 'health')) {
         const result = await dispatchPanama({ path, method: req.method, query: req.query, session, read: demo ? demoSheets.readSummary : readPanama });
         return res.status(result.status).json(result.body);
       }
@@ -258,21 +312,30 @@ export function createHermesGateway({
           await sheets.read('01 Inventario', { cached: true });
           return res.status(200).json({ status: 'ok', writeEnabled });
         }
-        const [fleet, operations] = await Promise.allSettled([
-          sheets.read('01 Inventario', { cached: true }),
-          sheets.read('ORDENES_TRABAJO', { cached: true, requireExisting: true }),
+        const [fleet, operations, masters, evidence] = await Promise.allSettled([
+          healthProbe(() => sheets.read('01 Inventario', { cached: true })),
+          healthProbe(() => sheets.read('ORDENES_TRABAJO', { cached: true, requireExisting: true })),
+          healthProbe(() => sheets.readWorkshopMasters?.({ preferPublished: true })),
+          healthProbe(() => !demo && sheets.nativeOperations ? probeEvidence() : undefined),
         ]);
         const checks = {
           identity: 'up',
           fleet: fleet.status === 'fulfilled' ? 'up' : 'down',
           operations: operations.status === 'fulfilled' ? 'up' : 'down',
         };
+        if (sheets.readWorkshopMasters) {
+          checks.masters = masters.status === 'fulfilled' && !!masters.value?.failures && !!masters.value?.orders ? 'up' : 'down';
+        }
+        if (!demo && sheets.nativeOperations) {
+          checks.evidence = evidence.status === 'fulfilled' && evidence.value === true ? 'up' : 'down';
+        }
+        const canWrite = enablePanamaOperations && writeEnabled && checks.operations === 'up';
         return res.status(200).json({
-          status: checks.fleet === 'up' && checks.operations === 'up' ? 'ok' : 'degraded',
+          status: Object.values(checks).every(check => check === 'up') ? 'ok' : 'degraded',
           checks,
-          writeEnabled: writeEnabled && checks.operations === 'up',
+          writeEnabled: canWrite,
           dataMode: demo ? 'demo' : 'operational',
-          ...(permittedGroups && { operationGroups: writeEnabled && checks.operations === 'up' ? [...permittedGroups] : [] }),
+          ...(permittedGroups && { operationGroups: canWrite ? [...permittedGroups] : [] }),
           deployment: {
             project: 'hermes-panama',
             environment: process.env.VERCEL_ENV ?? 'local',
@@ -291,7 +354,9 @@ export function createHermesGateway({
         return res.status(200).json(history);
       }
       if (path === 'api/sheets/read') return await sheetRead(req, res, sheets, session);
-      if (req.method !== 'GET' && pausedOperations.has(path)) return invalid(res, 503, 'Operación en pausa. Usa el procedimiento vigente de tu área.');
+      if (req.method !== 'GET' && (pausedOperations.has(path) || pausedOperations.has(relatedPause.get(path)))) {
+        return invalid(res, 503, 'Operación en pausa. Usa el procedimiento vigente de tu área.');
+      }
 
       const route = PROXY.get(path) ?? (/^diagrams\/file\/[A-Za-z0-9_-]+\.pdf$/i.test(path) ? { method: 'GET', roles: WORKSHOP } : undefined);
       if (route) {
@@ -315,10 +380,17 @@ export function createHermesGateway({
           return invalid(res, 503, 'Este flujo está en consulta. Usa el procedimiento vigente de tu área.');
         }
       }
+      if (meterRoute) {
+        const result = await dispatchPanamaMeter({ method: req.method, query: req.query, body: req.body, session, sheets,
+          readOfficialShifts: demo ? undefined : readOfficialShifts,
+          readTelematicsCut: demo ? undefined : readTelematicsCut, telematicsConfig: demo ? undefined : panamaTelematicsConfig, meterClock,
+          mayWrite: writeEnabled && !pausedOperations.has(path) && (!permittedGroups || permittedGroups.has('horometro')) });
+        return res.status(result.status).json(result.body);
+      }
       if (shiftRoute) {
-        const result = await shifts({ path, method: req.method, body: req.body ?? {}, session, sheets,
+        const result = await shifts({ path, method: req.method, body: req.body ?? {}, query: req.query, session, sheets,
           listShiftOperators: dispatchCapture ? listShiftOperators : undefined,
-          readOfficialShifts: demo ? undefined : readOfficialShifts });
+          readOfficialShifts: demo ? undefined : readOfficialShifts, readShiftBilling: demo ? undefined : readShiftBilling });
         if (path === 'api/panama/turnos/despacho' && req.method === 'GET') {
           return res.status(result.status).json({ ...result.body, captureAvailable: dispatchCapture });
         }
@@ -336,9 +408,16 @@ export function createHermesGateway({
         return await meterHandler(req, res);
       }
 
+      if (path === 'api/workshop/tires') {
+        const result = await dispatchPanamaTires({ method: req.method, query: req.query, body: req.body, session, sheets });
+        return res.status(result.status).json(result.body);
+      }
       const dispatch = path.startsWith('api/workshop/') ? dispatchWorkshop : path.startsWith('api/purchasing/') ? dispatchPurchasing : null;
       if (!dispatch) return invalid(res, 404, 'Ruta no disponible.');
-      const result = await dispatch({ path, method: req.method, body: req.body ?? {}, query: req.query ?? {}, session, sheets, listMechanics });
+      const batchPm = ['api/workshop/pmbatch', 'api/workshop/pmbatchcheck'].includes(path);
+      const readPmSources = async () => (await dispatchPanama({ path: 'api/panama/maintenance', method: 'GET', session, preferPublished: false,
+        read: demo ? demoSheets.readSummary : readPanama ?? (batchPm ? readPanamaForPmScheduling : undefined) })).body;
+      const result = await dispatch({ path, method: req.method, body: req.body ?? {}, query: req.query ?? {}, session, sheets, listMechanics, readPmSources });
       return res.status(result.status).json(result.body);
     } catch (error) {
       const status = error?.status;
@@ -359,6 +438,7 @@ export default createHermesGateway({
   panamaOnly: true,
   enablePanamaOperations: true,
   readOfficialShifts: readOfficialPanamaShifts,
+  readShiftBilling: readOfficialPanamaShiftBilling,
   panamaWriteGroups: productionGroups,
   enablePanamaFuelCapture: process.env.HERMES_PANAMA_FUEL_CAPTURE !== 'false',
   writeEnabled: live && !readOnly,
