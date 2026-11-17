@@ -6,7 +6,7 @@ import PanamaInterventionComparison from './PanamaInterventionComparison';
 
 const labels = { labor: 'Mano de obra', parts: 'Repuestos', returns: 'Devoluciones', services: 'Servicios externos' };
 type CostKind = keyof typeof labels;
-interface OrderCosts {
+export interface OrderCosts {
   ot: string;
   folio: string;
   unit: string;

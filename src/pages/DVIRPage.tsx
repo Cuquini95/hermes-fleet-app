@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { DVIRCheck, CheckStatus } from '../types/dvir';
 import { DVIR_SYSTEMS } from '../data/dvir-systems';
 import { useEquipmentList } from '../hooks/useEquipmentList';
+import { usePanamaCaptureUnit } from '../hooks/usePanamaCaptureUnit';
 import { mexicoDateInput, mexicoTimeInput } from '../lib/date-utils';
 import { saveWorkshopCapture } from '../lib/offline-queue';
 import { WorkshopApiError } from '../lib/workshop-api';
@@ -51,7 +52,7 @@ export default function DVIRPage() {
   const [saved, setSaved] = useState(false);
   const [fecha, setFecha] = useState(mexicoDateInput());
   const [hora, setHora] = useState(mexicoTimeInput());
-  const [unit_id, setUnitId] = useState('');
+  const [unit_id, setUnitId] = usePanamaCaptureUnit(units);
   const [type, setType] = useState<'pre-operacion' | 'post-operacion'>('pre-operacion');
   const [horometro, setHorometro] = useState('');
   const [checks, setChecks] = useState<CheckState[]>(buildInitialChecks);

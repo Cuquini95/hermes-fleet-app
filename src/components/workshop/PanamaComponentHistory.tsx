@@ -1,32 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { hermesApiUrl } from '../../lib/hermes-api-base';
+import { fetchPanamaComponents, type ComponentHistory, type ComponentRow } from '../../lib/panama-components';
 import { useAuthStore } from '../../stores/auth-store';
 import { requestWorkshop } from '../../lib/workshop-api';
 import { ComponentInterventionList, type ComponentInterventionHistory } from './ComponentInterventions';
-
-interface ComponentRow {
-  part: string;
-  position: string;
-  source: string;
-  status: string;
-  date?: string;
-  meter?: string;
-  reason?: string;
-  target?: string;
-  currentMeter?: string;
-  remaining?: string;
-  installedMeter?: string;
-  elapsed?: string;
-  calculation?: { status: 'verified' | 'reproduced' | 'mismatch'; elapsed: number; remaining: number }
-    | { status: 'regressed' | 'incomplete' };
-}
-interface ComponentHistory {
-  unit: string;
-  changes: ComponentRow[];
-  life: ComponentRow[];
-  unavailable: string[];
-  snapshots?: Record<string, string>;
-}
 
 const formatHours = (value: number) => value.toLocaleString('es-PA', { maximumFractionDigits: 3 });
 
@@ -77,11 +53,7 @@ export default function PanamaComponentHistory() {
   useEffect(() => {
     if (!request || !userId) return;
     const controller = new AbortController();
-    fetch(hermesApiUrl('/api/panama/componentes?' + new URLSearchParams({ unit: request.unit })), {
-      signal: controller.signal, cache: 'no-store', credentials: 'same-origin',
-    }).then(async res => {
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Consulta no disponible');
+    fetchPanamaComponents(request.unit, controller.signal).then(data => {
       if (!controller.signal.aborted) setRecord(data);
     }).catch((e: unknown) => {
       if (!controller.signal.aborted) setError(e instanceof Error ? e.message : 'Consulta no disponible');

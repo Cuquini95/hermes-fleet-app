@@ -14,6 +14,11 @@ import { requestWorkshop, workshopActorId, WorkshopApiError } from './workshop-a
 
 const DB_NAME = 'hermes-offline';
 const STORE_NAME = 'pending-submissions';
+export const WORKSHOP_CAPTURE_CHANGED = 'hermes:workshop-capture-changed';
+
+function notifyWorkshopCapture() {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(WORKSHOP_CAPTURE_CHANGED));
+}
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -61,6 +66,7 @@ export interface WorkshopCapture {
 
 interface QueuedWorkshopCapture extends WorkshopCapture {
   actorId: string;
+  project?: string;
   receipt?: unknown;
 }
 
@@ -74,7 +80,10 @@ async function putWorkshopCapture(capture: QueuedWorkshopCapture, id?: number): 
   if (id !== undefined) record.id = id;
   const request = tx.objectStore(STORE_NAME).put(record);
   return new Promise<number>((resolve, reject) => {
-    tx.oncomplete = () => resolve(Number(request.result));
+    tx.oncomplete = () => {
+      resolve(Number(request.result));
+      if (id === undefined || capture.receipt) notifyWorkshopCapture();
+    };
     tx.onabort = tx.onerror = () => reject(tx.error);
   }).finally(() => db.close());
 }
@@ -85,6 +94,7 @@ async function replayWorkshopCapture(capture: QueuedWorkshopCapture, id: number)
   if (active) return active;
   const task = (async () => {
     if (workshopActorId() !== capture.actorId) throw new Error('Abre la sesión que creó el registro pendiente.');
+    if (capture.project && useAuthStore.getState().project !== capture.project) throw new Error('Abre el proyecto que creó el registro pendiente.');
     const panama = useAuthStore.getState().project === 'tmf-panama';
     const uploaded = (photo: QueuedWorkshopCapture['photos'][number]) => panama ? isPrivateEvidenceUrl(photo.url) : Boolean(photo.url);
     for (const [index, photo] of capture.photos.entries()) {
@@ -115,11 +125,13 @@ async function replayWorkshopCapture(capture: QueuedWorkshopCapture, id: number)
 export async function saveWorkshopCapture<T>(input: WorkshopCapture): Promise<{ kind: 'saved'; result: T } | { kind: 'pending'; reason: string }> {
   const actorId = workshopActorId();
   if (!actorId) throw new Error('Abre una sesión individual para guardar el registro.');
+  const project = useAuthStore.getState().project;
   const pending = (await getPendingSubmissions()).find((entry) => {
     const capture = entry.data.capture as QueuedWorkshopCapture | undefined;
-    return entry.type === 'workshop_capture' && capture?.actorId === actorId && capture.mutationId === input.mutationId;
+    return entry.type === 'workshop_capture' && capture?.actorId === actorId && (!capture.project || capture.project === project)
+      && capture.mutationId === input.mutationId;
   });
-  const capture = pending ? pending.data.capture as QueuedWorkshopCapture : { ...input, actorId };
+  const capture = pending ? pending.data.capture as QueuedWorkshopCapture : { ...input, actorId, project };
   if (capture.receipt) return { kind: 'saved', result: capture.receipt as T };
   const id = pending?.id ?? await putWorkshopCapture(capture);
   if (!navigator.onLine) return { kind: 'pending', reason: 'Sin conexión. El registro quedó pendiente en este dispositivo.' };
@@ -128,6 +140,7 @@ export async function saveWorkshopCapture<T>(input: WorkshopCapture): Promise<{ 
   } catch (error) {
     if (error instanceof WorkshopApiError && [400, 413, 415].includes(error.status)) {
       await clearSubmission(id);
+      notifyWorkshopCapture();
       throw error;
     }
     return { kind: 'pending', reason: error instanceof Error ? error.message : 'El servidor no confirmó el guardado.' };
@@ -139,10 +152,22 @@ export async function getPendingSubmissions(): Promise<PendingSubmission[]> {
   const db = await openDB();
   const tx = db.transaction(STORE_NAME, 'readonly');
   const request = tx.objectStore(STORE_NAME).getAll();
-  return new Promise((resolve, reject) => {
+  return new Promise<PendingSubmission[]>((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
-  });
+  }).finally(() => db.close());
+}
+
+export async function pendingPanamaFaultReports(actorId: string) {
+  const records = await getPendingSubmissions();
+  if (workshopActorId() !== actorId || useAuthStore.getState().project !== 'tmf-panama') return [];
+  return records.flatMap(entry => {
+    if (entry.type !== 'workshop_capture' || entry.ownerId !== actorId) return [];
+    const capture = entry.data.capture as QueuedWorkshopCapture | undefined;
+    if (!capture || capture.endpoint !== 'report' || capture.actorId !== actorId || capture.receipt
+      || (capture.project && capture.project !== 'tmf-panama')) return [];
+    return [{ id: capture.mutationId, unit: String(capture.input.unit ?? ''), type: String(capture.input.type ?? ''), timestamp: entry.timestamp }];
+  }).reverse();
 }
 
 /** Remove a successfully-replayed submission from IndexedDB by its auto-increment id. */

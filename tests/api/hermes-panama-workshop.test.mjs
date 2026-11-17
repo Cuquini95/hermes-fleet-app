@@ -42,6 +42,23 @@ function readiness(sheets, session = manager) {
   return dispatchWorkshop({ path: 'api/workshop/readiness', method: 'GET', session, sheets, now });
 }
 
+test('Mis reportes devuelve el folio y el estado de Taller del autor y unidad autorizados', async () => {
+  const session = { ...manager, role: 'operador', allUnits: false, assignedUnits: ['QA01'] };
+  const failures = [
+    Object.assign(fault('QA01', 'OT-INTERNA-A', 'Abierta', '1/11/2026'), { 6: 'Nombre anterior', 15: session.userId }),
+    Object.assign(fault('QA01', 'OT-INTERNA-B', 'Abierta', '1/11/2026'), { 6: session.userName, 15: 'otro-id' }),
+    Object.assign(fault('QA02', 'OT-INTERNA-C', 'Abierta', '1/11/2026'), { 6: session.userName, 15: session.userId }),
+    Object.assign(fault('QA01', 'OT-SIN-ORDEN', 'Abierta', '1/11/2026'), { 6: session.userName, 15: session.userId }),
+  ];
+  const orders = [Object.assign(order('QA01', 'OT-INTERNA-A', 'En Reparación'), { 19: session.userId, 25: 'OT-0120' })];
+  const result = await dispatchWorkshop({ path: 'api/workshop/myfaults', method: 'GET', session, sheets: sheetsWith({ failures, orders }) });
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body.reports.map(row => [row.fecha, row.unidad, row.otId, row.workshopStatus]), [
+    ['01/11/2026', 'QA01', 'OT-0120', 'En reparación'],
+    ['01/11/2026', 'QA01', 'OT-SIN-ORDEN', undefined],
+  ]);
+});
+
 test('an enforced Sticker restriction overrides an operating confirmation while a non-stopping report does not', async () => {
   const store = sheetsWith({
     masters: {

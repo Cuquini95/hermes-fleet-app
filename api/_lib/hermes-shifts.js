@@ -34,11 +34,16 @@ function quantity(value, label, decimalPlaces) {
   return number;
 }
 
-function shiftFields(body) {
-  const date = text(body.date, 'Fecha', 10);
+function shiftDate(value) {
+  const date = text(value, 'Fecha', 10);
   const asDate = new Date(`${date}T00:00:00Z`);
   requireValue(/^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(asDate.valueOf()) && asDate.toISOString().slice(0, 10) === date,
     400, 'Fecha del turno inválida.');
+  return date;
+}
+
+function shiftFields(body) {
+  const date = shiftDate(body.date);
   const unit = text(body.unit, 'Unidad', 40).toUpperCase();
   const shift = text(body.shift, 'Turno', 32).replace(/\s+/g, ' ');
   return { unit, date, shift };
@@ -121,13 +126,14 @@ function assignmentReadiness(inventory, readiness) {
   return { level: readiness?.level ?? 'ok', reason: readiness?.reason ?? 'Sin restricción activa registrada.' };
 }
 
-async function dispatchAssignment({ method, body, session, sheets, listShiftOperators }) {
+async function dispatchAssignment({ method, body, query, session, sheets, listShiftOperators }) {
   const operatorsFor = async unit => listShiftOperators(session, unit);
   if (method === 'GET') {
+    const date = query?.date === undefined ? null : shiftDate(query.date);
     const [rows, operators] = await Promise.all([
       sheets.read(PANAMA_DISPATCH_TAB, { cached: true }), ASSIGN.has(session.role) ? operatorsFor() : [],
     ]);
-    const assignments = dispatchRecords(rows).filter(item => hasIdentityUnit(session, item.unit)
+    const assignments = dispatchRecords(rows).filter(item => (!date || item.date === date) && hasIdentityUnit(session, item.unit)
       && (session.role !== 'operador' || item.operator.id === session.userId));
     return { status: 200, body: { assignments: await assignmentsWithReadiness(sheets, assignments.reverse()), operators } };
   }
@@ -234,7 +240,7 @@ function reconcileAccepted(records, official) {
 
 export async function dispatchShifts({ path, method, body, query, session, sheets, listShiftOperators = async () => [], readOfficialShifts, readShiftBilling }) {
   requireValue(session.project === PANAMA_PROJECT && READ.has(session.role), 403, 'Relevo reservado a los roles autorizados de TMF Panamá.');
-  if (path === 'api/panama/turnos/despacho') return dispatchAssignment({ method, body, session, sheets, listShiftOperators });
+  if (path === 'api/panama/turnos/despacho') return dispatchAssignment({ method, body, query, session, sheets, listShiftOperators });
   if (path === 'api/panama/turnos/valorizacion') {
     requireValue(session.role === 'gerencia', 403, 'Valorización y facturas reservadas a Gerencia.');
     requireValue(method === 'GET', 405, 'Método no permitido.');

@@ -1358,11 +1358,46 @@ const MUTATIONS = {
   returns: [operationalReturn, OPERATIONS, false], componentinterventions: [registerComponentIntervention, CLOSE, false],
 };
 
+async function ownFaultReports({ session, sheets }) {
+  const [failures, orders] = await (sheets.readMany?.([TAB.failures, TAB.orders]) ?? Promise.all([
+    sheets.read(TAB.failures, { requireExisting: true }), sheets.read(TAB.orders, { requireExisting: true }),
+  ]));
+  const byOrder = new Map();
+  const addReference = (key, row) => byOrder.set(key, byOrder.has(key) && byOrder.get(key) !== row ? null : row);
+  for (const order of orders) {
+    if (!scopeAllows(session, order[3]?.trim().toUpperCase()) || !/^OT-/i.test(order[1] ?? '') || (order[19] && order[19] !== session.userId)) continue;
+    addReference(String(order[1]).toUpperCase(), order);
+    if (/^OT-\d{4,15}$/.test(order[25] ?? '')) addReference(order[25], order);
+  }
+  return failures.flatMap((row, index) => {
+    const unit = row[2]?.trim().toUpperCase();
+    const day = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(row[0] ?? '');
+    if (!day || !unit || !scopeAllows(session, unit)
+      || (row[15] ? row[15] !== session.userId : row[6] !== session.userName)) return [];
+    const reference = (row[13] ?? '').trim();
+    const match = byOrder.get(reference.toUpperCase());
+    const order = match && match[3]?.trim().toUpperCase() === unit ? match : undefined;
+    const state = order?.[9];
+    const workshopStatus = ['Abierta', 'En Espera de Asignación'].includes(state) ? 'Recibido por Taller'
+      : state === 'En Reparación' ? 'En reparación' : state;
+    const folio = /^OT-\d{4,15}$/.test(order?.[25] ?? '') ? order[25] : reference;
+    return [{
+      id: `averia-${index}`, fecha: `${day[1].padStart(2, '0')}/${day[2].padStart(2, '0')}/${day[3]}`,
+      hora: row[1], unidad: unit, tipoFalla: row[3], prioridad: row[5],
+      otId: folio, workshopStatus,
+    }];
+  });
+}
+
 export async function dispatchWorkshop(input) {
   const { path, method, session, body, sheets } = input;
   const endpoint = path?.match(/^api\/workshop\/([a-z]+)$/)?.[1];
   try {
     assert(session?.userId && session.userName && ROLES.has(session.role), 401, 'Sesión inválida');
+    if (method === 'GET' && endpoint === 'myfaults') {
+      assert(isPanama(input), 404, 'Consulta reservada a TMF Panamá');
+      return { status: 200, body: { reports: await ownFaultReports(input) } };
+    }
     if (method === 'GET' && endpoint === 'reportunits') {
       try {
         const { units, capturedAt } = await reportFleet(input);

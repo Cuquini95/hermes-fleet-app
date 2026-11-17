@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Clock, RefreshCw } from 'lucide-react';
 import { useEquipmentList } from '../hooks/useEquipmentList';
+import { usePanamaCaptureUnit } from '../hooks/usePanamaCaptureUnit';
 import { getNextPM } from '../data/pm-rules';
 import { mexicoDate, mexicoTime } from '../lib/date-utils';
 import { appendRow, handoffMeterReadings, SheetAppendError, SHEET_TABS, syncExistingHorometros } from '../lib/sheets-api';
@@ -31,7 +32,7 @@ export default function HorometroPage() {
   }, [isOnline]);
 
   const [turno, setTurno] = useState<TurnoType>('inicio');
-  const [unidad, setUnidad] = useState('');
+  const [unidad, setUnidad] = usePanamaCaptureUnit(equipment);
   const [horometro, setHorometro] = useState('');
   const [showConfirm, setShowConfirm] = useState(false);
   const [toastMessage, setToastMessage] = useState('');

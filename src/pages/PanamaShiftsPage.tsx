@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import PanamaShiftBilling from '../components/dashboard/PanamaShiftBilling';
 import { useEquipmentList } from '../hooks/useEquipmentList';
 import { mexicoDateInput } from '../lib/date-utils';
 import { downloadBlob } from '../lib/download-blob';
 import { shiftHandoffCsv } from '../lib/finance-handoff';
+import { requestPanamaDispatch, ShiftRequestError, type DispatchAssignment, type DispatchFields, type DispatchOperator } from '../lib/panama-dispatch';
 import { useAuthStore } from '../stores/auth-store';
 
 type ShiftFields = Record<'unit' | 'date' | 'shift' | 'initialHours' | 'finalHours' | 'equipmentStatus' | 'support' | 'trips' | 'tonnes' | 'stops' | 'client', string>;
@@ -20,10 +21,6 @@ type ShiftPart = Omit<ShiftFields, 'initialHours' | 'finalHours' | 'trips' | 'to
   history: { action: ShiftAction; actor: Actor; at: string; comment: string }[];
 };
 type Mutation = { endpoint: 'entregar' | 'revisar'; data: Record<string, unknown> };
-type DispatchFields = Record<'unit' | 'date' | 'shift' | 'site' | 'operatorId', string>;
-type DispatchOperator = { userId: string; userName: string; allUnits: boolean; assignedUnits: string[] };
-type DispatchAssignment = { id: string; unit: string; date: string; shift: string; site: string; operator: Actor; assignedBy: Actor; assignedAt: string;
-  readiness: { level: 'ok' | 'restricted' | 'blocked'; reason: string } };
 
 const inputClass = 'w-full rounded-lg border border-slate-400 bg-white px-3 py-2 text-base font-normal';
 const labelClass = 'flex min-w-0 flex-col gap-1 text-sm font-semibold';
@@ -81,15 +78,6 @@ function emptyFields(): ShiftFields {
     support: '', trips: '', tonnes: '', stops: '', client: '' };
 }
 
-class ShiftRequestError extends Error {
-  readonly status: number;
-
-  constructor(message: string, status: number) {
-    super(message);
-    this.status = status;
-  }
-}
-
 async function requestShifts<T>(mutation?: Mutation, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`/hermes-api/api/panama/turnos${mutation ? '/' + mutation.endpoint : ''}`, {
     method: mutation ? 'POST' : 'GET', cache: 'no-store', credentials: 'same-origin',
@@ -103,27 +91,12 @@ async function requestShifts<T>(mutation?: Mutation, signal?: AbortSignal): Prom
   return result;
 }
 
-async function requestDispatch(data?: DispatchFields & { mutationId: string; expectedUserId: string }, signal?: AbortSignal) {
-  const response = await fetch('/hermes-api/api/panama/turnos/despacho', {
-    method: data ? 'POST' : 'GET', cache: 'no-store', credentials: 'same-origin',
-    headers: data ? { 'Content-Type': 'application/json' } : undefined,
-    body: data ? JSON.stringify(data) : undefined,
-    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000),
-  });
-  const result = await response.json().catch(() => null);
-  if (!response.ok) throw new ShiftRequestError(result?.error ?? 'No se pudo confirmar el despacho.', response.status);
-  if (data ? !result?.assignment?.id : !Array.isArray(result?.assignments) || !Array.isArray(result?.operators)) {
-    throw new Error('El servidor no confirmó el despacho.');
-  }
-  return result as { assignment: DispatchAssignment; assignments: DispatchAssignment[]; operators: DispatchOperator[]; captureAvailable?: boolean };
-}
-
 function DispatchPanel({ userId, canAssign, units }: { userId: string; canAssign: boolean; units: { unit_id: string; model: string }[] }) {
   const [assignments, setAssignments] = useState<DispatchAssignment[]>([]);
   const [operators, setOperators] = useState<DispatchOperator[]>([]);
   const [captureAvailable, setCaptureAvailable] = useState<boolean>();
   const [fields, setFields] = useState<DispatchFields>({ unit: '', date: mexicoDateInput(), shift: '', site: '', operatorId: '' });
-  const [retry, setRetry] = useState<Parameters<typeof requestDispatch>[0]>();
+  const [retry, setRetry] = useState<Parameters<typeof requestPanamaDispatch>[0]>();
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
@@ -133,7 +106,7 @@ function DispatchPanel({ userId, canAssign, units }: { userId: string; canAssign
 
   useEffect(() => {
     const controller = new AbortController();
-    requestDispatch(undefined, controller.signal)
+    requestPanamaDispatch(undefined, controller.signal)
       .then(result => {
         if (controller.signal.aborted) return;
         setAssignments(result.assignments);
@@ -161,7 +134,7 @@ function DispatchPanel({ userId, canAssign, units }: { userId: string; canAssign
     setError('');
     setMessage('');
     try {
-      const { assignment } = await requestDispatch(data);
+      const { assignment } = await requestPanamaDispatch(data);
       setAssignments(current => [assignment, ...current.filter(item => item.id !== assignment.id)]);
       setMessage(assignment.readiness.level === 'ok'
         ? `${assignment.unit} asignado a ${assignment.operator.name}.`
@@ -224,18 +197,29 @@ function DispatchPanel({ userId, canAssign, units }: { userId: string; canAssign
 export default function PanamaShiftsPage() {
   const project = useAuthStore(state => state.project);
   const userId = useAuthStore(state => state.userId);
+  const [search] = useSearchParams();
+  const unit = (search.get('unit') ?? '').trim().toUpperCase();
+  const shift = (search.get('shift') ?? '').trim().slice(0, 32);
+  const acceptedOnly = search.get('estado') === 'aceptados';
   if (project !== 'tmf-panama') return <Navigate to="/" replace />;
-  return <ShiftQueue key={userId} userId={userId} />;
+  return <ShiftQueue key={JSON.stringify([userId, unit, shift, acceptedOnly])} userId={userId}
+    requestedUnit={unit} requestedShift={shift} acceptedOnly={acceptedOnly} />;
 }
 
-function ShiftQueue({ userId }: { userId: string }) {
+function ShiftQueue({ userId, requestedUnit, requestedShift, acceptedOnly }: {
+  userId: string; requestedUnit: string; requestedShift: string; acceptedOnly: boolean;
+}) {
   const role = useAuthStore(state => state.role);
+  const mayPrefill = useAuthStore(state => requestedUnit && (
+    state.allUnits || state.assignedUnits.some(unit => unit.toUpperCase() === requestedUnit)));
   const equipment = useEquipmentList();
   const [records, setRecords] = useState<ShiftPart[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [reload, setReload] = useState(0);
-  const [fields, setFields] = useState(emptyFields);
+  const [fields, setFields] = useState(() => ({
+    ...emptyFields(), ...(mayPrefill ? { unit: requestedUnit, shift: requestedShift } : {}),
+  }));
   const [correction, setCorrection] = useState<ShiftPart>();
   const [returnPart, setReturnPart] = useState<string>();
   const [comment, setComment] = useState('');
@@ -246,6 +230,8 @@ function ShiftQueue({ userId }: { userId: string }) {
   const writeLock = useRef(false);
   const form = useRef<HTMLFormElement>(null);
   const allowDelivery = role === 'operador' || role === 'supervisor';
+  const visibleRecords = records.filter(record => (!requestedUnit || record.unit.toUpperCase() === requestedUnit)
+    && (!acceptedOnly || record.status === 'Aceptado por Supervisión'));
   const hours = Number(fields.finalHours) - Number(fields.initialHours);
   const invalidReading = fields.initialHours !== '' && fields.finalHours !== '' && (hours < 0 || hours > 24);
 
@@ -374,13 +360,15 @@ function ShiftQueue({ userId }: { userId: string }) {
 
         <section className="space-y-3" aria-labelledby="turnos-heading">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 id="turnos-heading" className="text-lg font-bold">Partes de turno</h2>
+            <h2 id="turnos-heading" className="text-lg font-bold">
+              {acceptedOnly ? 'Partes aceptados' : 'Partes de turno'}{requestedUnit && ` · ${requestedUnit}`}
+            </h2>
             <button type="button" className={buttonClass} onClick={refresh} disabled={loading || saving || !!retry}>Actualizar</button>
           </div>
           {loading && <p role="status" className="text-sm text-slate-600">Consultando partes…</p>}
           {loadError && <p role="alert" className="text-sm text-red-800">{loadError}</p>}
-          {!loading && !loadError && records.length === 0 && <p className="text-sm text-slate-600">Sin partes de turno en tu alcance.</p>}
-          {records.map(record => (
+          {!loading && !loadError && visibleRecords.length === 0 && <p className="text-sm text-slate-600">Sin partes de turno en esta consulta.</p>}
+          {visibleRecords.map(record => (
             <article key={record.id} className="min-w-0 space-y-2 rounded-xl border border-slate-200 bg-white p-4">
               <h3 className="font-bold text-[#162252]">{record.unit} · {record.date} · {record.shift}</h3>
               <p className="break-words text-sm font-semibold">{record.status}</p>

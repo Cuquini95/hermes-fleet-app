@@ -16,6 +16,8 @@ import {
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
 import { mexicoDate } from '../lib/date-utils';
 import { visibleWorkOrderFolio } from '../lib/purchasing-api';
+import { pendingPanamaFaultReports, WORKSHOP_CAPTURE_CHANGED } from '../lib/offline-queue';
+import { requestWorkshop } from '../lib/workshop-api';
 import { useAuthStore } from '../stores/auth-store';
 import { SkeletonList } from '../components/ui/Skeleton';
 
@@ -49,11 +51,13 @@ interface HorometroRecord {
 
 interface AveriaRecord {
   id: string;
+  fecha?: string;
   hora: string;
   unidad: string;
   tipoFalla: string;
   prioridad: string;
   otId: string;
+  workshopStatus?: string;
 }
 
 interface ReportsData {
@@ -243,6 +247,7 @@ function AveriaCard({ record }: { record: AveriaRecord }) {
           <span className="text-xs text-text-secondary">{record.hora}</span>
           {publicOt && <span className="text-xs text-text-secondary">{publicOt}</span>}
         </div>
+        {record.workshopStatus && <p className="mt-1 text-xs font-semibold text-blue-800">{record.workshopStatus}</p>}
         {record.otId && !publicOt && <details className="text-xs text-text-secondary">
           <summary className="cursor-pointer py-1">Referencia</summary>
           <p className="break-words">{record.otId}</p>
@@ -282,6 +287,12 @@ function Section({ icon, title, count, iconColorClass, children }: SectionProps)
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function MyReportsPage() {
+  const userId = useAuthStore((s) => s.userId);
+  const isPanama = useAuthStore((s) => s.project === 'tmf-panama');
+  return <Reports key={JSON.stringify([isPanama, userId])} actorId={isPanama ? userId : undefined} />;
+}
+
+function Reports({ actorId }: { actorId?: string }) {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
 
@@ -289,27 +300,42 @@ export default function MyReportsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [partial, setPartial] = useState(false);
+  const [localFaults, setLocalFaults] = useState<Awaited<ReturnType<typeof pendingPanamaFaultReports>>>([]);
+  const [revision, setRevision] = useState(0);
 
   const todayStr = mexicoDate();
 
-  const load = useCallback(async (signal: AbortSignal) => {
-    setLoading(true);
-    setError(null);
+  const load = useCallback(async (signal: AbortSignal, background = false) => {
+    if (!background) {
+      setLoading(true);
+      setError(null);
+    }
 
     try {
-      const [inspRows, fuelRows, horoRows, averiaRows] = await Promise.all([
+      const results = await Promise.allSettled([
         readRange(SHEET_TABS.INSPECCIONES, signal),
         readRange(SHEET_TABS.COMBUSTIBLE, signal),
         readRange(SHEET_TABS.HOROMETROS, signal),
-        readRange(SHEET_TABS.AVERIAS, signal),
-      ]);
+        actorId ? requestWorkshop<{ reports: AveriaRecord[] }>('myfaults') : readRange(SHEET_TABS.AVERIAS, signal),
+      ] as const);
 
       if (signal.aborted) return;
+      const failed = results.filter(item => item.status === 'rejected');
+      if (failed.length && (!actorId || failed.length === results.length)) throw failed[0]?.reason;
+      const [insp, fuel, horo, faults] = results;
+      const inspRows = insp.status === 'fulfilled' ? insp.value : [];
+      const fuelRows = fuel.status === 'fulfilled' ? fuel.value : [];
+      const horoRows = horo.status === 'fulfilled' ? horo.value : [];
+      const faultSource = faults.status === 'fulfilled' ? faults.value : [];
+      const faultsOn = (date: string) => Array.isArray(faultSource)
+        ? parseAverias(faultSource, userName, date)
+        : faultSource.reports.filter(report => report.fecha === date);
 
       let dvir = parseDvir(inspRows, userName, todayStr);
       let combustible = parseCombustible(fuelRows, userName, todayStr);
       let horometros = parseHorometros(horoRows, userName, todayStr);
-      let averias = parseAverias(averiaRows, userName, todayStr);
+      let averias = faultsOn(todayStr);
 
       // If today is completely empty, try yesterday
       const totalToday = dvir.length + combustible.length + horometros.length + averias.length;
@@ -320,34 +346,57 @@ export default function MyReportsPage() {
         dvir = parseDvir(inspRows, userName, yesterdayStr);
         combustible = parseCombustible(fuelRows, userName, yesterdayStr);
         horometros = parseHorometros(horoRows, userName, yesterdayStr);
-        averias = parseAverias(averiaRows, userName, yesterdayStr);
+        averias = faultsOn(yesterdayStr);
       }
 
       setData({ dvir, combustible, horometros, averias });
+      setPartial(failed.length > 0);
+      setError(null);
       setLastRefresh(new Date());
     } catch (err: unknown) {
       if (signal.aborted) return;
-      setError(err instanceof Error ? err.message : 'Error al cargar reportes');
+      if (!background) setError(err instanceof Error ? err.message : 'Error al cargar reportes');
     } finally {
       if (!signal.aborted) setLoading(false);
     }
-  }, [userName, todayStr]);
+  }, [actorId, userName, todayStr]);
 
   useEffect(() => {
-    const ctrl = new AbortController();
-    load(ctrl.signal);
-    return () => ctrl.abort();
-  }, [load]);
+    const controller = new AbortController();
+    let activeRequest = false;
+    const update = (background: boolean) => {
+      if (activeRequest || (background && (!navigator.onLine || document.visibilityState !== 'visible'))) return;
+      activeRequest = true;
+      void load(controller.signal, background).finally(() => { activeRequest = false; });
+    };
+    update(false);
+    if (!actorId) return () => controller.abort();
+    const refresh = () => {
+      void pendingPanamaFaultReports(actorId).then(items => {
+        if (!controller.signal.aborted) setLocalFaults(items);
+      }).catch(() => {});
+      update(true);
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 15_000);
+    window.addEventListener('online', refresh);
+    window.addEventListener(WORKSHOP_CAPTURE_CHANGED, refresh);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+      window.removeEventListener('online', refresh);
+      window.removeEventListener(WORKSHOP_CAPTURE_CHANGED, refresh);
+    };
+  }, [actorId, load, revision]);
 
   function handleRetry() {
-    const ctrl = new AbortController();
-    load(ctrl.signal);
+    setRevision(value => value + 1);
   }
 
   const total = data
     ? data.dvir.length + data.combustible.length + data.horometros.length + data.averias.length
     : 0;
-  const allEmpty = !loading && !error && data !== null && total === 0;
+  const allEmpty = !loading && !error && !partial && data !== null && total === 0 && localFaults.length === 0;
 
   // Format today's date for display: "lunes 13 de abril"
   const todayDisplay = new Date().toLocaleDateString('es-MX', {
@@ -392,6 +441,15 @@ export default function MyReportsPage() {
         </p>
       )}
       {!lastRefresh && !loading && <div className="mb-4" />}
+      {!loading && !error && partial && <p role="status" className="mb-3 text-sm text-amber-800">Algunos reportes están pendientes de consulta.</p>}
+
+      {localFaults.length > 0 && <section aria-label="Reportes guardados en el teléfono" className="mb-4 space-y-2">
+        {localFaults.map(report => <article key={report.id} className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+          <p className="text-sm font-semibold text-amber-950">Guardado en el teléfono</p>
+          <p className="break-words text-sm">{report.unit} · {report.type}</p>
+          <p className="text-xs text-amber-900">Pendiente de enviar a Taller</p>
+        </article>)}
+      </section>}
 
       {/* Loading skeleton */}
       {loading && <SkeletonList count={4} />}

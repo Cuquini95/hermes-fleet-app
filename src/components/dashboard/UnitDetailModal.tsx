@@ -15,6 +15,7 @@ import type { OperatingStatus, WorkshopRecord, WorkshopSummary } from '../../hoo
 import { firstPhotoUrl, isOpenAveria, parseAveriaRow, type AveriaEntry } from '../../lib/averias'
 import { applyDispatchReadiness, normalizeUnitId, type UnitDispatchReadiness } from '../../lib/dispatch-readiness'
 import { useAuthStore } from '../../stores/auth-store'
+import PanamaUnitOperations from './PanamaUnitOperations'
 
 interface UnitDetailModalProps {
   unit: Equipment
@@ -48,6 +49,9 @@ const panamaCut = new Intl.DateTimeFormat('es-PA', {
 
 export default function UnitDetailModal({ unit, dispatchReadiness, verified = true, operatingOnly = false, operatingStatus, workshop, workshopRestriction, onClose }: UnitDetailModalProps) {
   const isPanama = useAuthStore(state => state.project === 'tmf-panama')
+  const role = useAuthStore(state => state.role)
+  const userId = useAuthStore(state => state.userId)
+  const canSeeOperations = isPanama && ['jefe_taller', 'coordinador', 'supervisor', 'gerencia'].includes(role ?? '')
   const [averias, setAverias] = useState<AveriaEntry[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const refreshedFailures = workshop?.failures
@@ -192,6 +196,8 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
               <p>{workshopRestriction.reason}</p>
             </div>
           )}
+          {canSeeOperations && <PanamaUnitOperations key={JSON.stringify([userId, role, unitId])}
+            unit={unit.unit_id.trim().toUpperCase()} showFinancials={role === 'gerencia'} />}
           {workshopIncomplete && (
             <p className="mb-4 text-sm text-amber-800">{isPanama ? 'Historial de Taller incompleto.' : 'Historial de Taller incompleto. Parte de la información no está disponible.'}</p>
           )}

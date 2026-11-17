@@ -273,6 +273,125 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       }
     }, loadAccounts[78]));
 
+    if (withGateway) await record('MÓVIL-MI-TURNO-AVISO-Y-BANDEJAS', async () => {
+      const operator = firstAccount('operador');
+      const coordinator = firstAccount('coordinador');
+      const workshop = firstAccount('jefe_taller');
+      const tab = 'HERMES_PA_DESPACHO';
+      const prior = [tab, tabs.orders, tabs.failure, tabs.history, tabs.sticker, tabs.dvir].map(name => [name, sheet.read(name)]);
+      for (const [name, column] of [[tabs.orders, 3], [tabs.failure, 2], [tabs.sticker, 5], [tabs.dvir, 4]]) {
+        sheet.seed(name, sheet.read(name).filter(row => row[column] !== 'DZ203'));
+      }
+      const now = new Date();
+      const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Panama', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+      const assignment = ['DPA-' + 'A'.repeat(20), 'DZ203', date, 'Noche', 'TMF QA',
+        operator.user.id, operator.membership.user_name, coordinator.user.id, coordinator.membership.user_name, now.toISOString()];
+      sheet.seed(tab, [...prior[0][1], assignment]);
+      try {
+        return await inRole('coordinador', 390, async coord => {
+          await visible(coord.getByRole('heading', { name: 'OT pendientes', exact: true }));
+          return inRole('jefe_taller', 390, async chief => {
+            await visible(chief.getByRole('heading', { name: 'OTs por recibir', exact: true }));
+            return inRole('operador', 360, async (page, context) => {
+              await visible(page.getByRole('heading', { name: 'Mi turno' }));
+              const dispatch = await page.request.get(origin + '/hermes-api/api/panama/turnos/despacho?date=' + date);
+              assert.equal(dispatch.status(), 200, await dispatch.text());
+              assert.equal((await dispatch.json()).assignments[0]?.id, assignment[0], 'El despacho no devolvió la asignación de prueba');
+              await visible(page.getByText('DZ203 · Noche', { exact: true }));
+              await noHorizontalOverflow(page, 360);
+              const home = async () => {
+                await page.getByRole('navigation', { name: 'Navegación principal' }).getByRole('button', { name: 'Inicio', exact: true }).click();
+                await visible(page.getByText('DZ203 · Noche', { exact: true }));
+              };
+              for (const name of ['Horómetro', 'Inspección']) {
+                await clickByName(page, name);
+                const select = page.locator('#main-content select').first();
+                await waitUntil(async () => (await select.inputValue()) === 'DZ203', 'No se precargó la unidad en ' + name);
+                await home();
+              }
+              await clickByName(page, 'Mis reportes');
+              await visible(page.getByRole('heading', { name: 'Mis reportes' }));
+              await home();
+              await clickByName(page, 'Reportar falla');
+              const selects = page.locator('#main-content select');
+              await waitUntil(async () => (await selects.first().inputValue()) === 'DZ203', 'No se precargó la unidad en la avería');
+              const description = 'Manguera dañada · Mi turno QA';
+              await selects.nth(1).selectOption({ label: 'Mecánica' });
+              await page.getByPlaceholder('Describe los síntomas observados...').fill(description);
+              await clickByName(page, 'Sí');
+              await page.locator('input[type=file]').first().setInputFiles({ name: 'mi-turno.png', mimeType: 'image/png', buffer: photoPng });
+              await clickByName(page, /^Enviar reporte$/i);
+              await visible(page.getByRole('heading', { name: 'Confirmar reporte de falla' }));
+              assert.equal(await coord.getByText(description, { exact: true }).count(), 0);
+              assert.equal(await chief.getByText(description, { exact: true }).count(), 0);
+              await context.setOffline(true);
+              await clickByName(page, 'Confirmar');
+              await visible(page.getByText(/pendiente en este dispositivo/i));
+              await page.getByRole('navigation', { name: 'Navegación principal' }).getByRole('button', { name: 'Inicio', exact: true }).click();
+              await clickByName(page, 'Mis reportes');
+              await visible(page.getByText('Guardado en el teléfono', { exact: true }));
+              assert.equal(sheet.read(tabs.orders).filter(row => row[5] === description).length, 0);
+
+              const accepted = page.waitForResponse(response => response.url() === origin + '/hermes-api/api/workshop/report'
+                && response.request().method() === 'POST' && response.ok());
+              await context.setOffline(false);
+              const receipt = await (await accepted).json();
+              const began = Date.now();
+              const observed = await Promise.all([coord, chief].map(async inbox => {
+                await inbox.getByText(description, { exact: true }).first().waitFor({ timeout: 22_000 });
+                return Date.now() - began;
+              }));
+              await page.getByText('Recibido por Taller', { exact: true }).first().waitFor({ timeout: 22_000 });
+              assert.equal(await page.getByText('Guardado en el teléfono', { exact: true }).count(), 0);
+              const [order] = sheet.read(tabs.orders).filter(row => row[5] === description);
+              assert.equal(order[1], receipt.otId);
+              for (const inbox of [coord, chief]) {
+                await inbox.getByText(description, { exact: true }).first().click();
+                await inbox.waitForURL(origin + '/workorders/' + encodeURIComponent(order[1]));
+                assert.deepEqual(await (await inbox.request.get(origin + order[10])).body(), photoPng);
+              }
+              const tech = firstAccount('mecanico');
+              await chief.getByLabel('Mecánico asignado').selectOption(tech.user.id);
+              await clickByName(chief, 'Asignar');
+              await waitUntil(() => sheet.read(tabs.orders).find(row => row[1] === order[1] && row[17] === tech.user.id), 'No persistió la asignación');
+              await changeOrderStatus(chief, 'En Reparación', order[1]);
+              await page.getByText('En reparación', { exact: true }).first().waitFor({ timeout: 22_000 });
+              assert.equal(sheet.read(tabs.orders).filter(row => row[5] === description).length, 1);
+              assert.equal(sheet.read(tabs.failure).filter(row => row[13] === order[1]).length, 1);
+              await shot(page, 'mi-turno-mis-reportes-360.png');
+              const orderPath = '/workorders/' + encodeURIComponent(order[1]);
+              await inRole('mecanico', 360, async mechanic => {
+                await mechanic.goto(origin + orderPath, { waitUntil: 'domcontentloaded' });
+                await visible(mechanic.getByRole('heading', { name: orderHeading(order[1]), exact: true }));
+                await changeOrderStatus(mechanic, 'Resuelta', order[1], false, 'Manguera sustituida en el piloto sintético');
+              }, tech);
+              await chief.reload({ waitUntil: 'domcontentloaded' });
+              await visible(chief.getByRole('heading', { name: orderHeading(order[1]), exact: true }));
+              await changeOrderStatus(chief, 'Completado', order[1]);
+              await inRole('supervisor', 390, async operations => {
+                await operations.goto(origin + orderPath, { waitUntil: 'domcontentloaded' });
+                await operations.getByLabel('Observación de Operaciones').fill('Recibido por Operaciones en prueba aislada');
+                const returned = operations.waitForResponse(response => response.url() === origin + '/hermes-api/api/workshop/returns'
+                  && response.request().method() === 'POST');
+                await clickByName(operations, 'Confirmar retorno ahora');
+                const response = await returned;
+                assert(response.ok(), await response.text());
+                await visible(operations.getByText(/Equipo recibido por /));
+              }, firstAccount('supervisor'));
+              const closedOrder = sheet.read(tabs.orders).find(row => row[1] === order[1]);
+              assert.equal(closedOrder[9], 'Completado');
+              assert.equal(JSON.parse(closedOrder[22]).decision, 'accepted');
+              return { unit: 'DZ203', shift: 'Noche', folio: receipt.folio ?? order[25] ?? order[1], prefills: 3,
+                officeViewsMs: { coordinator: observed[0], workshop: observed[1] }, samePhoto: true, offlineStatus: true,
+                receivedStatus: true, repairStatus: true, technicalClose: true, operationalReturn: true, duplicateOrders: 0 };
+            }, operator);
+          }, workshop);
+        }, coordinator);
+      } finally {
+        for (const [name, rows] of prior) sheet.seed(name, rows);
+      }
+    });
+
     if (withGateway) await record('MÓVIL-FLOTA-HISTORIAL-UNIDAD', () => inRole('gerencia', 390, async page => {
       const priorFailures = sheet.read(tabs.failure);
       const priorOrders = sheet.read(tabs.orders);
@@ -504,6 +623,9 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     await record('MÓVIL-VALORIZACIÓN-TMF-A-FACTURA', async () => {
       const tab = 'HERMES_PA_TURNOS';
       const prior = sheet.read(tab);
+      const priorOrders = sheet.read(tabs.orders);
+      const pmHistoryTab = '05 Historial PM';
+      const priorPmHistory = sheet.read(pmHistoryTab);
       const id = 'TPA-C4300000000000000001';
       const author = firstAccount('operador');
       const supervisor = firstAccount('supervisor');
@@ -514,9 +636,49 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
       Object.assign(accepted, { 4: 2, 5: 'Aceptado por Supervisión', 17: supervisor.user.id, 18: supervisor.membership.user_name,
         19: '2026-11-15T17:00:00Z', 20: 'accept' });
       sheet.seed(tab, [...prior, shift, accepted]);
+      sheet.seed(pmHistoryTab, priorPmHistory.slice(0, 1));
+      const repair = Object.assign(Array(26).fill(''), { 1: 'OT-QA-FICHA-401', 2: '16/11/2026', 3: 'EX401',
+        5: 'Cierre para ficha', 9: 'Completado', 14: new Date().toISOString(), 25: 'OT-0701' });
+      sheet.seed(tabs.orders, [...priorOrders, repair]);
       try {
         return await inRole('gerencia', 360, async page => {
-          await page.goto(`${origin}/panama/turnos`, { waitUntil: 'domcontentloaded' });
+          await page.route('**/hermes-api/api/panama/maintenance', route => route.fulfill({ json: { project: 'tmf-panama', sections: {
+            maintenance: [{ unit: 'EX401', next: 'PM-500', due: '2000', hours: '1924', remaining: '76', status: 'Al día' }],
+          } } }));
+          await page.route('**/hermes-api/api/panama/componentes?*', route => {
+            assert.equal(new URL(route.request().url()).searchParams.get('unit'), 'EX401');
+            return route.fulfill({ json: { unit: 'EX401', changes: [], unavailable: [], life: [
+              { part: 'Dientes', position: 'Frente', calculation: { status: 'verified', elapsed: 956, remaining: 44 } },
+            ] } });
+          });
+          await page.route('**/hermes-api/api/purchasing/requests', route => route.fulfill({ json: { items: [
+            { equipo: 'EX401', ot: 'OT-QA-ABIERTA-401', partNum: 'DIENTE-QA', descripcion: 'Diente de excavadora', cantidad: '2', estado: 'Pendiente' },
+          ] } }));
+          await page.route('**/hermes-api/api/purchasing/ot-part?*', route => {
+            const params = new URL(route.request().url()).searchParams;
+            assert.equal(params.get('ot'), 'OT-QA-ABIERTA-401');
+            assert.equal(params.get('partNumber'), 'DIENTE-QA');
+            return route.fulfill({ json: { unit: 'EX401', ot: 'OT-QA-ABIERTA-401', folio: 'OT-0702', match: 'verified', partNumber: 'DIENTE-QA',
+              items: [{ partNumber: 'DIENTE-QA', warehouse: 'Almacén QA', available: '3', reservedForOt: '2' }] } });
+          });
+          await page.route('**/hermes-api/api/purchasing/workorder-cost?*', route => {
+            assert.equal(new URL(route.request().url()).searchParams.get('ot'), repair[1]);
+            return route.fulfill({ json: { ot: repair[1], unit: 'EX401', folio: repair[25], project: 'tmf-panama',
+              totals: [{ currency: 'USD', amount: '240.50' }], pending: [] } });
+          });
+          await clickByName(page, 'Ver detalle de EX401');
+          const card = page.getByRole('region', { name: 'Ficha operativa de EX401' });
+          await visible(card.getByText('76 h restantes')).catch(async error => {
+            throw new Error(`${error.message}\n${await card.innerText({ timeout: 1500 })}`);
+          });
+          await visible(card.getByText('Dientes · Frente'));
+          await visible(card.getByText('44 h restantes'));
+          await visible(card.getByText(/3 disponibles · 2 reservados/));
+          await visible(card.getByText('OT-0701', { exact: true }));
+          await visible(card.getByText(/240[.,]50/));
+          await noHorizontalOverflow(page, 360);
+          await card.getByRole('link', { name: 'Partes aceptados, valorización y factura' }).click();
+          await visible(page.getByRole('heading', { name: 'Partes aceptados · EX401' }));
           const part = page.getByRole('article').filter({ hasText: id });
           await visible(part.getByText(/8 h del turno/));
           await part.getByRole('button', { name: 'Ver valorización y factura' }).click();
@@ -527,9 +689,10 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
           await noHorizontalOverflow(page, 360);
           await part.getByText(/FAC-QA/).scrollIntoViewIfNeeded();
           await shot(page, 'valorizacion-factura-360.png');
-          return { folio: id, acceptedHours: 8, valuedPeriodHours: 95, adjustmentHours: -5, invoice: 'FAC-QA', currency: 'USD', width: 360 };
+          return { folio: id, acceptedHours: 8, valuedPeriodHours: 95, adjustmentHours: -5, invoice: 'FAC-QA', currency: 'USD', width: 360,
+            unitCard: { unit: 'EX401', nextPmRemaining: 76, componentRemaining: 44, stockAvailable: 3, reserved: 2, lastRepairCost: '240.50 USD' } };
         });
-      } finally { sheet.seed(tab, prior); }
+      } finally { sheet.seed(tab, prior); sheet.seed(tabs.orders, priorOrders); sheet.seed(pmHistoryTab, priorPmHistory); }
     });
 
     await record('MÓVIL-HORÓMETRO-CAMBIO-CON-CONTINUIDAD', async () => {
