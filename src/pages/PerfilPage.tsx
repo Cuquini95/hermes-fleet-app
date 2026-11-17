@@ -16,6 +16,8 @@ import {
 import { useAuthStore } from '../stores/auth-store';
 import { ROLE_LABELS } from '../types/roles';
 import { isPrivateEvidenceUrl } from '../lib/evidence-link';
+import { PANAMA_R06_POSITIONS } from '../lib/panama-r06-positions';
+import { purchasingEntry } from '../lib/purchasing-home';
 
 interface ActivityEntry {
   type: string;
@@ -54,14 +56,15 @@ function downloadJson(data: unknown, filename: string): void {
 export default function PerfilPage() {
   const userId = useAuthStore((s) => s.userId);
   const project = useAuthStore((s) => s.project);
-  return <Profile key={project + ':' + userId} userId={userId} />;
+  return <Profile key={project + ':' + userId} userId={userId} panama={project === 'tmf-panama'} />;
 }
 
-function Profile({ userId }: { userId: string }) {
+function Profile({ userId, panama }: { userId: string; panama: boolean }) {
   const navigate = useNavigate();
 
   const userName = useAuthStore((s) => s.userName);
   const role = useAuthStore((s) => s.role);
+  const accessLabel = useAuthStore((s) => purchasingEntry(s)?.accessLabel);
   const assignedUnits = useAuthStore((s) => s.assignedUnits);
 
   const roleLabel = role ? ROLE_LABELS[role] : 'Sin rol';
@@ -146,10 +149,29 @@ function Profile({ userId }: { userId: string }) {
         </div>
         <div className="text-center">
           <h2 className="text-2xl font-bold text-text">{userName}</h2>
-          <p className="text-text-secondary mt-0.5">{roleLabel}</p>
+          <p className="text-text-secondary mt-0.5">
+            {panama ? `Perfil de acceso · ${roleLabel}` : roleLabel}
+          </p>
+          {accessLabel && <p className="text-sm text-text-secondary mt-1">Permiso · {accessLabel}</p>}
           {unitLabel && <p className="text-sm text-amber font-medium mt-1">{unitLabel}</p>}
         </div>
       </div>
+
+      {panama && (
+        <details className="bg-white rounded-xl shadow-sm border border-border">
+          <summary className="min-h-12 cursor-pointer p-4 font-semibold text-text">
+            {PANAMA_R06_POSITIONS.length} puestos del organigrama R06
+          </summary>
+          <ul className="divide-y divide-gray-100 border-t border-gray-100 px-4">
+            {PANAMA_R06_POSITIONS.map(({ code, title }) => (
+              <li key={code} className="grid grid-cols-[6rem_minmax(0,1fr)] gap-2 py-2.5 text-sm">
+                <span className="text-xs font-semibold text-text-secondary">{code}</span>
+                <span className="text-text">{title}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
 
       {/* ARCO: Exportar mis datos */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-border">

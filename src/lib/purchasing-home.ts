@@ -10,19 +10,19 @@ interface PurchasingProfile {
   previewDemo?: boolean;
 }
 
-type PurchasingEntry = NavItem & { positionName: string };
+type PurchasingEntry = NavItem & { accessLabel: string };
 const receiving: PurchasingEntry = {
-  id: 'recepciones', label: 'Recepciones', positionName: 'Almacén', icon: 'Package', path: '/panama/recepciones',
+  id: 'recepciones', label: 'Recepciones', accessLabel: 'Recepciones', icon: 'Package', path: '/panama/recepciones',
 };
 const orders: PurchasingEntry = {
-  id: 'pedidos', label: 'Pedidos', positionName: 'Compras', icon: 'ShoppingCart', path: '/pedidos',
+  id: 'pedidos', label: 'Pedidos', accessLabel: 'Aprobación de OC', icon: 'ShoppingCart', path: '/pedidos',
 };
 const invoices: PurchasingEntry = {
-  id: 'contabilidad', label: 'Por conciliar', positionName: 'Contabilidad', icon: 'Receipt',
+  id: 'contabilidad', label: 'Por conciliar', accessLabel: 'Registro de facturas', icon: 'Receipt',
   path: '/panama/cuentas-por-pagar?bandeja=conciliar#facturas',
 };
 const payments: PurchasingEntry = {
-  id: 'tesoreria', label: 'Por pagar', positionName: 'Tesorería', icon: 'Receipt',
+  id: 'tesoreria', label: 'Por pagar', accessLabel: 'Registro de pagos', icon: 'Receipt',
   path: '/panama/cuentas-por-pagar?bandeja=pagar#facturas',
 };
 

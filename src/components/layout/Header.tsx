@@ -14,7 +14,7 @@ export default function Header() {
   const userName = useAuthStore((s) => s.userName);
   const role = useAuthStore((s) => s.role);
   const previewDemo = useAuthStore((s) => s.previewDemo);
-  const position = useAuthStore((s) => purchasingEntry(s)?.positionName);
+  const accessLabel = useAuthStore((s) => purchasingEntry(s)?.accessLabel);
   const home = useAuthStore(sessionHome);
   const logout = useAuthStore((s) => s.logout);
   const [leaving, setLeaving] = useState(false);
@@ -79,7 +79,7 @@ export default function Header() {
         <div className="flex min-w-0 flex-col leading-tight">
           <span className="truncate text-white font-semibold text-sm">{userName}</span>
           {role && (
-            <span className="truncate text-xs text-white/75">{position ?? ROLE_LABELS[role]}{previewDemo ? ' · Datos de prueba' : ''}</span>
+            <span className="truncate text-xs text-white/75">{accessLabel ?? ROLE_LABELS[role]}{previewDemo ? ' · Datos de prueba' : ''}</span>
           )}
         </div>
       </div>
