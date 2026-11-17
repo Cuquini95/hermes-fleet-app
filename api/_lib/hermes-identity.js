@@ -1,4 +1,4 @@
-const ROLES = new Set(['operador', 'mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia']);
+const ROLES = new Set(['operador', 'mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia', 'almacen']);
 const PROJECT = /^[a-z0-9][a-z0-9_-]{0,79}$/;
 const UUID = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i;
 const UNIT = /^[a-z\d][a-z\d ._/-]{0,39}$/i;
@@ -50,15 +50,18 @@ export function normalizeRosterProfile(row, project) {
     || row.assigned_units.some((unit) => typeof unit !== 'string' || !UNIT.test(unit))) return null;
 
   const panamaOnly = project === 'tmf-panama' && row.projects.every((item) => item === project);
+  if (row.role === 'almacen' && (!panamaOnly || row.can_receive_purchases !== true
+    || row.can_approve_purchases === true)) return null;
   const demo = PREVIEW_EMAIL.test(row.email);
   if (demo && (process.env.VERCEL_ENV !== 'preview' || !panamaOnly || row.unit_scope !== 'assigned'
     || row.assigned_units.length === 0 || row.assigned_units.some(unit => !unit.startsWith('QA-')))) return null;
+  const demoWarehouse = demo && row.can_receive_purchases === true && row.can_approve_purchases !== true;
   const canInvoice = demo ? row.email === 'hermes-pa-demo-p21@example.com' : row.can_record_purchase_invoices;
   const canPay = demo ? row.email === 'hermes-pa-demo-p20@example.com' : row.can_record_purchase_payments;
   return {
     userId: row.user_id.toLowerCase(),
     userName: row.user_name.trim(),
-    role: row.role,
+    role: demoWarehouse ? 'almacen' : row.role,
     project,
     projects: [...new Set(row.projects)],
     assignedUnits: [...new Set(row.assigned_units.map((unit) => unit.toUpperCase()))],

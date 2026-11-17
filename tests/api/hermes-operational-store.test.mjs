@@ -70,7 +70,7 @@ test('Panamá records a failure and its order once, and a new gateway can read b
   const listUnits = await call(gateway(actor), 'GET', 'api/workshop/reportunits');
   assert.equal(listUnits.code, 200);
   assert.deepEqual(listUnits.body, { units: [{ code: 'DZ203', model: 'D155AX-6' }], capturedAt });
-  assert.equal((await call(gateway({ ...actor, role: 'almacen' }), 'GET', 'api/workshop/reportunits')).code, 401);
+  assert.equal((await call(gateway({ ...actor, role: 'almacen', canReceivePurchases: true }), 'GET', 'api/workshop/reportunits')).code, 403);
   assert.equal((await call(gateway({ ...actor, project: 'tcm' }), 'GET', 'api/workshop/reportunits')).code, 403);
   assert.equal((await call(gateway(actor), 'POST', 'api/workshop/report', { ...input, unit: 'EX401' })).code, 403);
   assert.equal(cutReads, 1);

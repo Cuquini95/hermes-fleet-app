@@ -9,6 +9,34 @@ function response() {
 
 const operator = { userId: 'qa-operador', userName: 'Operador QA', role: 'operador', assignedUnits: ['CA20'], allUnits: false };
 
+test('the warehouse profile can use receiving and inventory without reaching other modules', async () => {
+  const session = { ...operator, userId: 'qa-almacen', role: 'almacen', project: 'tmf-panama', canReceivePurchases: true };
+  const calls = [];
+  const gate = createHermesGateway({
+    sessionReader: async () => session, enablePanamaOperations: true, writeEnabled: true,
+    dispatchPurchasing: async ({ path }) => {
+      calls.push(path);
+      return { status: 200, body: {} };
+    },
+  });
+  for (const [method, path, status] of [
+    ['GET', 'api/purchasing/receiving', 200],
+    ['GET', 'api/purchasing/inventory-stock', 200],
+    ['POST', 'api/purchasing/order-receive', 200],
+    ['GET', 'api/workshop/orders', 403],
+    ['POST', 'api/workshop/transition', 403],
+    ['POST', 'api/purchasing/order-sign', 403],
+    ['GET', 'api/purchasing/ap', 403],
+    ['GET', 'api/purchasing/expenses', 403],
+    ['GET', 'api/panama/fleet', 403],
+  ]) {
+    const result = response();
+    await gate({ method, query: { path } }, result);
+    assert.equal(result.statusCode, status, path);
+  }
+  assert.deepEqual(calls, ['api/purchasing/receiving', 'api/purchasing/inventory-stock', 'api/purchasing/order-receive']);
+});
+
 test('el historial genérico de neumáticos conserva las inspecciones previas pero oculta los traslados de la bitácora', async () => {
   const header = ['ID','UNIDAD'], legacy = ['vista','CA20','Modelo','I1'];
   const transfer = Array(28).fill('');

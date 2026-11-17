@@ -41,6 +41,7 @@ export function planRosterImport(entries, users, existing, project, now = Date.n
     else if (item.canApprovePurchases === true && item.role !== 'gerencia') reason = 'permiso_de_compra_incompatible';
     else if (item.canReceivePurchases !== undefined && typeof item.canReceivePurchases !== 'boolean') reason = 'permiso_de_recepción_inválido';
     else if (item.canReceivePurchases === true && !panamaOnly) reason = 'permiso_de_recepción_fuera_de_panamá';
+    else if (item.role === 'almacen' && item.canReceivePurchases !== true) reason = 'permiso_de_recepción_requerido';
     else if (item.canReviewPanamaHse !== undefined && typeof item.canReviewPanamaHse !== 'boolean') reason = 'permiso_hse_inválido';
     else if (item.canReviewPanamaHse === true && (!panamaOnly
       || !['supervisor', 'gerencia'].includes(item.role))) reason = 'permiso_hse_incompatible';

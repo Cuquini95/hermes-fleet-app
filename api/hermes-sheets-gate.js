@@ -21,6 +21,18 @@ const ALL = ['operador', ...WORKSHOP];
 const FIELD = ['operador', 'supervisor', 'gerencia'];
 const MANAGEMENT = ['jefe_taller', 'coordinador', 'gerencia'];
 const GERENCIA = ['gerencia'];
+const WAREHOUSE_PATHS = new Set([
+  'health',
+  'api/profile/history',
+  'api/purchasing/receiving',
+  'api/purchasing/order-receive',
+  'api/purchasing/order-dispatch',
+  'api/purchasing/inventory-stock',
+  'api/purchasing/inventory-movements',
+  'api/purchasing/inventory-replenishment',
+  'api/purchasing/inventory-move',
+  'api/purchasing/inventory-reservation',
+]);
 
 const READ = new Map([
   ['01 Inventario', { roles: ALL, unit: 1 }],
@@ -259,6 +271,7 @@ export function createHermesGateway({
       if (!session) return;
       const path = knownPath(req.query?.path);
       if (!/^[a-zA-Z0-9_./-]+$/.test(path) || path.split('/').some(segment => segment === '.' || segment === '..')) return invalid(res, 400, 'Ruta inválida.');
+      if (session.role === 'almacen' && !WAREHOUSE_PATHS.has(path)) return invalid(res, 403, 'Acción reservada al perfil correspondiente.');
       if (rejectIfRateLimited(req, res, { scope: 'hermes-gateway', limit: 120 }, session.userId)) return;
 
       if (panamaOnly && session.project !== PANAMA_PROJECT) return invalid(res, 403, 'Proyecto no habilitado en Hermes Panamá.');

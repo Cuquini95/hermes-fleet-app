@@ -9,9 +9,15 @@ Hermes autentica con la cuenta individual del proveedor Supabase y consulta el p
 3. Vincula el padrón aprobado a los correos confirmados en el proveedor. Conserva el archivo con datos reales fuera del repositorio.
 
 En Panamá, aplica también las migraciones de permiso de recepción y revisión HSE.
+Aplica la migración del perfil de Almacén antes de registrar una cuenta operativa de ese puesto.
 Las opciones `canReceivePurchases` y `canReviewPanamaHse` deben constar explícitamente
 en el padrón y son independientes de `canApprovePurchases`. Usa `projects: ["tmf-panama"]`
 para esos permisos. La revisión HSE requiere rol base Supervisor o Gerencia.
+
+El puesto R06 **TP-PER-017 Almacén y Repuestos** usa `role: "almacen"`, el proyecto
+`tmf-panama` y `canReceivePurchases: true`. Su inicio es Recepciones y la cuenta
+también accede a Inventario por almacén y a su perfil. Define las unidades con el
+alcance aprobado en el padrón.
 
 Formato de una fila de prueba
 

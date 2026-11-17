@@ -4,7 +4,8 @@ export type AppRole =
   | 'jefe_taller'
   | 'coordinador'
   | 'supervisor'
-  | 'gerencia';
+  | 'gerencia'
+  | 'almacen';
 
 export interface NavItem {
   id: string;
@@ -14,6 +15,14 @@ export interface NavItem {
 }
 
 export const NAV_CONFIG: Record<AppRole, { visible: NavItem[]; overflow: NavItem[] }> = {
+  almacen: {
+    visible: [
+      { id: 'recepciones', label: 'Recepciones', icon: 'Package', path: '/panama/recepciones' },
+      { id: 'inventario', label: 'Inventario', icon: 'Boxes', path: '/inventory' },
+      { id: 'perfil', label: 'Perfil', icon: 'User', path: '/perfil' },
+    ],
+    overflow: [],
+  },
   operador: {
     visible: [
       { id: 'inicio',   label: 'Inicio',    icon: 'Home',          path: '/operator' },
@@ -123,6 +132,7 @@ export const NAV_CONFIG: Record<AppRole, { visible: NavItem[]; overflow: NavItem
 };
 
 export const ROLE_HOME: Record<AppRole, string> = {
+  almacen:     '/panama/recepciones',
   operador:    '/operator',
   mecanico:    '/mechanic',
   jefe_taller: '/workshop',
@@ -132,6 +142,7 @@ export const ROLE_HOME: Record<AppRole, string> = {
 };
 
 export const ROLE_LABELS: Record<AppRole, string> = {
+  almacen:     'Almacén y Repuestos',
   operador:    'Operador',
   mecanico:    'Mecánico',
   jefe_taller: 'Jefe de Taller',

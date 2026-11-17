@@ -96,6 +96,7 @@ function PageBoundary({ role, children }: { role?: AppRole; children: React.Reac
 // ── Role constants ────────────────────────────────────────────────────────────
 
 const ALL: AppRole[]          = ['operador', 'mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
+const ACCOUNT_ROLES: AppRole[] = [...ALL, 'almacen'];
 const ADMIN: AppRole[]        = ['jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
 const WORKSHOP: AppRole[]     = ['mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia'];
 const MANAGEMENT: AppRole[]   = ['jefe_taller', 'coordinador', 'gerencia'];
@@ -133,10 +134,10 @@ export default function App() {
   }, [userId]);
 
   useEffect(() => {
-    if (!userId) return;
+    if (!userId || role === 'almacen') return;
     const cleanup = initRealtime();
     return cleanup;
-  }, [initRealtime, userId]);
+  }, [initRealtime, userId, role]);
 
   return (
     <Routes>
@@ -156,7 +157,7 @@ export default function App() {
 
       {/* ── Protected shell ────────────────────────────────────────────── */}
       <Route element={
-        <RequireRole roles={ALL}>
+        <RequireRole roles={ACCOUNT_ROLES}>
           <ErrorBoundary role={role}>
             <AppShell />
           </ErrorBoundary>
@@ -185,8 +186,8 @@ export default function App() {
         <Route path="/diagrams"     element={<RequireRole roles={WORKSHOP}><PageBoundary role={role}><S><DiagramViewer /></S></PageBoundary></RequireRole>} />
 
         {/* Inventory & procurement */}
-        <Route path="/panama/recepciones" element={<RequireRole roles={ALL}><PageBoundary role={role}><S><PanamaReceivingPage /></S></PageBoundary></RequireRole>} />
-        <Route path="/inventory"  element={<RequireRole roles={ADMIN}><PageBoundary role={role}><S><InventoryPage /></S></PageBoundary></RequireRole>} />
+        <Route path="/panama/recepciones" element={<RequireRole roles={ACCOUNT_ROLES}><PageBoundary role={role}><S><PanamaReceivingPage /></S></PageBoundary></RequireRole>} />
+        <Route path="/inventory"  element={<RequireRole roles={[...ADMIN, 'almacen']}><PageBoundary role={role}><S><InventoryPage /></S></PageBoundary></RequireRole>} />
         <Route path="/pedidos"    element={<RequireRole roles={ADMIN}><PageBoundary role={role}><S><PedidosPage /></S></PageBoundary></RequireRole>} />
         <Route path="/neumaticos" element={<RequireRole roles={ADMIN}><PageBoundary role={role}><S><NeumaticosPage /></S></PageBoundary></RequireRole>} />
 
@@ -208,7 +209,7 @@ export default function App() {
         <Route path="/flete"           element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><PageBoundary role={role}><S><ViajePage /></S></PageBoundary></RequireRole>} />
         <Route path="/bulk-boletas"    element={<RequireRole roles={['operador', 'coordinador', 'supervisor', 'gerencia']}><PageBoundary role={role}><S><BulkBoletasPage /></S></PageBoundary></RequireRole>} />
         <Route path="/briefing"        element={<RequireRole roles={MANAGEMENT}><PageBoundary role={role}><S><BriefingCard /></S></PageBoundary></RequireRole>} />
-        <Route path="/perfil"          element={<RequireRole roles={ALL}><PageBoundary role={role}><S><PerfilPage /></S></PageBoundary></RequireRole>} />
+        <Route path="/perfil"          element={<RequireRole roles={ACCOUNT_ROLES}><PageBoundary role={role}><S><PerfilPage /></S></PageBoundary></RequireRole>} />
         <Route path="/my-reports"      element={<RequireRole roles={ALL}><PageBoundary role={role}><S><MyReportsPage /></S></PageBoundary></RequireRole>} />
 
         {/* Admin (Gerencia) */}
