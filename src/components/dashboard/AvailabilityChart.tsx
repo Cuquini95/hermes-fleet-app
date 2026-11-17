@@ -23,27 +23,31 @@ export default function AvailabilityChart({ data }: AvailabilityChartProps) {
   const hasData = data.length > 0 && data.some((point) => point.total && point.total > 0);
 
   return (
-    <div className="bg-card rounded-xl shadow-sm p-4 border border-border">
+    <div className="w-full min-w-0 rounded-xl border border-border bg-card p-3 shadow-sm sm:p-4">
       <h3 className="font-semibold text-text mb-4">
-        Tendencia de Disponibilidad - 7 dias
+        Disponibilidad · últimos 7 días
       </h3>
       {!hasData ? (
         <div className="flex h-[200px] items-center justify-center rounded-lg border border-dashed border-border text-sm text-text-secondary">
           Cargando disponibilidad real...
         </div>
       ) : (
-        <ResponsiveContainer width="100%" height={200}>
-          <LineChart data={data}>
+        <ResponsiveContainer width="100%" minWidth={0} height={200}>
+          <LineChart data={data} margin={{ top: 4, right: 12, bottom: 4, left: 2 }}>
             <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
             <XAxis
               dataKey="day"
-              tick={{ fill: '#6B7280', fontSize: 12 }}
+              tick={{ fill: '#6B7280', fontSize: 11 }}
+              tickMargin={6}
+              minTickGap={4}
               axisLine={false}
               tickLine={false}
             />
             <YAxis
               domain={[0, 100]}
-              tick={{ fill: '#6B7280', fontSize: 12 }}
+              width={38}
+              tick={{ fill: '#6B7280', fontSize: 11 }}
+              tickFormatter={(value) => `${value}%`}
               axisLine={false}
               tickLine={false}
             />

@@ -15,18 +15,13 @@ export default function AppShell() {
       >
         Saltar al contenido
       </a>
-      <div className="flex flex-col min-h-screen">
+      <div className="flex min-h-svh min-w-0 w-full flex-col">
         <Header />
         <OfflineBanner />
         <main
           id="main-content"
           tabIndex={-1}
-          className="flex-1 overflow-y-auto px-4"
-          style={{
-            paddingTop: 80,
-            paddingBottom: 80,
-            backgroundColor: '#F1F5F9',
-          }}
+          className="w-full min-w-0 flex-1 bg-cream px-3 pb-[calc(5rem+env(safe-area-inset-bottom))] pt-[calc(4.5rem+env(safe-area-inset-top))] sm:px-4"
         >
           <Outlet />
           <LegalFooter />

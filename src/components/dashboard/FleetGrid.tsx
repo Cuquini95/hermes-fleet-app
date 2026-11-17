@@ -67,7 +67,7 @@ export default function FleetGrid({ equipment }: FleetGridProps) {
 
   return (
     <>
-      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+      <div className="grid min-w-0 grid-cols-2 gap-2 min-[400px]:grid-cols-3 sm:grid-cols-4">
         {sorted.map((unit) => {
           const readiness = dispatchReadiness.get(normalizeUnitId(unit.unit_id))
           return (
@@ -75,7 +75,7 @@ export default function FleetGrid({ equipment }: FleetGridProps) {
             key={unit.unit_id}
             type="button"
             onClick={() => setSelected({ unit, readiness })}
-            className="relative bg-card rounded-lg p-3 border border-border text-center hover:shadow-md hover:border-blue-300 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/40"
+            className="relative min-w-0 cursor-pointer rounded-lg border border-border bg-card p-2.5 text-center transition-all hover:border-blue-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-400/40 sm:p-3"
             aria-label={`Ver detalle de ${unit.unit_id}`}
           >
             {readiness && readiness.level !== 'ok' && (
@@ -91,7 +91,7 @@ export default function FleetGrid({ equipment }: FleetGridProps) {
               <StatusDot status={unit.status} />
             </div>
             <p className="font-mono text-sm font-semibold text-text leading-tight">{unit.unit_id}</p>
-            <p className="text-xs text-text-secondary truncate mt-0.5">{unit.model}</p>
+            <p className="mt-0.5 break-words text-xs text-text-secondary">{unit.model}</p>
           </button>
           )
         })}

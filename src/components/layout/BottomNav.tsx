@@ -39,16 +39,16 @@ export default function BottomNav() {
     <>
       <nav
         aria-label="Navegación principal"
-        className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around px-2 pb-safe"
-        style={{ height: 64, backgroundColor: '#162252' }}
+        className="fixed inset-x-0 bottom-0 z-50 flex h-[calc(4rem+env(safe-area-inset-bottom))] items-center justify-around bg-teal px-2 pb-[env(safe-area-inset-bottom)]"
       >
         {visible.map((item) => {
           const active = isActive(item);
           return (
             <button
               key={item.id}
+              type="button"
               onClick={() => handleItemClick(item)}
-              className="flex flex-col items-center gap-1 flex-1 py-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white rounded"
+              className="flex min-h-11 min-w-0 flex-1 flex-col items-center gap-1 rounded px-0.5 py-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
               aria-label={item.label}
               aria-current={active ? 'page' : undefined}
             >
@@ -58,7 +58,7 @@ export default function BottomNav() {
                 color={active ? '#FFFFFF' : 'rgba(255,255,255,0.6)'}
               />
               <span
-                className="text-xs leading-none"
+                className="max-w-full text-center text-[11px] leading-tight sm:text-xs"
                 style={{ color: active ? '#FFFFFF' : 'rgba(255,255,255,0.6)' }}
               >
                 {item.label}

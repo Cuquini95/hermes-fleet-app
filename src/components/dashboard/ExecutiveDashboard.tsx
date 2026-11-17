@@ -39,7 +39,7 @@ export default function ExecutiveDashboard() {
   return (
     <div
       ref={scrollRef}
-      className={`flex flex-col py-4 overflow-y-auto transition-opacity ${data.loading ? 'opacity-60' : 'opacity-100'}`}
+      className={`mx-auto flex w-full min-w-0 max-w-6xl flex-col py-3 transition-opacity ${data.loading ? 'opacity-60' : 'opacity-100'}`}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
@@ -51,25 +51,29 @@ export default function ExecutiveDashboard() {
         style={pullIndicatorStyle}
       />
       {/* Tab pills */}
-      <div className="flex items-center gap-2 mb-5">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => tab.id === 'datos' ? navigate('/data') : setActiveTab(tab.id)}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
-              activeTab === tab.id
-                ? 'text-white'
-                : 'bg-card border border-border text-text-secondary hover:text-text'
-            }`}
-            style={activeTab === tab.id ? { backgroundColor: '#162252' } : undefined}
-          >
-            {tab.label}
-          </button>
-        ))}
+      <div className="mb-4 flex min-w-0 items-center gap-2">
+        <div className="grid min-w-0 flex-1 grid-cols-4 gap-1.5 sm:flex sm:flex-wrap sm:gap-2">
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => tab.id === 'datos' ? navigate('/data') : setActiveTab(tab.id)}
+              aria-pressed={tab.id === 'datos' ? undefined : activeTab === tab.id}
+              className={`min-h-11 min-w-0 rounded-full border px-1 text-xs font-medium transition-colors sm:px-4 sm:text-sm ${
+                activeTab === tab.id
+                  ? 'border-teal bg-teal text-white'
+                  : 'border-border bg-card text-text-secondary hover:text-text'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
         <button
+          type="button"
           onClick={data.refresh}
           disabled={data.loading}
-          className="ml-auto p-1.5 rounded-full text-text-secondary hover:text-text hover:bg-card border border-transparent hover:border-border transition-colors disabled:opacity-40"
+          className="grid size-11 shrink-0 place-items-center rounded-full border border-border bg-card text-text-secondary transition-colors hover:text-text disabled:opacity-40"
           aria-label="Actualizar datos"
         >
           <RefreshCw size={16} className={data.loading ? 'animate-spin' : ''} />
@@ -81,14 +85,14 @@ export default function ExecutiveDashboard() {
         <div className="flex flex-col gap-4">
           {/* KPI row */}
           {data.loading ? (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid min-w-0 grid-cols-2 gap-2.5 md:grid-cols-4 md:gap-3">
               <SkeletonKPI />
               <SkeletonKPI />
               <SkeletonKPI />
               <SkeletonKPI />
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid min-w-0 grid-cols-2 gap-2.5 md:grid-cols-4 md:gap-3">
               <KPICard
                 icon={<Activity size={20} />}
                 value={`${data.availability}%`}
@@ -129,43 +133,43 @@ export default function ExecutiveDashboard() {
           {role === 'gerencia' && (
             <div className="mt-2">
               <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide mb-2">
-                Admin
+                Administración
               </p>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-3 sm:gap-3">
                 <Link
                   to="/admin/activos"
-                  className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 hover:border-blue-400 transition-colors"
+                  className="flex min-w-0 items-center gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:border-blue-400"
                 >
                   <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
                     <Package size={20} />
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-text">Activos</p>
-                    <p className="text-xs text-text-secondary truncate">Ciclo de vida</p>
+                    <p className="text-xs text-text-secondary">Ciclo de vida</p>
                   </div>
                 </Link>
                 <Link
                   to="/admin/proveedores"
-                  className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 hover:border-blue-400 transition-colors"
+                  className="flex min-w-0 items-center gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:border-blue-400"
                 >
                   <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
                     <Building2 size={20} />
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-text">Proveedores</p>
-                    <p className="text-xs text-text-secondary truncate">Catálogo</p>
+                    <p className="text-xs text-text-secondary">Catálogo</p>
                   </div>
                 </Link>
                 <Link
                   to="/admin/ordenes-compra"
-                  className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 hover:border-blue-400 transition-colors"
+                  className="flex min-w-0 items-center gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:border-blue-400"
                 >
                   <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
                     <ShoppingCart size={20} />
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-text">Órdenes de Compra</p>
-                    <p className="text-xs text-text-secondary truncate">Crear OC</p>
+                    <p className="text-xs text-text-secondary">Crear OC</p>
                   </div>
                 </Link>
               </div>
