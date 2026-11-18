@@ -8,6 +8,7 @@ import { useFleetDispatch, type WorkshopRecord } from '../../hooks/useFleetDispa
 import { dispatchAvailability } from '../../lib/availability';
 import { useEquipmentStore } from '../../stores/equipment-store';
 import { useAuthStore } from '../../stores/auth-store';
+import { fuelTrackingEnabled } from '../../data/project-features.js';
 import KPICard from '../ui/KPICard';
 import { SkeletonKPI } from '../ui/Skeleton';
 import FleetGrid from './FleetGrid';
@@ -40,6 +41,7 @@ export default function ExecutiveDashboard() {
   const role = useAuthStore((s) => s.role);
   const project = useAuthStore((s) => s.project);
   const isPanama = project === 'tmf-panama';
+  const fuelEnabled = fuelTrackingEnabled(project);
   const demo = useAuthStore((s) => s.previewDemo);
   const showWorkshopExceptions = isPanama && (role === 'gerencia' || role === 'supervisor');
   const exceptions = usePanamaWorkshopExceptions(showWorkshopExceptions);
@@ -142,8 +144,8 @@ export default function ExecutiveDashboard() {
             <div className="grid grid-cols-2 gap-3">
               <SkeletonKPI />
               <SkeletonKPI />
-              <SkeletonKPI />
-              <SkeletonKPI />
+              {fuelEnabled && <SkeletonKPI />}
+              <div className={fuelEnabled ? '' : 'col-span-2'}><SkeletonKPI /></div>
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-3">
@@ -168,18 +170,18 @@ export default function ExecutiveDashboard() {
                 <KPICard icon={<AlertTriangle size={20} />} label="OTs Críticas" color="#DC2626"
                   value={data.criticalOTs ?? '—'} />
               )}
-              <KPICard
+              {fuelEnabled && <KPICard
                 icon={<Fuel size={20} />}
                 value={data.avgConsumption}
                 label="Diésel promedio por carga"
                 color="#2563EB"
-              />
-              <KPICard
+              />}
+              <div className={fuelEnabled ? '' : 'col-span-2'}><KPICard
                 icon={<Bell size={20} />}
                 value={data.alertsToday ?? (useWorkshopMaster ? 'Sin verificar' : '—')}
                 label="Averías hoy"
                 color="#F59E0B"
-              />
+              /></div>
             </div>
           )}
 
@@ -206,7 +208,7 @@ export default function ExecutiveDashboard() {
           )}
           {showWorkshopExceptions && <PanamaWorkshopExceptions {...exceptions} />}
           {useWorkshopMaster && <PanamaWorkshopSummary data={dispatch.workshop} loading={dispatch.loading} card />}
-          {useWorkshopMaster && <PanamaFuelReconciliation data={data.fuelReconciliation} />}
+          {fuelEnabled && useWorkshopMaster && <PanamaFuelReconciliation data={data.fuelReconciliation} />}
           {isPanama && !useWorkshopMaster && data.error && <PanamaSourceRecords source="orders" limit={3} />}
 
           {/* Fleet grid */}

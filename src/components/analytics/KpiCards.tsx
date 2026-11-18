@@ -4,6 +4,7 @@ import { formatPeso, formatLitros } from './analyticsUtils'
 
 interface KpiCardsProps {
   totals: KpiTotals
+  includeFuel?: boolean
 }
 
 interface CardProps {
@@ -25,7 +26,7 @@ function KpiCard({ label, value, accent, sub }: CardProps) {
   )
 }
 
-export default function KpiCards({ totals }: KpiCardsProps) {
+export default function KpiCards({ totals, includeFuel = true }: KpiCardsProps) {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
       <KpiCard
@@ -33,11 +34,11 @@ export default function KpiCards({ totals }: KpiCardsProps) {
         value={totals.gastosTotal > 0 ? formatPeso(totals.gastosTotal) : '—'}
         accent="border-[#3b82f6]"
       />
-      <KpiCard
+      {includeFuel && <KpiCard
         label="⛽ Combustible"
         value={totals.combustibleLitros > 0 ? formatLitros(totals.combustibleLitros) : '—'}
         accent="border-[#22c55e]"
-      />
+      />}
       <KpiCard
         label="🚛 Fletes"
         value={totals.fletesCount > 0 ? `${totals.fletesCount} viajes` : '—'}

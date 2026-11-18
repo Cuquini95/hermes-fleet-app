@@ -187,7 +187,7 @@ test('Panamá verifica cronología y horas del horómetro individual antes de gu
   assert.equal(saved.length, 1);
 });
 
-test('Panamá blocks TMF fuel capture until explicitly enabled in the isolated fixture', async () => {
+test('Panamá no lleva combustible y una bandera anterior no habilita capturas', async () => {
   let writes = 0;
   const session = { ...operator, project: 'tmf-panama' };
   const options = { sheets: { commit: async () => { writes += 1; } }, sessionReader: async () => session,
@@ -199,12 +199,12 @@ test('Panamá blocks TMF fuel capture until explicitly enabled in the isolated f
     const capabilities = response();
     await gateway({ method: 'GET', query: { path: 'api/panama/capacidades' } }, capabilities);
     assert.equal(capabilities.statusCode, 200);
-    assert.equal(capabilities.body.fuelCapture, enabled);
+    assert.equal(capabilities.body.fuelCapture, false);
     const receipt = response();
     await gateway(request, receipt);
-    assert.equal(receipt.statusCode, enabled ? 200 : 403);
+    assert.equal(receipt.statusCode, 403);
   }
-  assert.equal(writes, 1);
+  assert.equal(writes, 0);
 });
 
 test('el cambio autorizado conserva lecturas brutas y horas acumuladas y muestra el corte oficial sin editarlo', async () => {

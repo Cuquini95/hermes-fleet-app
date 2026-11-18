@@ -1,6 +1,8 @@
 // src/stores/analyticsStore.ts
 import { create } from 'zustand'
 import { readRange, SHEET_TABS } from '../lib/sheets-api'
+import { useAuthStore } from './auth-store'
+import { fuelTrackingEnabled } from '../data/project-features.js'
 import {
   type Period,
   type UnitMetrics,
@@ -73,6 +75,7 @@ export const useAnalyticsStore = create<AnalyticsState>((set, get) => ({
     set({ status: 'loading', fetchErrors: [] })
 
     const errors: string[] = []
+    const fuelEnabled = fuelTrackingEnabled(useAuthStore.getState().project)
 
     const safeRead = async (tab: string): Promise<string[][]> => {
       try {
@@ -86,14 +89,14 @@ export const useAnalyticsStore = create<AnalyticsState>((set, get) => ({
 
     const [gastos, combustible, fletes, averias] = await Promise.all([
       safeRead(SHEET_TABS.GASTOS),
-      safeRead(SHEET_TABS.COMBUSTIBLE),
+      fuelEnabled ? safeRead(SHEET_TABS.COMBUSTIBLE) : Promise.resolve([]),
       safeRead(SHEET_TABS.FLETES),
       safeRead(SHEET_TABS.AVERIAS),
     ])
 
     set({
       raw: { gastos, combustible, fletes, averias },
-      status: errors.length < 4 ? 'ready' : 'error',
+      status: errors.length < (fuelEnabled ? 4 : 3) ? 'ready' : 'error',
       lastFetched: new Date(), // records last attempt time (not last successful fetch)
       fetchErrors: errors,
     })
@@ -121,7 +124,7 @@ export const useAnalyticsStore = create<AnalyticsState>((set, get) => ({
 
     return {
       gastos:      raw.gastos.filter(filterRow(0, 10)),
-      combustible: raw.combustible.filter(filterRow(0, 3)),
+      combustible: fuelTrackingEnabled(useAuthStore.getState().project) ? raw.combustible.filter(filterRow(0, 3)) : [],
       fletes:      raw.fletes.filter(filterRow(0, 2)),
       averias:     raw.averias.filter(filterRow(0, 2)),
     }
@@ -129,7 +132,7 @@ export const useAnalyticsStore = create<AnalyticsState>((set, get) => ({
 
   getUnits: () => {
     const { raw } = get()
-    return extractUnits(raw.gastos, raw.combustible, raw.fletes, raw.averias)
+    return extractUnits(raw.gastos, fuelTrackingEnabled(useAuthStore.getState().project) ? raw.combustible : [], raw.fletes, raw.averias)
   },
 
   getUnitMetrics: () => {

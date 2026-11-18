@@ -7,6 +7,8 @@ import GastosPorUnidadChart from './GastosPorUnidadChart'
 import CombustibleTrendChart from './CombustibleTrendChart'
 import UnitSummaryTable from './UnitSummaryTable'
 import { generateReport } from './reportGenerator'
+import { useAuthStore } from '../../stores/auth-store'
+import { fuelTrackingEnabled } from '../../data/project-features.js'
 
 interface AnalyticsModalProps {
   open: boolean
@@ -21,6 +23,7 @@ const PERIOD_OPTIONS: { value: Period; label: string }[] = [
 ]
 
 export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
+  const fuelEnabled = useAuthStore(state => fuelTrackingEnabled(state.project))
   const store = useAnalyticsStore()
   const { status, fetchErrors, period, unitFilter, raw, dateFrom, dateTo } = store
   const [unitsOpen, setUnitsOpen] = useState(false)
@@ -87,7 +90,7 @@ export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
     const { period: p, unitFilter: uf, dateFrom: df, dateTo: dt, getFilteredRows, getKpiTotals, getUnitMetrics } =
       useAnalyticsStore.getState()
     const unitLabel = uf.length === 0 ? 'all' : uf.join(', ')
-    generateReport(p, unitLabel, getFilteredRows(), getKpiTotals(), getUnitMetrics(), df, dt).catch(console.error)
+    generateReport(p, unitLabel, getFilteredRows(), getKpiTotals(), getUnitMetrics(), df, dt, fuelEnabled).catch(console.error)
   }
 
   return (
@@ -238,7 +241,7 @@ export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
                 { key: 'fletes',      label: 'Fletes',      color: 'bg-orange-600/20 text-orange-300 border-orange-700' },
                 { key: 'averias',     label: 'Averías',     color: 'bg-red-600/20 text-red-300 border-red-700'       },
               ] as const
-            ).map(({ key, label, color }) => {
+            ).filter(section => fuelEnabled || section.key !== 'combustible').map(({ key, label, color }) => {
               const active = sections[key]
               return (
                 <button
@@ -272,7 +275,7 @@ export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
           ) : (
             <>
               {/* KPI row */}
-              <KpiCards totals={store.getKpiTotals()} />
+              <KpiCards totals={store.getKpiTotals()} includeFuel={fuelEnabled} />
 
               {/* Charts row */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -280,16 +283,16 @@ export default function AnalyticsModal({ open, onClose }: AnalyticsModalProps) {
                   <p className="text-sm font-semibold text-slate-200 mb-3">Gastos por Unidad</p>
                   <GastosPorUnidadChart units={store.getUnitMetrics()} />
                 </div>
-                <div className="bg-slate-800 rounded-lg p-4">
+                {fuelEnabled && <div className="bg-slate-800 rounded-lg p-4">
                   <p className="text-sm font-semibold text-slate-200 mb-3">Combustible por Semana</p>
                   <CombustibleTrendChart data={store.getTrend()} />
-                </div>
+                </div>}
               </div>
 
               {/* Summary table */}
               <div className="bg-slate-800 rounded-lg p-4">
                 <p className="text-sm font-semibold text-slate-200 mb-3">Resumen por Unidad</p>
-                <UnitSummaryTable units={store.getUnitMetrics()} />
+                <UnitSummaryTable units={store.getUnitMetrics()} includeFuel={fuelEnabled} />
               </div>
             </>
           )}

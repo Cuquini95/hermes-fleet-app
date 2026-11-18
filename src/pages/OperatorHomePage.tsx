@@ -14,6 +14,7 @@ import { readRange, SHEET_TABS } from '../lib/sheets-api';
 import { mexicoDate, mexicoDateInput } from '../lib/date-utils';
 import { requestPanamaDispatch, type DispatchAssignment } from '../lib/panama-dispatch';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { fuelTrackingEnabled } from '../data/project-features.js';
 
 interface ActionCard {
   label: string;
@@ -67,7 +68,8 @@ function PanamaOperatorHome({ userId }: { userId: string }) {
   if (unit) handoff.set('unit', unit);
   if (selected) handoff.set('shift', selected.shift);
   const primary = ACTION_CARDS.filter(item => ['/horometro', '/dvir', '/falla'].includes(item.path));
-  const secondary = ACTION_CARDS.filter(item => ['/diesel', '/flete', '/my-reports'].includes(item.path));
+  const secondary = ACTION_CARDS.filter(item => ['/flete', '/my-reports'].includes(item.path)
+    || (item.path === '/diesel' && fuelTrackingEnabled('tmf-panama')));
 
   return <div className="space-y-4 py-4">
     <header className="space-y-2 rounded-xl border border-border bg-white p-4">
@@ -109,7 +111,7 @@ function PanamaOperatorHome({ userId }: { userId: string }) {
         </button>
       ))}
       <button type="button" onClick={() => navigate(`/panama/turnos${handoff.size ? '?' + handoff : ''}`)}
-        className="min-h-11 rounded-lg border border-border bg-white p-2 text-sm font-medium">Relevo de turno</button>
+        className={`min-h-11 rounded-lg border border-border bg-white p-2 text-sm font-medium ${fuelTrackingEnabled('tmf-panama') ? '' : 'col-span-2'}`}>Relevo de turno</button>
     </div>
   </div>;
 }

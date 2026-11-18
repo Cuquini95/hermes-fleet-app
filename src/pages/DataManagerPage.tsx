@@ -14,6 +14,7 @@ import { useAnalyticsStore } from '../stores/analyticsStore';
 import AnalyticsModal from '../components/analytics/AnalyticsModal';
 import PanamaSourceRecords from '../components/workshop/PanamaSourceRecords';
 import { useAuthStore } from '../stores/auth-store';
+import { fuelTrackingEnabled } from '../data/project-features.js';
 
 // ── Collection definitions ───────────────────────────────────────────────────
 
@@ -326,6 +327,8 @@ export default function DataManagerPage() {
 }
 
 function DataManager({ isPanama }: { isPanama: boolean }) {
+  const collections = useMemo(() => COLLECTIONS.filter(collection => collection.id !== 'combustible'
+    || fuelTrackingEnabled(isPanama ? 'tmf-panama' : '')), [isPanama]);
   const [activeId, setActiveId] = useState<string>(() => isPanama ? 'averias' : COLLECTIONS[0].id);
   const [cache, setCache] = useState<TabCache>({});
   const [loadingTabs, setLoadingTabs] = useState<Record<string, boolean>>({});
@@ -344,13 +347,13 @@ function DataManager({ isPanama }: { isPanama: boolean }) {
 
   const active: Collection = useMemo(
     () => {
-      const collection = COLLECTIONS.find((c) => c.id === activeId) ?? COLLECTIONS[0];
+      const collection = collections.find((c) => c.id === activeId) ?? collections[0] ?? COLLECTIONS[0];
       if (!isPanama || collection.id !== 'gastos') return collection;
       return { ...collection, columns: collection.columns.map(column => ({ ...column,
         label: ({ RFC: 'RUC', IVA: 'ITBMS', Status: 'Estado' } as Record<string, string>)[column.label] ?? column.label,
       })) };
     },
-    [activeId, isPanama]
+    [activeId, isPanama, collections]
   );
 
   const loadTab = useCallback(async (collection: Collection) => {
@@ -472,7 +475,7 @@ function DataManager({ isPanama }: { isPanama: boolean }) {
       {/* ── Tabs ──────────────────────────────────────────────────────────── */}
       <div className="sticky top-[80px] z-10 bg-[#F1F5F9]/95 backdrop-blur border-b border-[#E5E7EB]">
         <div className="flex overflow-x-auto no-scrollbar">
-          {COLLECTIONS.map((col) => {
+          {collections.map((col) => {
             const isActive = col.id === active.id;
             const count = loadedRowCounts(col.id);
             return (

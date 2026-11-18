@@ -4,6 +4,7 @@ import { useAuthStore } from './stores/auth-store';
 import { useWorkOrderStore } from './stores/workorder-store';
 import { flushQueue } from './lib/offline-queue';
 import { sessionHome } from './lib/purchasing-home';
+import { fuelTrackingEnabled } from './data/project-features.js';
 import type { AppRole } from './types/roles';
 import RequireRole from './components/auth/RequireRole';
 import SessionUnavailable from './components/auth/SessionUnavailable';
@@ -119,6 +120,7 @@ export default function App() {
   const initRealtime = useWorkOrderStore((s) => s.initRealtime);
   const role = useAuthStore((s) => s.role) ?? undefined;
   const userId = useAuthStore((s) => s.userId);
+  const fuelEnabled = useAuthStore((s) => fuelTrackingEnabled(s.project));
   const validateSession = useAuthStore((s) => s.validateSession);
 
   useEffect(() => {
@@ -203,7 +205,7 @@ export default function App() {
         <Route path="/fleet"           element={<RequireRole roles={['supervisor', 'gerencia', 'coordinador']}><PageBoundary role={role}><S><FleetPage /></S></PageBoundary></RequireRole>} />
         <Route path="/alerts"          element={<RequireRole roles={ADMIN}><PageBoundary role={role}><S><AlertsPage /></S></PageBoundary></RequireRole>} />
         <Route path="/data"            element={<RequireRole roles={ADMIN}><PageBoundary role={role}><S><DataManagerPage /></S></PageBoundary></RequireRole>} />
-        <Route path="/diesel"          element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><PageBoundary role={role}><S><DieselPage /></S></PageBoundary></RequireRole>} />
+        <Route path="/diesel"          element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}>{fuelEnabled ? <PageBoundary role={role}><S><DieselPage /></S></PageBoundary> : <Navigate to="/" replace />}</RequireRole>} />
         <Route path="/horometro"       element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><PageBoundary role={role}><S><HorometroPage /></S></PageBoundary></RequireRole>} />
         <Route path="/viaje"           element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><PageBoundary role={role}><S><ViajePage /></S></PageBoundary></RequireRole>} />
         <Route path="/flete"           element={<RequireRole roles={['operador', 'supervisor', 'gerencia']}><PageBoundary role={role}><S><ViajePage /></S></PageBoundary></RequireRole>} />

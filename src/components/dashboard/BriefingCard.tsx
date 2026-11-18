@@ -18,6 +18,7 @@ import { mexicoDate, mexicoDateInput, mexicoTimeInput } from '../../lib/date-uti
 import PanamaWorkshopSummary from './PanamaWorkshopSummary';
 import PanamaFuelReconciliation from './PanamaFuelReconciliation';
 import { reconcileDieselDispatches } from '../../lib/panama-fuel-reconciliation';
+import { fuelTrackingEnabled } from '../../data/project-features.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -226,6 +227,7 @@ export default function BriefingCard({ dispatch }: { dispatch?: FleetDispatch })
   const fallback = useFleetDispatch(equipmentList, !dispatch);
   const fleet = dispatch ?? fallback;
   const project = useAuthStore(state => state.project);
+  const fuelEnabled = fuelTrackingEnabled(project);
   const demo = useAuthStore(state => state.previewDemo);
   const equipmentError = useEquipmentStore((state) => state.error);
   const equipmentFetched = useEquipmentStore((state) => state.fetched);
@@ -248,7 +250,7 @@ export default function BriefingCard({ dispatch }: { dispatch?: FleetDispatch })
     const signal = AbortSignal.any([ctrl.signal, AbortSignal.timeout(8000)]);
     const [maintenance, fuel, inspections, inventory] = await Promise.allSettled([
       fetchPanamaMaintenance(ctrl.signal, signal),
-      readRange(SHEET_TABS.COMBUSTIBLE, signal, undefined, 0),
+      fuelEnabled ? readRange(SHEET_TABS.COMBUSTIBLE, signal, undefined, 0) : Promise.resolve([] as string[][]),
       readRange(SHEET_TABS.INSPECCIONES, signal, undefined, 0),
       readRange(SHEET_TABS.INVENTARIO, signal, undefined, 0),
     ]);
@@ -328,7 +330,7 @@ export default function BriefingCard({ dispatch }: { dispatch?: FleetDispatch })
           </Section>
 
           {/* Combustible */}
-          {project === 'tmf-panama' ? <PanamaFuelReconciliation data={rows?.[0] && equipmentFetched && !equipmentError
+          {fuelEnabled && (project === 'tmf-panama' ? <PanamaFuelReconciliation data={rows?.[0] && equipmentFetched && !equipmentError
             ? reconcileDieselDispatches(rows[0], equipmentList.map(unit => unit.unit_id)) : null} /> : <Section label={data.fuelTotalDiesel === null ? 'COMBUSTIBLE (7 DÍAS)' : `COMBUSTIBLE (7 DÍAS) · ${data.fuelTotalDiesel.toLocaleString()} L diésel total`}>
             {data.fuelTotalDiesel === null ? <Line color="amber">Fuente de combustible no disponible.</Line> : data.fuelAnomalies.length === 0 ? (
               <Line color="green">Sin anomalías detectadas</Line>
@@ -341,7 +343,7 @@ export default function BriefingCard({ dispatch }: { dispatch?: FleetDispatch })
             )}
           </Section>
 
-          }
+          )}
           {/* DVIR Compliance */}
           <Section
             label={data.dvirExpectedCount ? `INSPECCIONES DVIR · ${Math.round((data.dvirCompliantCount / data.dvirExpectedCount) * 100)}% (${data.dvirCompliantCount}/${data.dvirExpectedCount} unidades hoy)` : 'INSPECCIONES DVIR'}
