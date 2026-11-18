@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { z } from 'zod';
@@ -9,10 +9,13 @@ import { usePanamaCaptureUnit } from '../hooks/usePanamaCaptureUnit';
 import { mexicoDateInput, mexicoTimeInput } from '../lib/date-utils';
 import { saveWorkshopCapture } from '../lib/offline-queue';
 import { WorkshopApiError } from '../lib/workshop-api';
+import { EVIDENCE_IMAGE_TYPES } from '../lib/evidence-upload';
+import { useAuthStore } from '../stores/auth-store';
 import { useEquipmentStore } from '../stores/equipment-store';
 import SystemCheckRow from '../components/dvir/SystemCheckRow';
 import DVIRResultBanner from '../components/dvir/DVIRResultBanner';
 import ConfirmModal from '../components/ui/ConfirmModal';
+import PhotoCapture from '../components/ui/PhotoCapture';
 import SuccessToast, { type ToastType } from '../components/ui/SuccessToast';
 
 const dvirSchema = z.object({
@@ -20,26 +23,26 @@ const dvirSchema = z.object({
   allChecked: z.literal(true, 'Completa todos los sistemas'),
 });
 
-interface PhotoItem {
+const MAX_INSPECTION_PHOTOS = 40;
+
+interface InspectionPhoto {
   file: File;
   preview: string;
+  systemId?: string;
 }
 
-interface CheckState extends DVIRCheck {
-  photos: PhotoItem[];
-}
-
-function buildInitialChecks(): CheckState[] {
+function buildInitialChecks(): DVIRCheck[] {
   return DVIR_SYSTEMS.map((sys) => ({
     system_id: sys.id,
     status: null,
     notes: '',
-    photos: [],
   }));
 }
 
 export default function DVIRPage() {
   const navigate = useNavigate();
+  const isPanama = useAuthStore(state => state.project === 'tmf-panama');
+  const accept = isPanama ? EVIDENCE_IMAGE_TYPES.join(',') : undefined;
   const equipment = useEquipmentList();
   const reportUnits = useEquipmentStore(state => state.reportUnits);
   const units = equipment.length === 0 && reportUnits
@@ -47,6 +50,7 @@ export default function DVIRPage() {
     : equipment;
   const mutationId = useRef('');
   const sending = useRef(false);
+  const previews = useRef(new Set<string>());
   const [saving, setSaving] = useState(false);
   const [pending, setPending] = useState('');
   const [saved, setSaved] = useState(false);
@@ -55,13 +59,23 @@ export default function DVIRPage() {
   const [unit_id, setUnitId] = usePanamaCaptureUnit(units);
   const [type, setType] = useState<'pre-operacion' | 'post-operacion'>('pre-operacion');
   const [horometro, setHorometro] = useState('');
-  const [checks, setChecks] = useState<CheckState[]>(buildInitialChecks);
+  const [checks, setChecks] = useState(buildInitialChecks);
+  const [photos, setPhotos] = useState<InspectionPhoto[]>([]);
   const [observations, setObservations] = useState('');
   const [showConfirm, setShowConfirm] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [toastType, setToastType] = useState<ToastType>('success');
   const [toastVisible, setToastVisible] = useState(false);
 
+  useEffect(() => {
+    const urls = previews.current;
+    return () => {
+      urls.forEach(url => URL.revokeObjectURL(url));
+      urls.clear();
+    };
+  }, []);
+
+  const inspectionPhotos = photos.filter(photo => !photo.systemId);
   const allChecked = checks.every((c) => c.status !== null);
   const validation = dvirSchema.safeParse({
     unit_id,
@@ -81,26 +95,26 @@ export default function DVIRPage() {
     );
   }
 
-  const handlePhotoCapture = useCallback((index: number, file: File) => {
+  function addPhoto(file: File, systemId?: string) {
+    if (!file.size || (isPanama && !EVIDENCE_IMAGE_TYPES.includes(file.type))) {
+      showToast(isPanama ? 'Elige una foto JPG, PNG o WebP.' : 'Elige una foto válida.', 'error');
+      return;
+    }
+    if (previews.current.size >= MAX_INSPECTION_PHOTOS) {
+      showToast(`Máximo ${MAX_INSPECTION_PHOTOS} fotos por inspección.`, 'error');
+      return;
+    }
     const preview = URL.createObjectURL(file);
-    setChecks((prev) =>
-      prev.map((c, i) =>
-        i === index ? { ...c, photos: [{ file, preview }] } : c
-      )
-    );
-  }, []);
+    previews.current.add(preview);
+    setPhotos(current => [...current, { file, preview, systemId }]);
+  }
 
-  const handlePhotoRemove = useCallback((checkIndex: number, photoIndex: number) => {
-    setChecks((prev) =>
-      prev.map((c, i) => {
-        if (i !== checkIndex) return c;
-        const updated = [...c.photos];
-        const removed = updated.splice(photoIndex, 1);
-        if (removed[0]) URL.revokeObjectURL(removed[0].preview);
-        return { ...c, photos: updated };
-      })
-    );
-  }, []);
+  function removePhoto(photo: InspectionPhoto | undefined) {
+    if (!photo) return;
+    URL.revokeObjectURL(photo.preview);
+    previews.current.delete(photo.preview);
+    setPhotos(current => current.filter(item => item.preview !== photo.preview));
+  }
 
   function handleSubmitIntent() {
     if (!canSubmit || saving || saved) return;
@@ -127,7 +141,7 @@ export default function DVIRPage() {
           unit: unit_id, date: fecha, time: hora, type, meter: horometro,
           checks: checks.map(({ status, notes }) => ({ status, notes })), observations,
         },
-        photos: checks.flatMap((check) => check.photos.map(({ file }) => ({ file }))),
+        photos: photos.map(({ file }) => ({ file })),
       });
       if (response.kind === 'pending') {
         setPending(response.reason);
@@ -263,20 +277,36 @@ export default function DVIRPage() {
         </div>
       </div>
 
+      <section aria-label="Fotos de la inspección" className="mb-4 flex min-w-0 flex-col gap-2 rounded-xl border border-border bg-white p-3 shadow-sm">
+        <h2 className="text-sm font-semibold text-text">
+          Fotos{inspectionPhotos.length > 0 && <span className="ml-2 text-xs font-normal text-text-secondary">{inspectionPhotos.length}</span>}
+        </h2>
+        <PhotoCapture
+          photos={inspectionPhotos}
+          onCapture={addPhoto}
+          onRemove={index => removePhoto(inspectionPhotos[index])}
+          accept={accept}
+          labels={{ camera: 'Tomar foto', gallery: 'Galería' }}
+          multiple
+        />
+      </section>
+
       {/* Systems */}
       <div className="flex flex-col">
         {DVIR_SYSTEMS.map((system, index) => {
           const check = checks[index];
           if (!check) return null;
+          const systemPhotos = photos.filter(photo => photo.systemId === system.id);
           return (
             <SystemCheckRow
               key={system.id}
               system={system}
               value={check.status}
               onChange={(status) => updateCheck(index, status)}
-              photos={check.photos}
-              onPhotoCapture={(file) => handlePhotoCapture(index, file)}
-              onPhotoRemove={(photoIndex) => handlePhotoRemove(index, photoIndex)}
+              photos={systemPhotos}
+              accept={accept}
+              onPhotoCapture={file => addPhoto(file, system.id)}
+              onPhotoRemove={index => removePhoto(systemPhotos[index])}
               notes={check.notes ?? ''}
               onNotesChange={(notes) => updateNotes(index, notes)}
             />

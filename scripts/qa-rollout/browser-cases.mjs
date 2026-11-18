@@ -162,6 +162,82 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
   }
 
   try {
+    if (withGateway) await record('MÓVIL-DVIR-FOTOS-APROBADAS', async () => {
+      const saved = [];
+      const baseline = sheet.checkpoint();
+      const photoKeys = new Set(fixture.photos.keys());
+      const evidenceKeys = new Set(fixture.evidence.keys());
+      const photo = name => ({ name, mimeType: 'image/png', buffer: photoPng });
+      try {
+        for (const [width, type, label] of [[320, 'pre-operacion', 'Pre-Operación'], [390, 'post-operacion', 'Post-Operación']]) {
+          const links = await inRole('operador', width, async page => {
+            await page.goto(origin + '/dvir', { waitUntil: 'domcontentloaded' });
+            const section = page.getByRole('region', { name: 'Fotos de la inspección' });
+            const [camera] = await Promise.all([page.waitForEvent('filechooser'), clickByName(page, 'Tomar foto')]);
+            assert.equal(await camera.element().getAttribute('capture'), 'environment');
+            await camera.setFiles(photo('frente.png'));
+            const [gallery] = await Promise.all([page.waitForEvent('filechooser'), clickByName(page, 'Galería')]);
+            assert.equal(gallery.isMultiple(), true);
+            await gallery.setFiles([photo('costado.png'), photo('serie.png')]);
+            await visible(section.getByRole('img', { name: 'Foto 3' }));
+            await section.getByRole('button', { name: 'Eliminar foto' }).nth(1).click();
+            assert.equal(await section.getByRole('img').count(), 2);
+            await page.locator('#main-content select').first().selectOption('DZ203');
+            await clickByName(page, label);
+            await noHorizontalOverflow(page, width);
+            await section.scrollIntoViewIfNeeded();
+            await shot(page, `dvir-fotos-${width}.png`);
+            const ok = page.getByRole('button', { name: 'OK', exact: true });
+            for (let i = 0; i < 12; i++) await ok.nth(i).click();
+            const note = 'Fotos QA ' + randomUUID();
+            await page.getByLabel('Observaciones', { exact: true }).fill(note);
+            await clickByName(page, 'Enviar Inspección');
+            await clickByName(page, 'Confirmar');
+            await visible(page.getByText('Inspección registrada.', { exact: true }));
+            const row = sheet.read(tabs.dvir).find(item => item[23] === note);
+            assert(row);
+            assert.deepEqual([row[7], row[22], row[25]], [type, 'aprobado', '']);
+            const urls = row[24].split(', ');
+            assert.equal(new Set(urls).size, 2);
+            await page.goto(origin + '/perfil', { waitUntil: 'domcontentloaded' });
+            await clickByName(page, 'Historial de mis acciones');
+            const history = page.getByText(row[1], { exact: false }).locator('..');
+            await visible(history.getByRole('link', { name: 'Ver evidencia 1', exact: true }));
+            for (const [index, path] of urls.entries()) {
+              assert.match(path, /^\/hermes-api\/api\/evidence\?id=[a-f0-9]{64}$/);
+              const link = history.getByRole('link', { name: 'Ver evidencia ' + (index + 1), exact: true });
+              assert.equal(await link.getAttribute('href'), path);
+              const image = await page.request.get(origin + path);
+              assert.equal(image.status(), 200);
+              assert.deepEqual(await image.body(), photoPng);
+            }
+            return urls;
+          }, firstAccount('operador'));
+          saved.push(...links);
+        }
+        await inRole('gerencia', 390, async page => {
+          await page.goto(origin + '/data', { waitUntil: 'domcontentloaded' });
+          await clickByName(page, /^Inspecciones/);
+          await visible(page.getByRole('columnheader', { name: 'Fotos', exact: true }));
+          const summaries = page.locator('td summary').filter({ hasText: '2 fotos' });
+          await visible(summaries);
+          assert.equal(await summaries.count(), 2);
+          for (const summary of await summaries.all()) await summary.click();
+          const urls = await page.getByRole('link', { name: /^Foto [12]$/ }).evaluateAll(links => links.map(link => link.getAttribute('href')));
+          assert.deepEqual(urls.sort(), [...saved].sort());
+          await noHorizontalOverflow(page, 390);
+        }, firstAccount('gerencia'));
+        const anon = await browser.newContext({ ignoreHTTPSErrors: true });
+        try {
+          assert.equal((await anon.request.get(origin + saved[0])).status(), 401);
+        } finally { await anon.close(); }
+        return { inspections: 2, photos: saved.length, visibleInHistory: true, visibleInReports: true, authenticatedOnly: true };
+      } finally {
+        sheet.restoreCheckpoint(baseline);
+        for (const key of fixture.photos.keys()) if (!photoKeys.has(key)) fixture.photos.delete(key);
+        for (const key of fixture.evidence.keys()) if (!evidenceKeys.has(key)) fixture.evidence.delete(key);
+      }
+    });
     if (focusedPanama) {
       await checkPanamaViewportMatrix({ fixture, record, inRole, shot, out });
       await checkConnectedPmPdfs({ fixture, record, inRole, out });
@@ -1247,7 +1323,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         for (let index = 0; index < 12; index++) await (index === 2 ? fail : ok).nth(index).click();
         await page.getByPlaceholder('Describe el problema...').fill('Hallazgo de freno sintético');
         await page.getByLabel('Observaciones', { exact: true }).fill(note);
-        await page.locator('input[type=file]:not([capture])').first().setInputFiles({ name: 'dvir-sintetico.png', mimeType: 'image/png', buffer: photoPng });
+        await page.locator('input[type=file]:not([capture])').last().setInputFiles({ name: 'dvir-sintetico.png', mimeType: 'image/png', buffer: photoPng });
         await clickByName(page, 'Enviar Inspección');
         await clickByName(page, 'Confirmar');
         await visible(page.getByText(/Inspección registrada\. OT creada/));

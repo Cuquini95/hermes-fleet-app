@@ -11,9 +11,11 @@ interface PhotoCaptureProps {
   photos: PhotoItem[];
   onRemove: (index: number) => void;
   multiple?: boolean;
+  accept?: string;
+  labels?: { camera: string; gallery: string };
 }
 
-export default function PhotoCapture({ onCapture, photos, onRemove, multiple = false }: PhotoCaptureProps) {
+export default function PhotoCapture({ onCapture, photos, onRemove, multiple = false, accept = 'image/*', labels }: PhotoCaptureProps) {
   const cameraRef = useRef<HTMLInputElement>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
 
@@ -39,8 +41,8 @@ export default function PhotoCapture({ onCapture, photos, onRemove, multiple = f
             className="flex items-center gap-2 border border-amber text-amber rounded-xl px-4 font-medium text-sm w-fit"
             style={{ minHeight: 44 }}
           >
-            <Camera size={18} />
-            Agregar foto
+            <Camera size={18} aria-hidden />
+            {labels?.camera ?? 'Agregar foto'}
           </button>
           <button
             type="button"
@@ -48,15 +50,15 @@ export default function PhotoCapture({ onCapture, photos, onRemove, multiple = f
             className="flex items-center gap-2 border border-amber text-amber rounded-xl px-4 font-medium text-sm w-fit"
             style={{ minHeight: 44 }}
           >
-            <Upload size={18} />
-            Subir archivo
+            <Upload size={18} aria-hidden />
+            {labels?.gallery ?? 'Subir archivo'}
           </button>
         </div>
       )}
       <input
         ref={cameraRef}
         type="file"
-        accept="image/*"
+        accept={accept}
         capture="environment"
         className="hidden"
         onChange={handleFileChange}
@@ -64,7 +66,7 @@ export default function PhotoCapture({ onCapture, photos, onRemove, multiple = f
       <input
         ref={uploadRef}
         type="file"
-        accept="image/*"
+        accept={accept}
         multiple={multiple}
         className="hidden"
         onChange={handleFileChange}
@@ -72,7 +74,7 @@ export default function PhotoCapture({ onCapture, photos, onRemove, multiple = f
       {photos.length > 0 && (
         <div className="flex gap-2 flex-wrap">
           {photos.map((photo, index) => (
-            <div key={index} className="relative w-20 h-20">
+            <div key={photo.preview} className="relative w-20 h-20">
               <img
                 src={photo.preview}
                 alt={`Foto ${index + 1}`}

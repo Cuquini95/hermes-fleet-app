@@ -68,6 +68,7 @@ export async function checkOfflineRestart(fixture, out) {
     await page.getByPlaceholder('Describe el problema...').fill('Freno reprobado en el checklist');
     await page.getByLabel('Observaciones', { exact: true }).fill(checklistNote);
     await page.locator('input[type=file]:not([capture])').first().setInputFiles(photo('inspeccion-sin-senal.png'));
+    await page.locator('input[type=file]:not([capture])').last().setInputFiles(photo('frenos-sin-senal.png'));
     await button(page, 'Enviar Inspección').click();
     await button(page, 'Confirmar').click();
     await expect(page.getByText(/Guardado pendiente\./)).toBeVisible();
@@ -96,7 +97,7 @@ export async function checkOfflineRestart(fixture, out) {
     await validated;
     await expect.poll(() => [failures().length, inspections().length, photos.size - baselinePhotos], {
       timeout: 15000,
-    }).toEqual([1, 1, 2]);
+    }).toEqual([1, 1, 3]);
 
     const [failure] = failures();
     const [inspection] = inspections();
@@ -104,8 +105,11 @@ export async function checkOfflineRestart(fixture, out) {
     assert.equal(inspection[11], 'falla');
     assert.equal(sheet.read(tabs.failure).filter(row => row[13] === failure[1]).length, 1);
     assert.equal(sheet.read(tabs.failure).filter(row => row[13] === inspection[25]).length, 1);
-    const photoPaths = [failure[10], inspection[24]];
-    assert.equal(new Set(photoPaths).size, 2);
+    const inspectionPhotos = inspection[24].split(', ');
+    assert.equal(inspectionPhotos.length, 2);
+    assert.equal(sheet.read(tabs.orders).find(row => row[1] === inspection[25])?.[10], inspection[24]);
+    const photoPaths = [failure[10], ...inspectionPhotos];
+    assert.equal(new Set(photoPaths).size, 3);
     for (const path of photoPaths) {
       assert.match(path, /^\/hermes-api\/api\/evidence\?id=[a-f0-9]{64}$/);
       const response = await restarted.request.get(origin + path);
@@ -118,11 +122,11 @@ export async function checkOfflineRestart(fixture, out) {
     await context.setOffline(false);
     await restarted.reload({ waitUntil: 'domcontentloaded' });
     await expect(restarted.getByRole('navigation', { name: 'Navegación principal' })).toBeVisible();
-    assert.deepEqual([failures().length, inspections().length, photos.size - baselinePhotos], [1, 1, 2]);
+    assert.deepEqual([failures().length, inspections().length, photos.size - baselinePhotos], [1, 1, 3]);
     return { failure: failure[1], inspection: inspection[1], inspectionOrder: inspection[25],
       persistedAfterOfflineRestart: true, chromiumProcessRestarted: true,
       authenticatedAfterReconnect: true, duplicateSuppressed: true,
-      photosWithOriginalBytes: 2, width: 390, device: 'Chromium con viewport móvil' };
+      photosWithOriginalBytes: photoPaths.length, width: 390, device: 'Chromium con viewport móvil' };
   } finally {
     await context?.close();
     await rm(profile, { recursive: true, force: true });

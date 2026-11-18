@@ -43,6 +43,7 @@ interface SystemCheckRowProps {
   value: CheckStatus;
   onChange: (status: CheckStatus) => void;
   photos: PhotoItem[];
+  accept?: string;
   onPhotoCapture: (file: File) => void;
   onPhotoRemove: (index: number) => void;
   notes: string;
@@ -54,6 +55,7 @@ export default function SystemCheckRow({
   value,
   onChange,
   photos,
+  accept,
   onPhotoCapture,
   onPhotoRemove,
   notes,
@@ -108,21 +110,22 @@ export default function SystemCheckRow({
         </div>
       </div>
 
-      {value === 'falla' && (
+      {(value === 'falla' || photos.length > 0) && (
         <div className="mt-3 flex flex-col gap-2">
           <PhotoCapture
             photos={photos}
             onCapture={onPhotoCapture}
             onRemove={onPhotoRemove}
+            accept={accept}
             multiple={false}
           />
-          <textarea
+          {value === 'falla' && <textarea
             value={notes}
             onChange={(e) => onNotesChange(e.target.value)}
             placeholder="Describe el problema..."
             rows={2}
             className="w-full rounded-xl border border-border p-2 text-sm text-text resize-none bg-white"
-          />
+          />}
         </div>
       )}
     </div>

@@ -8,6 +8,7 @@ import {
   Loader2,
   Copy,
   Check,
+  Camera,
 } from 'lucide-react';
 import { readRange } from '../lib/sheets-api';
 import { useAnalyticsStore } from '../stores/analyticsStore';
@@ -15,6 +16,7 @@ import AnalyticsModal from '../components/analytics/AnalyticsModal';
 import PanamaSourceRecords from '../components/workshop/PanamaSourceRecords';
 import { useAuthStore } from '../stores/auth-store';
 import { visibleWorkOrderFolio } from '../lib/purchasing-api';
+import { isPrivateEvidenceUrl } from '../lib/evidence-link';
 import { fuelTrackingEnabled } from '../data/project-features.js';
 
 // ── Collection definitions ───────────────────────────────────────────────────
@@ -30,6 +32,7 @@ interface ColumnDef {
   badge?: 'severity' | 'status' | 'resultado';
   hideOnMobile?: boolean; // hide on small screens
   sticky?: boolean;       // sticky first column
+  photos?: boolean;
   minWidth?: string;
 }
 
@@ -233,6 +236,12 @@ function recordRows(rows: string[][], collection: Collection, isPanama: boolean,
       cells[1] = visibleWorkOrderFolio(row[25] ?? '') ?? visibleWorkOrderFolio(row[1] ?? '') ?? '';
       return cells;
     });
+    if (collection.id === 'inspecciones') return records.map(row => {
+      if (!row[24]) return row;
+      const cells = [...row];
+      cells[24] = row[24].split(/,\s*/).filter(isPrivateEvidenceUrl).join(', ');
+      return cells;
+    });
     if (collection.id === 'averias') {
       const folios = new Map<string, string | undefined>();
       for (const row of orders?.slice(1) ?? []) {
@@ -376,6 +385,10 @@ function DataManager({ isPanama }: { isPanama: boolean }) {
       const collection = collections.find((c) => c.id === activeId) ?? collections[0] ?? COLLECTIONS[0];
       if (isPanama && collection.id === 'ot') return { ...collection, columns: collection.columns.map(column =>
         column.index === 1 ? { ...column, label: 'Folio' } : column) };
+      if (isPanama && collection.id === 'inspecciones') return {
+        ...collection, columns: collection.columns.flatMap(column => column.index === 4
+          ? [column, { label: 'Fotos', index: 24, photos: true }] : [column]),
+      };
       if (!isPanama || collection.id !== 'gastos') return collection;
       return { ...collection, columns: collection.columns.map(column => ({ ...column,
         label: ({ RFC: 'RUC', IVA: 'ITBMS', Status: 'Estado' } as Record<string, string>)[column.label] ?? column.label,
@@ -719,6 +732,18 @@ function DataTable({ columns, rows }: { columns: ColumnDef[]; rows: string[][] }
 function renderCell(raw: string, col: ColumnDef) {
   if (!raw) {
     return <span className="text-[#9CA3AF]">—</span>;
+  }
+  if (col.photos) {
+    const links = raw.split(', ');
+    return <details className="text-xs">
+      <summary className="inline-flex min-h-11 cursor-pointer items-center gap-1 font-semibold text-blue-800">
+        <Camera size={16} aria-hidden /> {links.length}<span className="sr-only"> {links.length === 1 ? 'foto' : 'fotos'}</span>
+      </summary>
+      <div className="grid">
+        {links.map((url, index) => <a key={url} href={url} target="_blank" rel="noreferrer"
+          className="inline-flex min-h-11 items-center font-semibold text-blue-800 underline">Foto {index + 1}</a>)}
+      </div>
+    </details>;
   }
   if (col.currency) {
     return <span className="text-[#1A2B2B]">{formatCurrency(raw)}</span>;

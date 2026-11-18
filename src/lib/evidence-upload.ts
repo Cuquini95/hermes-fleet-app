@@ -3,6 +3,7 @@ import { compressImage, fileToBase64 } from './photo-upload';
 import { WorkshopApiError } from './workshop-api';
 
 const MAX_BYTES = 3 * 1024 * 1024;
+export const EVIDENCE_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
 export interface EvidenceUpload {
   kind: 'report' | 'dvir' | 'sticker' | 'order' | 'receipt' | 'warranty';
@@ -15,7 +16,7 @@ export interface EvidenceUpload {
 
 export async function uploadEvidence(file: File, scope: EvidenceUpload): Promise<string> {
   const pdf = file.type === 'application/pdf' && ['receipt', 'warranty'].includes(scope.kind);
-  if (!file.size || !['image/jpeg', 'image/png', 'image/webp'].includes(file.type) && !pdf) {
+  if (!file.size || !EVIDENCE_IMAGE_TYPES.includes(file.type) && !pdf) {
     throw new WorkshopApiError('Adjunta una imagen JPG, PNG o WebP. Recibos y garantías también admiten PDF.', 415);
   }
   let attachment: Blob = file;
