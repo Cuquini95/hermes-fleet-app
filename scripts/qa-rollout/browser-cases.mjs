@@ -217,13 +217,16 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         }
         await inRole('gerencia', 390, async page => {
           await page.goto(origin + '/data', { waitUntil: 'domcontentloaded' });
-          await clickByName(page, /^Inspecciones/);
-          await visible(page.getByRole('columnheader', { name: 'Fotos', exact: true }));
-          const summaries = page.locator('td summary').filter({ hasText: '2 fotos' });
+          const data = page.locator('#main-content');
+          await data.getByRole('button', { name: /^Inspecciones/ }).click();
+          await visible(data.getByRole('columnheader', { name: /^fotos$/i })).catch(async error => {
+            throw new Error(`${error.message}\n${(await data.innerText()).slice(0, 700)}`);
+          });
+          const summaries = data.locator('td summary').filter({ hasText: '2 fotos' });
           await visible(summaries);
           assert.equal(await summaries.count(), 2);
           for (const summary of await summaries.all()) await summary.click();
-          const urls = await page.getByRole('link', { name: /^Foto [12]$/ }).evaluateAll(links => links.map(link => link.getAttribute('href')));
+          const urls = await data.getByRole('link', { name: /^Foto [12]$/ }).evaluateAll(links => links.map(link => link.getAttribute('href')));
           assert.deepEqual(urls.sort(), [...saved].sort());
           await noHorizontalOverflow(page, 390);
         }, firstAccount('gerencia'));

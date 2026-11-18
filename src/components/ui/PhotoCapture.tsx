@@ -83,8 +83,7 @@ export default function PhotoCapture({ onCapture, photos, onRemove, multiple = f
               <button
                 type="button"
                 onClick={() => onRemove(index)}
-                className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-8 h-8 flex items-center justify-center"
-                style={{ minWidth: 44, minHeight: 44, margin: '-8px -8px 0 0' }}
+                className="absolute top-0 right-0 bg-red-600 text-white rounded-full w-11 h-11 flex items-center justify-center"
                 aria-label="Eliminar foto"
               >
                 <X size={16} />
