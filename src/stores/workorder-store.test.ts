@@ -7,7 +7,9 @@ vi.mock('../lib/workshop-api', () => ({
   WorkshopApiError: class extends Error { status = 503; },
 }));
 
-vi.mock('./auth-store', () => ({ useAuthStore: { getState: () => ({ role: 'jefe_taller' }) } }));
+vi.mock('./auth-store', () => ({ useAuthStore: { getState: () => ({
+  isAuthenticated: true, userId: 'staff-test', project: 'tmf-panama', role: 'jefe_taller', allUnits: true, assignedUnits: [],
+}) } }));
 
 const { requestWorkshop } = await import('../lib/workshop-api');
 const { useWorkOrderStore } = await import('./workorder-store');

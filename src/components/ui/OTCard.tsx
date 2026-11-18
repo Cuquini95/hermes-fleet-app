@@ -1,13 +1,16 @@
 import { Wrench, Clock, ChevronRight } from 'lucide-react';
-import type { WorkOrder } from '../../types/workorder';
+import type { OrderCardData } from '../../lib/panama-order-list';
 import { PRIORITY_CONFIG, ESTADO_CONFIG } from '../../types/workorder';
 import { useEquipmentById } from '../../hooks/useEquipmentList';
 import { visibleWorkOrderFolio } from '../../lib/purchasing-api';
 import { useAuthStore } from '../../stores/auth-store';
 
 interface OTCardProps {
-  workorder: WorkOrder;
+  workorder: OrderCardData;
   onClick?: () => void;
+  origin?: string;
+  readOnly?: boolean;
+  notice?: string;
 }
 
 const PRIORITY_BORDER: Record<string, string> = {
@@ -47,12 +50,12 @@ export function timeSince(dateStr: string): string {
   return `Hace ${diffDays}d`;
 }
 
-export default function OTCard({ workorder, onClick }: OTCardProps) {
+export default function OTCard({ workorder, onClick, origin, readOnly = false, notice }: OTCardProps) {
   const equipment = useEquipmentById(workorder.unidad);
   const panama = useAuthStore(state => state.project === 'tmf-panama');
   const reference = workorder.folio ?? workorder.ot_id;
   const folio = panama ? visibleWorkOrderFolio(reference) : reference;
-  const DEFAULT_PRIORITY = { color: '#6B7280', bg: '#F3F4F6', label: workorder.prioridad, time: '' };
+  const DEFAULT_PRIORITY = { color: '#6B7280', bg: '#F3F4F6', label: workorder.prioridad || 'Por priorizar', time: '' };
   const DEFAULT_ESTADO = { color: '#6B7280', bg: '#F3F4F6' };
 
   // Normalize priority lookup (sheet may have 'Alta' vs 'ALTA')
@@ -64,9 +67,13 @@ export default function OTCard({ workorder, onClick }: OTCardProps) {
   return (
     <div
       data-ot={reference}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      aria-label={onClick ? `${readOnly ? 'Consultar' : 'Abrir'} ${folio || 'orden'} de ${workorder.unidad}` : undefined}
       className={`bg-card rounded-xl shadow-sm border border-border mb-3 overflow-hidden${onClick ? ' cursor-pointer hover:bg-gray-50 transition-colors card-lift' : ''}`}
       style={{ borderLeft: `4px solid ${borderColor}` }}
       onClick={onClick}
+      onKeyDown={event => { if (onClick && ['Enter', ' '].includes(event.key)) { event.preventDefault(); onClick(); } }}
     >
       <div className="p-4">
         {/* Row 1: OT ID + priority pill + estado pill */}
@@ -96,24 +103,26 @@ export default function OTCard({ workorder, onClick }: OTCardProps) {
         </p>
 
         {/* Row 3: descripcion truncated */}
-        <p className="text-sm text-text-secondary truncate mb-2">{workorder.descripcion}</p>
+        <p className="text-sm text-text-secondary line-clamp-2 mb-2 break-words">{workorder.descripcion}</p>
 
         {/* Row 4: mechanic + time + chevron */}
-        <div className="flex items-center justify-between text-xs text-text-secondary">
-          <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-text-secondary">
+          <div className="flex min-w-0 items-center gap-1">
             <Wrench size={12} />
             {workorder.mecanico_asignado && workorder.mecanico_asignado !== 'Sin asignar' ? (
-              <span>{workorder.mecanico_asignado}</span>
+              <span className="break-words">{workorder.mecanico_asignado}</span>
             ) : (
-              <span className="italic">Sin asignar</span>
+              <span className="italic">{readOnly ? 'Asignación sin dato' : 'Sin asignar'}</span>
             )}
           </div>
           <div className="flex items-center gap-1">
             <Clock size={12} />
-            <span>{timeSince(workorder.fecha)}</span>
+            <span>{timeSince(workorder.fecha ?? '')}</span>
             {onClick && <ChevronRight size={14} className="text-text-secondary ml-1" />}
           </div>
         </div>
+        {origin && <p className="mt-2 text-xs font-medium text-text-secondary">{origin}{readOnly && ' · Solo consulta'}</p>}
+        {notice && <p className="mt-2 break-words text-xs text-amber-900">{notice}</p>}
       </div>
     </div>
   );

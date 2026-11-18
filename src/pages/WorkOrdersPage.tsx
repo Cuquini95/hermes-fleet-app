@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useWorkOrderStore } from '../stores/workorder-store';
 import OTCard from '../components/ui/OTCard';
 import EmptyState from '../components/ui/EmptyState';
 import { SkeletonList } from '../components/ui/Skeleton';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import PullIndicator from '../components/ui/PullIndicator';
-import PanamaSourceRecords from '../components/workshop/PanamaSourceRecords';
+import PanamaWorkOrdersPage from './PanamaWorkOrdersPage';
 import { useAuthStore } from '../stores/auth-store';
 
 type FilterKey = 'Todas' | 'CRITICA' | 'ALTA' | 'MEDIA' | 'Abierta' | 'En Reparación' | 'Esperando Pieza' | 'Resuelta' | 'Completado';
@@ -26,8 +26,13 @@ const FILTER_LABELS: Record<FilterKey, string> = {
 };
 
 export default function WorkOrdersPage() {
+  const unified = useAuthStore(state => state.project === 'tmf-panama' && state.role !== 'mecanico');
+  const scope = useAuthStore(state => JSON.stringify([state.userId, state.project, state.role, state.allUnits, state.assignedUnits]));
+  return unified ? <PanamaWorkOrdersPage key={scope} /> : <ExistingWorkOrdersPage />;
+}
+
+function ExistingWorkOrdersPage() {
   const navigate = useNavigate();
-  const showMaster = useAuthStore(state => state.project === 'tmf-panama' && state.role !== 'mecanico');
   const { workorders, loading, error, fetched, fetchWorkOrders } = useWorkOrderStore();
   const [filter, setFilter] = useState<FilterKey>('Todas');
 
@@ -60,7 +65,7 @@ export default function WorkOrdersPage() {
       <div className="py-4">
         <h2 className="font-semibold text-lg text-text mb-3">Órdenes de Trabajo</h2>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
-          <p className="text-sm text-amber-900" role="alert">{showMaster ? 'No se pudieron consultar las órdenes de Hermes.' : error}</p>
+          <p className="text-sm text-amber-900" role="alert">{error}</p>
           <button
             type="button"
             onClick={() => fetchWorkOrders()}
@@ -69,7 +74,6 @@ export default function WorkOrdersPage() {
             Reintentar
           </button>
         </div>
-        {showMaster && <PanamaSourceRecords source="orders" />}
       </div>
     );
   }
@@ -91,8 +95,6 @@ export default function WorkOrdersPage() {
 
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-semibold text-text">Órdenes de Trabajo</h2>
-        {showMaster && <Link className="inline-flex min-h-11 items-center rounded-lg border border-border bg-card px-3 text-sm font-semibold text-text"
-          to="/panama/tiempo-caido">Tiempo caído</Link>}
       </div>
 
       {/* Filter pills */}
@@ -129,7 +131,6 @@ export default function WorkOrdersPage() {
           />
         ))
       )}
-      {showMaster && fetched && filter === 'Todas' && <div className="mt-4"><PanamaSourceRecords source="orders" /></div>}
     </div>
   );
 }
