@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { filterPanamaOrders, readPanamaOrderMaster, unifiedPanamaOrders } from './panama-order-list';
+import { filterPanamaOrders, masterOrderForReference, masterOrderHref, masterOrderNotes, nativeOrderForReference, readPanamaOrderMaster, unifiedPanamaOrders } from './panama-order-list';
 import type { MasterOrder } from './panama-order-list';
 import type { WorkOrder } from '../types/workorder';
 
@@ -11,6 +11,27 @@ const master: MasterOrder = { id: 'OT-0001', unit: 'DZ203', description: 'Diagn�
 
 afterEach(() => vi.restoreAllMocks());
 describe('Una lista de órdenes de Panamá', () => {
+  it('la ficha del maestro tiene URL propia que conserva exactamente la referencia', () => {
+    expect(masterOrderHref('dz203', 'OT-0001')).toBe('/workorders/maestro/DZ203?ref=OT-0001');
+    const link = new URL(masterOrderHref('DZ203', 'OT/A?x=2&y=3'), 'https://example.invalid');
+    expect(link.searchParams.get('ref')).toBe('OT/A?x=2&y=3');
+  });
+  it('el enlace del maestro resuelve solo el equipo y referencia solicitados, sin fabricar una OT editable', () => {
+    const row = masterOrderForReference([master, { ...master }, { ...master, unit: 'EX401' }], 'DZ203', 'OT-0001');
+    expect(row?.masters).toHaveLength(1); expect(row?.native).toBeUndefined(); expect(row?.card.unidad).toBe('DZ203');
+    expect(masterOrderForReference([master], 'DZ209', 'OT-0001')).toBeUndefined();
+    expect(masterOrderForReference([{ unit: 'DZ203' }], 'DZ203', '')).toBeUndefined();
+  });
+  it('solo una coincidencia operativa única permite pasar a la ficha de Hermes', () => {
+    const order = native();
+    expect(nativeOrderForReference([order], 'DZ209', 'ot-0100')).toBe(order);
+    expect(nativeOrderForReference([order], 'DZ203', 'OT-0100')).toBeUndefined();
+    expect(nativeOrderForReference([order, native({ ot_id: 'OT-SECOND' })], 'DZ209', 'OT-0100')).toBeUndefined();
+  });
+  it('los pendientes se explican sin inventar fecha de apertura y se conserva cualquier control desconocido', () => {
+    expect(masterOrderNotes([{ ...master, check: 'APERTURA INCOMPLETA · OT ABIERTA >7 DÍAS · Control especial' }, { ...master, check: 'OK' }]))
+      .toEqual(['Datos de apertura incompletos.', 'El maestro señala más de 7 días abierta.', 'Control especial']);
+  });
   it('conserva las dos órdenes distintas, con búsqueda y filtros comunes', () => {
     const rows = unifiedPanamaOrders([native()], [master]);
     expect(rows.map(row => row.card.ot_id)).toEqual(['OT-0001', 'OT-INTERNAL']);

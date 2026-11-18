@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth-store';
 import { useWorkOrderStore } from '../stores/workorder-store';
-import { filterPanamaOrders, readPanamaOrderMaster, unifiedPanamaOrders, type ListedOrder, type MasterOrder, type OrderListStatus } from '../lib/panama-order-list';
-import { visibleWorkOrderFolio } from '../lib/purchasing-api';
+import { filterPanamaOrders, readPanamaOrderMaster, unifiedPanamaOrders, masterOrderHref, type MasterOrder, type OrderListStatus } from '../lib/panama-order-list';
 import OTCard from '../components/ui/OTCard';
 import { SkeletonList } from '../components/ui/Skeleton';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
@@ -28,32 +27,32 @@ export default function PanamaWorkOrdersPage() {
   const [search, setSearch] = useState('');
   const [priority, setPriority] = useState('');
   const [status, setStatus] = useState('');
-  const [selected, setSelected] = useState<string | null>(null);
 
-  const refreshMaster = useCallback(async () => {
+  const loadMaster = useCallback(() => {
     controller.current?.abort();
     const request = new AbortController(); controller.current = request;
-    setMaster({ loading: true, rows: null, capturedAt: null, error: '' });
-    try {
-      const result = await readPanamaOrderMaster(AbortSignal.any([request.signal, AbortSignal.timeout(12000)]));
+    return readPanamaOrderMaster(AbortSignal.any([request.signal, AbortSignal.timeout(12000)])).then(result => {
       if (!request.signal.aborted) setMaster({ ...result, loading: false, error: '' });
-    } catch {
+    }).catch(() => {
       if (!request.signal.aborted) setMaster({ loading: false, rows: null, capturedAt: null, error: 'No se pudo consultar el Maestro de Taller.' });
-    }
+    });
   }, []);
+  const refreshMaster = useCallback(async () => {
+    setMaster({ loading: true, rows: null, capturedAt: null, error: '' });
+    await loadMaster();
+  }, [loadMaster]);
   const refresh = useCallback(async () => { await Promise.all([fetchWorkOrders(), refreshMaster()]); }, [fetchWorkOrders, refreshMaster]);
   useEffect(() => {
-    void refresh();
+    void Promise.all([fetchWorkOrders(), loadMaster()]);
     const check = () => { if (document.visibilityState === 'visible') void refreshMaster(); };
     window.addEventListener('focus', check); window.addEventListener('online', check);
     return () => { controller.current?.abort(); window.removeEventListener('focus', check); window.removeEventListener('online', check); };
-  }, [refresh, refreshMaster]);
+  }, [fetchWorkOrders, loadMaster, refreshMaster]);
 
   const items = unifiedPanamaOrders(workorders.filter(row => allows(row.unidad)), (master.rows ?? []).filter(row => allows(row.unit)));
   const filtered = filterPanamaOrders(items, { search, priority, status });
   const loading = nativeLoading || !fetched || master.loading;
   const partial = Boolean(error || master.error);
-  const selectedOrder = items.find(row => row.key === selected && !row.native);
   const { scrollRef, onTouchStart, onTouchMove, onTouchEnd, pullDistance, refreshing, pullIndicatorStyle, isReady } = usePullToRefresh({ onRefresh: refresh });
 
   return <div ref={scrollRef} className="min-w-0 space-y-3 py-4 text-text" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
@@ -89,7 +88,7 @@ export default function PanamaWorkOrdersPage() {
       <div role="list" aria-label="Órdenes de trabajo">
         {filtered.map(row => <div role="listitem" key={row.key}><OTCard workorder={row.card} readOnly={!row.native}
           origin={row.native ? row.masters.length ? 'Hermes y Maestro' : 'Hermes' : 'Maestro'} notice={row.notice}
-          onClick={() => row.native ? navigate(`/workorders/${encodeURIComponent(row.detailReference ?? row.native.ot_id)}`) : setSelected(row.key)} /></div>)}
+          onClick={() => row.native ? navigate(`/workorders/${encodeURIComponent(row.detailReference ?? row.native.ot_id)}`) : navigate(masterOrderHref(row.card.unidad, row.card.ot_id), { state: { fromOrderList: true } })} /></div>)}
       </div>
       {filtered.length === 0 && <p className="rounded-xl border border-border bg-card p-4 text-sm text-text-secondary">
         {partial && items.length === 0 ? 'No hay una lista completa verificada. Reintenta la consulta.' : items.length ? 'Sin coincidencias. Cambia los filtros.' : 'Sin órdenes en las fuentes consultadas.'}
@@ -104,27 +103,5 @@ export default function PanamaWorkOrdersPage() {
         <Link className="ml-4 inline-flex min-h-11 items-center font-semibold text-blue-800 underline" to="/panama/tiempo-caido">Tiempo caído</Link>
       </div>
     </details>
-    <MasterOrderDialog row={selectedOrder} onClose={() => setSelected(null)} capturedAt={master.capturedAt} />
   </div>;
-}
-
-function MasterOrderDialog({ row, onClose, capturedAt }: { row?: ListedOrder; onClose: () => void; capturedAt: string | null }) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  const title = useId();
-  useEffect(() => { if (row && !dialog.current?.open) dialog.current?.showModal(); else if (!row) dialog.current?.close(); }, [row]);
-  return <dialog ref={dialog} onClose={onClose} onClick={event => { if (event.target === dialog.current) dialog.current.close(); }} aria-labelledby={title}
-    className="fixed inset-0 m-auto max-h-[calc(var(--app-viewport-height,100dvh)-2rem)] w-[calc(100%-1.5rem)] max-w-lg overflow-y-auto rounded-2xl border border-border bg-white p-4 text-text shadow-xl backdrop:bg-black/50">
-    {row && <><div className="flex flex-wrap items-start justify-between gap-2"><h2 id={title} className="text-lg font-bold">{row.card.unidad} · {visibleWorkOrderFolio(row.card.ot_id) ?? 'Orden del maestro'}</h2>
-      <button type="button" autoFocus className={buttonClass} onClick={() => dialog.current?.close()}>Cerrar</button></div>
-      <p className="mt-2 text-sm text-text-secondary">Maestro de Taller · Solo consulta</p>
-      {capturedAt && <p className="mt-1 text-xs text-text-secondary">Corte del {displayCut(capturedAt)} · Panamá</p>}
-      {row.masters.map((master, index) => <dl key={index} className="mt-4 space-y-3 break-words border-t border-border pt-3 text-sm">
-        <div><dt className="font-semibold">Trabajo</dt><dd>{master.description || 'Sin descripción'}</dd></div>
-        <div><dt className="font-semibold">Estado registrado</dt><dd>{master.status || 'Sin dato'}</dd></div>
-        <div><dt className="font-semibold">Prioridad registrada</dt><dd>{master.priority || 'Sin dato'}</dd></div>
-        {master.check && <div><dt className="font-semibold">Pendientes del registro</dt><dd>{master.check}</dd></div>}
-        {master.id && !visibleWorkOrderFolio(master.id) && <div><dt className="font-semibold">Referencia</dt><dd>{master.id}</dd></div>}
-      </dl>)}
-    </>}
-  </dialog>;
 }
