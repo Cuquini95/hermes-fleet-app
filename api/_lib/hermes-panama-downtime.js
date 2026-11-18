@@ -1,4 +1,5 @@
 import { panamaWorkshopDate, panamaWorkshopFailureOrder } from './hermes-panama-workshop.js';
+import { buildMaintenanceMetrics } from './hermes-panama-maintenance-metrics.js';
 
 const DAY = 86_400_000;
 const panamaDate = new Intl.DateTimeFormat('en-CA', {
@@ -139,7 +140,7 @@ export function buildPanamaDowntime({ failures, orders, logs, master, now, windo
     const validReturn = closed
       ? row[9] === 'Completado' && validTechnical && !!ops.userId && ops.userId !== technical.userId
         && ops.userId !== execution.userId && ops.userId !== row[17]
-        && approved <= finish && finish <= recorded && recorded <= now
+        && start <= approved && approved <= finish && finish <= recorded && recorded <= now
       : (!row?.[22] || (ops?.decision === 'returned' && !!ops.userId && recorded <= now))
         && (openStates.has(plain(row?.[9])) || (row?.[9] === 'Completado' && validTechnical));
     const date = panamaWorkshopDate(failure[0]);
@@ -160,7 +161,7 @@ export function buildPanamaDowntime({ failures, orders, logs, master, now, windo
     const cause = diagnosis || String(failure[3] ?? '').trim() || 'Motivo por verificar';
     const order = { id, folio, cause, source: diagnosis ? 'Taller' : 'Reporte' };
     const records = units.get(unit) ?? [];
-    records.push({ start, finish, open: !closed, unit, order });
+    records.push({ start, finish, open: !closed, unit, order, status: row[9], maintenanceType: row[4] });
     units.set(unit, records);
   }
   for (const record of master?.records ?? []) {
@@ -175,10 +176,12 @@ export function buildPanamaDowntime({ failures, orders, logs, master, now, windo
         : 'Maestro de Taller sin intervalo horario confirmado',
     });
   }
+  const records = [...units.values()].flat();
   const intervals = [...units.values()].flatMap(records => mergeUnitIntervals(records, window, shifts))
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt) || a.unit.localeCompare(b.unit));
   return {
     from: window.from, through: window.through, checkedAt: iso(now), shiftStarts: shifts, masterAvailable: Boolean(master),
     seconds: intervals.reduce((total, interval) => total + interval.seconds, 0), intervals, pending: [...pending.values()],
+    metrics: buildMaintenanceMetrics({ records, orders, logs, window, now, pendingStops: pending.size, instant: downtimeInstant }),
   };
 }

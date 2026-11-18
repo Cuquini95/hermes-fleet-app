@@ -1529,6 +1529,8 @@ export async function dispatchWorkshop(input) {
       return { status, body: { error: error.message } };
     }
     if (status === 409) return { status, body: { error: 'La operación ya existe o el registro cambió. Actualiza y vuelve a revisar.' } };
-    return { status: 503, body: { error: 'No se pudo confirmar el guardado en Taller. Reintenta la misma operación.' } };
+    return { status: 503, body: { error: method === 'GET' && endpoint === 'downtime'
+      ? 'No se pudieron consultar los tiempos de mantenimiento. Reintenta la consulta.'
+      : 'No se pudo confirmar el guardado en Taller. Reintenta la misma operación.' } };
   }
 }
