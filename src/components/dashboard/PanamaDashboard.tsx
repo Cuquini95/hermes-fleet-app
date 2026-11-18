@@ -60,7 +60,7 @@ function PendingRow({ item }: { item: DashboardPending }) {
     <p className="break-words text-base font-bold text-[#162252]">{item.unit}</p>
     <div className="min-w-0">
       <p className={`inline-flex rounded-md px-2 py-1 text-sm font-semibold ${pendingColors[item.kind]}`}>{item.title}</p>
-      {item.detail && <p className="mt-1 break-words text-sm text-slate-600">{item.detail}</p>}
+      {item.detail && <p className="mt-1 line-clamp-2 break-words text-sm text-slate-600">{item.detail}</p>}
       {item.unverified && <p className="mt-1 text-sm font-medium text-amber-900">Estado por confirmar</p>}
     </div>
     <div className="flex min-w-0 flex-wrap gap-x-4 text-sm text-slate-700 lg:contents">
