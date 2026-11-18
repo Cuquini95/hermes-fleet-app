@@ -5,10 +5,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { expect } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
 import { fixturePassword, loadAccounts, photoPng, tabs } from './fixture.mjs';
-
-const failureNote = 'Prueba de arranque sin señal: presión hidráulica';
-const checklistNote = 'Prueba de arranque sin señal: inspección de frenos';
 
 const button = (page, name) => page.getByRole('button', { name, exact: true });
 const view = (page, label) => page.getByRole('heading', { name: label, exact: true });
@@ -16,6 +14,12 @@ const photo = name => ({ name, mimeType: 'image/png', buffer: photoPng });
 
 export async function checkOfflineRestart(fixture, out) {
   const { origin, sheet, photos } = fixture;
+  const caseId = randomUUID().slice(0, 8);
+  const failureNote = 'Prueba de arranque sin señal: presión hidráulica ' + caseId;
+  const checklistNote = 'Prueba de arranque sin señal: inspección de frenos ' + caseId;
+  const baselineTables = [tabs.orders, tabs.failure, tabs.history, tabs.dvir, 'HERMES_PA_ESTADO_UNIDAD']
+    .map(tab => [tab, sheet.read(tab)]);
+  const baselinePhotoKeys = new Set(photos.keys());
   const baselinePhotos = photos.size;
   const executablePath = process.env.HERMES_QA_CHROMIUM_EXECUTABLE
     ?? ['/usr/bin/chromium', '/tmp/chromium'].find(existsSync);
@@ -122,5 +126,7 @@ export async function checkOfflineRestart(fixture, out) {
   } finally {
     await context?.close();
     await rm(profile, { recursive: true, force: true });
+    for (const [tab, rows] of baselineTables) sheet.seed(tab, rows);
+    for (const key of photos.keys()) if (!baselinePhotoKeys.has(key)) photos.delete(key);
   }
 }

@@ -56,3 +56,25 @@ test('the PM checklist route rejects out-of-scope units and resolves the intende
     readPlan: async () => [plan], readPmChecklists: args.readPmChecklists, expectedModel: 'DX340LCA-K',
   })).status, 409);
 });
+
+test('the printable PM includes authoritative identity and a reproducible catalog revision', async () => {
+  const args = { readPlan: async () => [plan], readPmChecklists: async () => snapshot,
+    readEquipment: async () => [{ unit: 'EX401', project: 'TMF', model: 'DX360LCA-7M', serial: 'FICTICIA-01' }] };
+  const query = { unit: 'EX401', level: 'PM-1000' };
+  const actor = { project: 'tmf-panama', allUnits: true };
+  const result = await readPrintablePanamaPm(query, actor, args);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.serial, 'FICTICIA-01');
+  assert.equal(result.body.identityVerified, true);
+  assert.match(result.body.revision, /^[a-f0-9]{16}$/);
+  assert.equal((await readPrintablePanamaPm(query, actor, args)).body.revision, result.body.revision);
+  const edited = structuredClone(snapshot); edited.rows[0].rows[1][1] = 'Otra tarea ficticia';
+  assert.notEqual(resolvePanamaPmChecklist(plan, 1000, edited).revision, result.body.revision);
+  assert.equal((await readPrintablePanamaPm(query, actor, { ...args, expectedSerial: 'OTRA-SERIE' })).status, 409);
+  const unavailable = await readPrintablePanamaPm(query, actor, { ...args, readEquipment: async () => [] });
+  assert.equal(unavailable.body.identityVerified, false);
+  assert.equal(unavailable.body.serial, undefined);
+  assert.equal((await readPrintablePanamaPm(query, actor, { ...args, readEquipment: async () => [
+    { unit: 'EX401', project: 'TMF', model: 'DX340LCA-K', serial: 'FICTICIA-01' },
+  ] })).status, 409);
+});

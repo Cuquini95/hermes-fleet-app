@@ -120,6 +120,7 @@ export async function exerciseConcurrentRoles(fixture, request, sessions) {
           field: 'observaciones', value: 'Avance de carga QA ' + tag,
         } };
       }
+      if (item.account.qaLabel === 'Finanzas') return { ...item, role, route: '/hermes-api/api/purchasing/ap', field: 'invoices' };
       return { ...item, role, route: roles[role][0], field: roles[role][1] };
     });
 
@@ -161,6 +162,8 @@ export async function exerciseConcurrentRoles(fixture, request, sessions) {
         const roleSamples = samples.filter(sample => sample.role === role);
         return [role, { sessions: roleSamples.length, ...latencies(roleSamples.map(sample => sample.duration)) }];
       })),
+      prescribedMix: Object.fromEntries([...new Set(sessions.map(session => session.account.qaLabel).filter(Boolean))]
+        .map(label => [label, sessions.filter(session => session.account.qaLabel === label).length])),
       writes,
     };
     assert(!result.errors, `${failures[0]?.reason?.message ?? ''} · ${JSON.stringify(result)}`);

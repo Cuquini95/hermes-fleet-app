@@ -8,6 +8,7 @@ import { chromium } from 'playwright';
 import { firstAccount, fixturePassword, loadAccounts, photoPng, roles, tabs } from './fixture.mjs';
 import { checkMobileRoleHomes } from './mobile-role-home-cases.mjs';
 import { checkShiftRegister } from './shift-register-browser.mjs';
+import { checkConnectedPmPdfs, checkPanamaViewportMatrix } from './panama-viewport-cases.mjs';
 
 const roleMenus = {
   operador: ['Reportar', '/falla'], mecanico: ['Órdenes', '/workorders'],
@@ -192,16 +193,18 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         fill('QA-03', 11, 'EX401', '60', '2000'), fill('QA-04', 12, 'EX401', '50', '')]);
       try {
         await clickByName(page, 'Actualizar datos');
-        const detail = page.locator('summary').filter({ hasText: /Conciliación de diésel/ });
-        await visible(detail.filter({ hasText: /20 L\/h/ }));
-        await detail.click();
-        const list = page.getByRole('list', { name: 'Diésel por unidad' });
-        await visible(list.getByText('Horómetro faltante o sin avance cuadrable.', { exact: true }));
-        await visible(page.getByText(/80 L en 4 h conciliadas/));
+        const panel = page.getByRole('region', { name: 'Consumo de diésel por familia' });
+        await panel.getByLabel('Fecha final · Panamá').fill('2026-11-12');
+        await visible(panel.getByText('20 L/h', { exact: true }).first());
+        await visible(panel.getByText('Horómetro faltante o sin avance cuadrable.', { exact: true }));
+        await visible(panel.getByText(/80 L \/ 4 h/).first());
         await noHorizontalOverflow(page, 390);
         return { liters: 80, meterHours: 4, incompleteReadingVisible: true };
       } finally { sheet.seed(tab, prior); }
     }, loadAccounts[71]));
+
+    if (withGateway) await checkPanamaViewportMatrix({ fixture, record, inRole, shot, out });
+    if (withGateway) await checkConnectedPmPdfs({ fixture, record, inRole, out });
 
     if (withGateway) await record('MÓVIL-QR-PRESELECCIÓN-UNIDAD', () => inRole('operador', 390, async page => {
       await page.goto(`${origin}/falla?unit=NO-ASIGNADA`, { waitUntil: 'domcontentloaded' });
@@ -527,7 +530,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         await page.reload({ waitUntil: 'domcontentloaded' });
         await clickByName(page, 'Briefing');
         await visible(page.getByText('210 h sobre límite', { exact: false }));
-        await visible(page.getByText('Fuente de combustible no disponible.', { exact: true }));
+        await visible(page.getByText('Combustible sin verificar.', { exact: true }));
         await visible(page.getByText('DESPACHO SIN VERIFICAR', { exact: true }));
         assert.equal(await page.getByText(/0 L diésel total|Sin anomalías detectadas/).count(), 0);
         await noHorizontalOverflow(page, 390);

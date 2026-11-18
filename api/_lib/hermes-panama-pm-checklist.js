@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 export const PM_CHECKLIST_SOURCE = 'pmChecklists';
 const workbook = '1AeTvqR052hJHhEQ7jbkJ3_VIxwPa5ftwGKeVxVlasYw';
 const families = new Map([
@@ -90,6 +92,7 @@ export function resolvePanamaPmChecklist(plan, level, snapshot) {
   if (!sections) return null;
   return {
     unit: plan.unit, model: plan.model, hours: level, sheet: family[0], capturedAt: snapshot.captured_at,
+    revision: createHash('sha256').update(JSON.stringify(document.rows)).digest('hex').slice(0, 16),
     approved: modelKey(plan.approved) === 'SI', sections,
   };
 }

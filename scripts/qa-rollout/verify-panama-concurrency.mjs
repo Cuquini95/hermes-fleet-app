@@ -68,12 +68,25 @@ try {
   await db.exec('create role anon; create role authenticated; create role service_role bypassrls;');
   for (const migration of ['20261113193000_hermes_panama_source_snapshots.sql', '20261113204500_hermes_panama_operational_store.sql', '20261114181455_hermes_panama_purchase_numbers.sql',
     '20261114231214_hermes_panama_work_order_numbers.sql', '20261114174000_hermes_panama_purchase_signatures.sql',
-    '20261116143000_hermes_panama_purchase_signature_profiles.sql']) {
+    '20261116143000_hermes_panama_purchase_signature_profiles.sql', '20261116140000_hermes_panama_accounts_payable.sql']) {
     await db.exec(await readFile(new URL('../../supabase/migrations/' + migration, import.meta.url), 'utf8'));
   }
   report.postgres = (await db.query('show server_version')).rows[0].server_version;
-  fixture = await startFixture({ repoDirectory, distDirectory: work, createOperationalSheets: async seed => {
+  fixture = await startFixture({ repoDirectory, distDirectory: work,
+    capacityMix: [
+      { label: 'Operadores', role: 'operador', count: 40 }, { label: 'Técnicos', role: 'mecanico', count: 20 },
+      { label: 'Supervisores', role: 'supervisor', count: 8 }, { label: 'Planificadores', role: 'coordinador', count: 8 },
+      { label: 'Jefes de Taller', role: 'jefe_taller', count: 6 }, { label: 'Almacén', role: 'almacen', count: 6 },
+      { label: 'Compras', role: 'gerencia', count: 4 }, { label: 'Finanzas', role: 'gerencia', count: 4 },
+      { label: 'Operaciones', role: 'supervisor', count: 2 }, { label: 'TI', role: 'gerencia', count: 2 },
+    ], createOperationalSheets: async seed => {
     const inventory = seed.read('01 Inventario');
+    for (let index = 5; index <= 60; index++) inventory.push([
+      String(index), `QA-${String(index).padStart(3, '0')}`, 'Equipo ficticio de carga', 'QA', 'Modelo ficticio', '2026',
+      `SERIE-FICTICIA-${index}`, 'Entorno aislado', 'Operativo', '1000',
+    ]);
+    assert.equal(inventory.slice(3).length, 60);
+    report.syntheticAssets = 60;
     const fleet = [['Código', 'Equipo', 'Modelo', 'Clase contractual', 'Activo'], ...inventory.slice(3)
       .map(row => [row[1], row[2], [row[3], row[4]].filter(Boolean).join(' '), 'Equipo', 'Sí'])];
     await db.query("insert into public.hermes_panama_source_snapshots values ('fleet', now(), $1::jsonb)", [JSON.stringify(fleet)]);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildPanamaMaintenance, isPmAlert, maintenanceFullyVerified, panamaPmLevel } from './panama-maintenance';
+import { projectPanamaPmNextService } from './panama-pm-next-service.js';
 
 const official = {
   unit: 'DZ203', model: 'Komatsu D155AX-6', status: '🔴 VENCIDO · PROVISIONAL', next: 'PM 500',
@@ -24,6 +25,20 @@ function history(overrides: Record<number, string> = {}) {
 }
 
 describe('Panama maintenance sources', () => {
+  it('reconciles the completion-based 1250/40 and corrected 1300/10 cases without changing the baseline', () => {
+    const plan = { unit: 'DZ203', model: official.model, active: 'Sí', approved: 'Sí', cycle: '250' };
+    const next = (meter: number) => projectPanamaPmNextService({ meter, level: 'PM-250' }, plan, 0);
+    expect(next(1000)?.dueAt).toBe(1250);
+    expect(next(1050)?.dueAt).toBe(1300);
+    const source = { ...official, hours: '1290', due: '1250', remaining: '-40', next: 'PM-250',
+      last: 'PM 250 a 1000 h', reading: 'Actualizada', status: 'VENCIDO' };
+    const baseline = { maintenance: [source], maintenancePlan: [plan] };
+    expect(buildPanamaMaintenance(baseline, []).entries?.[0]).toMatchObject({ dueAt: 1250, remaining: -40, state: 'overdue' });
+    const correction = { ...baseline, maintenance: [{ ...source, due: '1300', remaining: '10', last: 'PM 250 a 1050 h', status: 'AL DÍA' }] };
+    expect(buildPanamaMaintenance(correction, []).entries?.[0]).toMatchObject({ dueAt: 1300, remaining: 10, state: 'ok' });
+    expect(buildPanamaMaintenance(baseline, []).entries?.[0]?.remaining).toBe(-40);
+    for (const cycle of ['0', '-250']) expect(projectPanamaPmNextService({ meter: 1000, level: 'PM-250' }, { ...plan, cycle }, 0)).toBeNull();
+  });
   it('keeps the official overdue PM and exposes components and unknown units', () => {
     const result = buildPanamaMaintenance(master, []);
     expect(result.entries?.[0]).toMatchObject({ dueAt: 2225, currentHours: 2280, remaining: -55, state: 'overdue' });
@@ -49,13 +64,19 @@ describe('Panama maintenance sources', () => {
 
   it('shows current and previous master labels for an up-to-date PM', () => {
     const maintenance = [
-      { ...official, status: 'Al día', reading: 'Al día', remaining: '100', plan: 'Por aprobar' },
-      { ...official, unit: 'DZ204', status: 'BIEN', reading: 'AL DÍA', remaining: '100' },
-      { ...official, unit: 'DZ205', status: 'Al día', reading: 'Lectura atrasada (105 días)', remaining: '100' },
+      { ...official, status: 'Al día', reading: 'Al día', hours: '2,125', remaining: '100', plan: 'Por aprobar' },
+      { ...official, unit: 'DZ204', status: 'BIEN', reading: 'AL DÍA', hours: '2,125', remaining: '100' },
+      { ...official, unit: 'DZ205', status: 'Al día', reading: 'Lectura atrasada (105 días)', hours: '2,125', remaining: '100' },
     ];
     const result = buildPanamaMaintenance({ maintenance }, []);
     expect(result.entries?.map(({ state }) => state)).toEqual(['ok', 'ok', 'unknown']);
     expect(result.entries?.[0]?.plan).toBe('Por aprobar');
+  });
+
+  it('shows consistent arithmetic and blocks a conflicting source balance without approving its plan', () => {
+    const result = buildPanamaMaintenance({ maintenance: [{ ...official, remaining: '100' }], maintenancePlan: [] }, []);
+    expect(result.entries?.[0]).toMatchObject({ dueAt: 2225, currentHours: 2280, remaining: -55,
+      state: 'unknown', readingConflict: true, batchBlock: 'Vencimiento por conciliar', planApproval: 'unavailable' });
   });
 
   it('keeps known component exceptions visible when the other master is unavailable', () => {

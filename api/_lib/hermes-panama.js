@@ -392,7 +392,8 @@ async function publishedCuts({ method, session, readCuts }) {
 const readPmChecklistCut = () => readSnapshot({ key: PM_CHECKLIST_SOURCE });
 
 export async function readPrintablePanamaPm(query, session, {
-  expectedModel, folio, readPmChecklists = readPmChecklistCut,
+  expectedModel, expectedSerial, folio, readPmChecklists = readPmChecklistCut,
+  readEquipment = () => readMaster(equipmentDetails, source => visibleRecords(rowsOf(source), equipmentDetails, session)),
   readPlan = () => readMaster(maintenancePlan, source => visibleRecords(rowsOf(source), maintenancePlan, session)),
 } = {}) {
   const unit = typeof query?.unit === 'string' ? query.unit.trim().toUpperCase() : '';
@@ -411,9 +412,23 @@ export async function readPrintablePanamaPm(query, session, {
     return { status: 409, body: { error: 'El modelo de esta orden difiere del maestro PM.' } };
   }
   const document = resolvePanamaPmChecklist(plan, hours, await readPmChecklists());
-  return document
-    ? { status: 200, body: { ...document, ...(folio && { folio }) } }
-    : { status: 404, body: { error: `El maestro no tiene un checklist para ${unit} a ${hours.toLocaleString('en-US')} h.` } };
+  if (!document) return { status: 404, body: { error: `El maestro no tiene un checklist para ${unit} a ${hours.toLocaleString('en-US')} h.` } };
+  let equipment = [];
+  try { equipment = (await readEquipment()).filter(row => keyOf(row.unit) === unit
+    && ['TMF', 'TMF MINERA PANAMA'].includes(keyOf(row.project))); } catch { /* A review PDF must state the missing master. */ }
+  if (equipment.length > 1) return { status: 409, body: { error: 'El equipo está duplicado en el maestro. Taller debe verificar su identidad.' } };
+  const detail = equipment[0];
+  if (detail?.model && pmModelCode(detail.model) !== pmModelCode(plan.model)) {
+    return { status: 409, body: { error: 'El modelo del equipo difiere del plan PM. Taller debe revisar el checklist.' } };
+  }
+  const serial = String(detail?.serial ?? '').trim();
+  if (expectedSerial && serial && keyOf(serial) !== keyOf(expectedSerial)) {
+    return { status: 409, body: { error: 'La serie del equipo difiere de la registrada en la OT.' } };
+  }
+  const verifiedSerial = serial && !/^(?:N\/A|SIN (?:DATO|SERIE)|POR (?:VERIFICAR|CONFIRMAR)|[-—])$/i.test(serial) ? serial : undefined;
+  return { status: 200, body: { ...document, ...(folio && { folio }), ...(verifiedSerial && { serial: verifiedSerial }),
+    identityVerified: Boolean(verifiedSerial && detail?.model),
+  } };
 }
 
 export async function dispatchPanama({
@@ -432,6 +447,7 @@ export async function dispatchPanama({
     if (!management.has(session.role)) return { status: 403, body: { error: 'Consulta reservada a Taller y Operaciones.' } };
     return readPrintablePanamaPm(query, session, {
       readPlan: async () => (await readSection(maintenancePlan)).records,
+      readEquipment: async () => (await readSection(equipmentDetails)).records,
       readPmChecklists,
     });
   }

@@ -16,6 +16,8 @@ import { briefingPmAlerts } from './briefing-pm';
 import { parseInventoryRows } from '../../lib/inventory-rows';
 import { mexicoDate, mexicoDateInput, mexicoTimeInput } from '../../lib/date-utils';
 import PanamaWorkshopSummary from './PanamaWorkshopSummary';
+import PanamaFuelReconciliation from './PanamaFuelReconciliation';
+import { reconcileDieselDispatches } from '../../lib/panama-fuel-reconciliation';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -45,6 +47,7 @@ interface BriefingData {
   dvirExpectedCount: number | null;
   missingChecklists: MissingChecklist[];
   criticalParts: CriticalPart[];
+  inventoryCount: number;
 }
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
@@ -163,6 +166,7 @@ function buildBriefingFromSheets(
     dvirExpectedCount: inspeccionesRows === null || !fleetAvailable ? null : dvirExpectedCount,
     missingChecklists,
     criticalParts,
+    inventoryCount: parseInventoryRows(inventarioRows ?? []).length,
   };
 }
 
@@ -324,7 +328,8 @@ export default function BriefingCard({ dispatch }: { dispatch?: FleetDispatch })
           </Section>
 
           {/* Combustible */}
-          <Section label={data.fuelTotalDiesel === null ? 'COMBUSTIBLE (7 DÍAS)' : `COMBUSTIBLE (7 DÍAS) · ${data.fuelTotalDiesel.toLocaleString()} L diésel total`}>
+          {project === 'tmf-panama' ? <PanamaFuelReconciliation data={rows?.[0] && equipmentFetched && !equipmentError
+            ? reconcileDieselDispatches(rows[0], equipmentList.map(unit => unit.unit_id)) : null} /> : <Section label={data.fuelTotalDiesel === null ? 'COMBUSTIBLE (7 DÍAS)' : `COMBUSTIBLE (7 DÍAS) · ${data.fuelTotalDiesel.toLocaleString()} L diésel total`}>
             {data.fuelTotalDiesel === null ? <Line color="amber">Fuente de combustible no disponible.</Line> : data.fuelAnomalies.length === 0 ? (
               <Line color="green">Sin anomalías detectadas</Line>
             ) : (
@@ -336,6 +341,7 @@ export default function BriefingCard({ dispatch }: { dispatch?: FleetDispatch })
             )}
           </Section>
 
+          }
           {/* DVIR Compliance */}
           <Section
             label={data.dvirExpectedCount ? `INSPECCIONES DVIR · ${Math.round((data.dvirCompliantCount / data.dvirExpectedCount) * 100)}% (${data.dvirCompliantCount}/${data.dvirExpectedCount} unidades hoy)` : 'INSPECCIONES DVIR'}
@@ -358,7 +364,7 @@ export default function BriefingCard({ dispatch }: { dispatch?: FleetDispatch })
 
           {/* Partes Críticas */}
           <Section label="PARTES CRÍTICAS">
-            {rows?.[2] === null ? <Line color="amber">Inventario de repuestos no disponible.</Line> : data.criticalParts.length === 0 ? (
+            {rows?.[2] === null ? <Line color="amber">Inventario de repuestos no disponible.</Line> : project === 'tmf-panama' && data.inventoryCount === 0 ? <Line color="amber">Catálogo de repuestos sin existencias verificadas. Almacén debe conciliar la carga inicial.</Line> : data.criticalParts.length === 0 ? (
               <Line color="green">Sin partes críticas</Line>
             ) : (
               data.criticalParts.slice(0, 5).map((p) => (

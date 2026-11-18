@@ -15,6 +15,7 @@ import type { OTEstado, OTStatusField, PMChecklistDefinition, StatusLogEntry, Wo
 import { photoUrls } from '../lib/averias';
 import { requestWorkshop, mechanicCoversUnit, type WorkshopMechanic } from '../lib/workshop-api';
 import PanamaPmChecklistPdf from '../components/workshop/PanamaPmChecklistPdf';
+import PanamaWorkOrderPdf from '../components/workshop/PanamaWorkOrderPdf';
 import { mexicoDateInput } from '../lib/date-utils';
 import { uploadPhoto } from '../lib/photo-upload';
 import { uploadEvidence } from '../lib/evidence-upload';
@@ -333,6 +334,7 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
       </div>
 
       {/* Status flow */}
+      {panamaWorkflow && <PanamaWorkOrderPdf key={wo.ot_id} order={wo} equipment={equipment} />}
       <div className="bg-white rounded-xl p-3 shadow-sm border border-border">
         <StatusPillRow current={wo.estado} compact={panamaWorkflow} />
         {panamaWorkflow && !folio && <details className="text-xs text-text-secondary">
@@ -356,6 +358,9 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
             <p className="text-xs text-text-secondary">Tipo</p>
             <p className="text-sm font-semibold text-text">{wo.tipo_averia}</p>
           </div>
+          {panamaWorkflow && <div><p className="text-xs text-text-secondary">Serie / PIN</p>
+            <p className="break-words text-sm font-semibold">{equipment?.serial || 'Por verificar'}</p>
+          </div>}
           <div>
             <p className="text-xs text-text-secondary">Prioridad</p>
             <p className="text-sm font-semibold" style={{ color: priorityConfig?.color }}>

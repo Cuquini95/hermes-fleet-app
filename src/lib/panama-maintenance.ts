@@ -41,6 +41,8 @@ export interface MaintenanceEntry {
   reconciliationPending: boolean;
   batchBlock: string | null;
   projectedNext: { dueAt: number; level: string } | null;
+  planApproval?: 'approved' | 'pending' | 'unavailable';
+  readingConflict?: boolean;
 }
 
 export interface MaintenanceComponent {
@@ -111,24 +113,28 @@ export function buildPanamaMaintenance(sections: Sources, history: string[][] | 
     const officialLevel = panamaPmLevel(row.next);
     const dueAt = meterFromMaster(row.due);
     const currentHours = meterFromMaster(row.hours);
-    const remaining = pmMasterNumber(row.remaining);
+    const sourceRemaining = pmMasterNumber(row.remaining);
+    const remaining = dueAt !== null && currentHours !== null ? dueAt - currentHours : sourceRemaining;
+    const readingConflict = sourceRemaining !== null && remaining !== null && Math.abs(sourceRemaining - remaining) > 0.5;
     const masterLast = meterFromMaster(/\ba\s+([\d,.]+)\s*h/i.exec(row.last ?? '')?.[1]);
     const reconciliationPending = accepted !== null && (masterLast === null || accepted.meter > masterLast
       || (accepted.meter === masterLast && /POR CONFIRMAR/.test(clean(row.last))));
     const projection = accepted && reconciliationPending ? projectPanamaPmNextService(accepted, plan, anchors.get(unit) ?? null) : null;
     const projectedNext = projection ? { dueAt: projection.dueAt, level: projection.level } : null;
     let batchBlock = null;
-    if (reconciliationPending) batchBlock = 'Cierre por conciliar';
+    if (readingConflict) batchBlock = 'Vencimiento por conciliar';
+    else if (reconciliationPending) batchBlock = 'Cierre por conciliar';
     else if (!officialLevel || dueAt === null || currentHours === null) batchBlock = 'Vencimiento por verificar';
     else if (/SIN |FALTA|ACTUALIZAR|INACTIVO|ATRASAD|PROVISIONAL/.test(clean(`${row.reading ?? ''} ${row.status ?? ''}`))) batchBlock = 'Lectura o estado por verificar';
     else if (clean(plan?.active) !== 'SI' || clean(plan?.approved) !== 'SI') batchBlock = 'Plan de PM por confirmar';
     return {
       unit, model: row.model || plan?.model || '', level: officialLevel, dueAt, currentHours, remaining,
-      state: officialLevel && dueAt !== null && currentHours !== null ? sourceState(row, remaining) : 'unknown',
+      state: !readingConflict && officialLevel && dueAt !== null && currentHours !== null ? sourceState(row, remaining) : 'unknown',
       sourceStatus: row.status ?? '', reading: row.reading ?? '', plan: row.plan ?? '', lastOfficial: row.last ?? '',
       checklistUrl: checklistLink(plan?.checklist), allowedLevels: intervals.map(interval => `PM-${interval}`),
       latestAccepted: accepted, reconciliationPending, batchBlock,
-      projectedNext,
+      projectedNext, readingConflict,
+      planApproval: !plan ? 'unavailable' : clean(plan.approved) === 'SI' && clean(plan.active) === 'SI' ? 'approved' : 'pending',
     };
   }) ?? null;
   const componentRows = [sections.dozers, sections.excavators].filter((rows): rows is SourceRow[] => Array.isArray(rows));

@@ -58,6 +58,7 @@ async function save(connection, key, changes, outcome) {
 function storeOnMemoryDatabase(connection, units, createStore = createPanamaOperationalStore) {
   return createStore({
     readInventory: async () => units.map((unit, index) => ['', unit, '', 'QA', String(index + 1)]),
+    readReportFleet: async () => ({ capturedAt: new Date().toISOString(), units: units.map(code => ({ code, model: 'Equipo ficticio' })) }),
     request: async (path, { query, body }) => {
       if (path.endsWith('/hermes_panama_operational_tables')) {
         const names = query.name.startsWith('eq.') ? [query.name.slice(3)] : JSON.parse(`[${query.name.slice(4, -1)}]`);
@@ -146,13 +147,21 @@ async function verifyWarehouseReserve(connection) {
 }
 
 async function candidateAddedMigrations() {
-  if (!previousRepo) return [];
+  if (!previousRepo) {
+    const supplemental = ['20261116030000_hermes_panama_expense_adjustments.sql','20261116031000_hermes_panama_alert_delivery.sql','20261116131500_hermes_panama_sign_purchase.sql','20261116140000_hermes_panama_accounts_payable.sql','20261116143000_hermes_panama_purchase_signature_profiles.sql','20261117122216_hermes_panama_warehouse_role.sql'];
+    for (const name of supplemental) await migration(name);
+    return supplemental;
+  }
   const old = new Set(await readdir(resolve(previousRepo, 'supabase/migrations')));
   const now = await readdir(resolve(repo, 'supabase/migrations'));
   const added = now.filter(name => /^\d{14}_.+\.sql$/.test(name) && !old.has(name)).sort();
   const existingFixtureJournals = [
     '20261116030000_hermes_panama_expense_adjustments.sql',
     '20261116031000_hermes_panama_alert_delivery.sql',
+    '20261116131500_hermes_panama_sign_purchase.sql',
+    '20261116140000_hermes_panama_accounts_payable.sql',
+    '20261116143000_hermes_panama_purchase_signature_profiles.sql',
+    '20261117122216_hermes_panama_warehouse_role.sql',
   ];
   for (const name of existingFixtureJournals.filter(name => old.has(name))) await migration(name);
   for (const name of added) await migration(name);
@@ -318,11 +327,16 @@ async function verifyRollback(connection, files, added, adjustment) {
 try {
   await db.exec(`
     create role anon; create role authenticated; create role service_role bypassrls;
+    create schema auth; create table auth.users(id uuid primary key);
     create schema storage;
     create table storage.buckets (id text primary key, name text, public boolean,
       file_size_limit int, allowed_mime_types text[]);
     create table storage.objects (bucket_id text);
   `);
+  await migration('20261112030000_hermes_identity.sql');
+  await migration('20261112150000_hermes_panama_warehouse_permission.sql');
+  await migration('20261112152000_hermes_panama_hse_permission.sql');
+  await migration('20261113040500_hermes_panama_purchase_reconciliation.sql');
   await migration('20261113204500_hermes_panama_operational_store.sql');
   await migration('20261113203000_hermes_panama_private_evidence.sql');
   await migration('20261114174000_hermes_panama_purchase_signatures.sql');

@@ -1461,7 +1461,7 @@ export async function dispatchWorkshop(input) {
       if (input.query?.format === 'print') {
         assert(!session.previewDemo, 404, 'Esta orden de prueba no tiene un checklist del maestro.');
         return await readPrintablePanamaPm({ unit: order.row[3], level: definition.level }, session, {
-          expectedModel: definition.model, folio: order.otId,
+          expectedModel: definition.model, expectedSerial: definition.serial, folio: order.otId,
         });
       }
       return { status: 200, body: definition };

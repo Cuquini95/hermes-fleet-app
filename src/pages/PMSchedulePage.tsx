@@ -11,7 +11,7 @@ import LegacyPMSchedulePage from './LegacyPMSchedulePage';
 
 const states = {
   overdue: { label: 'Vencido', cls: 'border-l-critical' },
-  upcoming: { label: 'Próximo', cls: 'border-l-amber' },
+  upcoming: { label: 'Por vencer', cls: 'border-l-amber' },
   ok: { label: 'Al día', cls: 'border-l-success' },
   unknown: { label: 'Por verificar', cls: 'border-l-gray-400' },
 };
@@ -26,6 +26,9 @@ function MaintenanceCard({ entry, canSchedule }: { entry: MaintenanceEntry; canS
     <article className={`min-w-0 rounded-xl border border-border border-l-4 ${state.cls} bg-white p-4`}>
       <h2 className="break-words font-bold text-text">{entry.unit}{entry.model && ` · ${entry.model}`}</h2>
       <p className="mt-1 text-sm font-semibold text-text">{state.label}</p>
+      {entry.planApproval !== 'approved' && <p className="mt-1 text-xs text-amber-800">
+        {entry.planApproval === 'unavailable' ? 'Plan no disponible' : 'Plan por aprobar'}
+      </p>}
       <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
         <div><dt className="text-text-secondary">Nivel</dt><dd>{entry.level || 'Sin dato'}</dd></div>
         <div><dt className="text-text-secondary">Vence a</dt><dd>{meter(entry.dueAt)}</dd></div>
@@ -44,10 +47,12 @@ function MaintenanceCard({ entry, canSchedule }: { entry: MaintenanceEntry; canS
           </a>}
         </div>
       )}
+      {entry.readingConflict && <p role="alert" className="mt-2 rounded-lg bg-amber-50 p-3 text-sm">El saldo de horas del maestro difiere del cálculo. Taller debe conciliarlo antes de programar.</p>}
       <div className="mt-2 flex flex-wrap gap-x-4 text-sm font-semibold">
         {entry.checklistUrl && entry.level && <PanamaPmChecklistPdf unit={entry.unit} level={entry.level} />}
         {!entry.checklistUrl && entry.level && <p className="flex min-h-11 items-center font-normal text-text-secondary">Checklist pendiente</p>}
-        {canSchedule && entry.level && <Link
+        {canSchedule && entry.batchBlock && <p className="flex min-h-11 items-center font-normal text-amber-800">{entry.batchBlock}</p>}
+        {canSchedule && entry.level && !entry.batchBlock && <Link
           to={`/pm-order?${new URLSearchParams({ unidad: entry.unit, nivel: entry.level })}`}
           className="inline-flex min-h-11 items-center text-amber"
         >
@@ -89,7 +94,7 @@ function PanamaPMSchedule({ userId, canSchedule }: { userId?: string; canSchedul
     <div className="flex flex-col pb-4">
       <div className="mb-4 flex items-center gap-3">
         <button type="button" aria-label="Volver" onClick={() => navigate(-1)} className="rounded-xl border border-border bg-white p-3"><ArrowLeft size={20} /></button>
-        <h1 className="flex-1 text-xl font-bold text-text">Programa de Mantenimiento</h1>
+        <h1 className="min-w-0 flex-1 text-lg font-bold text-text sm:text-xl">Programa de Mantenimiento</h1>
         <button type="button" aria-label="Actualizar programa PM" onClick={reload} disabled={data === null} className="rounded-xl border border-border bg-white p-3">
           <RefreshCw size={18} className={data === null ? 'animate-spin' : ''} />
         </button>
@@ -110,6 +115,11 @@ function PanamaPMSchedule({ userId, canSchedule }: { userId?: string; canSchedul
         PM FLOTA no disponible. Actualiza para verificar los vencimientos.
       </p>}
       {data?.entries?.length === 0 && <p className="mb-4 rounded-xl bg-amber-50 p-4 text-sm text-text">Sin equipos en PM FLOTA para tu cuenta.</p>}
+      {entries && entries.some(entry => entry.planApproval !== 'approved') && <aside className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
+        <p className="font-semibold">Revisión de planes PM</p>
+        <p className="mt-1">{entries.filter(entry => entry.planApproval !== 'approved').length} equipos necesitan revisar su plan. Taller confirma modelo, serie, tareas y aprobación.</p>
+        {PANAMA_PM_MASTER_URL && <a href={PANAMA_PM_MASTER_URL} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center font-semibold underline">Revisar maestro PM</a>}
+      </aside>}
       {!batchOpen && entries && <div className="grid gap-3 sm:grid-cols-2">
         {entries.map(entry => <MaintenanceCard key={entry.unit} entry={entry} canSchedule={canSchedule} />)}
       </div>}

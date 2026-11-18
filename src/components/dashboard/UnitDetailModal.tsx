@@ -57,6 +57,17 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
   const refreshedFailures = workshop?.failures
 
   useEffect(() => {
+    if (!isPanama) return;
+    const opener = document.activeElement;
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', close);
+    return () => {
+      document.removeEventListener('keydown', close);
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+    };
+  }, [isPanama, onClose]);
+
+  useEffect(() => {
     let cancelled = false
     void (async () => {
       try {
@@ -110,18 +121,19 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
       >
         {/* Header */}
         <div className="flex items-start justify-between p-5 border-b border-gray-100">
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             {operatingOnly ? operatingStatus && <StatusDot status={operatingStatus === 'operativo' ? 'operativo' : 'taller'} />
               : <StatusDot status={effectiveStatus} />}
-            <div>
+            <div className="min-w-0 break-words">
               <h2 className="text-lg font-bold text-gray-900 font-mono">{unit.unit_id}</h2>
               <p className="text-sm text-gray-500">{unit.model}</p>
+              {isPanama && <p className="mt-1 text-xs text-gray-500">Serie / PIN: {unit.serial || 'Por verificar'}</p>}
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+            className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
             aria-label="Cerrar"
           >
             <X size={18} />
