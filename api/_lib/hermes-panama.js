@@ -3,6 +3,7 @@ import { createHermesSheets } from './hermes-google-sheets.js';
 import { identityConfig, identityRequest } from './hermes-identity.js';
 import { resolveShiftBilling } from './hermes-panama-shift-billing.js';
 import { PM_CHECKLIST_SOURCE, pmModelCode, resolvePanamaPmChecklist } from './hermes-panama-pm-checklist.js';
+import { buildPanamaPmReview } from './hermes-panama-pm-review.js';
 
 export const PANAMA_PROJECT = 'tmf-panama';
 const management = new Set(['jefe_taller', 'coordinador', 'supervisor', 'gerencia']);
@@ -442,6 +443,27 @@ export async function dispatchPanama({
     if (read || !preferPublished) return project(await (read ?? readSourceForConsultation)(spec));
     return readMaster(spec, project, sourceReaders);
   };
+  if (path === 'api/panama/pm-review') {
+    if (method !== 'GET') return { status: 405, body: { error: 'Método no permitido.' } };
+    if (!management.has(session.role)) return { status: 403, body: { error: 'Consulta reservada a Taller y Operaciones.' } };
+    const specs = [sourceSpecs[0], sourceSpecs.find(spec => spec.key === 'maintenance'), maintenancePlan, equipmentDetails];
+    const results = await Promise.all(specs.map(async spec => {
+      try { return [spec.key, await readSection(spec)]; } catch { return [spec.key, null]; }
+    }));
+    let catalog = null;
+    try {
+      const cut = await (readPmChecklists ?? readPmChecklistCut)();
+      if (Array.isArray(cut?.rows) && Number.isFinite(Date.parse(cut.captured_at))
+        && Date.parse(cut.captured_at) <= Date.now() + 300_000) catalog = cut;
+    } catch { /* Missing coverage remains an explicit review issue. */ }
+    const sources = Object.fromEntries(results);
+    if (!results.some(([, value]) => value !== null)) return { status: 503, body: { error: 'No se pudieron consultar los maestros PM.' } };
+    return { status: 200, body: { project: PANAMA_PROJECT,
+      sources: Object.fromEntries(results.map(([name, value]) => [name, { available: value !== null, capturedAt: value?.capturedAt ?? null }])),
+      catalog: { available: catalog !== null, capturedAt: catalog?.captured_at ?? null },
+      rows: buildPanamaPmReview(sources, catalog),
+    } };
+  }
   if (path === 'api/panama/pm-checklist') {
     if (method !== 'GET') return { status: 405, body: { error: 'Método no permitido.' } };
     if (!management.has(session.role)) return { status: 403, body: { error: 'Consulta reservada a Taller y Operaciones.' } };

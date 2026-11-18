@@ -6,6 +6,7 @@ import { SkeletonList } from '../components/ui/Skeleton';
 import PanamaPmBatch from '../components/workshop/PanamaPmBatch';
 import PanamaPmNextService from '../components/workshop/PanamaPmNextService';
 import PanamaPmChecklistPdf from '../components/workshop/PanamaPmChecklistPdf';
+import PanamaPmReview from '../components/workshop/PanamaPmReview';
 import { PANAMA_PM_MASTER_URL, PANAMA_PM_REGISTER_URL, fetchPanamaMaintenance, type MaintenanceEntry, type PanamaMaintenance } from '../lib/panama-maintenance';
 import LegacyPMSchedulePage from './LegacyPMSchedulePage';
 
@@ -75,6 +76,7 @@ function PanamaPMSchedule({ userId, canSchedule }: { userId?: string; canSchedul
   const [refresh, setRefresh] = useState(0);
   const [data, setData] = useState<PanamaMaintenance | null>(null);
   const [batchOpen, setBatchOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const entries = data?.entries ? [...data.entries].sort((a, b) => (a.remaining ?? Infinity) - (b.remaining ?? Infinity)) : null;
 
   useEffect(() => {
@@ -99,6 +101,12 @@ function PanamaPMSchedule({ userId, canSchedule }: { userId?: string; canSchedul
           <RefreshCw size={18} className={data === null ? 'animate-spin' : ''} />
         </button>
       </div>
+      <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="Vista de mantenimiento">
+        {[{ label: 'Programa PM', open: false }, { label: 'Revisar planes', open: true }].map(view => <button
+          key={view.label} type="button" disabled={batchOpen && view.open} aria-pressed={reviewOpen === view.open} onClick={() => setReviewOpen(view.open)}
+          className={`min-h-11 rounded-xl border border-border px-4 text-sm font-semibold ${reviewOpen === view.open ? 'bg-slate-900 text-white' : 'bg-white text-text'}`}>{view.label}</button>)}
+      </div>
+      {reviewOpen ? <PanamaPmReview reload={refresh} /> : <>
       <details className="mb-3 text-xs text-text-secondary">
         <summary className="min-h-11 cursor-pointer py-3 font-medium">Fuente de vencimientos</summary>
         {PANAMA_PM_MASTER_URL
@@ -144,6 +152,7 @@ function PanamaPMSchedule({ userId, canSchedule }: { userId?: string; canSchedul
               </ul>}
         </section>
       )}
+      </>}
     </div>
   );
 }

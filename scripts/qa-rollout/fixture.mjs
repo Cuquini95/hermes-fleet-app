@@ -364,6 +364,7 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
   let gateway;
   let auth;
   let printablePmLevel;
+  let printablePmApproved = false;
   const printableSnapshot = {
     captured_at: '2026-11-17T20:00:00Z', rows: [{ id: '102', name: 'D65EX-16', rows: [
       ['▸', 'PREPARACIÓN Y SEGURIDAD'], ['1', 'Preparación ficticia de prueba'],
@@ -592,9 +593,10 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
             dozers: [{ unit: 'DZ205', group: 'QA', critical: '2', upcoming: '0', noData: '0' }],
           };
           if (printablePmLevel) Object.assign(rows, {
+            fleet: [{ unit: 'EX401', model: 'Komatsu D65EX-16', equipment: 'Tractor ficticio', group: 'Dozer', active: 'Sí' }],
             maintenance: [{ unit: 'EX401', model: 'Komatsu D65EX-16', status: 'AL DÍA', next: `PM-${printablePmLevel}`,
               due: '2000', hours: '1960', remaining: '40', reading: 'Actualizada', plan: 'Por aprobar' }],
-            maintenancePlan: [{ unit: 'EX401', model: 'Komatsu D65EX-16', active: 'Sí', approved: 'No', cycle: '250',
+            maintenancePlan: [{ unit: 'EX401', model: 'Komatsu D65EX-16', active: 'Sí', approved: printablePmApproved ? 'Sí' : 'No', cycle: '250',
               level2: '500', level3: '1000', level4: '2000',
               checklist: 'https://docs.google.com/spreadsheets/d/1AeTvqR052hJHhEQ7jbkJ3_VIxwPa5ftwGKeVxVlasYw/edit#gid=102' }],
             equipmentDetails: [{ unit: 'EX401', country: 'Panamá', project: 'TMF', kind: 'Tractor ficticio',
@@ -618,6 +620,7 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
       origin, repoDirectory, sheet, operationalSheets, photos, evidence, alerts, errors, outboundBlocked, stop, peakLogins: () => peakLogins,
       registerLoadAccounts, releaseLoadAccounts,
       setPrintablePmLevel(level) { printablePmLevel = level; },
+      setPrintablePmApproval(approved) { printablePmApproved = approved === true; },
       setOfficialShiftCut(cut) {
         const previous = officialShiftCut;
         officialShiftCut = clone(cut);
