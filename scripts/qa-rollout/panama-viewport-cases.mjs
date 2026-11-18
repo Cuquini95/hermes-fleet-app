@@ -25,7 +25,7 @@ export async function checkPanamaViewportMatrix({ fixture, record, inRole, shot,
       const screens = [];
       for (const [label, path] of [
         ['inicio', '/dashboard'], ['equipos', '/fleet'], ['ordenes', '/workorders'],
-        ['orden', '/workorders/OT-0004'], ['pm', '/pm'], ['almacen', '/inventory'], ['compras', '/pedidos'],
+        ['orden', '/workorders/OT-0004'], ['pm', '/pm'], ['almacen', '/inventory'], ['compras', '/pedidos'], ['datos', '/data'],
       ]) {
         await page.goto(fixture.origin + path, { waitUntil: 'domcontentloaded' });
         await page.locator('#main-content').getByRole('heading').first().waitFor({ state: 'visible' });
@@ -61,10 +61,13 @@ export async function checkPanamaViewportMatrix({ fixture, record, inRole, shot,
       await shot(page, `panama-estado-${width}.png`);
       await page.keyboard.press('Escape');
       assert.equal(await panel.count(), 0, 'Escape no cierra el estado');
-      await page.getByRole('button', { name: 'Opciones de la cuenta', exact: true }).click();
-      await page.getByRole('button', { name: 'Cerrar sesión', exact: true }).waitFor({ state: 'visible' });
+      await page.getByRole('button', { name: 'Abrir menú', exact: true }).click();
+      const menu = page.getByRole('dialog', { name: 'Menú', exact: true });
+      await menu.getByRole('link', { name: 'Configuración', exact: true }).waitFor({ state: 'visible' });
+      await menu.getByRole('link', { name: 'Mantenimiento PM', exact: true }).waitFor({ state: 'visible' });
       await dimensions(page, width);
       await page.keyboard.press('Escape');
+      assert.equal(await menu.count(), 0, 'Escape no cierra el menú');
       await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
       await page.goto(fixture.origin + '/pm', { waitUntil: 'domcontentloaded' });
       await page.getByText('DZ205', { exact: true }).first().waitFor({ state: 'visible' });

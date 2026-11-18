@@ -1,3 +1,4 @@
+import { Wifi, WifiOff } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useApiHealth } from '../../hooks/useApiHealth';
 import { useAuthStore } from '../../stores/auth-store';
@@ -34,7 +35,7 @@ function UptimeStr({ seconds }: { seconds?: number }) {
   return <span className="text-xs text-white/50">Uptime {h}h {m}m</span>;
 }
 
-export default function ApiHealthDot() {
+export default function ApiHealthDot({ rescue = false }: { rescue?: boolean }) {
   const health = useApiHealth();
   const isPanama = useAuthStore((state) => state.project === 'tmf-panama');
   const [open, setOpen] = useState(false);
@@ -67,10 +68,10 @@ export default function ApiHealthDot() {
         aria-label={`${isPanama ? 'Estado del servicio' : 'Estado de la API'}: ${label}`}
         aria-expanded={open}
         aria-controls="service-status-panel"
-        className="flex min-h-11 min-w-11 items-center justify-center gap-1.5 px-2 py-1 rounded-lg hover:bg-white/10 transition-colors focus-visible:ring-2 focus-visible:ring-white"
+        className={rescue ? 'rescue-service-control' : 'flex min-h-11 min-w-11 items-center justify-center gap-1.5 px-2 py-1 rounded-lg hover:bg-white/10 transition-colors focus-visible:ring-2 focus-visible:ring-white'}
       >
         <span
-          className="rounded-full shrink-0"
+          className={rescue ? 'rescue-service-indicator' : 'rounded-full shrink-0'}
           style={{
             width: 8,
             height: 8,
@@ -78,7 +79,9 @@ export default function ApiHealthDot() {
             boxShadow: health.status === 'ok' ? `0 0 0 2px ${color}33` : 'none',
           }}
         />
-        <span className="text-white/70 text-xs hidden sm:inline">{label}</span>
+        <span className={rescue ? 'rescue-service-label' : 'text-white/70 text-xs hidden sm:inline'}>{label}</span>
+        {rescue && (health.status === 'down' ? <WifiOff aria-hidden className="rescue-service-wifi" size={18} color={color} />
+          : <Wifi aria-hidden className="rescue-service-wifi" size={18} color={color} />)}
       </button>
 
       {open && (

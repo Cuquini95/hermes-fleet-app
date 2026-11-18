@@ -9,12 +9,20 @@ import { NAV_CONFIG } from '../../types/roles';
 import { fuelTrackingEnabled } from '../../data/project-features.js';
 import MoreTray from './MoreTray';
 
+const commandTabs: NavItem[] = [
+  { id: 'dashboard', label: 'Inicio', path: '/dashboard', icon: 'Home' },
+  { id: 'ordenes', label: 'Trabajos', path: '/workorders', icon: 'Wrench' },
+  { id: 'dvir', label: 'Inspecciones', path: '/dvir', icon: 'ClipboardCheck' },
+  { id: 'equipos', label: 'Equipos', path: '/fleet', icon: 'Truck' },
+  { id: 'inventario', label: 'Repuestos', path: '/inventory', icon: 'Package' },
+];
+
 function LucideIcon({ name, ...props }: { name: string } & LucideProps) {
   const Icon = NAV_ICONS[name];
   return Icon ? <Icon {...props} /> : null;
 }
 
-export default function BottomNav() {
+export default function BottomNav({ rescue = false, command = false }: { rescue?: boolean; command?: boolean }) {
   const [showMoreTray, setShowMoreTray] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -33,7 +41,8 @@ export default function BottomNav() {
   const purchasing: NavItem[] = [];
   const receiving = entry?.id === 'recepciones';
   const start = receiving && generalHome ? { ...generalHome, path: entry.path } : entry;
-  const visibleItems = start && entry?.id !== 'pedidos' ? [start, ...otherItems] : visible;
+  const roleItems = start && entry?.id !== 'pedidos' ? [start, ...otherItems] : visible;
+  const visibleItems = rescue && command ? commandTabs : roleItems;
   const previousStart = generalHome && (receiving || (isPanama && generalHome.id === 'dashboard'))
     ? { ...generalHome, label: 'Inicio general' } : generalHome;
   if (receiving) purchasing.push(entry);
@@ -86,8 +95,8 @@ export default function BottomNav() {
       <nav
         aria-label="Navegación principal"
         data-mobile-toolbar
-        className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around px-2 pb-safe"
-        style={{ minHeight: 64, paddingBottom: 'env(safe-area-inset-bottom, 0px)', backgroundColor: '#162252' }}
+        className={rescue ? 'rescue-mobile-tabs' : 'fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around px-2 pb-safe'}
+        style={rescue ? undefined : { minHeight: 64, paddingBottom: 'env(safe-area-inset-bottom, 0px)', backgroundColor: '#162252' }}
       >
         {visibleItems.map((item) => {
           const active = isActive(item);
@@ -103,15 +112,15 @@ export default function BottomNav() {
               <LucideIcon
                 name={item.icon}
                 size={22}
-                color={active ? '#FFFFFF' : 'rgba(255,255,255,0.6)'}
+                color={rescue ? 'currentColor' : active ? '#FFFFFF' : 'rgba(255,255,255,0.6)'}
               />
               <span
                 className="max-w-full break-words text-center text-xs leading-tight"
-                style={{ color: active ? '#FFFFFF' : 'rgba(255,255,255,0.6)' }}
+                style={rescue ? undefined : { color: active ? '#FFFFFF' : 'rgba(255,255,255,0.6)' }}
               >
                 {label}
               </span>
-              {active && (
+              {active && !rescue && (
                 <span
                   className="w-1 h-1 rounded-full"
                   style={{ backgroundColor: '#FFFFFF' }}

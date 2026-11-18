@@ -14,6 +14,7 @@ import { useAnalyticsStore } from '../stores/analyticsStore';
 import AnalyticsModal from '../components/analytics/AnalyticsModal';
 import PanamaSourceRecords from '../components/workshop/PanamaSourceRecords';
 import { useAuthStore } from '../stores/auth-store';
+import { visibleWorkOrderFolio } from '../lib/purchasing-api';
 import { fuelTrackingEnabled } from '../data/project-features.js';
 
 // ── Collection definitions ───────────────────────────────────────────────────
@@ -224,8 +225,33 @@ function looksLikeHeaderRow(row: string[], columns: ColumnDef[]): boolean {
   return first === expected || first.startsWith('fecha');
 }
 
-function recordRows(rows: string[][], collection: Collection, isPanama: boolean): string[][] {
-  if (isPanama) return rows.slice(collection.id === 'combustible' ? 2 : 1).filter(row => !isRowEmpty(row));
+function recordRows(rows: string[][], collection: Collection, isPanama: boolean, orders?: string[][]): string[][] {
+  if (isPanama) {
+    const records = rows.slice(collection.id === 'combustible' ? 2 : 1).filter(row => !isRowEmpty(row));
+    if (collection.id === 'ot') return records.map(row => {
+      const cells = [...row];
+      cells[1] = visibleWorkOrderFolio(row[25] ?? '') ?? visibleWorkOrderFolio(row[1] ?? '') ?? '';
+      return cells;
+    });
+    if (collection.id === 'averias') {
+      const folios = new Map<string, string | undefined>();
+      for (const row of orders?.slice(1) ?? []) {
+        const id = row[1]?.trim().toUpperCase();
+        const unit = row[3]?.trim().toUpperCase();
+        if (!id || !unit) continue;
+        const key = JSON.stringify([unit, id]);
+        folios.set(key, folios.has(key) ? undefined : visibleWorkOrderFolio(row[25] ?? ''));
+      }
+      return records.map(row => {
+        const cells = [...row];
+        const reference = (row[13] ?? '').trim().toUpperCase();
+        const key = JSON.stringify([(row[2] ?? '').trim().toUpperCase(), reference]);
+        cells[13] = folios.get(key) ?? visibleWorkOrderFolio(reference) ?? '';
+        return cells;
+      });
+    }
+    return records;
+  }
   const filtered = rows.filter(row => !isRowEmpty(row));
   return filtered[0] && looksLikeHeaderRow(filtered[0], collection.columns) ? filtered.slice(1) : filtered;
 }
@@ -348,6 +374,8 @@ function DataManager({ isPanama }: { isPanama: boolean }) {
   const active: Collection = useMemo(
     () => {
       const collection = collections.find((c) => c.id === activeId) ?? collections[0] ?? COLLECTIONS[0];
+      if (isPanama && collection.id === 'ot') return { ...collection, columns: collection.columns.map(column =>
+        column.index === 1 ? { ...column, label: 'Folio' } : column) };
       if (!isPanama || collection.id !== 'gastos') return collection;
       return { ...collection, columns: collection.columns.map(column => ({ ...column,
         label: ({ RFC: 'RUC', IVA: 'ITBMS', Status: 'Estado' } as Record<string, string>)[column.label] ?? column.label,
@@ -378,10 +406,11 @@ function DataManager({ isPanama }: { isPanama: boolean }) {
 
   // Lazy-load the active tab the first time it becomes active
   useEffect(() => {
-    if (cache[active.id] === undefined && !loadingTabs[active.id] && !errors[active.id]) {
-      loadTab(active);
+    const orders = isPanama && active.id === 'averias' ? collections.find(collection => collection.id === 'ot') : undefined;
+    for (const tab of orders ? [active, orders] : [active]) {
+      if (cache[tab.id] === undefined && !loadingTabs[tab.id] && !errors[tab.id]) void loadTab(tab);
     }
-  }, [active, cache, loadingTabs, errors, loadTab]);
+  }, [active, cache, collections, isPanama, loadingTabs, errors, loadTab]);
 
   // Reset search and pagination when switching tabs
   useEffect(() => {
@@ -397,7 +426,7 @@ function DataManager({ isPanama }: { isPanama: boolean }) {
   // Clean rows: drop empties and any header row
   const cleanRows = useMemo(() => {
     const raw = cache[active.id];
-    return raw ? recordRows(raw, active, isPanama) : [];
+    return raw ? recordRows(raw, active, isPanama, cache.ot) : [];
   }, [cache, active, isPanama]);
 
   // Filtered by search (client-side, instant)
@@ -460,7 +489,7 @@ function DataManager({ isPanama }: { isPanama: boolean }) {
   }
 
   return (
-    <div className="-mx-4 -my-0 min-h-full bg-[#F1F5F9] text-[#1A2B2B]">
+    <div className={isPanama ? 'min-w-0 rounded-xl border border-border bg-white text-[#1A2B2B]' : '-mx-4 min-h-full bg-[#F1F5F9] text-[#1A2B2B]'}>
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <div className="px-4 pt-4 pb-3 border-b border-[#E5E7EB]">
         <div className="flex items-center gap-2 mb-1">
@@ -473,7 +502,7 @@ function DataManager({ isPanama }: { isPanama: boolean }) {
       </div>
 
       {/* ── Tabs ──────────────────────────────────────────────────────────── */}
-      <div className="sticky top-[80px] z-10 bg-[#F1F5F9]/95 backdrop-blur border-b border-[#E5E7EB]">
+      <div className={`sticky z-10 backdrop-blur border-b border-[#E5E7EB] ${isPanama ? 'rescue-data-tabs bg-white/95' : 'top-[80px] bg-[#F1F5F9]/95'}`}>
         <div className="flex overflow-x-auto no-scrollbar">
           {collections.map((col) => {
             const isActive = col.id === active.id;
@@ -539,7 +568,11 @@ function DataManager({ isPanama }: { isPanama: boolean }) {
 
         <button
           type="button"
-          onClick={() => loadTab(active)}
+          onClick={() => {
+            void loadTab(active);
+            const orders = isPanama && active.id === 'averias' ? collections.find(collection => collection.id === 'ot') : undefined;
+            if (orders) void loadTab(orders);
+          }}
           disabled={isLoading}
           title="Recargar datos"
           aria-label="Recargar datos"

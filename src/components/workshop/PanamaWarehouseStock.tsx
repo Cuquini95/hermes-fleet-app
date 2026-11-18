@@ -1,3 +1,4 @@
+import { useSearchParams } from 'react-router-dom';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { purchaseRead, purchaseWrite, type WarehouseStock } from '../../lib/purchasing-api';
 import { useAuthStore } from '../../stores/auth-store';
@@ -27,7 +28,14 @@ export default function PanamaWarehouseStock() {
   const [items, setItems] = useState<WarehouseStock[]>([]);
   const [unmatched, setUnmatched] = useState(0);
   const [transitScoped, setTransitScoped] = useState(false);
-  const [query, setQuery] = useState('');
+  const [params, setParams] = useSearchParams();
+  const query = (params.get('buscar') ?? '').slice(0, 80);
+  function setQuery(value: string) {
+    const next = new URLSearchParams(params);
+    if (value) next.set('buscar', value);
+    else next.delete('buscar');
+    setParams(next, { replace: true });
+  }
   const [warehouse, setWarehouse] = useState('');
   const [stateFilter, setStateFilter] = useState('');
   const [reload, setReload] = useState(0);

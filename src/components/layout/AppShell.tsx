@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { Outlet } from 'react-router-dom';
 import Header from './Header';
+import PanamaWorkspace from './PanamaWorkspace';
+import './panama-rescue.css';
 import BottomNav from './BottomNav';
 import FloatingChatButton from './FloatingChatButton';
 import { OfflineBanner } from '../ui/OfflineBanner';
@@ -47,6 +49,8 @@ export default function AppShell() {
     };
   }, []);
 
+  const panama = project === 'tmf-panama';
+
   return (
     <>
       <a
@@ -55,7 +59,12 @@ export default function AppShell() {
       >
         Saltar al contenido
       </a>
-      <div ref={shell} data-project={project} className="app-shell flex min-h-dvh min-w-0 w-full flex-col">
+      <div ref={shell} data-project={project} className={`app-shell flex min-h-dvh min-w-0 w-full flex-col${panama ? ' panama-rescue' : ''}`}>
+        {panama ? <PanamaWorkspace>
+          <div className="rescue-offline"><OfflineBanner /></div>
+          <Outlet />
+          <LegalFooter />
+        </PanamaWorkspace> : <>
         <Header />
         <OfflineBanner />
         <main
@@ -73,6 +82,7 @@ export default function AppShell() {
         </main>
         <BottomNav />
         <FloatingChatButton />
+        </>}
         <ConsentBanner />
       </div>
     </>

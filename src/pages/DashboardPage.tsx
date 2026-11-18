@@ -5,7 +5,7 @@ const ExecutiveDashboard = lazy(() => import('../components/dashboard/ExecutiveD
 const PanamaDashboard = lazy(() => import('../components/dashboard/PanamaDashboard'));
 
 export default function DashboardPage() {
-  const panama = useAuthStore(state => state.project === 'tmf-panama' && !state.previewDemo);
+  const panama = useAuthStore(state => state.project === 'tmf-panama');
   const scope = useAuthStore(state => JSON.stringify([state.userId, state.role, state.allUnits, state.assignedUnits]));
   return panama ? <PanamaDashboard key={scope} /> : <ExecutiveDashboard />;
 }
