@@ -44,11 +44,27 @@ export default function BottomNav() {
     }
   }
 
-  const workshopShortcuts: NavItem[] = isPanama && ['gerencia', 'jefe_taller', 'coordinador', 'supervisor'].includes(role)
-    ? [
+  const panamaShortcuts: NavItem[] = [];
+  if (isPanama && ['gerencia', 'jefe_taller', 'coordinador', 'supervisor'].includes(role)) {
+    panamaShortcuts.push(
       { id: 'pm', label: 'Mantenimiento PM', icon: 'Clock', path: '/pm' },
       { id: 'inventario', label: 'Inventario', icon: 'Package', path: '/inventory' },
-    ].filter(item => ![...visibleItems, ...overflow].some(existing => existing.path === item.path)) : [];
+    );
+  }
+  if (isPanama && role === 'gerencia') {
+    panamaShortcuts.push(
+      { id: 'activos', label: 'Activos', icon: 'Package', path: '/admin/activos' },
+      { id: 'proveedores', label: 'Proveedores', icon: 'FileText', path: '/admin/proveedores' },
+    );
+  }
+  if (isPanama && role === 'supervisor') {
+    panamaShortcuts.push(
+      { id: 'ordenes', label: 'Órdenes de trabajo', icon: 'Wrench', path: '/workorders' },
+      { id: 'pedidos', label: 'Pedidos', icon: 'ShoppingCart', path: '/pedidos' },
+      { id: 'datos', label: 'Datos', icon: 'Table2', path: '/data' },
+    );
+  }
+  const shortcuts = panamaShortcuts.filter(item => ![...visibleItems, ...overflow].some(existing => existing.path === item.path));
 
   const isActive = (item: NavItem) => {
     if (!item.path) return false;
@@ -110,7 +126,7 @@ export default function BottomNav() {
         open={showMoreTray}
         onClose={() => setShowMoreTray(false)}
         items={[
-          ...workshopShortcuts, ...purchasing, ...(visibleItems !== visible && previousStart ? [previousStart] : []), ...overflow,
+          ...shortcuts, ...purchasing, ...(visibleItems !== visible && previousStart ? [previousStart] : []), ...overflow,
           { id: 'tmf', label: 'Maestros TMF', icon: 'Table2', path: '/panama' },
         ]}
       />

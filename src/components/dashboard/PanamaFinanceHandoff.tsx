@@ -1,26 +1,18 @@
 import { Link } from 'react-router-dom';
 import { panamaWorkbookLink } from '../../lib/panama-maintenance';
+import { canOpenPanamaPayables } from '../../lib/purchasing-home';
+import { useAuthStore } from '../../stores/auth-store';
 
-const TMF = panamaWorkbookLink(import.meta.env.VITE_HERMES_PA_VALUATION_LINK);
-const RENTABILIDAD = panamaWorkbookLink(import.meta.env.VITE_HERMES_PA_FINANCE_LINK);
-
-function Source({ href, children }: { href?: string; children: string }) {
-  return href
-    ? <a href={href} target="_blank" rel="noreferrer" className="font-semibold text-blue-800 underline">{children}</a>
-    : <strong>{children}</strong>;
-}
+const valuation = panamaWorkbookLink(import.meta.env.VITE_HERMES_PA_VALUATION_LINK);
+const collections = panamaWorkbookLink(import.meta.env.VITE_HERMES_PA_FINANCE_LINK);
+const shortcut = 'inline-flex min-h-11 items-center rounded-lg border border-slate-200 px-3 text-sm font-semibold text-[#162252] hover:bg-slate-50';
 
 export default function PanamaFinanceHandoff() {
-  return (
-    <section className="rounded-xl border border-border bg-card p-4" aria-labelledby="tmf-finance">
-      <h2 id="tmf-finance" className="font-semibold text-text">Valorización, cobro y cierre de TMF</h2>
-      <p className="mt-1 text-sm text-text-secondary">Usa el corte, la unidad y el folio de origen para conciliar cada etapa. La confirmación se registra en el maestro correspondiente.</p>
-      <Link to="/panama/turnos" className="mt-3 inline-block text-sm font-semibold text-blue-800 underline">Descargar un parte aceptado</Link>
-      <ol className="mt-3 space-y-2 text-sm text-text">
-        <li><strong>Operaciones</strong> · Concilia parte aceptado, unidad y horas del corte en <Source href={TMF}>Disponibilidad TMF · VALORIZACION</Source>.</li>
-        <li><strong>Facturación</strong> · Vincula corte, cliente, referencia y fecha de la factura en <Source href={RENTABILIDAD}>Rentabilidad por Unidad · DOCUMENTOS COBRO</Source>.</li>
-        <li><strong>Tesorería y Contabilidad</strong> · Concilia el comprobante, la fecha efectiva, la moneda y el saldo en <Source href={RENTABILIDAD}>MOVIMIENTOS y CIERRE</Source>.</li>
-      </ol>
-    </section>
-  );
+  const canOpenPayables = useAuthStore(canOpenPanamaPayables);
+  return <nav aria-label="Finanzas" className="flex flex-wrap gap-2">
+    <Link to="/panama/turnos" className={shortcut}>Partes aceptados</Link>
+    {valuation && <a href={valuation} className={shortcut} target="_blank" rel="noreferrer">Valorización</a>}
+    {collections && <a href={collections} className={shortcut} target="_blank" rel="noreferrer">Cobros y cierre</a>}
+    {canOpenPayables && <Link to="/panama/cuentas-por-pagar" className={shortcut}>Cuentas por pagar</Link>}
+  </nav>;
 }

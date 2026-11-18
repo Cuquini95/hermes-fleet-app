@@ -4,7 +4,7 @@ import { mexicoDateInput } from './date-utils';
 import { normalizeUnitId } from './dispatch-readiness';
 import type { PmReview } from './panama-pm-review';
 import type { WorkshopExceptionView } from './panama-workshop-exceptions';
-import type { PurchaseRequestLine } from './purchasing-api';
+import { visibleWorkOrderFolio, type PurchaseRequestLine } from './purchasing-api';
 
 export type PendingFilter = 'all' | 'stopped' | 'unassigned' | 'pm' | 'parts';
 type PendingKind = 'stopped' | 'assignment' | 'pm' | 'parts' | 'critical' | 'return';
@@ -16,8 +16,7 @@ export interface DashboardPending {
   unit: string;
   kind: PendingKind;
   title: string;
-  detail?: string;
-  owner: string;
+  folio?: string;
   href: string;
   action: string;
   date?: PendingDate;
@@ -31,12 +30,11 @@ const orderPriority = { return: 0, critical: 1, parts: 2, assignment: 3 };
 const stoppedStatus = /^(detenido reportado|en reparaci[oó]n|esperando pieza)$/i;
 const dayFormat = new Intl.DateTimeFormat('es-PA', { dateStyle: 'medium', timeZone: 'UTC' });
 
-export function pendingAge(day: string, now = new Date()): string | null {
+export function pendingAge(day: string, now = new Date()): number | null {
   const start = new Date(`${day}T00:00:00Z`);
   if (!Number.isFinite(+start) || start.toISOString().slice(0, 10) !== day) return null;
   const age = (+new Date(`${mexicoDateInput(now)}T00:00:00Z`) - +start) / 86_400_000;
-  if (age < 0) return null;
-  return age === 0 ? 'Hoy' : age === 1 ? 'Hace 1 día' : `Hace ${age} días`;
+  return age >= 0 ? age : null;
 }
 
 export function pendingDateLabel(day: string) {
@@ -77,10 +75,8 @@ export function panamaDashboardPendings({ equipment, dispatch, fleetVerified, or
     const reported = dispatch.workshop?.failures.records
       .filter(row => row.unit === unit && row.date && !row.needsReview && stoppedStatus.test(row.status))
       .sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''))[0];
-    const restriction = dispatch.readiness.get(unit);
     rows.push({
-      id: `fleet:${unit}`, unit, kind: 'stopped', title: 'Equipo inoperativo',
-      detail: restriction?.reason ?? equipmentRow.model, owner: 'Operaciones / Taller',
+      id: `fleet:${unit}`, unit, kind: 'stopped', title: 'Detenido',
       href: `/fleet?${new URLSearchParams({ unit })}`, action: 'Ver equipo',
       date: reported?.date ? { day: reported.date, label: 'Reporte' } : undefined,
       unverified: !fleetVerified, priority: 4,
@@ -89,18 +85,16 @@ export function panamaDashboardPendings({ equipment, dispatch, fleetVerified, or
 
   for (const order of orders?.alerts ?? []) {
     const closedForReview = /^resuelt[ao]$/i.test(order.status);
-    const titles = { critical: 'OT crítica', assignment: 'OT sin asignar', parts: 'Esperando repuesto', return: 'Retorno pendiente' };
+    const titles = { critical: 'OT crítica', assignment: 'Sin asignar', parts: 'Esperando repuesto', return: 'Retorno pendiente' };
     const actions = { critical: closedForReview ? 'Revisar cierre técnico' : 'Revisar OT', assignment: 'Revisar asignación',
       parts: 'Ver OT y repuesto', return: 'Revisar retorno' };
-    const responsible = { critical: 'Taller', parts: 'Taller / Almacén', assignment: 'Taller · por asignar', return: 'Operaciones' };
     const reference = order.folio.trim().toUpperCase();
     const purchaseHref = order.kind === 'parts' && !order.pendingConfirmation && !ordersUnavailable
       && hasPendingPurchase(purchases, order.unit, reference)
       ? `/pedidos?${new URLSearchParams({ otPedido: reference, equipo: order.unit })}` : undefined;
     rows.push({
       id: `order:${order.unit}:${order.id}`, unit: order.unit, kind: order.kind, title: titles[order.kind],
-      detail: [order.folio, order.description].filter(Boolean).join(' · '),
-      owner: order.owner ?? responsible[order.kind],
+      folio: visibleWorkOrderFolio(order.folio),
       href: `/workorders/${encodeURIComponent(order.id)}`,
       action: order.unassigned && order.kind === 'critical' ? 'Revisar asignación' : actions[order.kind],
       date: order.openedOn ? { day: order.openedOn, label: 'Apertura' } : undefined,
@@ -111,11 +105,8 @@ export function panamaDashboardPendings({ equipment, dispatch, fleetVerified, or
 
   for (const plan of review?.rows ?? []) {
     if (!plan.issues.length) continue;
-    const detail = plan.issues[0]?.label;
-    const more = plan.issues.length - 1;
     rows.push({
-      id: `pm:${plan.unit}`, unit: plan.unit, kind: 'pm', title: 'Plan PM por revisar',
-      detail: more > 0 ? `${detail} · +${more}` : detail, owner: 'Planificación / Taller',
+      id: `pm:${plan.unit}`, unit: plan.unit, kind: 'pm', title: 'PM por revisar',
       href: `/pm?${new URLSearchParams({ vista: 'revisar', equipo: plan.unit })}`,
       action: 'Revisar plan', priority: 5,
     });

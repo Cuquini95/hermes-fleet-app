@@ -5,11 +5,13 @@ export default function FloatingChatButton() {
   const navigate = useNavigate()
   const location = useLocation()
   const role = useAuthStore(s => s.role)
+  const panama = useAuthStore(s => s.project === 'tmf-panama')
 
   const ALLOWED_ROLES = ['mecanico', 'coordinador', 'jefe_taller', 'supervisor', 'gerencia']
   if (!role || !ALLOWED_ROLES.includes(role)) return null
 
-  if (location.pathname === '/chat' || location.pathname === '/sticker-inspection') return null
+  if (location.pathname === '/chat' || location.pathname === '/sticker-inspection'
+    || (panama && /^\/dashboard\/?$/.test(location.pathname))) return null
 
   return (
     <div data-mobile-toolbar style={{ position: 'fixed', bottom: '84px', left: '16px', zIndex: 45 }}>
