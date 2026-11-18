@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { readRange, SHEET_TABS } from '../lib/sheets-api';
 import PanamaWarehouseStock from '../components/workshop/PanamaWarehouseStock';
+import PanamaStockCountReview from '../components/workshop/PanamaStockCountReview';
 import { useAuthStore } from '../stores/auth-store';
 import { parseInventoryRows, type InventoryItem } from '../lib/inventory-rows';
 
@@ -67,15 +68,24 @@ function SkeletonCard() {
 export default function InventoryPage() {
   const project = useAuthStore(state => state.project);
   const userId = useAuthStore(state => state.userId);
+  const canReview = useAuthStore(state => state.role === 'gerencia' || (state.canReceivePurchases && !state.canApprovePurchases));
+  const fullScope = useAuthStore(state => state.allUnits);
+  const scope = useAuthStore(state => state.assignedUnits.join('|'));
+  const [reviewing, setReviewing] = useState(false);
   const navigate = useNavigate();
   if (project !== 'tmf-panama') return <LegacyInventoryPage />;
   return <div className="flex flex-col pb-4">
-    <div className="mb-4 flex items-center gap-3">
+    <div className="mb-4 flex flex-wrap items-center gap-3">
       <button type="button" aria-label="Volver" onClick={() => navigate(-1)}
-        className="rounded-xl border border-border bg-white p-2"><ArrowLeft size={20} /></button>
-      <h1 className="text-xl font-bold">Inventario por almacén</h1>
+        className="rounded-xl border border-border bg-white p-3"><ArrowLeft size={20} /></button>
+      <h1 className="min-w-0 flex-1 basis-48 break-words text-xl font-bold">Inventario por almacén</h1>
     </div>
-    <PanamaWarehouseStock key={userId} />
+    {canReview && <div className="mb-4 flex flex-wrap gap-2" role="group" aria-label="Vista de Almacén">
+      {[{ label: 'Existencias', review: false }, { label: 'Revisar conteo', review: true }].map(view => <button
+        type="button" key={view.label} aria-pressed={reviewing === view.review} onClick={() => setReviewing(view.review)}
+        className={`min-h-11 rounded-xl border border-border px-3 text-sm font-semibold ${reviewing === view.review ? 'bg-slate-900 text-white' : 'bg-white'}`}>{view.label}</button>)}
+    </div>}
+    {canReview && reviewing ? <PanamaStockCountReview key={`${userId}/${fullScope}/${scope}`} fullScope={fullScope} /> : <PanamaWarehouseStock key={userId} />}
   </div>;
 }
 
