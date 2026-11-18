@@ -91,7 +91,9 @@ try {
         return { line: output.stdout.split('\n').filter(Boolean).at(-1) };
       });
       if (built) {
-        await record('NAVEGADOR-ARRANQUE', async () => ({ browserEgressBlocked: await checkBrowser(fixture, record, out, { withGateway, withPurchasing }) }));
+        await record('NAVEGADOR-ARRANQUE', async () => ({ browserEgressBlocked: await checkBrowser(fixture, record, out, {
+          withGateway, withPurchasing, focusedPanama: flags.has('--mobile-increment'),
+        }) }));
         if (withGateway) for (let repeat = 1; repeat <= 3; repeat++) {
           await record('MÓVIL-REINICIO-SIN-SEÑAL-' + repeat, () => checkOfflineRestart(fixture, out));
         }

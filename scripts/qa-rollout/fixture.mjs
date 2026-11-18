@@ -187,6 +187,19 @@ export function makeSheetsFixture() {
 
   return {
     read, commit, replay, commits,
+    checkpoint() {
+      return clone({ tables: [...tables], mutations: [...mutations], versions: [...versions],
+        purchaseSignatures: [...purchaseSignatures], signatureProfiles: [...signatureProfiles], commits });
+    },
+    restoreCheckpoint(saved) {
+      // Reset records, operation receipts and write guards together between isolated repetitions.
+      for (const [target, values] of [[tables, saved.tables], [mutations, saved.mutations],
+        [purchaseSignatures, saved.purchaseSignatures], [signatureProfiles, saved.signatureProfiles]]) {
+        target.clear(); for (const [key, value] of values) target.set(key, clone(value));
+      }
+      versions.clear(); for (const version of saved.versions) versions.add(version);
+      commits.splice(0, commits.length, ...clone(saved.commits));
+    },
     async readPurchaseSignature(order) { return purchaseSignatures.get(signatureKey(order)); },
     async registeredPurchaseSignatureSource(id) { return clone(signatureProfiles.get(id)); },
     registerPurchaseSignature(source) {
@@ -602,7 +615,7 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
       });
     }
     return {
-      origin, repoDirectory, sheet, operationalSheets, photos, alerts, errors, outboundBlocked, stop, peakLogins: () => peakLogins,
+      origin, repoDirectory, sheet, operationalSheets, photos, evidence, alerts, errors, outboundBlocked, stop, peakLogins: () => peakLogins,
       registerLoadAccounts, releaseLoadAccounts,
       setPrintablePmLevel(level) { printablePmLevel = level; },
       setOfficialShiftCut(cut) {

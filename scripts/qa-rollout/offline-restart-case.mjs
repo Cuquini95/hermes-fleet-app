@@ -17,9 +17,9 @@ export async function checkOfflineRestart(fixture, out) {
   const caseId = randomUUID().slice(0, 8);
   const failureNote = 'Prueba de arranque sin señal: presión hidráulica ' + caseId;
   const checklistNote = 'Prueba de arranque sin señal: inspección de frenos ' + caseId;
-  const baselineTables = [tabs.orders, tabs.failure, tabs.history, tabs.dvir, 'HERMES_PA_ESTADO_UNIDAD']
-    .map(tab => [tab, sheet.read(tab)]);
+  const baselineState = sheet.checkpoint();
   const baselinePhotoKeys = new Set(photos.keys());
+  const baselineEvidenceKeys = new Set(fixture.evidence.keys());
   const baselinePhotos = photos.size;
   const executablePath = process.env.HERMES_QA_CHROMIUM_EXECUTABLE
     ?? ['/usr/bin/chromium', '/tmp/chromium'].find(existsSync);
@@ -126,7 +126,8 @@ export async function checkOfflineRestart(fixture, out) {
   } finally {
     await context?.close();
     await rm(profile, { recursive: true, force: true });
-    for (const [tab, rows] of baselineTables) sheet.seed(tab, rows);
+    sheet.restoreCheckpoint(baselineState);
     for (const key of photos.keys()) if (!baselinePhotoKeys.has(key)) photos.delete(key);
+    for (const key of fixture.evidence.keys()) if (!baselineEvidenceKeys.has(key)) fixture.evidence.delete(key);
   }
 }

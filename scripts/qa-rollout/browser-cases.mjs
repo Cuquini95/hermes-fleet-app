@@ -41,7 +41,7 @@ async function noHorizontalOverflow(page, width) {
   assert(scrollWidth <= width + 1, `Desplazamiento horizontal de ${scrollWidth - width}px en ${new URL(page.url()).pathname}`);
 }
 
-export async function checkBrowser(fixture, record, out, { withGateway, withPurchasing }) {
+export async function checkBrowser(fixture, record, out, { withGateway, withPurchasing, focusedPanama = false }) {
   const executablePath = process.env.HERMES_QA_CHROMIUM_EXECUTABLE
     ?? ['/usr/bin/chromium', '/tmp/chromium'].find(existsSync);
   const browser = await chromium.launch({
@@ -162,6 +162,12 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
   }
 
   try {
+    if (focusedPanama) {
+      await checkPanamaViewportMatrix({ fixture, record, inRole, shot, out });
+      await checkConnectedPmPdfs({ fixture, record, inRole, out });
+      await checkMobileRoleHomes({ fixture, record, inRole, shot });
+      return [...external];
+    }
     await record('MÓVIL-LOGIN-RECUPERA-ARCHIVO', async () => {
       const context = await browser.newContext({
         viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
