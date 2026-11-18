@@ -11,7 +11,7 @@ async function dimensions(page, width) {
   }));
   assert.equal(observed.innerWidth, width, 'El viewport real no coincide con la prueba');
   assert(observed.scrollWidth <= width + 1, `${new URL(page.url()).pathname}: ${JSON.stringify(observed)}`);
-  assert(!['hidden', 'clip'].includes(observed.overflowX), 'La página oculta el desbordamiento');
+  assert(!['hidden', 'clip'].includes(observed.overflowX), new URL(page.url()).pathname + ': la página oculta el desbordamiento ' + JSON.stringify(observed));
   assert(observed.bottomItems <= 5, 'Más de cinco destinos en la navegación');
   return observed;
 }
@@ -67,6 +67,7 @@ export async function checkPanamaViewportMatrix({ fixture, record, inRole, shot,
       await page.keyboard.press('Escape');
       await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
       await page.goto(fixture.origin + '/pm', { waitUntil: 'domcontentloaded' });
+      await page.getByText('DZ205', { exact: true }).first().waitFor({ state: 'visible' });
       await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
       const enlarged = await dimensions(page, width);
       await shot(page, `panama-texto-ampliado-${width}.png`);
