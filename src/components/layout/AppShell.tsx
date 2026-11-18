@@ -73,8 +73,8 @@ export default function AppShell() {
         </main>
         <BottomNav />
         <FloatingChatButton />
+        <ConsentBanner />
       </div>
-      <ConsentBanner />
     </>
   );
 }

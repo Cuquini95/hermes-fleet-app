@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { X } from 'lucide-react';
 
@@ -21,14 +21,7 @@ function storeConsent(): void {
 }
 
 export default function ConsentBanner() {
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    // Only show after hydration to avoid SSR mismatch
-    if (!hasConsented()) {
-      setVisible(true);
-    }
-  }, []);
+  const [visible, setVisible] = useState(() => !hasConsented());
 
   if (!visible) return null;
 
@@ -45,44 +38,41 @@ export default function ConsentBanner() {
       style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1rem)' }}
     >
       <div
-        className="rounded-2xl shadow-lg border border-gray-200 p-4"
-        style={{ backgroundColor: '#162252' }}
+        className="relative overflow-y-auto rounded-2xl shadow-lg border border-gray-200 p-4"
+        style={{ backgroundColor: '#162252', maxHeight: 'calc(var(--app-viewport-height, 100dvh) - 2rem)' }}
       >
-        <div className="flex items-start gap-3">
-          <div className="flex-1">
-            <p className="text-white text-sm font-medium leading-snug">
-              Almacenamiento local
+        <div className="min-w-0">
+          <div className="sticky top-0 z-10 flex min-w-0 items-center justify-between gap-2 bg-[#162252]">
+            <p className="min-w-0 break-words text-white text-sm font-medium leading-snug">
+              Uso de datos
             </p>
-            <p className="text-white/70 text-xs mt-1 leading-relaxed">
+            <button type="button" onClick={() => setVisible(false)} aria-label="Cerrar aviso temporalmente"
+              className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg text-white/70 hover:text-white transition-colors">
+              <X size={16} />
+            </button>
+          </div>
+          <div className="min-w-0">
+            <p className="break-words text-white/70 text-xs mt-1 leading-relaxed">
               Hermes usa almacenamiento local (IndexedDB y localStorage) para funcionar sin
               conexión y guardar tu sesión. No usamos cookies de seguimiento de terceros.
             </p>
-            <div className="flex items-center gap-3 mt-3">
+            <div className="flex flex-wrap items-center gap-3 mt-3">
               <button
                 type="button"
                 onClick={handleAccept}
-                className="px-4 py-1.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90 active:opacity-75"
+                className="min-h-11 px-4 py-1.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90 active:opacity-75"
                 style={{ backgroundColor: '#F59E0B' }}
               >
                 Aceptar y continuar
               </button>
               <Link
                 to="/privacy"
-                className="text-white/60 text-xs underline hover:text-white/90 transition-colors"
+                className="inline-flex min-h-11 items-center text-white/60 text-xs underline hover:text-white/90 transition-colors"
               >
                 Ver aviso completo
               </Link>
             </div>
           </div>
-          {/* Dismiss without explicit consent — banner will re-appear next session */}
-          <button
-            type="button"
-            onClick={() => setVisible(false)}
-            aria-label="Cerrar aviso temporalmente"
-            className="text-white/50 hover:text-white/80 transition-colors shrink-0 mt-0.5"
-          >
-            <X size={16} />
-          </button>
         </div>
       </div>
     </div>
