@@ -88,12 +88,15 @@ export default function PedidosPage() {
   const equipment = useEquipmentList();
   const { items, removeItem, updateItem, clearCart } = useCartStore();
 
+  const orderFilter = isPanama ? (params.get('otPedido') ?? '').trim().toUpperCase() : '';
+  const unitFilter = isPanama ? (params.get('equipo') ?? '').trim().toUpperCase() : '';
+  const linkedOnly = Boolean(orderFilter && unitFilter);
   const isJT = role === 'jefe_taller';
   const isGerencia = role === 'gerencia';
 
   const { fetchCatalogo, fetched: catalogFetched } = useCatalogoStore();
 
-  const [tab, setTab] = useState<Tab>(isJT ? 'carrito' : isGerencia ? 'pendientes' : 'historial');
+  const [tab, setTab] = useState<Tab>(linkedOnly ? 'historial' : isJT ? 'carrito' : isGerencia ? 'pendientes' : 'historial');
   const [showManual, setShowManual] = useState(false);
   const [manual, setManual] = useState<ManualForm>(emptyManual());
   const [manualErrors, setManualErrors] = useState<Partial<ManualForm>>({});
@@ -112,13 +115,15 @@ export default function PedidosPage() {
   const historialError = scoped?.hermes?.error;
   const masterError = scoped?.master?.error;
   const loadingHistorial = !scoped?.hermes;
-  const loadingMaster = isPanama && !scoped?.master;
+  const loadingMaster = isPanama && !linkedOnly && !scoped?.master;
   const pending = tab === 'pendientes';
-  const visibleRows = pending ? historial.filter(row => row.estado !== 'Completado') : historial;
-  const visibleMaster = master?.rows.filter(row => !pending || masterPurchaseState(row.status) === 'open') ?? [];
-  const unknownMaster = pending && master?.rows.some(row => masterPurchaseState(row.status) === 'unknown');
+  const visibleRows = historial.filter(row => (!pending || row.estado !== 'Completado')
+    && (!linkedOnly || (row.equipo.trim().toUpperCase() === unitFilter && row.ot?.trim().toUpperCase() === orderFilter)));
+  const visibleMaster = linkedOnly ? [] : master?.rows.filter(row => !pending || masterPurchaseState(row.status) === 'open') ?? [];
+  const unknownMaster = !linkedOnly && pending && master?.rows.some(row => masterPurchaseState(row.status) === 'unknown');
   const hasRows = visibleRows.length > 0 || visibleMaster.length > 0;
-  const verifiedEmpty = !hasRows && !loadingHistorial && !loadingMaster && !historialError && !masterError && !unknownMaster;
+  const verifiedEmpty = !hasRows && !loadingHistorial && !historialError
+    && (linkedOnly || (!loadingMaster && !masterError && !unknownMaster));
 
   const totalItems = items.reduce((s, i) => s + i.quantity, 0);
   const totalPrice = items.reduce((s, i) => s + i.quantity * i.unit_price, 0);
@@ -136,11 +141,11 @@ export default function PedidosPage() {
     })).then(result => {
       if (!controller.signal.aborted) setHistory(previous => ({ ...previous, identity, hermes: result }));
     });
-    const masterRead = isPanama ? readOrderSource(readPanamaPurchaseMaster(signal)).then(result => {
+    const masterRead = isPanama && !linkedOnly ? readOrderSource(readPanamaPurchaseMaster(signal)).then(result => {
       if (!controller.signal.aborted) setHistory(previous => ({ ...previous, identity, master: result }));
     }) : undefined;
     await Promise.all([hermes, masterRead]);
-  }, [identity, isPanama]);
+  }, [identity, isPanama, linkedOnly]);
 
   useEffect(() => {
     void loadHistorial();
@@ -245,6 +250,10 @@ export default function PedidosPage() {
         <ShoppingCart size={24} color="#162252" />
         <h1 className="text-xl font-bold text-text">Pedidos de Refacciones</h1>
       </div>
+      {linkedOnly && <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm">
+        <p className="min-w-0 break-words">Pedidos de {orderFilter} · {unitFilter}</p>
+        <Link to="/pedidos" className="inline-flex min-h-11 items-center font-semibold text-[#162252] underline">Ver todos los pedidos</Link>
+      </div>}
       {isPanama && isGerencia && <div className="mb-4 flex flex-wrap gap-2">
         <Link to="/panama/comparar-cotizaciones" className="inline-flex min-h-11 items-center rounded-lg bg-[#162252] px-4 text-sm font-semibold text-white">Comparar cotizaciones</Link>
         <Link to="/admin/ordenes-compra" className="inline-flex min-h-11 items-center rounded-lg border border-slate-400 bg-white px-4 text-sm font-semibold text-[#162252]">Órdenes de compra</Link>
@@ -448,13 +457,13 @@ export default function PedidosPage() {
             </div>
           )}
 
-          {(historialError || masterError) && (
+          {(historialError || (!linkedOnly && masterError)) && (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
               <div role="alert" className="space-y-1 text-sm text-amber-900">
                 {historialError && <p>
                   {historialError === 'access' ? 'Tu cuenta no pudo abrir esta consulta.' : 'No se pudieron consultar los pedidos de Hermes.'}
                 </p>}
-                {masterError && <p>No se pudo consultar el Maestro de Compras.</p>}
+                {!linkedOnly && masterError && <p>No se pudo consultar el Maestro de Compras.</p>}
               </div>
               <button type="button" onClick={() => void loadHistorial()} className="flex min-h-10 shrink-0 items-center gap-2 rounded-lg bg-[#162252] px-3 text-sm font-semibold text-white">
                 <RefreshCw size={15} /> Reintentar
@@ -463,7 +472,7 @@ export default function PedidosPage() {
           )}
           {loadingMaster && <p role="status" className="text-sm text-text-secondary">Consultando el Maestro de Compras…</p>}
           {loadingHistorial && hasRows && <p role="status" className="text-sm text-text-secondary">Consultando pedidos de Hermes…</p>}
-          {master?.capturedAt && (
+          {!linkedOnly && master?.capturedAt && (
             <details className="text-xs text-text-secondary">
               <summary className="min-h-8 cursor-pointer py-2">Fuente y fecha</summary>
               <p>Corte del Maestro de Compras: {cutFormatter.format(new Date(master.capturedAt))} · Panamá</p>
@@ -477,7 +486,7 @@ export default function PedidosPage() {
             <div className="flex flex-col items-center gap-4 py-10">
               <ClipboardList size={48} color="#9CA3AF" />
               <p className="text-center text-sm text-text-secondary">
-                {isPanama && pending ? 'No hay pedidos pendientes.' : 'No hay pedidos registrados aún.'}
+                {linkedOnly ? 'Sin pedidos para esta orden.' : isPanama && pending ? 'No hay pedidos pendientes.' : 'No hay pedidos registrados aún.'}
               </p>
               <button
                 onClick={() => loadHistorial()}

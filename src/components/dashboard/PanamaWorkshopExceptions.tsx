@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import type { WorkshopExceptionView } from '../../lib/panama-workshop-exceptions';
 
-const labels = { critical: 'OT crítica', parts: 'Esperando repuesto', return: 'Retorno pendiente' };
+const labels = { critical: 'OT crítica', parts: 'Esperando repuesto', return: 'Retorno pendiente', assignment: 'OT sin asignar' };
 const cutoff = new Intl.DateTimeFormat('es-PA', { timeZone: 'America/Panama', dateStyle: 'short', timeStyle: 'short' });
 const hours = new Intl.NumberFormat('es-PA', { maximumFractionDigits: 3 });
 

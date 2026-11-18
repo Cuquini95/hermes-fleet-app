@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { PANAMA_PM_MASTER_URL } from '../../lib/panama-maintenance';
-import { pmReviewCsv, type PmReview } from '../../lib/panama-pm-review';
+import { pmReviewCsv } from '../../lib/panama-pm-review';
+import { usePanamaPmReview } from '../../hooks/usePanamaPmReview';
 import { downloadBlob } from '../../lib/download-blob';
 
 const action = 'inline-flex min-h-11 items-center justify-center rounded-lg border border-border bg-white px-3 text-sm font-semibold disabled:opacity-50';
@@ -11,37 +12,17 @@ function cutDate(value: string | null) {
     : 'Sin fecha de corte';
 }
 
-export default function PanamaPmReview({ reload }: { reload: number }) {
+export default function PanamaPmReview({ reload, unit }: { reload: number; unit?: string }) {
   const [request, setRequest] = useState(0);
-  const [reply, setReply] = useState<{ key: string; data: PmReview | null; error: string } | null>(null);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(unit ?? '');
   const [pendingOnly, setPendingOnly] = useState(true);
-  const key = `${reload}/${request}`;
-  // A new request hides the previous result immediately, before the effect runs.
-  const data = reply?.key === key ? reply.data : null;
-  const error = reply?.key === key ? reply.error : '';
-  const loading = reply?.key !== key;
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetch('/hermes-api/api/panama/pm-review', { credentials: 'same-origin', cache: 'no-store', signal: controller.signal })
-      .then(async response => {
-        const result = await response.json();
-        if (!response.ok) throw new Error(result?.error || 'No se pudo consultar la revisión PM.');
-        if (result?.project !== 'tmf-panama' || !Array.isArray(result.rows) || !result.sources || !result.catalog) {
-          throw new Error('No se pudo verificar la respuesta PM.');
-        }
-        if (!controller.signal.aborted) setReply({ key, data: result as PmReview, error: '' });
-      })
-      .catch(cause => { if (!controller.signal.aborted) setReply({ key, data: null,
-        error: cause instanceof Error ? cause.message : 'Revisión no disponible.' }); });
-    return () => controller.abort();
-  }, [key]);
+  const { data, error, loading } = usePanamaPmReview(reload + request);
 
   const pending = data?.rows.filter(row => row.issues.length).length ?? 0;
   const query = search.trim().toLocaleLowerCase('es-PA');
   const rows = data?.rows.filter(row => (!pendingOnly || row.issues.length > 0)
-    && `${row.unit} ${row.model} ${row.serial ?? ''}`.toLocaleLowerCase('es-PA').includes(query));
+    && (unit && search === unit ? row.unit.toUpperCase() === unit.toUpperCase()
+      : `${row.unit} ${row.model} ${row.serial ?? ''}`.toLocaleLowerCase('es-PA').includes(query)));
   const missing = data && [...Object.entries(data.sources).filter(([, source]) => !source.available).map(([name]) => sourceNames[name] ?? name),
     ...(!data.catalog.available ? ['Catálogo de checklists'] : [])];
 

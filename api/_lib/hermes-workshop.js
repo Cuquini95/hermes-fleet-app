@@ -1436,7 +1436,7 @@ export async function dispatchWorkshop(input) {
       const units = session.allUnits === true ? null : (session.assignedUnits ?? []).map(unit => unit.trim().toUpperCase());
       const records = workshopExceptionRecords(orders, row => orderVisible(session, row), pendingOperationalReturn,
         row => storedObject(row[WORKFLOW.pm])?.dueAt, history, value => historyTime(value, true));
-      return { status: 200, body: { observedAt, units, records } };
+      return { status: 200, body: { observedAt, units, records, assignmentsChecked: true } };
     }
     if (method === 'GET' && endpoint === 'readiness') {
       return { status: 200, body: await readinessSources(input) };

@@ -7,7 +7,7 @@ const session = {
   allUnits: false, assignedUnits: ['DZ203'],
 };
 const order = (substitute = {}) => Object.assign(Array(26).fill(''), {
-  1: 'OT-EXCEPTION-QA', 3: 'DZ203', 4: 'PM', 5: 'PM pendiente', 7: 'CRITICA', 8: 'Mecánico QA',
+  1: 'OT-EXCEPTION-QA', 2: '14/11/2026', 3: 'DZ203', 4: 'PM', 5: 'PM pendiente', 7: 'CRITICA', 8: 'Mecánico QA',
   9: 'En Reparación', 23: JSON.stringify({ dueAt: 1500 }), 25: 'OT-0892', ...substitute,
 });
 
@@ -25,9 +25,11 @@ test('la excepción abre la OT exacta y conserva responsable y horómetro oficia
   assert.equal(response.status, 200);
   assert.equal(response.body.observedAt, '2026-11-16T02:00:00.000Z');
   assert.deepEqual(response.body.units, ['DZ203']);
+  assert.equal(response.body.assignmentsChecked, true);
   assert.deepEqual(response.body.records, [{
     id: 'OT-EXCEPTION-QA', unit: 'DZ203', state: 'active', kind: 'critical', folio: 'OT-0892',
     owner: 'Mecánico QA', dueHours: 1500, status: 'En Reparación', description: 'PM pendiente',
+    openedOn: '2026-11-14', unassigned: false, critical: true,
   }]);
   assert.equal((await read([order()], { authorizedSession: { ...session, role: 'operador' } })).status, 403);
   assert.equal((await read([order()], { authorizedSession: { ...session, project: 'mx' } })).status, 404);
@@ -62,4 +64,22 @@ test('un folio operativo duplicado exige conciliación y un historial anterior a
   assert.equal(legacy.body.records[0].state, 'resolved');
   const native = await read([order()], { history });
   assert.equal(native.body.records[0].state, 'active');
+});
+
+
+test('marca solo las órdenes activas sin asignar y conserva un solo registro para las que esperan repuesto', async () => {
+  const response = await read([
+    order({ 1: 'OT-OPEN', 7: '', 8: 'Sin asignar', 9: 'En Espera de Asignación' }),
+    order({ 1: 'OT-PARTS', 8: '', 9: 'Esperando repuesto' }),
+    order({ 1: 'OT-NAMED', 7: 'ALTA', 8: '', 17: 'mechanic-fixture' }),
+    order({ 1: 'OT-REVIEW', 7: 'ALTA', 8: '', 9: 'Resuelta' }),
+    order({ 1: 'OT-CLOSED', 8: '', 9: 'Cerrada' }),
+  ]);
+  assert.deepEqual(response.body.records.map(({ id, state, kind, unassigned }) => [id, state, kind, unassigned]), [
+    ['OT-OPEN', 'active', 'assignment', true],
+    ['OT-PARTS', 'active', 'parts', true],
+    ['OT-NAMED', 'resolved', undefined, undefined],
+    ['OT-REVIEW', 'resolved', undefined, undefined],
+    ['OT-CLOSED', 'resolved', undefined, undefined],
+  ]);
 });

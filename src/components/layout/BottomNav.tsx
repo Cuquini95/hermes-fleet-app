@@ -44,6 +44,12 @@ export default function BottomNav() {
     }
   }
 
+  const workshopShortcuts: NavItem[] = isPanama && ['gerencia', 'jefe_taller', 'coordinador', 'supervisor'].includes(role)
+    ? [
+      { id: 'pm', label: 'Mantenimiento PM', icon: 'Clock', path: '/pm' },
+      { id: 'inventario', label: 'Inventario', icon: 'Package', path: '/inventory' },
+    ].filter(item => ![...visibleItems, ...overflow].some(existing => existing.path === item.path)) : [];
+
   const isActive = (item: NavItem) => {
     if (!item.path) return false;
     const [beforeHash = ''] = item.path.split('#', 1);
@@ -104,7 +110,7 @@ export default function BottomNav() {
         open={showMoreTray}
         onClose={() => setShowMoreTray(false)}
         items={[
-          ...purchasing, ...(visibleItems !== visible && previousStart ? [previousStart] : []), ...overflow,
+          ...workshopShortcuts, ...purchasing, ...(visibleItems !== visible && previousStart ? [previousStart] : []), ...overflow,
           { id: 'tmf', label: 'Maestros TMF', icon: 'Table2', path: '/panama' },
         ]}
       />

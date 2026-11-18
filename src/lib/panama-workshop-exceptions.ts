@@ -5,12 +5,15 @@ interface WorkshopExceptionIdentity {
 
 interface OpenWorkshopException extends WorkshopExceptionIdentity {
   state: 'active';
-  kind: 'critical' | 'parts' | 'return';
+  kind: 'critical' | 'parts' | 'return' | 'assignment';
   folio: string;
   owner: string | null;
   dueHours: number | null;
   status: string;
   description: string;
+  openedOn?: string | null;
+  unassigned?: boolean;
+  critical?: boolean;
 }
 
 export type WorkshopExceptionRecord = OpenWorkshopException | (WorkshopExceptionIdentity & { state: 'resolved' | 'unknown' });
@@ -18,6 +21,7 @@ export type WorkshopExceptionAlert = OpenWorkshopException & { pendingConfirmati
 
 export interface WorkshopExceptionSnapshot {
   observedAt: string;
+  assignmentsChecked?: boolean;
   units: string[] | null;
   records: WorkshopExceptionRecord[];
 }
@@ -25,23 +29,28 @@ export interface WorkshopExceptionSnapshot {
 export interface WorkshopExceptionView {
   alerts: WorkshopExceptionAlert[];
   observedAt: string;
+  assignmentsChecked?: boolean;
   unconfirmed: boolean;
 }
 
-const kinds = ['critical', 'parts', 'return'];
+const kinds = ['critical', 'parts', 'return', 'assignment'];
 const recordKey = ({ id, unit }: WorkshopExceptionIdentity) => JSON.stringify([unit, id]);
 
 export function isWorkshopExceptionSnapshot(value: unknown): value is WorkshopExceptionSnapshot {
   if (!value || typeof value !== 'object') return false;
-  const { observedAt, units, records } = value as Partial<WorkshopExceptionSnapshot>;
+  const { observedAt, units, records, assignmentsChecked } = value as Partial<WorkshopExceptionSnapshot>;
   if (typeof observedAt !== 'string' || !Number.isFinite(Date.parse(observedAt))
     || (units !== null && (!Array.isArray(units) || !units.every(unit => typeof unit === 'string')))
+    || (assignmentsChecked !== undefined && typeof assignmentsChecked !== 'boolean')
     || !Array.isArray(records)) return false;
   return records.every(record => record && typeof record.id === 'string' && typeof record.unit === 'string'
     && (record.state === 'resolved' || record.state === 'unknown'
       || (record.state === 'active' && kinds.includes(record.kind) && typeof record.folio === 'string'
         && typeof record.status === 'string' && typeof record.description === 'string'
         && (record.owner === null || typeof record.owner === 'string')
+        && (record.openedOn == null || (typeof record.openedOn === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(record.openedOn)))
+        && (record.unassigned === undefined || typeof record.unassigned === 'boolean')
+        && (record.critical === undefined || typeof record.critical === 'boolean')
         && (record.dueHours === null || (Number.isFinite(record.dueHours) && record.dueHours > 0)))));
 }
 
@@ -57,6 +66,6 @@ export function reconcileWorkshopExceptions(previous: WorkshopExceptionView | un
     if (row.state === 'resolved') active.delete(id);
   }
   const alerts = [...active.values()].sort((a, b) => a.unit.localeCompare(b.unit) || a.folio.localeCompare(b.folio));
-  return { observedAt: snapshot.observedAt, alerts,
+  return { observedAt: snapshot.observedAt, assignmentsChecked: snapshot.assignmentsChecked, alerts,
     unconfirmed: snapshot.records.some(row => allowed(row.unit) && row.state === 'unknown') };
 }

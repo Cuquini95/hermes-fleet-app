@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { SkeletonList } from '../components/ui/Skeleton';
@@ -76,16 +76,29 @@ function PanamaPMSchedule({ userId, canSchedule }: { userId?: string; canSchedul
   const [refresh, setRefresh] = useState(0);
   const [data, setData] = useState<PanamaMaintenance | null>(null);
   const [batchOpen, setBatchOpen] = useState(false);
-  const [reviewOpen, setReviewOpen] = useState(false);
+  const [params, setParams] = useSearchParams();
+  const reviewOpen = params.get('vista') === 'revisar';
+  const reviewUnit = params.get('equipo') ?? undefined;
+
+  function setReviewOpen(open: boolean) {
+    const next = new URLSearchParams(params);
+    if (open) next.set('vista', 'revisar');
+    else {
+      next.delete('vista');
+      next.delete('equipo');
+    }
+    setParams(next, { replace: true });
+  }
   const entries = data?.entries ? [...data.entries].sort((a, b) => (a.remaining ?? Infinity) - (b.remaining ?? Infinity)) : null;
 
   useEffect(() => {
+    if (reviewOpen) return;
     const controller = new AbortController();
     void fetchPanamaMaintenance(controller.signal)
       .then((result) => { if (!controller.signal.aborted) setData(result); })
       .catch(() => { if (!controller.signal.aborted) setData({ entries: null, components: null, componentSourcesAvailable: false, historyAvailable: false, acceptedHistory: [] }); });
     return () => controller.abort();
-  }, [refresh, userId]);
+  }, [refresh, reviewOpen, userId]);
 
   function reload() {
     setData(null);
@@ -97,8 +110,8 @@ function PanamaPMSchedule({ userId, canSchedule }: { userId?: string; canSchedul
       <div className="mb-4 flex items-center gap-3">
         <button type="button" aria-label="Volver" onClick={() => navigate(-1)} className="rounded-xl border border-border bg-white p-3"><ArrowLeft size={20} /></button>
         <h1 className="min-w-0 flex-1 text-lg font-bold text-text sm:text-xl">Programa de Mantenimiento</h1>
-        <button type="button" aria-label="Actualizar programa PM" onClick={reload} disabled={data === null} className="rounded-xl border border-border bg-white p-3">
-          <RefreshCw size={18} className={data === null ? 'animate-spin' : ''} />
+        <button type="button" aria-label="Actualizar programa PM" onClick={reload} disabled={!reviewOpen && data === null} className="rounded-xl border border-border bg-white p-3">
+          <RefreshCw size={18} className={!reviewOpen && data === null ? 'animate-spin' : ''} />
         </button>
       </div>
       <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="Vista de mantenimiento">
@@ -106,7 +119,7 @@ function PanamaPMSchedule({ userId, canSchedule }: { userId?: string; canSchedul
           key={view.label} type="button" disabled={batchOpen && view.open} aria-pressed={reviewOpen === view.open} onClick={() => setReviewOpen(view.open)}
           className={`min-h-11 rounded-xl border border-border px-4 text-sm font-semibold ${reviewOpen === view.open ? 'bg-slate-900 text-white' : 'bg-white text-text'}`}>{view.label}</button>)}
       </div>
-      {reviewOpen ? <PanamaPmReview reload={refresh} /> : <>
+      {reviewOpen ? <PanamaPmReview key={reviewUnit} reload={refresh} unit={reviewUnit} /> : <>
       <details className="mb-3 text-xs text-text-secondary">
         <summary className="min-h-11 cursor-pointer py-3 font-medium">Fuente de vencimientos</summary>
         {PANAMA_PM_MASTER_URL
