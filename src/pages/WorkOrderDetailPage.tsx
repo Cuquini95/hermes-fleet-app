@@ -334,7 +334,7 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
       </div>
 
       {/* Status flow */}
-      {panamaWorkflow && <PanamaWorkOrderPdf key={wo.ot_id} order={wo} equipment={equipment} />}
+      {panamaWorkflow && <PanamaWorkOrderPdf key={`pdf:${wo.ot_id}`} order={wo} equipment={equipment} />}
       <div className="bg-white rounded-xl p-3 shadow-sm border border-border">
         <StatusPillRow current={wo.estado} compact={panamaWorkflow} />
         {panamaWorkflow && !folio && <details className="text-xs text-text-secondary">

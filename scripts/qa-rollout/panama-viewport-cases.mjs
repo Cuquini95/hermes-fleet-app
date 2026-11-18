@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { loadAccounts } from './fixture.mjs';
 
 async function dimensions(page, width) {
   const observed = await page.evaluate(() => ({
@@ -18,9 +17,10 @@ async function dimensions(page, width) {
 }
 
 export async function checkPanamaViewportMatrix({ fixture, record, inRole, shot, out }) {
-  const manager = loadAccounts.find(actor => actor.membership.role === 'gerencia' && actor.membership.can_approve_purchases);
-  const warehouse = loadAccounts.find(actor => actor.membership.can_receive_purchases);
-  for (const width of [320, 360, 390, 412]) {
+  const cohort = fixture.registerLoadAccounts(28);
+  const managers = cohort.filter(actor => actor.membership.role === 'gerencia' && actor.membership.can_approve_purchases);
+  const warehouse = cohort.find(actor => actor.membership.can_receive_purchases);
+  try { for (const [index, width] of [320, 360, 390, 412].entries()) {
     await record('MÓVIL-PANTALLAS-' + width, () => inRole('gerencia', width, async page => {
       const screens = [];
       for (const [label, path] of [
@@ -30,7 +30,7 @@ export async function checkPanamaViewportMatrix({ fixture, record, inRole, shot,
         await page.goto(fixture.origin + path, { waitUntil: 'domcontentloaded' });
         await page.locator('#main-content').getByRole('heading').first().waitFor({ state: 'visible' });
         if (label === 'equipos') await page.getByRole('button', { name: 'Ver detalle de DZ203', exact: true }).waitFor({ state: 'visible' });
-        if (label === 'almacen') await page.getByText('QA-001', { exact: true }).first().waitFor({ state: 'visible' });
+        if (label === 'almacen') await page.getByRole('heading', { name: /^QA-001 ·/ }).first().waitFor({ state: 'visible' });
         if (label === 'pm') await page.getByText('DZ205', { exact: true }).first().waitFor({ state: 'visible' });
         screens.push({ screen: label, ...await dimensions(page, width) });
         await shot(page, `panama-${label}-${width}.png`);
@@ -71,18 +71,19 @@ export async function checkPanamaViewportMatrix({ fixture, record, inRole, shot,
       const enlarged = await dimensions(page, width);
       await shot(page, `panama-texto-ampliado-${width}.png`);
       return { width, screens, statusPanel: bounds, textEnlargement: { percent: 200, ...enlarged }, environment: 'Chromium aislado; fuentes e identidad sintéticas' };
-    }, manager));
+    }, managers[index]));
     await record('MÓVIL-ALMACÉN-INICIO-' + width, () => inRole('jefe_taller', width, async page => {
       assert.equal(new URL(page.url()).pathname, '/panama/recepciones');
       const observed = await dimensions(page, width);
       await shot(page, `panama-recepciones-${width}.png`);
       return { width, ...observed, home: '/panama/recepciones', capability: 'canReceivePurchases' };
     }, warehouse, '', true));
-  }
+  } } finally { fixture.releaseLoadAccounts(cohort); }
 }
 
 export async function checkConnectedPmPdfs({ fixture, record, inRole, out }) {
-  await record('MÓVIL-PDF-PM-250-1000-TRES-VECES', () => inRole('gerencia', 390, async page => {
+  const cohort = fixture.registerLoadAccounts(6);
+  try { await record('MÓVIL-PDF-PM-250-1000-TRES-VECES', () => inRole('gerencia', 390, async page => {
     const downloads = [];
     try {
       for (const level of [250, 1000]) {
@@ -102,5 +103,6 @@ export async function checkConnectedPmPdfs({ fixture, record, inRole, out }) {
       }
       return { downloads, expectedSerial: 'QA-EX401', approval: 'Borrador; aprobación pendiente', environment: 'Gateway y app reales con maestros sintéticos aislados' };
     } finally { fixture.setPrintablePmLevel(undefined); }
-  }, loadAccounts.findLast(actor => actor.membership.role === 'gerencia' && actor.membership.can_approve_purchases)));
+  }, cohort.find(actor => actor.membership.role === 'gerencia' && actor.membership.can_approve_purchases)));
+  } finally { fixture.releaseLoadAccounts(cohort); }
 }
