@@ -26,7 +26,7 @@ Rama de la aplicación independiente para TMF Minera Panamá. La navegación de 
 | HERMES_PANAMA_PM_TRIGGER_RULES_JSON | Reglas aprobadas de fecha y condición por `unit` y `level`. Cada entrada exige `reference` con la revisión del plan. `dueDate` usa AAAA-MM-DD, y `condition` admite `source` (`dozers` o `excavators`) y `minCritical` (entero positivo). Fecha y condición se consumen al completar la OT. Registra la nueva fecha o revisión aprobada para habilitar el siguiente ciclo. Las horas se leen del plan aprobado de PM FLOTA. Taller confirma la creación de la orden. |
 | VITE_HERMES_PA_PM_MASTER_LINK, VITE_HERMES_PA_PM_REGISTER_LINK, VITE_HERMES_PA_VALUATION_LINK, VITE_HERMES_PA_FINANCE_LINK | Enlaces opcionales a maestros compartidos con el equipo. Los enlaces solo sirven para abrir Drive y conservan sus permisos. Cualquier URL del frontend es visible en el paquete compilado. |
 
-Usa el padrón de 28 personas, los correos confirmados en la identidad propia y los alcances aprobados para cada puesto. `scripts/import-hermes-roster.mjs` valida y vincula cuentas existentes. El importador no crea credenciales. Mantén pendientes las asignaciones locales que el responsable TMF todavía deba confirmar. Usa el proyecto de identidad exclusivo de Panamá.
+Usa los 28 puestos del organigrama R06 y una identidad individual por persona. Varias personas pueden ocupar el mismo puesto. Los correos, suplencias y alcances requieren el padrón F01 vigente y su aprobación. `scripts/import-hermes-roster.mjs` valida y vincula cuentas existentes. El importador no crea credenciales. Mantén pendientes las asignaciones locales que el responsable TMF todavía deba confirmar. Usa el proyecto de identidad exclusivo de Panamá.
 
 ## Habilitar el turno
 

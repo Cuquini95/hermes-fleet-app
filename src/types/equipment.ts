@@ -1,6 +1,7 @@
 export interface Equipment {
   unit_id: string;
   model: string;
+  serial?: string;
   type: string;
   client: string;
   status: string;

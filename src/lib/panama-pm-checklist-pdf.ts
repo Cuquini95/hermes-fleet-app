@@ -8,6 +8,9 @@ export interface PrintablePmChecklist {
   sheet: string;
   capturedAt: string;
   approved: boolean;
+  serial?: string;
+  identityVerified?: boolean;
+  revision?: string;
   folio?: string;
   sections: { title: string; tasks: { id: string; label: string; reference: string; observation: string }[] }[];
 }
@@ -32,21 +35,21 @@ export function makePmChecklistPdf(checklist: PrintablePmChecklist) {
     [{ content: printable(section.title), colSpan: 5, styles: { fillColor: [225, 232, 246], textColor: [22, 34, 82], fontStyle: 'bold' } }],
     ...section.tasks.map(task => [task.id, printable(task.label), printable(task.reference), '', printable(task.observation)]),
   ]);
-  let tableEnd = 47;
+  let tableEnd = 65;
 
   autoTable(doc, {
-    startY: 47,
-    margin: { top: 47, bottom: 17, left: edge, right: edge },
+    startY: 65,
+    margin: { top: 65, bottom: 22, left: edge, right: edge },
     head: [['N.º', 'Trabajo a realizar', 'Referencia / medida', 'Resultado', 'Dato / observación']],
     body,
     theme: 'grid',
     styles: { fontSize: 8.5, cellPadding: 2, lineColor: [198, 205, 219], lineWidth: 0.16, valign: 'middle' },
     headStyles: { fillColor: [22, 34, 82], textColor: 255 },
     columnStyles: {
-      0: { cellWidth: 10, halign: 'center' },
-      1: { cellWidth: contentWidth - 86 },
+      0: { cellWidth: 12, halign: 'center' },
+      1: { cellWidth: contentWidth - 93 },
       2: { cellWidth: 33 },
-      3: { cellWidth: 16 },
+      3: { cellWidth: 21 },
       4: { cellWidth: 27 },
     },
     rowPageBreak: 'avoid',
@@ -55,15 +58,22 @@ export function makePmChecklistPdf(checklist: PrintablePmChecklist) {
       const page = doc.getCurrentPageInfo().pageNumber;
       doc.setTextColor(22, 34, 82).setFont('helvetica', 'bold').setFontSize(10);
       doc.text('TRANS PLUS · MANTENIMIENTO PANAMÁ', edge, 12);
-      doc.setFontSize(16);
+      doc.setFontSize(13);
       doc.text(doc.splitTextToSize(title, contentWidth - 34).slice(0, 2), edge, 20);
       doc.text(`PM ${hours} h`, pageWidth - edge, 20, { align: 'right' });
       doc.setFont('helvetica', 'normal').setFontSize(8.5);
-      doc.text(`OT ${checklist.folio ?? '___________'}    Fecha ___________    Serie / PIN ________________`, edge, 32);
-      doc.text('Horómetro inicial ___________    Horómetro final ___________    Técnico ________________', edge, 38);
-      if (!checklist.approved) doc.text('Plan por aprobar · conservar las condiciones del manual indicadas en cada sección.', edge, 43);
+      doc.text(`OT ${checklist.folio ?? 'Sin orden vinculada'}    Fecha del servicio ___________`, edge, 32);
+      doc.text(doc.splitTextToSize(`Serie / PIN: ${checklist.serial ?? 'Por verificar en el maestro de equipos'}`, contentWidth), edge, 38);
+      doc.text('Horómetro inicial ___________    Horómetro final ___________    Técnico ________________', edge, 46);
+      doc.text(`Revisión del catálogo: ${checklist.revision ?? 'Por verificar'} · Corte ${date}`, edge, 52);
+      const review = !checklist.approved ? 'BORRADOR · PLAN POR APROBAR · Solo revisión de Taller'
+        : !checklist.identityVerified ? 'SERIE POR VERIFICAR · Solo revisión de Taller' : 'Plan aprobado · Confirmar aplicabilidad y condiciones antes del servicio';
+      const needsReview = !checklist.approved || !checklist.identityVerified;
+      doc.setTextColor(needsReview ? 160 : 22, needsReview ? 35 : 34, needsReview ? 35 : 82);
+      doc.text(doc.splitTextToSize(review, contentWidth), edge, 59);
+      doc.setTextColor(22, 34, 82);
       doc.setDrawColor(198, 205, 219).line(edge, pageHeight - 14, pageWidth - edge, pageHeight - 14);
-      doc.text(`Flota - Checklists PM · ${checklist.sheet} · Corte ${date}`, edge, pageHeight - 9);
+      doc.text(`Flota - Checklists PM · ${checklist.sheet}`, edge, pageHeight - 9);
       doc.text(String(page), pageWidth - edge, pageHeight - 9, { align: 'right' });
     },
   });

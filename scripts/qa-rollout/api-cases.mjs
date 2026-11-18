@@ -53,6 +53,7 @@ export async function checkLoad(fixture, record, withGateway) {
     const ordersExpected = ['coordinador', 'gerencia', 'jefe_taller', 'mecanico', 'supervisor'];
     let orderReads = 0;
     let inconsistentOrders = 0;
+    let warehouseStockReads = 0;
     const cohort = fixture.registerLoadAccounts(count);
     try {
       const attempts = await Promise.allSettled(cohort.map(async account => {
@@ -62,9 +63,17 @@ export async function checkLoad(fixture, record, withGateway) {
         assert.equal(session.userId, account.user.id);
         assert.equal(session.role, account.membership.role);
         if (withGateway) {
-          const fleet = good(await request('/hermes-api/api/sheets/read?tab=01%20Inventario', { cookie }), 'Primera consulta de inventario');
-          assert(Array.isArray(fleet.data) && fleet.data.some(row => row.includes('DZ203')), 'El inventario de prueba no llegó a la sesión');
-          if (!session.allUnits) assert(!fleet.data.some(row => row.includes('EX410')), 'Se mostró una unidad de prueba fuera del alcance');
+          if (session.role === 'almacen') {
+            assert.equal((await request('/hermes-api/api/sheets/read?tab=01%20Inventario', { cookie })).status, 403,
+              'Almacén no debe recibir permisos de flota por la prueba de carga');
+            const stock = good(await purchasing(request, cookie)('inventory-stock'), 'Inventario por almacén');
+            assert(Array.isArray(stock.items));
+            warehouseStockReads++;
+          } else {
+            const fleet = good(await request('/hermes-api/api/sheets/read?tab=01%20Inventario', { cookie }), 'Primera consulta de inventario');
+            assert(Array.isArray(fleet.data) && fleet.data.some(row => row.includes('DZ203')), 'El inventario de prueba no llegó a la sesión');
+            if (!session.allUnits) assert(!fleet.data.some(row => row.includes('EX410')), 'Se mostró una unidad de prueba fuera del alcance');
+          }
           if (ordersExpected.includes(session.role)) {
             const orders = async () => good(await workshop(request, cookie)('orders'), 'Consulta concurrente de órdenes')
               .orders.map(row => row[1]).sort();
@@ -86,7 +95,7 @@ export async function checkLoad(fixture, record, withGateway) {
         dependencies: { identity: 'fixture HTTPS loopback', gateway: withGateway ? 'Hermes real' : 'sin gateway',
           operations: withGateway ? sheets.nativeOperations ? 'Postgres PGlite en memoria' : 'registro sintético en memoria' : 'sin escrituras',
           externalNetwork: 'bloqueada' },
-        firstInventory: withGateway, orderReads, inconsistentOrders, errors: errors.length, peakIdentityRequests: fixture.peakLogins(),
+        firstInventory: withGateway, warehouseStockReads, orderReads, inconsistentOrders, errors: errors.length, peakIdentityRequests: fixture.peakLogins(),
         ...latencies(durations),
         ...(withGateway && { operations: await exerciseConcurrentRoles(fixture, request, actors) }) };
     } finally { fixture.releaseLoadAccounts(cohort); }

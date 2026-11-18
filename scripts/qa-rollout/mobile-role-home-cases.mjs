@@ -54,7 +54,7 @@ export async function checkMobileRoleHomes({ fixture, record, inRole, shot }) {
   const { sheet } = fixture;
   const original = [tabs.orders, tabs.failure, tabs.history].map(tab => [tab, sheet.read(tab)]);
   try {
-    for (const [index, width] of [360, 390].entries()) {
+    for (const [index, width] of [320, 360, 390, 412].entries()) {
       await record('MÓVIL-INICIO-OPERADOR-TECLADO-' + width, () => inRole('operador', width, async page => {
         const initial = page.viewportSize();
         const home = page.getByRole('button', { name: /^Reportar falla$/i });
@@ -69,7 +69,7 @@ export async function checkMobileRoleHomes({ fixture, record, inRole, shot }) {
         await page.getByLabel('Unidad', { exact: true }).selectOption('DZ203');
         await page.getByLabel('Tipo de Falla').selectOption({ label: 'Mecánica' });
         await page.getByRole('button', { name: 'Sí', exact: true }).tap();
-        const description = index === 0 ? 'Fuga de aceite en la bomba' : 'Testigo de presión encendido';
+        const description = (index === 0 ? 'Fuga de aceite en la bomba' : 'Testigo de presión encendido') + ' · prueba ' + width;
         const editor = page.getByLabel('Descripción', { exact: true });
         const viewportHeight = await editWithReducedViewport(page, width, editor, description);
         await shot(page, 'inicio-operador-teclado-' + width + '.png');
@@ -91,7 +91,7 @@ export async function checkMobileRoleHomes({ fixture, record, inRole, shot }) {
       await record('MÓVIL-INICIO-MECÁNICO-TECLADO-' + width, async () => {
         const account = qaAccounts('mecanico', index);
         const orderId = 'OT-QA-C15-' + width;
-        const folio = index === 0 ? 'OT-0141' : 'OT-0142';
+        const folio = 'OT-' + String(141 + index).padStart(4, '0');
         const description = index === 0 ? 'Ajustar conexión hidráulica' : 'Revisar válvula de presión';
         const orders = sheet.read(tabs.orders);
         const order = ['inicial-qa-' + width, orderId, panamaDate(), 'DZ205', 'Avería', description,

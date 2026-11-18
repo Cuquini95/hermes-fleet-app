@@ -34,6 +34,7 @@ function parseEquipmentRow(row: string[]): Equipment | null {
   return {
     unit_id,
     model: [marca, modelo].filter(Boolean).join(' ') || unit_id,
+    serial: (row[6] ?? '').trim() || undefined,
     type: (row[2] ?? '').trim() || 'Equipo',
     client: 'GTP',
     status: normalizeStatus(row[8] ?? ''),

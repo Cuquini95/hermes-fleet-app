@@ -96,6 +96,9 @@ function stateError(status, message) {
 const nameOf = name => ({ Averias: tabs.failure, Gastos: tabs.expenses })[name] ?? name;
 const clone = value => structuredClone(value);
 const wait = ms => new Promise(resolveDelay => setTimeout(resolveDelay, ms));
+function assertCapacityCount(templates, count) {
+  if (templates.length !== count) throw new Error('La mezcla de carga no coincide con el número de identidades solicitado');
+}
 
 function columnNumber(letters) {
   return [...letters].reduce((n, letter) => n * 26 + letter.charCodeAt(0) - 64, 0);
@@ -184,6 +187,19 @@ export function makeSheetsFixture() {
 
   return {
     read, commit, replay, commits,
+    checkpoint() {
+      return clone({ tables: [...tables], mutations: [...mutations], versions: [...versions],
+        purchaseSignatures: [...purchaseSignatures], signatureProfiles: [...signatureProfiles], commits });
+    },
+    restoreCheckpoint(saved) {
+      // Reset records, operation receipts and write guards together between isolated repetitions.
+      for (const [target, values] of [[tables, saved.tables], [mutations, saved.mutations],
+        [purchaseSignatures, saved.purchaseSignatures], [signatureProfiles, saved.signatureProfiles]]) {
+        target.clear(); for (const [key, value] of values) target.set(key, clone(value));
+      }
+      versions.clear(); for (const version of saved.versions) versions.add(version);
+      commits.splice(0, commits.length, ...clone(saved.commits));
+    },
     async readPurchaseSignature(order) { return purchaseSignatures.get(signatureKey(order)); },
     async registeredPurchaseSignatureSource(id) { return clone(signatureProfiles.get(id)); },
     registerPurchaseSignature(source) {
@@ -302,7 +318,7 @@ async function loopbackCertificate() {
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
 
-export async function startFixture({ repoDirectory, distDirectory, listenPort = 0, withGateway = true, createOperationalSheets }) {
+export async function startFixture({ repoDirectory, distDirectory, listenPort = 0, withGateway = true, createOperationalSheets, capacityMix }) {
   const sheet = makeSheetsFixture();
   let officialShiftCut = { capturedAt: '2026-11-13T04:00:00Z', records: [
     { unit: 'DZ203', id: 'REG-QA-HOROMETRO', date: '12-Nov-2026', shift: 'Día', start: '390', end: '397' },
@@ -313,8 +329,15 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
   const sessions = new Map();
   // Dedicated load accounts keep the web scenarios' login quotas untouched.
   function registerLoadAccounts(count) {
-    return accounts.slice(-count).map((original, index) => {
+    const templates = count === 100 && capacityMix ? capacityMix.flatMap(group => Array.from({ length: group.count }, () => ({
+      membership: { role: group.role, can_approve_purchases: false, can_receive_purchases: group.role === 'almacen',
+        can_record_purchase_invoices: group.label === 'Finanzas', can_record_purchase_payments: false,
+        can_review_panama_hse: false }, qaLabel: group.label,
+    }))) : accounts.slice(-count);
+    assertCapacityCount(templates, count);
+    return templates.map((original, index) => {
       const actor = account(1000 + count * 100 + index, original.membership.role);
+      if (original.qaLabel) actor.qaLabel = original.qaLabel;
       for (const key of ['can_approve_purchases', 'can_receive_purchases', 'can_record_purchase_invoices',
         'can_record_purchase_payments', 'can_review_panama_hse']) actor.membership[key] = original.membership[key];
       identities.set(actor.user.email, actor);
@@ -340,6 +363,17 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
   let origin;
   let gateway;
   let auth;
+  let printablePmLevel;
+  const printableSnapshot = {
+    captured_at: '2026-11-17T20:00:00Z', rows: [{ id: '102', name: 'D65EX-16', rows: [
+      ['▸', 'PREPARACIÓN Y SEGURIDAD'], ['1', 'Preparación ficticia de prueba'],
+      ['▸', 'PM 250 h'], ['2', 'Tarea ficticia de 250 h'],
+      ['▸', 'PM 500 h'], ['3', 'Tarea ficticia de 500 h'],
+      ['▸', 'PM 1000 h'], ['4', 'Tarea ficticia de 1000 h'],
+      ['▸', 'PM 2000 h'], ['5', 'Tarea ficticia de 2000 h'],
+      ['▸', 'CIERRE Y PRUEBA'], ['6', 'Cierre ficticio de prueba'],
+    ] }],
+  };
 
   async function serveAsset(url, res) {
     let filename = resolve(distDirectory, `.${decodeURIComponent(url.pathname)}`);
@@ -371,6 +405,9 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
       }
       if (path.startsWith('/rest/v1/') && req.headers.apikey !== qaServiceKey) {
         return json(res, 401, { error: 'Proveedor de prueba requiere servicio autorizado' });
+      }
+      if (path === '/rest/v1/hermes_panama_source_snapshots' && req.method === 'GET') {
+        return json(res, 200, printablePmLevel && firstEq(url.searchParams, 'source') === 'pmChecklists' ? [printableSnapshot] : []);
       }
       if (path === '/rest/v1/hermes_memberships' && req.method === 'GET') {
         const requested = firstEq(url.searchParams, 'user_id');
@@ -554,9 +591,19 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
               .map(([unit, cycle]) => ({ unit, active: 'Sí', approved: 'Sí', cycle })),
             dozers: [{ unit: 'DZ205', group: 'QA', critical: '2', upcoming: '0', noData: '0' }],
           };
+          if (printablePmLevel) Object.assign(rows, {
+            maintenance: [{ unit: 'EX401', model: 'Komatsu D65EX-16', status: 'AL DÍA', next: `PM-${printablePmLevel}`,
+              due: '2000', hours: '1960', remaining: '40', reading: 'Actualizada', plan: 'Por aprobar' }],
+            maintenancePlan: [{ unit: 'EX401', model: 'Komatsu D65EX-16', active: 'Sí', approved: 'No', cycle: '250',
+              level2: '500', level3: '1000', level4: '2000',
+              checklist: 'https://docs.google.com/spreadsheets/d/1AeTvqR052hJHhEQ7jbkJ3_VIxwPa5ftwGKeVxVlasYw/edit#gid=102' }],
+            equipmentDetails: [{ unit: 'EX401', country: 'Panamá', project: 'TMF', kind: 'Tractor ficticio',
+              brand: 'Komatsu', model: 'D65EX-16', serial: 'QA-EX401' }],
+          });
           const row = rows[spec.key];
           if (!row) throw new Error('Fuente sintética sin datos');
           const columns = Object.entries({ ...spec.columns, ...spec.optionalColumns });
+          if (spec.country) columns.push(['country', spec.country]);
           const values = [columns.map(([, name]) => name), ...row.map(item => columns.map(([property]) => item[property] ?? ''))];
           return spec.key.startsWith('maintenance') ? values : { rows: values, captured_at: '2026-11-13T04:00:00Z' };
         },
@@ -568,8 +615,9 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
       });
     }
     return {
-      origin, repoDirectory, sheet, operationalSheets, photos, alerts, errors, outboundBlocked, stop, peakLogins: () => peakLogins,
+      origin, repoDirectory, sheet, operationalSheets, photos, evidence, alerts, errors, outboundBlocked, stop, peakLogins: () => peakLogins,
       registerLoadAccounts, releaseLoadAccounts,
+      setPrintablePmLevel(level) { printablePmLevel = level; },
       setOfficialShiftCut(cut) {
         const previous = officialShiftCut;
         officialShiftCut = clone(cut);

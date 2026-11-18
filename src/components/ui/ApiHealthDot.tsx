@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useApiHealth } from '../../hooks/useApiHealth';
 import { useAuthStore } from '../../stores/auth-store';
 
@@ -38,6 +38,20 @@ export default function ApiHealthDot() {
   const health = useApiHealth();
   const isPanama = useAuthStore((state) => state.project === 'tmf-panama');
   const [open, setOpen] = useState(false);
+  const container = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !container.current?.contains(event.target)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setOpen(false); trigger.current?.focus(); }
+    };
+    document.addEventListener('pointerdown', closeOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => { document.removeEventListener('pointerdown', closeOutside); document.removeEventListener('keydown', closeOnEscape); };
+  }, [open]);
 
   const color = STATUS_COLOR[health.status] ?? STATUS_COLOR.loading;
   const label = isPanama && health.status !== 'loading'
@@ -45,13 +59,15 @@ export default function ApiHealthDot() {
     : STATUS_LABEL[health.status] ?? 'Desconocido';
 
   return (
-    <div className="relative">
+    <div ref={container} className="relative">
       <button
         type="button"
+        ref={trigger}
         onClick={() => setOpen((v) => !v)}
         aria-label={`${isPanama ? 'Estado del servicio' : 'Estado de la API'}: ${label}`}
         aria-expanded={open}
-        className="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-white/10 transition-colors"
+        aria-controls="service-status-panel"
+        className="flex min-h-11 min-w-11 items-center justify-center gap-1.5 px-2 py-1 rounded-lg hover:bg-white/10 transition-colors focus-visible:ring-2 focus-visible:ring-white"
       >
         <span
           className="rounded-full shrink-0"
@@ -67,15 +83,18 @@ export default function ApiHealthDot() {
 
       {open && (
         <div
-          className="absolute right-0 top-full mt-2 rounded-xl p-4 shadow-xl z-50 w-56 max-w-[calc(100vw-2rem)] flex flex-col gap-2 text-xs"
-          style={{ backgroundColor: '#162252', border: '1px solid rgba(255,255,255,0.1)' }}
+          id="service-status-panel"
+          role="region"
+          aria-label={isPanama ? 'Estado del servicio' : 'Estado API'}
+          className={`${isPanama ? 'fixed inset-x-3 top-[72px] sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 sm:w-80' : 'absolute right-0 top-full mt-2 w-56'} max-h-[calc(var(--app-viewport-height,100dvh)-100px)] overflow-y-auto rounded-xl p-4 shadow-xl z-50 max-w-[calc(100vw-1.5rem)] flex flex-col gap-2 text-xs`}
+          style={{ backgroundColor: '#162252', border: '1px solid rgba(255,255,255,0.1)', overflowWrap: 'anywhere' }}
         >
           <div className="flex justify-between items-center">
             <span className="text-white font-semibold">{isPanama ? 'Estado del servicio' : 'Estado API'}</span>
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="text-white/50 hover:text-white text-sm leading-none"
+              className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-white/70 hover:text-white text-sm leading-none focus-visible:ring-2 focus-visible:ring-white"
               aria-label="Cerrar"
             >
               ✕
@@ -95,9 +114,9 @@ export default function ApiHealthDot() {
               {health.checks && (
                 <dl className="space-y-1 border-t border-white/10 pt-2">
                   {Object.entries(health.checks).map(([check, state]) => (
-                    <div key={check} className="flex justify-between gap-3">
+                    <div key={check} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3">
                       <dt className="text-white/80">{CHECK_LABELS[check as keyof typeof CHECK_LABELS] ?? check}</dt>
-                      <dd className={state === 'up' ? 'text-green-300' : 'text-amber-300'}>
+                      <dd className={`min-w-0 ${state === 'up' ? 'text-green-300' : 'text-amber-300'}`}>
                         {state === 'up' ? <>
                           Disponible
                           {check === 'fleet' && health.fleetCapturedAt && <time className="block text-white/60" dateTime={health.fleetCapturedAt}>
@@ -113,7 +132,7 @@ export default function ApiHealthDot() {
                 </dl>
               )}
               {health.status !== 'ok' && <button type="button" onClick={() => void health.refresh()}
-                className="mt-2 rounded-md border border-white/30 px-2 py-1 text-white">
+                className="mt-2 min-h-11 rounded-md border border-white/30 px-2 py-1 text-white">
                 {isPanama ? 'Reintentar' : 'Volver a comprobar'}
               </button>}
 

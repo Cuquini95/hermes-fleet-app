@@ -47,6 +47,32 @@ body {
   flex-direction: column;
 }
 
+/* Panamá measures content overflow instead of hiding inaccessible controls. */
+html:has(.app-shell[data-project="tmf-panama"]),
+body:has(.app-shell[data-project="tmf-panama"]) {
+  overflow-x: visible;
+}
+
+@media (max-width: 639px) {
+  .app-shell[data-project="tmf-panama"] :is(input, textarea, select) {
+    min-width: 0;
+    max-width: 100%;
+    font-size: 16px;
+  }
+
+  .app-shell[data-project="tmf-panama"] main {
+    overflow-wrap: anywhere;
+  }
+
+  body:has(.app-shell[data-project="tmf-panama"]) :is(button, summary, input:not([type="checkbox"]):not([type="radio"]), select) {
+    min-height: 44px;
+  }
+
+  body:has(.app-shell[data-project="tmf-panama"]) button {
+    min-width: 44px;
+  }
+}
+
 @media (max-width: 639px) and (pointer: coarse) {
   .app-shell[data-keyboard-open] [data-mobile-toolbar] {
     visibility: hidden;

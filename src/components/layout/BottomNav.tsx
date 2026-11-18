@@ -62,7 +62,7 @@ export default function BottomNav() {
         aria-label="Navegación principal"
         data-mobile-toolbar
         className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around px-2 pb-safe"
-        style={{ height: 64, backgroundColor: '#162252' }}
+        style={{ minHeight: 64, paddingBottom: 'env(safe-area-inset-bottom, 0px)', backgroundColor: '#162252' }}
       >
         {visibleItems.map((item) => {
           const active = isActive(item);
@@ -71,7 +71,7 @@ export default function BottomNav() {
             <button
               key={item.id}
               onClick={() => handleItemClick(item)}
-              className="flex flex-col items-center gap-1 flex-1 py-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white rounded"
+              className="flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 flex-1 px-1 py-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white rounded"
               aria-label={label}
               aria-current={active ? 'page' : undefined}
             >
@@ -81,7 +81,7 @@ export default function BottomNav() {
                 color={active ? '#FFFFFF' : 'rgba(255,255,255,0.6)'}
               />
               <span
-                className="text-xs leading-none"
+                className="max-w-full break-words text-center text-xs leading-tight"
                 style={{ color: active ? '#FFFFFF' : 'rgba(255,255,255,0.6)' }}
               >
                 {label}
