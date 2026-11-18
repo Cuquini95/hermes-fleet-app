@@ -1,22 +1,57 @@
 import { useState } from 'react';
+import { ChevronRight, Search } from 'lucide-react';
 import { PANAMA_PM_MASTER_URL } from '../../lib/panama-maintenance';
-import { pmReviewCsv } from '../../lib/panama-pm-review';
+import { pmReviewCsv, type PmReview, type PmReviewRow } from '../../lib/panama-pm-review';
 import { usePanamaPmReview } from '../../hooks/usePanamaPmReview';
 import { downloadBlob } from '../../lib/download-blob';
 
-const action = 'inline-flex min-h-11 items-center justify-center rounded-lg border border-border bg-white px-3 text-sm font-semibold disabled:opacity-50';
+const action = 'inline-flex min-h-11 items-center font-semibold text-blue-800 underline disabled:opacity-50';
 const sourceNames: Record<string, string> = { fleet: 'Flota', maintenance: 'PM FLOTA', maintenancePlan: 'Planes PM', equipmentDetails: 'Maestro de Equipos' };
 function cutDate(value: string | null) {
   return value && Number.isFinite(Date.parse(value))
     ? new Date(value).toLocaleString('es-PA', { timeZone: 'America/Panama', dateStyle: 'short', timeStyle: 'short' })
-    : 'Sin fecha de corte';
+    : 'Sin fecha';
+}
+
+function PlanRow({ row, data }: { row: PmReviewRow; data: PmReview }) {
+  const [primaryIssue, ...otherIssues] = row.issues;
+  const title = [`Revisión PM de ${row.unit}`, row.model, primaryIssue?.label ?? 'Sin pendientes',
+    otherIssues.length ? `${otherIssues.length} más` : ''].filter(Boolean).join(' · ');
+  return <details className="rescue-pm-row">
+    <summary aria-label={title}>
+      <span className="rescue-pm-row-title"><b>{row.unit}</b>{row.model && <span>{row.model}</span>}</span>
+      <span className="rescue-pm-row-state">
+        <span className={`rescue-order-badge ${primaryIssue ? 'media' : 'rescue-badge-ok'}`}>{primaryIssue?.label ?? 'Sin pendientes'}</span>
+        {otherIssues.length > 0 && <span className="rescue-pm-more">+{otherIssues.length}</span>}
+      </span>
+      <ChevronRight className="rescue-pm-chevron" size={17} aria-hidden />
+    </summary>
+    <div className="space-y-3 border-t border-border px-3 py-3 text-sm">
+      <dl className="grid grid-cols-2 gap-2 break-words text-xs">
+        <div><dt className="text-text-secondary">Modelo</dt><dd>{row.equipmentModel || row.model || 'Sin dato'}</dd></div>
+        <div><dt className="text-text-secondary">Serie</dt><dd>{row.serial ?? 'Sin dato'}</dd></div>
+        <div><dt className="text-text-secondary">Aprobación</dt><dd>{row.approved ? 'Registrada' : 'Pendiente'}</dd></div>
+        {row.intervals.length > 0 && <div><dt className="text-text-secondary">Intervalos</dt><dd>{row.intervals.join(' / ')} h</dd></div>}
+        {row.revision && <div><dt className="text-text-secondary">Revisión del checklist</dt><dd>{row.revision}</dd></div>}
+      </dl>
+      {row.issues.length > 0 && <ul className="space-y-2 text-xs" aria-label={`Pendientes de ${row.unit}`}>
+        {row.issues.map(issue => <li key={issue.code} className="break-words"><b className="text-amber-900">{issue.label}</b><p className="text-text-secondary">{issue.action}</p></li>)}
+      </ul>}
+      <details className="text-xs text-text-secondary">
+        <summary className="min-h-11 cursor-pointer py-3 font-medium">Cortes</summary>
+        <p>Plan · {cutDate(data.sources.maintenancePlan?.capturedAt ?? null)}</p>
+        <p>Equipo · {cutDate(data.sources.equipmentDetails?.capturedAt ?? null)}</p>
+        <p>Catálogo · {cutDate(data.catalog.capturedAt)}</p>
+      </details>
+      {row.checklist && <a href={row.checklist} target="_blank" rel="noreferrer" className={action}>Checklist</a>}
+    </div>
+  </details>;
 }
 
 export default function PanamaPmReview({ reload, unit }: { reload: number; unit?: string }) {
-  const [request, setRequest] = useState(0);
   const [search, setSearch] = useState(unit ?? '');
   const [pendingOnly, setPendingOnly] = useState(true);
-  const { data, error, loading } = usePanamaPmReview(reload + request);
+  const { data, error, loading } = usePanamaPmReview(reload);
 
   const pending = data?.rows.filter(row => row.issues.length).length ?? 0;
   const query = search.trim().toLocaleLowerCase('es-PA');
@@ -26,47 +61,32 @@ export default function PanamaPmReview({ reload, unit }: { reload: number; unit?
   const missing = data && [...Object.entries(data.sources).filter(([, source]) => !source.available).map(([name]) => sourceNames[name] ?? name),
     ...(!data.catalog.available ? ['Catálogo de checklists'] : [])];
 
-  return <section aria-label="Revisión de planes PM" className="min-w-0 space-y-3">
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <h2 className="font-bold text-text">Revisión de planes PM</h2>
-      <button type="button" className={action} disabled={loading} onClick={() => setRequest(value => value + 1)}>Actualizar revisión</button>
-    </div>
-    <p className="text-sm text-text-secondary">Revisa cada pendiente con Taller, corrige el maestro y actualiza esta lista.</p>
-    {loading && <p role="status" className="text-sm">Consultando planes e identidad…</p>}
+  return <section aria-label="Revisión de planes PM" className="min-w-0 space-y-2">
+    {loading && <p role="status" className="text-sm">Consultando PM…</p>}
     {error && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm">{error}</p>}
     {data && <>
-      {missing && missing.length > 0 && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm">Revisión parcial. No disponible: {missing.join(', ')}. La lista puede estar incompleta.</p>}
-      <p role="status" className="text-sm font-semibold">{pending} {pending === 1 ? 'equipo por revisar' : 'equipos por revisar'} · {data.rows.length} {data.rows.length === 1 ? 'consultado' : 'consultados'}</p>
-      <div className="flex flex-wrap gap-2">
-        {PANAMA_PM_MASTER_URL && <a className={action} href={PANAMA_PM_MASTER_URL} target="_blank" rel="noreferrer">Abrir maestro PM</a>}
-        <button type="button" className={action} disabled={!data.rows.length}
-          onClick={() => downloadBlob(new Blob([pmReviewCsv(data)], { type: 'text/csv;charset=utf-8' }), 'Hermes-Panama-Revision-PM.csv')}>Descargar revisión completa</button>
+      {missing && missing.length > 0 && <p role="alert" className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">Datos parciales · {missing.join(', ')}</p>}
+      <div className="rescue-pm-tools">
+        <label className="rescue-compact-search"><Search size={16} aria-hidden />
+          <input aria-label="Buscar equipo, modelo o serie" placeholder="Buscar equipo" value={search} onChange={event => setSearch(event.target.value)} type="search" />
+        </label>
+        <details className="rescue-pm-menu">
+          <summary className="rescue-secondary" aria-label="Fuentes y CSV">Fuentes</summary>
+          <div>
+            {PANAMA_PM_MASTER_URL && <a className={action} href={PANAMA_PM_MASTER_URL} target="_blank" rel="noreferrer">Maestro PM</a>}
+            <button type="button" className={action} aria-label="Descargar revisión completa" disabled={!data.rows.length}
+              onClick={() => downloadBlob(new Blob([pmReviewCsv(data)], { type: 'text/csv;charset=utf-8' }), 'Hermes-Panama-Revision-PM.csv')}>Descargar CSV</button>
+          </div>
+        </details>
       </div>
-      <label className="block text-sm font-medium">Buscar equipo, modelo o serie
-        <input className="mt-1 min-h-11 w-full min-w-0 rounded-lg border border-border bg-white px-3" value={search} onChange={event => setSearch(event.target.value)} type="search" />
+      <label className="rescue-pm-pending">
+        <input aria-label="Solo pendientes" type="checkbox" checked={pendingOnly} onChange={event => setPendingOnly(event.target.checked)} />
+        <span>{pending} {pending === 1 ? 'pendiente' : 'pendientes'}</span>
       </label>
-      <label className="flex min-h-11 items-center gap-2 text-sm"><input type="checkbox" checked={pendingOnly} onChange={event => setPendingOnly(event.target.checked)} />Solo pendientes</label>
-      {!rows?.length && <p className="rounded-xl border border-border bg-white p-3 text-sm">{data.rows.length ? 'Sin equipos para este filtro.' : 'Sin equipos consultables. Verifica el alcance y las fuentes de tu cuenta.'}</p>}
-      <div className="grid gap-3 sm:grid-cols-2">
-        {rows?.map(row => <article key={row.unit} className="min-w-0 rounded-xl border border-border bg-white p-4">
-          <h3 className="break-words font-bold">{row.unit} · {row.model || 'Modelo por verificar'}</h3>
-          <p className="mt-1 break-words text-sm">Serie · {row.serial ?? 'Por verificar'}</p>
-          <p className="mt-1 text-sm">Aprobación en maestro · {row.approved ? 'Registrada' : 'Pendiente'}</p>
-          {row.issues.length ? <ul className="mt-2 space-y-3 text-sm" aria-label={`Pendientes de ${row.unit}`}>
-            {row.issues.map(issue => <li key={issue.code} className="break-words"><p className="font-semibold text-amber-900">{issue.label}</p><p className="mt-1 text-text-secondary">{issue.action}</p></li>)}
-          </ul> : <p className="mt-2 text-sm">Sin pendientes detectados. Conservar la revisión técnica vigente.</p>}
-          <details className="mt-2 break-words text-xs text-text-secondary">
-            <summary className="min-h-11 cursor-pointer py-3 font-medium">Datos de la revisión</summary>
-            <p>Modelo del equipo · {row.equipmentModel || 'Sin dato'}</p>
-            <p>Intervalos · {row.intervals.length ? `${row.intervals.join(' / ')} h` : 'Por verificar'}</p>
-            <p>Revisión del checklist · {row.revision ?? 'Sin dato'}</p>
-            <p>Plan · {cutDate(data.sources.maintenancePlan?.capturedAt ?? null)} · Panamá</p>
-            <p>Identidad · {cutDate(data.sources.equipmentDetails?.capturedAt ?? null)} · Panamá</p>
-            <p>Catálogo · {cutDate(data.catalog.capturedAt)} · Panamá</p>
-            {row.checklist && <a href={row.checklist} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center font-semibold underline">Abrir checklist del modelo</a>}
-          </details>
-        </article>)}
-      </div>
+      <p role="status" className="sr-only">{rows?.length ?? 0} de {data.rows.length} equipos</p>
+      {rows?.length ? <div className="grid items-start gap-2 sm:grid-cols-2">
+        {rows.map(row => <PlanRow key={row.unit} row={row} data={data} />)}
+      </div> : <p className="rounded-xl border border-border bg-white p-3 text-sm">{query ? 'Sin coincidencias' : pendingOnly && data.rows.length ? 'Sin pendientes' : 'Sin equipos'}</p>}
     </>}
   </section>;
 }

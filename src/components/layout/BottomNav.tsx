@@ -118,7 +118,7 @@ export default function BottomNav({ rescue = false, command = false }: { rescue?
                 className="max-w-full break-words text-center text-xs leading-tight"
                 style={rescue ? undefined : { color: active ? '#FFFFFF' : 'rgba(255,255,255,0.6)' }}
               >
-                {label}
+                {rescue && command && item.id === 'dvir' ? 'Inspección' : label}
               </span>
               {active && !rescue && (
                 <span

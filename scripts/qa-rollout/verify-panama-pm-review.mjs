@@ -45,9 +45,17 @@ try {
       await page.goto(fixture.origin + '/pm');
       await page.getByRole('button', { name: 'Revisar planes', exact: true }).click();
       const panel = page.getByRole('region', { name: 'Revisión de planes PM', exact: true });
-      await panel.getByText('1 equipo por revisar · 1 consultado', { exact: true }).waitFor();
-      await panel.getByText('Serie · QA-EX401', { exact: true }).waitFor();
-      await panel.getByText('Aprobación pendiente', { exact: true }).waitFor();
+      const summary = panel.locator('summary[aria-label^="Revisión PM de EX401"]');
+      const instructions = panel.getByRole('list', { name: 'Pendientes de EX401' });
+      const sources = panel.locator('summary[aria-label="Fuentes y CSV"]');
+      const exportButton = panel.getByRole('button', { name: 'Descargar revisión completa', exact: true });
+      const reload = page.getByRole('button', { name: 'Actualizar revisión', exact: true });
+      await panel.getByText('1 pendiente', { exact: true }).waitFor();
+      await summary.getByText('Aprobación pendiente', { exact: true }).waitFor();
+      assert.equal(await instructions.isVisible(), false);
+      assert.equal(await exportButton.isVisible(), false);
+      const rowBounds = await summary.boundingBox();
+      assert(rowBounds && rowBounds.height >= 44 && rowBounds.height <= 85);
       // The temporary dismissal can reset across a full navigation to /pm.
       const notice = page.getByRole('button', { name: 'Cerrar aviso temporalmente', exact: true });
       if (await notice.isVisible()) await notice.click();
@@ -60,29 +68,37 @@ try {
       const normal = await dimensions();
       await page.screenshot({ path: join(out, `revision-pm-${width}.png`), fullPage: true });
       await panel.getByLabel('Buscar equipo, modelo o serie').fill('NO-EXISTE');
-      await panel.getByText('Sin equipos para este filtro.', { exact: true }).waitFor();
+      await panel.getByText('Sin coincidencias', { exact: true }).waitFor();
       await panel.getByLabel('Buscar equipo, modelo o serie').fill('QA-EX401');
-      await panel.getByText('Serie · QA-EX401', { exact: true }).waitFor();
+      await summary.click();
+      await panel.getByText('QA-EX401', { exact: true }).waitFor();
+      await instructions.getByText(/Taller: validar tareas/).waitFor();
+      await summary.click();
       const downloads = [];
-      if (width === 320) for (let repeat = 1; repeat <= 3; repeat++) {
-        const [download] = await Promise.all([page.waitForEvent('download'), panel.getByRole('button', { name: 'Descargar revisión completa', exact: true }).click()]);
-        const file = `revision-PM-${repeat}.csv`; await download.saveAs(join(out, file));
-        const csv = await readFile(join(out, file), 'utf8');
-        assert(csv.includes('QA-EX401')); assert(csv.includes('Aprobación pendiente')); assert(csv.includes('Taller:'));
-        downloads.push({ repeat, file, bytes: Buffer.byteLength(csv) });
+      if (width === 320) {
+        await sources.click();
+        for (let repeat = 1; repeat <= 3; repeat++) {
+          const [download] = await Promise.all([page.waitForEvent('download'), exportButton.click()]);
+          const file = `revision-PM-${repeat}.csv`; await download.saveAs(join(out, file));
+          const csv = await readFile(join(out, file), 'utf8');
+          assert(csv.includes('QA-EX401')); assert(csv.includes('Aprobación pendiente')); assert(csv.includes('Taller:'));
+          downloads.push({ repeat, file, bytes: Buffer.byteLength(csv) });
+        }
+        await sources.click();
       }
       fixture.setPrintablePmApproval(true);
-      await panel.getByRole('button', { name: 'Actualizar revisión', exact: true }).click();
-      await panel.getByText('0 equipos por revisar · 1 consultado', { exact: true }).waitFor();
+      await reload.click();
+      await panel.getByText('0 pendientes', { exact: true }).waitFor();
       await panel.getByLabel('Solo pendientes', { exact: true }).uncheck();
-      await panel.getByText('Aprobación en maestro · Registrada', { exact: true }).waitFor();
+      await summary.click();
+      await panel.getByText('Registrada', { exact: true }).waitFor();
       await page.route('**/hermes-api/api/panama/pm-review', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Fuente ficticia temporalmente no disponible.' }) }));
-      await panel.getByRole('button', { name: 'Actualizar revisión', exact: true }).click();
+      await reload.click();
       await panel.getByText('Fuente ficticia temporalmente no disponible.', { exact: true }).waitFor();
-      assert.equal(await panel.getByText('Aprobación en maestro · Registrada', { exact: true }).count(), 0);
+      assert.equal(await panel.getByText('Registrada', { exact: true }).count(), 0);
       await page.unroute('**/hermes-api/api/panama/pm-review');
-      await panel.getByRole('button', { name: 'Actualizar revisión', exact: true }).click();
-      await panel.getByText('Aprobación en maestro · Registrada', { exact: true }).waitFor();
+      await reload.click();
+      await summary.getByText('Sin pendientes', { exact: true }).waitFor();
       await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
       const enlarged = await dimensions();
       await page.screenshot({ path: join(out, `revision-pm-texto-200-${width}.png`), fullPage: true });
@@ -90,7 +106,7 @@ try {
       await page.setViewportSize({ width, height: 320 });
       const search = panel.getByLabel('Buscar equipo, modelo o serie'); await search.focus(); await search.fill('EX401');
       await dimensions();
-      const exportButton = panel.getByRole('button', { name: 'Descargar revisión completa', exact: true });
+      await sources.click();
       await exportButton.scrollIntoViewIfNeeded();
       const bounds = await exportButton.boundingBox(); assert(bounds && bounds.height >= 44 && bounds.y >= 0 && bounds.y + bounds.height <= 321);
       report.results.push({ width, status: 'pasa', normal, enlarged, keyboardViewportHeight: 320,

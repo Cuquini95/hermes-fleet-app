@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, RefreshCw } from 'lucide-react';
+import { ArrowLeft, ChevronRight, RefreshCw } from 'lucide-react';
 import { useAuthStore } from '../stores/auth-store';
 import { SkeletonList } from '../components/ui/Skeleton';
 import PanamaPmBatch from '../components/workshop/PanamaPmBatch';
@@ -90,6 +90,7 @@ function PanamaPMSchedule({ userId, canSchedule }: { userId?: string; canSchedul
     setParams(next, { replace: true });
   }
   const entries = data?.entries ? [...data.entries].sort((a, b) => (a.remaining ?? Infinity) - (b.remaining ?? Infinity)) : null;
+  const plansToReview = entries?.filter(entry => entry.planApproval !== 'approved').length ?? 0;
 
   useEffect(() => {
     if (reviewOpen) return;
@@ -107,17 +108,18 @@ function PanamaPMSchedule({ userId, canSchedule }: { userId?: string; canSchedul
 
   return (
     <div className="flex flex-col pb-4">
-      <div className="mb-4 flex items-center gap-3">
-        <button type="button" aria-label="Volver" onClick={() => navigate(-1)} className="rounded-xl border border-border bg-white p-3"><ArrowLeft size={20} /></button>
-        <h1 className="min-w-0 flex-1 text-lg font-bold text-text sm:text-xl">Programa de Mantenimiento</h1>
-        <button type="button" aria-label="Actualizar programa PM" onClick={reload} disabled={!reviewOpen && data === null} className="rounded-xl border border-border bg-white p-3">
-          <RefreshCw size={18} className={!reviewOpen && data === null ? 'animate-spin' : ''} />
+      <div className="mb-2 flex items-center gap-2">
+        <button type="button" aria-label="Volver" onClick={() => navigate(-1)} className="rescue-icon-button"><ArrowLeft size={18} aria-hidden /></button>
+        <h1 aria-label="Programa de Mantenimiento" className="min-w-0 flex-1 text-xl font-bold text-text">PM</h1>
+        <button type="button" aria-label={reviewOpen ? 'Actualizar revisión' : 'Actualizar programa PM'} title="Actualizar"
+          onClick={reload} disabled={!reviewOpen && data === null} className="rescue-icon-button">
+          <RefreshCw size={17} aria-hidden className={!reviewOpen && data === null ? 'animate-spin motion-reduce:animate-none' : ''} />
         </button>
       </div>
       <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="Vista de mantenimiento">
-        {[{ label: 'Programa PM', open: false }, { label: 'Revisar planes', open: true }].map(view => <button
+        {[{ label: 'Programa', open: false }, { label: 'Revisar planes', open: true }].map(view => <button
           key={view.label} type="button" disabled={batchOpen && view.open} aria-pressed={reviewOpen === view.open} onClick={() => setReviewOpen(view.open)}
-          className={`min-h-11 rounded-xl border border-border px-4 text-sm font-semibold ${reviewOpen === view.open ? 'bg-slate-900 text-white' : 'bg-white text-text'}`}>{view.label}</button>)}
+          className={`min-h-11 rounded-lg border border-border px-3 text-xs font-semibold ${reviewOpen === view.open ? 'bg-slate-900 text-white' : 'bg-white text-text'}`}>{view.label}</button>)}
       </div>
       {reviewOpen ? <PanamaPmReview key={reviewUnit} reload={refresh} unit={reviewUnit} /> : <>
       <details className="mb-3 text-xs text-text-secondary">
@@ -133,14 +135,13 @@ function PanamaPMSchedule({ userId, canSchedule }: { userId?: string; canSchedul
       </div>}
       {data === null && <SkeletonList count={4} />}
       {data?.entries === null && <p role="alert" className="mb-4 rounded-xl bg-amber-50 p-4 text-sm text-text">
-        PM FLOTA no disponible. Actualiza para verificar los vencimientos.
+        PM FLOTA no disponible.
       </p>}
-      {data?.entries?.length === 0 && <p className="mb-4 rounded-xl bg-amber-50 p-4 text-sm text-text">Sin equipos en PM FLOTA para tu cuenta.</p>}
-      {entries && entries.some(entry => entry.planApproval !== 'approved') && <aside className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
-        <p className="font-semibold">Revisión de planes PM</p>
-        <p className="mt-1">{entries.filter(entry => entry.planApproval !== 'approved').length} equipos necesitan revisar su plan. Taller confirma modelo, serie, tareas y aprobación.</p>
-        {PANAMA_PM_MASTER_URL && <a href={PANAMA_PM_MASTER_URL} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center font-semibold underline">Revisar maestro PM</a>}
-      </aside>}
+      {data?.entries?.length === 0 && <p className="mb-4 rounded-xl bg-amber-50 p-3 text-sm text-text">Sin equipos en PM FLOTA.</p>}
+      {!batchOpen && plansToReview > 0 && <button type="button" onClick={() => setReviewOpen(true)}
+        className="mb-3 flex min-h-11 items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 text-left text-sm font-semibold text-amber-900">
+        {plansToReview} {plansToReview === 1 ? 'plan por revisar' : 'planes por revisar'} <ChevronRight size={16} aria-hidden />
+      </button>}
       {!batchOpen && entries && <div className="grid gap-3 sm:grid-cols-2">
         {entries.map(entry => <MaintenanceCard key={entry.unit} entry={entry} canSchedule={canSchedule} />)}
       </div>}

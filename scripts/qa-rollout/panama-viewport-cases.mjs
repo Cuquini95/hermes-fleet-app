@@ -30,6 +30,22 @@ export async function checkPanamaViewportMatrix({ fixture, record, inRole, shot,
         await page.goto(fixture.origin + path, { waitUntil: 'domcontentloaded' });
         await page.locator('#main-content').getByRole('heading').first().waitFor({ state: 'visible' });
         if (label === 'equipos') await page.getByRole('button', { name: 'Ver detalle de DZ203', exact: true }).waitFor({ state: 'visible' });
+        if (label === 'ordenes') {
+          const filters = page.getByRole('button', { name: 'Filtros', exact: true });
+          const priority = page.getByLabel('Prioridad', { exact: true });
+          const row = page.getByRole('list', { name: 'Órdenes de trabajo', exact: true }).getByRole('link').first();
+          await row.waitFor({ state: 'visible' });
+          assert.equal(await filters.getAttribute('aria-expanded'), 'false');
+          assert.equal(await priority.isVisible(), false);
+          const bounds = await row.boundingBox();
+          assert(bounds && bounds.height >= 44 && bounds.height <= 85);
+          await filters.click();
+          await priority.selectOption('ALTA');
+          assert.equal(new URL(page.url()).searchParams.get('prioridad'), 'ALTA');
+          await page.getByRole('button', { name: 'Limpiar filtros' }).click();
+          await filters.click();
+          assert.equal(await priority.isVisible(), false);
+        }
         if (label === 'almacen') await page.getByRole('heading', { name: /^QA-001 ·/ }).first().waitFor({ state: 'visible' });
         if (label === 'pm') await page.getByText('DZ205', { exact: true }).first().waitFor({ state: 'visible' });
         screens.push({ screen: label, ...await dimensions(page, width) });
