@@ -465,6 +465,7 @@
     background: #fff;
     box-shadow: 0 -7px 24px #11182012;
   }
+  .rescue-mobile-tabs[data-command-tabs] { grid-auto-columns: minmax(max-content, 1fr); }
   .rescue-mobile-tabs > button { color: #647286; gap: 4px; padding-inline: 2px; }
   .rescue-mobile-tabs > button[aria-current="page"] { color: #172334; background: #edf2f7; }
   .rescue-mobile-tabs > button svg { width: 19px; height: 19px; }

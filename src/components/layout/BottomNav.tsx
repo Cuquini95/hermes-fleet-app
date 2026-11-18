@@ -95,6 +95,7 @@ export default function BottomNav({ rescue = false, command = false }: { rescue?
       <nav
         aria-label="Navegación principal"
         data-mobile-toolbar
+        data-command-tabs={rescue && command ? true : undefined}
         className={rescue ? 'rescue-mobile-tabs' : 'fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around px-2 pb-safe'}
         style={rescue ? undefined : { minHeight: 64, paddingBottom: 'env(safe-area-inset-bottom, 0px)', backgroundColor: '#162252' }}
       >
@@ -118,7 +119,7 @@ export default function BottomNav({ rescue = false, command = false }: { rescue?
                 className="max-w-full break-words text-center text-xs leading-tight"
                 style={rescue ? undefined : { color: active ? '#FFFFFF' : 'rgba(255,255,255,0.6)' }}
               >
-                {rescue && command && item.id === 'dvir' ? 'Inspección' : label}
+                {label}
               </span>
               {active && !rescue && (
                 <span

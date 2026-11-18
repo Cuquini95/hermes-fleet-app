@@ -25,7 +25,8 @@ export async function checkPanamaViewportMatrix({ fixture, record, inRole, shot,
       const screens = [];
       for (const [label, path] of [
         ['inicio', '/dashboard'], ['equipos', '/fleet'], ['ordenes', '/workorders'],
-        ['orden', '/workorders/OT-0004'], ['pm', '/pm'], ['almacen', '/inventory'], ['compras', '/pedidos'], ['datos', '/data'],
+        ['orden', '/workorders/OT-0004'], ['inspeccion', '/dvir'], ['pm', '/pm'],
+        ['almacen', '/inventory'], ['compras', '/pedidos'], ['datos', '/data'],
       ]) {
         await page.goto(fixture.origin + path, { waitUntil: 'domcontentloaded' });
         await page.locator('#main-content').getByRole('heading').first().waitFor({ state: 'visible' });
@@ -48,6 +49,18 @@ export async function checkPanamaViewportMatrix({ fixture, record, inRole, shot,
         }
         if (label === 'almacen') await page.getByRole('heading', { name: /^QA-001 ·/ }).first().waitFor({ state: 'visible' });
         if (label === 'pm') await page.getByText('DZ205', { exact: true }).first().waitFor({ state: 'visible' });
+        if (label === 'inspeccion') {
+          const nav = page.getByRole('navigation', { name: 'Navegación principal' });
+          const inspections = nav.getByRole('button', { name: 'Inspecciones', exact: true });
+          assert.equal(await inspections.getAttribute('aria-current'), 'page');
+          assert.equal(await inspections.locator('span').textContent(), 'Inspecciones');
+          const clippedLabels = await nav.locator('button span').evaluateAll(async labels => {
+            await document.fonts.ready;
+            return labels.filter(label => getComputedStyle(label).whiteSpace !== 'nowrap' || label.scrollWidth > label.clientWidth)
+              .map(label => label.textContent);
+          });
+          assert.deepEqual(clippedLabels, [], `Etiquetas cortadas en la barra inferior a ${width} px`);
+        }
         screens.push({ screen: label, ...await dimensions(page, width) });
         await shot(page, `panama-${label}-${width}.png`);
         if (label === 'orden' && width === 320) {
