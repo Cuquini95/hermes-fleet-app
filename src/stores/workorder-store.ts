@@ -121,22 +121,29 @@ const emptyState = { workorders: [], statusLog: [], loading: false, error: null,
 const pendingUpdates = new Map<string, { mutationId: string; expectedVersion?: string }>();
 let requestSequence = 0;
 
+function orderSessionScope(): string {
+  const session = useAuthStore.getState();
+  return JSON.stringify([session.isAuthenticated ? session.userId : '', session.project, session.role, session.allUnits,
+    [...session.assignedUnits].map(unit => unit.trim().toUpperCase()).sort()]);
+}
+
 export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
   ...emptyState,
 
   fetchWorkOrders: async () => {
     const actorId = workshopActorId();
     if (!actorId || useAuthStore.getState().role === 'operador') return;
+    const scope = orderSessionScope();
     const sequence = ++requestSequence;
     set({ loading: true, error: null });
     try {
       const { orders, history, nativeOperations } = await requestWorkshop<{ orders: string[][]; history: string[][]; nativeOperations?: boolean }>('orders');
-      if (actorId !== workshopActorId() || sequence !== requestSequence) return;
+      if (scope !== orderSessionScope() || sequence !== requestSequence) return;
       const workorders = orders.map(parseWorkOrderRow).filter((row): row is WorkOrder => row !== null);
       const statusLog = history.map(parseStatusLogRow).filter((row): row is StatusLogEntry => row !== null);
       set({ workorders: nativeOperations ? workorders : applyStatusLog(workorders, statusLog), statusLog, loading: false, fetched: true });
     } catch (error) {
-      if (actorId !== workshopActorId() || sequence !== requestSequence) return;
+      if (scope !== orderSessionScope() || sequence !== requestSequence) return;
       set({
         workorders: [], statusLog: [], loading: false, fetched: true,
         error: error instanceof Error ? error.message : 'Error al cargar órdenes',
@@ -147,18 +154,19 @@ export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
   updateOTField: async (otId, field, newValue, execution, operationId) => {
     const actorId = workshopActorId();
     if (!actorId) throw new Error('Abre una sesión individual para actualizar la OT.');
-    const key = JSON.stringify([actorId, otId, field, newValue, execution]);
+    const scope = orderSessionScope();
+    const key = JSON.stringify([scope, otId, field, newValue, execution]);
     const attempt = pendingUpdates.get(key) ?? { mutationId: operationId ?? crypto.randomUUID(), expectedVersion: get().getWorkOrderById(otId)?.version };
     pendingUpdates.set(key, attempt);
     try {
       await requestWorkshop('transition', { mutationId: attempt.mutationId, otId, field, value: newValue, execution,
         ...(attempt.expectedVersion && { expectedVersion: attempt.expectedVersion }) });
       pendingUpdates.delete(key);
-      if (actorId === workshopActorId()) await get().fetchWorkOrders();
+      if (scope === orderSessionScope()) await get().fetchWorkOrders();
     } catch (error) {
       if (error instanceof WorkshopApiError && [400, 403, 404, 409].includes(error.status)) {
         pendingUpdates.delete(key);
-        if (error.status === 409 && actorId === workshopActorId()) await get().fetchWorkOrders();
+        if (error.status === 409 && scope === orderSessionScope()) await get().fetchWorkOrders();
       }
       throw error;
     }
@@ -167,11 +175,11 @@ export const useWorkOrderStore = create<WorkOrderState>((set, get) => ({
   getWorkOrderById: (otId) => get().workorders.find((wo) => wo.ot_id === otId || wo.folio === otId),
 
   initRealtime: () => {
-    let actor = workshopActorId();
+    let scope = orderSessionScope();
     const unsubscribe = useAuthStore.subscribe(() => {
-      const next = workshopActorId();
-      if (next === actor) return;
-      actor = next;
+      const next = orderSessionScope();
+      if (next === scope) return;
+      scope = next;
       requestSequence++;
       pendingUpdates.clear();
       set(emptyState);
