@@ -29,6 +29,34 @@ export function orderListStatus(value?: string): OrderListStatus {
 }
 const meaningfulCheck = (value?: string) => Boolean(clean(value)) && !['OK', 'COMPLETA', 'COMPLETO', 'SIN OBSERVACIONES'].includes(key(value));
 
+export function masterOrderHref(unit: string, reference?: string): string {
+  return `/workorders/maestro/${encodeURIComponent(unit.trim().toUpperCase())}?${new URLSearchParams({ ref: clean(reference) })}`;
+}
+
+export function nativeOrderForReference(orders: WorkOrder[], unit: string, reference: string): WorkOrder | undefined {
+  if (!key(reference)) return undefined;
+  const matches = orders.filter(row => key(row.unidad) === key(unit) && [key(row.folio), key(row.ot_id)].includes(key(reference)));
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+export function masterOrderForReference(rows: MasterOrder[], unit: string, reference: string): ListedOrder | undefined {
+  if (!key(reference)) return undefined;
+  return unifiedPanamaOrders([], rows.filter(row => key(row.unit) === key(unit) && key(row.id) === key(reference)))[0];
+}
+
+export function masterOrderNotes(rows: MasterOrder[]): string[] {
+  const notes = new Set<string>();
+  for (const row of rows) for (const part of (row.check ?? '').split(/[·|\n]+/).map(value => value.trim()).filter(Boolean)) {
+    if (!meaningfulCheck(part)) continue;
+    if (key(part) === 'APERTURA INCOMPLETA') notes.add('Datos de apertura incompletos.');
+    else {
+      const age = /^OT ABIERTA\s*>\s*(\d+)\s*DIAS$/.exec(key(part));
+      notes.add(age ? `El maestro señala más de ${age[1]} días abierta.` : part);
+    }
+  }
+  return [...notes];
+}
+
 // Match only an exact reference on the same unit. Text similarity never proves that two orders are one.
 export function unifiedPanamaOrders(operational: WorkOrder[], master: MasterOrder[]): ListedOrder[] {
   const folios = new Map<string, number>();

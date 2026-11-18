@@ -6,11 +6,11 @@ import PanamaWorkOrderPartRequest from '../components/workshop/PanamaWorkOrderPa
  */
 import { useState, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Clock, Wrench, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Clock, ChevronRight } from 'lucide-react';
 import { useWorkOrderStore, orderHistoryTime } from '../stores/workorder-store';
 import { useAuthStore } from '../stores/auth-store';
 import { useEquipmentById } from '../hooks/useEquipmentList';
-import { PRIORITY_CONFIG, ESTADO_CONFIG, getNextStatuses } from '../types/workorder';
+import { ESTADO_CONFIG, getNextStatuses } from '../types/workorder';
 import type { OTEstado, OTStatusField, PMChecklistDefinition, StatusLogEntry, WorkshopExecutionInput } from '../types/workorder';
 import { photoUrls } from '../lib/averias';
 import { requestWorkshop, mechanicCoversUnit, type WorkshopMechanic } from '../lib/workshop-api';
@@ -28,6 +28,7 @@ import OrderComponentInterventions from '../components/workshop/ComponentInterve
 import PanamaPmNextService from '../components/workshop/PanamaPmNextService';
 import { parsePanamaPmNextService } from '../lib/panama-pm-next-service.js';
 import { visibleWorkOrderFolio } from '../lib/purchasing-api';
+import { OrderDetailHeader, OrderDetailInformation, OrderDetailLayout, OrderDetailStatus } from '../components/workshop/OrderDetailLayout';
 
 const FIELD_LABELS: Record<StatusLogEntry['field'], string> = {
   estado: 'Estado',
@@ -286,8 +287,6 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
     );
   }
 
-  const prioKey = wo.prioridad?.toUpperCase() as keyof typeof PRIORITY_CONFIG;
-  const priorityConfig = PRIORITY_CONFIG[prioKey] ?? { color: '#6B7280', bg: '#F3F4F6', label: wo.prioridad, time: '' };
   const canEdit = wo.estado !== 'Completado' && role !== null && UPDATE.includes(role);
   const nextStatuses = getNextStatuses(wo.estado).filter((state) => {
     if (state === wo.estado) return true;
@@ -307,88 +306,31 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
   const folio = panamaWorkflow ? visibleWorkOrderFolio(wo.folio ?? wo.ot_id) : wo.folio ?? wo.ot_id;
 
   return (
-    <div className="flex flex-col gap-4 pb-6 animate-fade-up">
+    <OrderDetailLayout>
       {saveError && (
         <div role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">
           {saveError}
         </div>
       )}
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <button type="button" onClick={() => navigate(-1)} className="p-2 rounded-xl bg-white border border-border shadow-sm">
-          <ArrowLeft size={20} className="text-text" />
-        </button>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-bold text-text truncate">{folio ?? 'Orden de trabajo'}</h1>
-          <p className="text-xs text-text-secondary">{wo.fecha}</p>
-          {wo.fecha_cierre && <p className="text-xs text-text-secondary">Cierre {wo.fecha_cierre}</p>}
-        </div>
-        {priorityConfig && (
-          <span
-            className="text-xs font-semibold px-2.5 py-1 rounded-full shrink-0"
-            style={{ color: priorityConfig.color, backgroundColor: priorityConfig.bg }}
-          >
-            {priorityConfig.label}
-          </span>
-        )}
-      </div>
+      <OrderDetailHeader folio={folio} date={wo.fecha} closedDate={wo.fecha_cierre} priority={wo.prioridad} onBack={() => navigate(-1)} />
 
       {/* Status flow */}
       {panamaWorkflow && <PanamaWorkOrderPdf key={`pdf:${wo.ot_id}`} order={wo} equipment={equipment} />}
-      <div className="bg-white rounded-xl p-3 shadow-sm border border-border">
+      <OrderDetailStatus>
         <StatusPillRow current={wo.estado} compact={panamaWorkflow} />
         {panamaWorkflow && !folio && <details className="text-xs text-text-secondary">
           <summary className="min-h-11 cursor-pointer py-3 font-medium">Referencia de la OT</summary>
           <p className="break-words">{wo.folio ?? wo.ot_id}</p>
         </details>}
-      </div>
+      </OrderDetailStatus>
 
-      {/* Info card */}
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-border flex flex-col gap-3">
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <p className="text-xs text-text-secondary">Unidad</p>
-            <p className="text-sm font-semibold text-text">{wo.unidad}</p>
-          </div>
-          <div>
-            <p className="text-xs text-text-secondary">Modelo</p>
-            <p className="text-sm font-semibold text-text">{equipment?.model ?? '-'}</p>
-          </div>
-          <div>
-            <p className="text-xs text-text-secondary">Tipo</p>
-            <p className="text-sm font-semibold text-text">{wo.tipo_averia}</p>
-          </div>
-          {panamaWorkflow && <div><p className="text-xs text-text-secondary">Serie / PIN</p>
-            <p className="break-words text-sm font-semibold">{equipment?.serial || 'Por verificar'}</p>
-          </div>}
-          <div>
-            <p className="text-xs text-text-secondary">Prioridad</p>
-            <p className="text-sm font-semibold" style={{ color: priorityConfig?.color }}>
-              {priorityConfig?.label ?? wo.prioridad}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs text-text-secondary">Mecánico</p>
-            <div className="flex items-center gap-1">
-              <Wrench size={12} className="text-text-secondary" />
-              <p className="text-sm font-semibold text-text">
-                {wo.mecanico_asignado || 'Sin asignar'}
-              </p>
-            </div>
-          </div>
-          <div>
-            <p className="text-xs text-text-secondary">Progreso</p>
-            <p className="text-sm font-semibold text-text">{wo.progreso}%</p>
-          </div>
-        </div>
-
-        <div>
-          <p className="text-xs text-text-secondary mb-1">Descripción</p>
-          <p className="text-sm text-text break-words">{wo.descripcion}</p>
-          {wo.previousOtId && (previous ? <Link className="mt-2 inline-flex min-h-11 items-center text-sm font-semibold text-amber underline"
+      <OrderDetailInformation data={{ unit: wo.unidad, model: equipment?.model, type: wo.tipo_averia,
+        serial: equipment?.serial, priority: wo.prioridad,
+        mechanic: wo.mecanico_asignado || (wo.mecanico_usuario_id ? 'Nombre por verificar' : 'Sin asignar'),
+        progress: wo.progreso, description: wo.descripcion }} showSerial={panamaWorkflow}
+        descriptionExtra={wo.previousOtId && (previous ? <Link className="mt-2 inline-flex min-h-11 items-center text-sm font-semibold text-amber underline"
             to={`/workorders/${encodeURIComponent(previous.folio ?? previous.ot_id)}`}>Reincidencia de {previous.folio ?? previous.ot_id}</Link>
-            : <p className="mt-2 text-sm text-text-secondary">OT anterior disponible para Taller y Coordinación.</p>)}
-        </div>
+            : <p className="mt-2 text-sm text-text-secondary">OT anterior disponible para Taller y Coordinación.</p>)}>
 
         {panamaWorkflow && wo.estado !== 'Completado' && <PanamaWorkOrderPartRequest ot={wo.ot_id} />}
         <PanamaPartsMovements ot={wo.ot_id} onMoved={() => setCostRevision(revision => revision + 1)} />
@@ -433,7 +375,7 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
             <p className="text-sm text-text">{wo.observaciones}</p>
           </div>
         )}
-      </div>
+      </OrderDetailInformation>
 
       {panamaWorkflow && role === 'gerencia' && <PanamaWorkOrderCost ot={wo.ot_id} folio={wo.folio ?? wo.ot_id} unit={wo.unidad} revision={costRevision} />}
 
@@ -727,6 +669,6 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
           </div>
         </div>
       )}
-    </div>
+    </OrderDetailLayout>
   );
 }
