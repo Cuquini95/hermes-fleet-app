@@ -4,9 +4,10 @@ import { formatPeso, formatLitros } from './analyticsUtils'
 
 interface UnitSummaryTableProps {
   units: UnitMetrics[]
+  includeFuel?: boolean
 }
 
-export default function UnitSummaryTable({ units }: UnitSummaryTableProps) {
+export default function UnitSummaryTable({ units, includeFuel = true }: UnitSummaryTableProps) {
   if (units.length === 0) {
     return (
       <div className="bg-[#1e293b] rounded-xl p-4 text-center">
@@ -38,7 +39,7 @@ export default function UnitSummaryTable({ units }: UnitSummaryTableProps) {
             <tr className="text-[#64748b] text-[10px] uppercase tracking-wide">
               <th className="text-left py-2 px-3 font-medium">Unidad</th>
               <th className="text-right py-2 px-3 font-medium">Gastos</th>
-              <th className="text-right py-2 px-3 font-medium">Combustible</th>
+              {includeFuel && <th className="text-right py-2 px-3 font-medium">Combustible</th>}
               <th className="text-right py-2 px-3 font-medium">Fletes</th>
               <th className="text-right py-2 px-3 font-medium">Flete $</th>
               <th className="text-right py-2 px-3 font-medium">Averías</th>
@@ -55,9 +56,9 @@ export default function UnitSummaryTable({ units }: UnitSummaryTableProps) {
                 <td className="py-2 px-3 text-right text-[#93c5fd]">
                   {u.gastos > 0 ? formatPeso(u.gastos) : '—'}
                 </td>
-                <td className="py-2 px-3 text-right text-[#86efac]">
+                {includeFuel && <td className="py-2 px-3 text-right text-[#86efac]">
                   {u.combustibleLitros > 0 ? formatLitros(u.combustibleLitros) : '—'}
-                </td>
+                </td>}
                 <td className="py-2 px-3 text-right text-[#f1f5f9]">
                   {u.fletes > 0 ? u.fletes : '—'}
                 </td>
@@ -68,7 +69,7 @@ export default function UnitSummaryTable({ units }: UnitSummaryTableProps) {
                   {u.averias > 0 ? u.averias : '—'}
                 </td>
                 <td className="py-2 px-3 text-right text-[#f1f5f9]">
-                  {formatPeso(u.gastos + u.combustibleCosto)}
+                  {formatPeso(u.gastos + (includeFuel ? u.combustibleCosto : 0))}
                 </td>
               </tr>
             ))}
@@ -77,11 +78,11 @@ export default function UnitSummaryTable({ units }: UnitSummaryTableProps) {
             <tr className="border-t-2 border-[#475569] font-bold">
               <td className="py-2 px-3 text-[#94a3b8] text-[10px] uppercase">Total</td>
               <td className="py-2 px-3 text-right text-[#60a5fa]">{formatPeso(totals.gastos)}</td>
-              <td className="py-2 px-3 text-right text-[#4ade80]">{formatLitros(totals.combustibleLitros)}</td>
+              {includeFuel && <td className="py-2 px-3 text-right text-[#4ade80]">{formatLitros(totals.combustibleLitros)}</td>}
               <td className="py-2 px-3 text-right text-[#f1f5f9]">{totals.fletes}</td>
               <td className="py-2 px-3 text-right text-[#fdba74]">{formatPeso(totals.fletesAmount)}</td>
               <td className="py-2 px-3 text-right text-[#f87171]">{totals.averias}</td>
-              <td className="py-2 px-3 text-right text-[#f1f5f9]">{formatPeso(totals.gastos + totals.combustibleCosto)}</td>
+              <td className="py-2 px-3 text-right text-[#f1f5f9]">{formatPeso(totals.gastos + (includeFuel ? totals.combustibleCosto : 0))}</td>
             </tr>
           </tfoot>
         </table>

@@ -1,3 +1,5 @@
+import { fuelTrackingEnabled } from '../../src/data/project-features.js';
+
 const sources = [
   { tab: '14 Inspecciones', name: 'Inspecciones DVIR', actor: 28, unit: 4, date: 2, time: 3, folio: 1, detail: 22, evidence: 24 },
   { tab: 'Inspeccion_Stickers', name: 'Inspecciones Sticker', actor: 18, unit: 5, date: 3, time: 4, folio: 1, detail: 10, evidence: 16 },
@@ -15,7 +17,7 @@ const timestamp = ({ date, time }) => {
 };
 
 export async function readPersonalHistory(sheets, session, { mayRead, supportsUnit }) {
-  const allowed = sources.filter(source => mayRead(source.tab));
+  const allowed = sources.filter(source => mayRead(source.tab) && (source.tab !== 'Combustible' || fuelTrackingEnabled(session.project)));
   const settled = await Promise.allSettled(allowed.map(source => sheets.read(source.tab)));
   const own = normalize(session.userId);
   let priorFaults = new Set();

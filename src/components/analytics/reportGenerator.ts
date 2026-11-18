@@ -213,7 +213,8 @@ function buildExecutiveSummary(
   unitMetrics: UnitMetrics[],
   timestamp: string,
   dateFrom?: string,
-  dateTo?: string
+  dateTo?: string,
+  includeFuel = true
 ): void {
   const pageW = doc.internal.pageSize.width
   const periodLabel = getPeriodLabel(period, dateFrom, dateTo)
@@ -250,8 +251,6 @@ function buildExecutiveSummary(
 
   // ── KPI Cards (5 in a row) ─────────────────────────────────────────────────
   const cardGap = 3
-  const totalGaps = cardGap * 4
-  const cardW = (pageW - margin * 2 - totalGaps) / 5
   const cardH = 27
   const cardY = headerH + 6
 
@@ -293,7 +292,9 @@ function buildExecutiveSummary(
     },
   ]
 
-  cards.forEach((card, i) => {
+  const visibleCards = includeFuel ? cards : cards.filter(card => card.label !== 'Combustible')
+  const cardW = (pageW - margin * 2 - cardGap * (visibleCards.length - 1)) / visibleCards.length
+  visibleCards.forEach((card, i) => {
     const x = margin + i * (cardW + cardGap)
     drawKpiCard(doc, x, cardY, cardW, cardH, card)
   })
@@ -310,14 +311,14 @@ function buildExecutiveSummary(
 
   // ── Per-unit table ─────────────────────────────────────────────────────────
   autoTable(doc, {
-    head: [['Unidad', 'Gastos', 'Combustible (L)', 'Fletes', 'Averías', 'Total (Gastos + Comb.)']],
+    head: [includeFuel ? ['Unidad', 'Gastos', 'Combustible (L)', 'Fletes', 'Averías', 'Total (Gastos + Comb.)'] : ['Unidad', 'Gastos', 'Fletes', 'Averías', 'Total gastos']],
     body: unitMetrics.map(u => [
       u.unit,
       formatPeso(u.gastos),
-      formatLitros(u.combustibleLitros),
+      ...(includeFuel ? [formatLitros(u.combustibleLitros)] : []),
       String(u.fletes),
       String(u.averias),
-      formatPeso(u.gastos + u.combustibleCosto),
+      formatPeso(u.gastos + (includeFuel ? u.combustibleCosto : 0)),
     ]),
     startY: sectionY + 7,
     styles: {
@@ -532,7 +533,8 @@ export async function generateReport(
   kpiTotals: KpiTotals,
   unitMetrics: UnitMetrics[],
   dateFrom?: string,
-  dateTo?: string
+  dateTo?: string,
+  includeFuel = true
 ): Promise<void> {
   const [{ default: jsPDF }, autoTableMod] = await Promise.all([
     import('jspdf'),
@@ -545,15 +547,17 @@ export async function generateReport(
   const periodLabel = getPeriodLabel(period, dateFrom, dateTo)
 
   // Page 1 — Executive Summary
-  buildExecutiveSummary(doc, autoTable, period, unitFilter, kpiTotals, unitMetrics, timestamp, dateFrom, dateTo)
+  buildExecutiveSummary(doc, autoTable, period, unitFilter, kpiTotals, unitMetrics, timestamp, dateFrom, dateTo, includeFuel)
 
   // Page 2 — Gastos
   doc.addPage()
   buildGastosPage(doc, autoTable, periodLabel, filteredRows.gastos)
 
   // Page 3 — Combustible
-  doc.addPage()
-  buildCombustiblePage(doc, autoTable, periodLabel, filteredRows.combustible)
+  if (includeFuel) {
+    doc.addPage()
+    buildCombustiblePage(doc, autoTable, periodLabel, filteredRows.combustible)
+  }
 
   // Page 4 — Fletes
   doc.addPage()

@@ -19,6 +19,7 @@ import { visibleWorkOrderFolio } from '../lib/purchasing-api';
 import { pendingPanamaFaultReports, WORKSHOP_CAPTURE_CHANGED } from '../lib/offline-queue';
 import { requestWorkshop } from '../lib/workshop-api';
 import { useAuthStore } from '../stores/auth-store';
+import { fuelTrackingEnabled } from '../data/project-features.js';
 import { SkeletonList } from '../components/ui/Skeleton';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -293,6 +294,7 @@ export default function MyReportsPage() {
 }
 
 function Reports({ actorId }: { actorId?: string }) {
+  const fuelEnabled = useAuthStore(state => fuelTrackingEnabled(state.project));
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
 
@@ -315,14 +317,14 @@ function Reports({ actorId }: { actorId?: string }) {
     try {
       const results = await Promise.allSettled([
         readRange(SHEET_TABS.INSPECCIONES, signal),
-        readRange(SHEET_TABS.COMBUSTIBLE, signal),
+        fuelEnabled ? readRange(SHEET_TABS.COMBUSTIBLE, signal) : Promise.resolve([] as string[][]),
         readRange(SHEET_TABS.HOROMETROS, signal),
         actorId ? requestWorkshop<{ reports: AveriaRecord[] }>('myfaults') : readRange(SHEET_TABS.AVERIAS, signal),
       ] as const);
 
       if (signal.aborted) return;
       const failed = results.filter(item => item.status === 'rejected');
-      if (failed.length && (!actorId || failed.length === results.length)) throw failed[0]?.reason;
+      if (failed.length && (!actorId || failed.length === results.length - (fuelEnabled ? 0 : 1))) throw failed[0]?.reason;
       const [insp, fuel, horo, faults] = results;
       const inspRows = insp.status === 'fulfilled' ? insp.value : [];
       const fuelRows = fuel.status === 'fulfilled' ? fuel.value : [];
@@ -359,7 +361,7 @@ function Reports({ actorId }: { actorId?: string }) {
     } finally {
       if (!signal.aborted) setLoading(false);
     }
-  }, [actorId, userName, todayStr]);
+  }, [actorId, userName, todayStr, fuelEnabled]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -497,7 +499,7 @@ function Reports({ actorId }: { actorId?: string }) {
           </Section>
 
           {/* Combustible */}
-          <Section
+          {fuelEnabled && <Section
             icon={<Fuel size={16} />}
             title="Combustible"
             count={data.combustible.length}
@@ -506,7 +508,7 @@ function Reports({ actorId }: { actorId?: string }) {
             <div className="flex flex-col gap-2">
               {data.combustible.map((r) => <CombustibleCard key={r.id} record={r} />)}
             </div>
-          </Section>
+          </Section>}
 
           {/* Horómetros */}
           <Section

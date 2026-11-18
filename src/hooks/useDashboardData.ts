@@ -7,6 +7,8 @@ import { parseAveriaRow } from '../lib/averias';
 import { useEquipmentStore } from '../stores/equipment-store';
 import type { WorkshopSummary } from './useFleetDispatch';
 import { reconcileDieselDispatches } from '../lib/panama-fuel-reconciliation';
+import { useAuthStore } from '../stores/auth-store';
+import { fuelTrackingEnabled } from '../data/project-features.js';
 
 export interface DashboardData {
   criticalOTs: number | null;
@@ -55,6 +57,7 @@ function countAlertsToday(rows: string[][]): number {
 }
 
 export function useDashboardData(equipmentList: Equipment[], useWorkshopMaster = false, workshop?: WorkshopSummary): DashboardData {
+  const fuelEnabled = useAuthStore(state => fuelTrackingEnabled(state.project));
   const [criticalOTs, setCriticalOTs] = useState<number | null>(null);
   const [avgConsumption, setAvgConsumption] = useState('—');
   const [fuelRows, setFuelRows] = useState<string[][] | null>(null);
@@ -81,15 +84,15 @@ export function useDashboardData(equipmentList: Equipment[], useWorkshopMaster =
   const availabilityTrend = hasAvailability ? buildAvailabilityTrend(equipmentList, scopedRows) : [];
   const alertsToday = useWorkshopMaster ? workshop?.alertsToday ?? null
     : averiaRows === null ? null : countAlertsToday(averiaRows);
-  const fuelReconciliation = useMemo(() => useWorkshopMaster && fuelRows && !equipmentError
+  const fuelReconciliation = useMemo(() => fuelEnabled && useWorkshopMaster && fuelRows && !equipmentError
     ? reconcileDieselDispatches(fuelRows, equipmentList.map(unit => unit.unit_id)) : null,
-  [useWorkshopMaster, fuelRows, equipmentList, equipmentError]);
+  [fuelEnabled, useWorkshopMaster, fuelRows, equipmentList, equipmentError]);
 
   const fetchAll = useCallback(async (signal: AbortSignal, refresh = false) => {
     const offset = refresh ? 0 : undefined;
     const results = await Promise.allSettled([
       useWorkshopMaster ? Promise.resolve(null) : fetchCriticalOTs(signal, offset),
-      readRange(SHEET_TABS.COMBUSTIBLE, signal, undefined, offset),
+      fuelEnabled ? readRange(SHEET_TABS.COMBUSTIBLE, signal, undefined, offset) : Promise.resolve([] as string[][]),
       useWorkshopMaster ? Promise.resolve(null) : readRange(SHEET_TABS.AVERIAS, signal, undefined, offset),
     ]);
     if (signal.aborted) return;
@@ -101,7 +104,7 @@ export function useDashboardData(equipmentList: Equipment[], useWorkshopMaster =
     setAveriaRows(breakdowns.status === 'fulfilled' ? breakdowns.value : null);
     setError(results.some((result) => result.status === 'rejected') ? 'Algunos indicadores no se pudieron cargar.' : null);
     setLoading(false);
-  }, [useWorkshopMaster]);
+  }, [useWorkshopMaster, fuelEnabled]);
 
   useEffect(() => {
     const controller = new AbortController();

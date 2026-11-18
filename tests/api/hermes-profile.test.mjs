@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHermesGateway } from '../../api/hermes-sheets-gate.js';
+import { readPersonalHistory } from '../../api/_lib/hermes-profile.js';
 
 const id = '11111111-1111-4111-8111-111111111111';
 const other = '22222222-2222-4222-8222-222222222222';
@@ -30,8 +31,10 @@ async function call(gate, path, body) {
 }
 
 test('personal history reports only records attributable to the session and available units', async () => {
+  const reads = [];
   const gate = createHermesGateway({
     sheets: { read: async tab => {
+      reads.push(tab);
       if (tab === '04B Registro Horómetros') throw new Error('Offline fixture');
       return data[tab] || [];
     } },
@@ -43,20 +46,19 @@ test('personal history reports only records attributable to the session and avai
   assert.deepEqual(res.body.records.map(item => item.folio), ['OT-1', 'INS-1', 'STICKER-1']);
   assert.deepEqual(res.body.records.find(item => item.folio === 'STICKER-1')?.evidence, [proof]);
   assert.ok(res.body.unavailable.includes('Horómetros'));
+  assert.ok(!reads.includes('Combustible'));
+  assert.ok(!res.body.unavailable.includes('Diésel'));
   assert.ok(!Object.values(res.body).flat().some(item => item?.folio === 'INS-LEGACY'));
 });
 
-test('capture assigns an actor ID from the authenticated session to the fuel row', async () => {
-  const commits = [];
-  const gate = createHermesGateway({
-    sheets: { commit: async write => { commits.push(write); } },
-    sessionReader: async () => session,
-    enablePanamaOperations: true,
-    enablePanamaFuelCapture: true,
-    writeEnabled: true,
-  });
+test('el historial de combustible se conserva fuera de Panamá y no altera la atribución individual', async () => {
   const values = row(14, { 0: 'F-QA', 1: '12/11/2026', 3: 'CA20', 4: 'Input', 13: other });
-  const res = await call(gate, 'api/sheets/append', { tab: 'Combustible', values });
-  assert.equal(res.statusCode, 200);
-  assert.equal(commits[0].writes[0].append[0][13], id);
+  values[13] = id;
+  const before = JSON.stringify(values);
+  const result = await readPersonalHistory({ read: async () => [values] }, { ...session, project: 'mexico' }, {
+    mayRead: tab => tab === 'Combustible', supportsUnit: unit => unit === 'CA20',
+  });
+  assert.equal(result.records[0].type, 'Diésel');
+  assert.equal(result.records[0].folio, 'F-QA');
+  assert.equal(JSON.stringify(values), before);
 });

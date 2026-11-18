@@ -6,6 +6,7 @@ import { canOpenPanamaPayables, purchasingEntry } from '../../lib/purchasing-hom
 import { useAuthStore } from '../../stores/auth-store';
 import type { NavItem } from '../../types/roles';
 import { NAV_CONFIG } from '../../types/roles';
+import { fuelTrackingEnabled } from '../../data/project-features.js';
 import MoreTray from './MoreTray';
 
 function LucideIcon({ name, ...props }: { name: string } & LucideProps) {
@@ -24,7 +25,9 @@ export default function BottomNav() {
 
   if (!role) return null;
 
-  const { visible, overflow } = NAV_CONFIG[role];
+  const config = NAV_CONFIG[role];
+  const visible = fuelTrackingEnabled(project) ? config.visible : config.visible.filter(item => item.id !== 'diesel');
+  const overflow = fuelTrackingEnabled(project) ? config.overflow : config.overflow.filter(item => item.id !== 'diesel');
   const isPanama = project === 'tmf-panama';
   const [generalHome, ...otherItems] = visible;
   const purchasing: NavItem[] = [];

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { fuelTrackingEnabled } from '../src/data/project-features.js';
 import { isSameOriginAuthRequest, requireSession } from './_lib/session-auth.js';
 import { canonicalTab, createHermesSheets } from './_lib/hermes-google-sheets.js';
 import { checkEvidenceAvailability, dispatchEvidence } from './_lib/hermes-evidence.js';
@@ -291,7 +292,7 @@ export function createHermesGateway({
         if (session.project !== PANAMA_PROJECT) return invalid(res, 403, 'Consulta reservada a TMF Panamá.');
         if (req.method !== 'GET') return invalid(res, 405, 'Método no permitido.');
         return res.status(200).json({
-          fuelCapture: enablePanamaOperations && writeEnabled && (demo || (enablePanamaFuelCapture && (!permittedGroups || permittedGroups.has('combustible')))),
+          fuelCapture: fuelTrackingEnabled(session.project) && enablePanamaOperations && writeEnabled && (demo || (enablePanamaFuelCapture && (!permittedGroups || permittedGroups.has('combustible')))),
         });
       }
       if (path === 'api/panama/documentos-tecnicos') {
@@ -412,8 +413,9 @@ export function createHermesGateway({
         return res.status(result.status).json(result.body);
       }
       if (path === 'api/sheets/append') {
-        if (session.project === PANAMA_PROJECT && canonicalTab(req.body?.tab) === 'Combustible' && !demo && !enablePanamaFuelCapture) {
-          return invalid(res, 403, 'La captura de combustible TMF está pendiente de habilitación por Operaciones.');
+        if (session.project === PANAMA_PROJECT && canonicalTab(req.body?.tab) === 'Combustible'
+          && (!fuelTrackingEnabled(session.project) || (!demo && !enablePanamaFuelCapture))) {
+          return invalid(res, 403, 'El proyecto Panamá no lleva combustible por el momento.');
         }
         return await sheetAppend(req, res, sheets, session);
       }
