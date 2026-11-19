@@ -291,7 +291,7 @@ async function dvir(context) {
     body.type, meter, ...checks.map((c) => c.status), score, result, observations, photos.join(', '), otId || '', otId ? 'Pendiente' : '', session.userName, session.userId]] }];
   if (otId) writes.push(...failureWrites(context, {
     id: otId, unit: code, type: 'DVIR', description: observations || 'Inspección DVIR reprobada', priority: 'ALTA', photos, notes: inspectionId,
-  }));
+  }), { tab: TAB.history, append: [historyRow(context, otId, 'inspeccion_origen', '', inspectionId)] });
   return commitRestriction(context, code, writes, { inspectionId, otId, result, score });
 }
 
@@ -1487,7 +1487,7 @@ export async function dispatchWorkshop(input) {
       ]));
       const orders = rows.filter((row) => orderVisible(session, row));
       const ids = new Set(orders.map((row) => row[1]));
-      return { status: 200, body: { orders, history: logs.filter((row) => ids.has(row[1]) && row[2] !== COMPONENT_INTERVENTION),
+      return { status: 200, body: { orders, history: logs.filter((row) => ids.has(row[1]) && ![COMPONENT_INTERVENTION, 'solicitud_repuesto'].includes(row[2])),
         ...(sheets.nativeOperations && { nativeOperations: true }) } };
     }
     if (method === 'GET' && endpoint === 'schedule') {

@@ -19,11 +19,32 @@ test('the demo receiving account is scoped to warehouse and remains preview-only
     assert.equal(profile?.role, 'almacen');
     assert.equal(profile?.canReceivePurchases, true);
     assert.equal(profile?.previewDemo, true);
+    assert.equal(profile?.positionCode, 'TP-PER-017');
     process.env.VERCEL_ENV = 'production';
     assert.equal(normalizeRosterProfile(row, 'tmf-panama'), null);
   } finally {
     if (env === undefined) delete process.env.VERCEL_ENV;
     else process.env.VERCEL_ENV = env;
+  }
+});
+
+test('F01 position selects the home and keeps Q25 approval with Operations', () => {
+  const approved = { ...rosterEntry, projects: ['tmf-panama'], role: 'gerencia',
+    positionCode: 'TP-PER-002', canApprovePurchases: true };
+  const rows = planRosterImport([approved], [employee], [], 'tmf-panama').members;
+  assert.equal(rows[0].position_code, 'TP-PER-002');
+  assert.equal(normalizeRosterProfile(rows[0], 'tmf-panama').positionCode, 'TP-PER-002');
+  assert.equal(normalizeRosterProfile(rows[0], 'tmf-panama').canApprovePurchases, true);
+  const buyer = { ...approved, positionCode: 'TP-PER-016' };
+  assert.equal(planRosterImport([buyer], [employee], [], 'tmf-panama').pending[0].motivo,
+    'aprobacion_q25_fuera_de_direccion_de_operaciones');
+  const badAssignment = normalizeRosterProfile({ ...rows[0], position_code: 'TP-PER-016' }, 'tmf-panama');
+  assert.equal(badAssignment.positionCode, undefined);
+  assert.equal(badAssignment.canApprovePurchases, false);
+  assert.equal(normalizeRosterProfile({ ...rows[0], position_code: null }, 'tmf-panama').canApprovePurchases, true);
+  for (const projects of [['tcm'], ['tmf-panama', 'tcm']]) {
+    assert.equal(planRosterImport([{ ...approved, projects }], [employee], [], projects[0]).pending[0].motivo,
+      'puesto_r06_incompatible');
   }
 });
 

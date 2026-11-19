@@ -25,6 +25,10 @@ const RECEIPT_ORDER_STATUS = new Set(['Aprobada', 'Recibida parcial', 'Recibida'
 const MOVEMENT_WAREHOUSE = 16;
 const MOVEMENT_RESERVATION = 17;
 const MOVEMENT_DISPATCH = 18;
+const MOVEMENT_PART_NEED = 19;
+const PART_NEED_FIELD = 'solicitud_repuesto';
+const WORK_ORDERS = 'ORDENES_TRABAJO';
+const WORKSHOP_HISTORY = 'OT_STATUS_LOG';
 const LINE_WAREHOUSE = 13;
 const LINE_DISPATCHES = 14;
 const OP_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
@@ -486,6 +490,7 @@ function movementRecord(row) {
     originalIssueId: trim(row[14]), valuation: recordedInventoryValue(row[15]),
     warehouse: trim(row[MOVEMENT_WAREHOUSE]), reservationId: trim(row[MOVEMENT_RESERVATION]),
     dispatchId: trim(row[MOVEMENT_DISPATCH]),
+    ...(row[MOVEMENT_PART_NEED] && { partNeedId: trim(row[MOVEMENT_PART_NEED]) }),
   };
 }
 
@@ -541,9 +546,10 @@ function issueBalance(issue, related) {
 }
 
 function inventoryMovement({ part, nextStock, session, tx, kind, amount, unit, folio = '', lineId = '', ot = '', reference,
-  originalIssueId = '', valuation = null, reservationId = '', dispatchId = '' }) {
-  const extension = part.warehouse || reservationId || dispatchId
-    ? [originalIssueId, valuation ? JSON.stringify(valuation) : '', part.warehouse, reservationId, ...(dispatchId ? [dispatchId] : [])]
+  originalIssueId = '', valuation = null, reservationId = '', dispatchId = '', partNeedId = '' }) {
+  const extension = part.warehouse || reservationId || dispatchId || partNeedId
+    ? [originalIssueId, valuation ? JSON.stringify(valuation) : '', part.warehouse, reservationId,
+      ...(dispatchId || partNeedId ? [dispatchId] : []), ...(partNeedId ? [partNeedId] : [])]
     : originalIssueId || valuation ? [originalIssueId, valuation ? JSON.stringify(valuation) : ''] : [];
   return append(PURCHASE_TABS.inventoryMovements, [[
     tx.version, timestamp().iso, kind, part.row[0], quantity(amount), unit, folio, lineId, ot, reference,
@@ -596,7 +602,7 @@ function reservationBalances(history, part) {
     if (row[2] === 'Reserva') {
       const id = trim(row[0]);
       if (!id || reservations.has(id) || !row[5] || !row[8]) error(409, 'Concilia el historial de reservas del almacén.');
-      reservations.set(id, { id, unit: upper(row[5]), ot: upper(row[8]), reference: trim(row[9]),
+      reservations.set(id, { id, unit: upper(row[5]), ot: upper(row[8]), reference: trim(row[9]), partNeedId: trim(row[MOVEMENT_PART_NEED]),
         remaining: decimal(row[4], 3, 'reserva registrada', true) });
     } else if (row[2] === 'Liberación' || (row[2] === 'Salida' && linked)) {
       const original = reservations.get(linked);
@@ -642,25 +648,37 @@ async function reserveInventory(body, session, sheets, tx) {
   const { reservations, reserved } = reservationBalances(history, part);
   if (reserved > physical) error(409, 'Las reservas superan la existencia registrada. Concilia el almacén.');
   const reservationId = field(body.reservationId, 120, 'reserva original', kind === 'Liberación');
+  let partNeedId = field(body.partNeedId, 64, 'solicitud de Taller');
   if (kind === 'Reserva') {
     requireOpenStockOrder(order);
     assertCompatible(part, await sheets.read('01 Inventario'), unit);
     if (reservationId) error(400, 'La nueva reserva no puede indicar una reserva anterior.');
     if (amount > physical - reserved) error(409, 'La cantidad supera la existencia disponible del almacén.');
+    if (partNeedId) {
+      const supplies = await partNeedSupply(sheets);
+      const need = partNeedFor(supplies, partNeedId, ot);
+      if (need.state !== 'Autorizada' || upper(need.partNumber) !== upper(sku)) {
+        error(409, 'La reserva requiere una solicitud autorizada para este SKU y OT.');
+      }
+      const balance = partNeedBalance(need, history, supplies.requests, supplies.allocations);
+      if (amount > balance.forStock) error(409, 'La cantidad supera el saldo que corresponde a Almacén.');
+    }
   } else {
     const original = reservations.get(reservationId);
     if (!original || original.ot !== ot || original.unit !== unit || amount > original.remaining) {
       error(409, 'La liberación supera el saldo o no corresponde a la reserva de esta OT y almacén.');
     }
+    if (partNeedId && original.partNeedId !== partNeedId) error(409, 'La reserva pertenece a otra solicitud.');
+    partNeedId = original.partNeedId;
   }
   if (history.some(row => row[2] === kind && upper(row[3]) === upper(sku) && upper(row[8]) === ot
       && upper(row[MOVEMENT_WAREHOUSE]) === upper(warehouse) && upper(row[9]) === upper(reference))) {
     error(409, 'La referencia ya se registró para esta OT y repuesto.');
   }
   const guards = [inventoryGuard(part, history)];
-  const writes = [inventoryMovement({ part, nextStock: physical, session, tx, kind, amount, unit, ot, reference, reservationId }),
+  const writes = [inventoryMovement({ part, nextStock: physical, session, tx, kind, amount, unit, ot, reference, reservationId, partNeedId }),
     auditRow(session, tx.operationId, kind + ' de repuesto', ot, [sku, warehouse, quantity(amount), reference].join(' · '))];
-  if (kind === 'Reserva' && sheets.nativeOperations) {
+  if ((kind === 'Reserva' && sheets.nativeOperations) || partNeedId) {
     guards.push(orderWriteGuard(order.row));
     writes.push({ tab: 'ORDENES_TRABAJO', row: order.index, col: 18, values: [tx.version] });
   }
@@ -688,6 +706,7 @@ async function moveInventory(body, session, sheets, tx, inventoryValuations) {
     error(409, 'La referencia ya está registrada para este repuesto y OT.');
   }
   let originalIssueId = '';
+  let partNeedId = field(body.partNeedId, 64, 'solicitud de Taller');
   let valuation = null;
   if (kind === 'Salida') {
     requireOpenStockOrder(order);
@@ -702,6 +721,8 @@ async function moveInventory(body, session, sheets, tx, inventoryValuations) {
     if (warehouse && upper(warehouse) !== upper(originalWarehouse)) error(409, 'Devuelve el repuesto al almacén de la salida original.');
     warehouse = originalWarehouse;
     originalIssueId = trim(issue[0]);
+    if (partNeedId && partNeedId !== trim(issue[MOVEMENT_PART_NEED])) error(409, 'La salida pertenece a otra solicitud.');
+    partNeedId = trim(issue[MOVEMENT_PART_NEED]);
     if (!originalIssueId || history.filter(row => trim(row[0]) === originalIssueId).length !== 1) {
       error(409, 'La salida original requiere conciliación.');
     }
@@ -728,11 +749,13 @@ async function moveInventory(body, session, sheets, tx, inventoryValuations) {
     if (reserved > physical || (reservationId
       ? !original || original.ot !== internalOt || original.unit !== unit || amount > original.remaining
       : amount > physical - reserved)) error(409, 'La cantidad supera el disponible o el saldo de la reserva para esta OT y almacén.');
+    if (partNeedId && partNeedId !== original?.partNeedId) error(409, 'Selecciona la reserva de esta solicitud.');
+    partNeedId = original?.partNeedId || '';
   }
   const nextStock = physical + (kind === 'Salida' ? -amount : amount);
   const guards = [inventoryGuard(part, history)];
-  const writes = inventoryWrites({ part, nextStock, session, tx, kind, amount, unit, ot: internalOt, reference, originalIssueId, valuation, reservationId });
-  if (kind === 'Salida' && sheets.nativeOperations) {
+  const writes = inventoryWrites({ part, nextStock, session, tx, kind, amount, unit, ot: internalOt, reference, originalIssueId, valuation, reservationId, partNeedId });
+  if ((kind === 'Salida' && sheets.nativeOperations) || partNeedId) {
     guards.push(orderWriteGuard(order.row));
     writes.push({ tab: 'ORDENES_TRABAJO', row: order.index, col: 18, values: [tx.version] });
   }
@@ -968,12 +991,162 @@ async function readWorkOrderPart(sheets, session, query) {
   return { ...context, partNumber: trim(compatible[0].row[0]), match: 'verified', items, transitScoped: balances.transitScoped };
 }
 
-async function submitRequest(body, session, sheets, tx) {
+async function partNeedSupply(sheets) {
+  const [logs, requests, orders, lines] = await readTables(
+    sheets, WORKSHOP_HISTORY, PURCHASE_TABS.requests, PURCHASE_TABS.orders, PURCHASE_TABS.lines,
+  );
+  const needs = new Map();
+  for (const row of logs) {
+    if (row[2] !== PART_NEED_FIELD) continue;
+    let need;
+    try { need = JSON.parse(row[4]); }
+    catch { error(409, 'Hay una solicitud de Taller por conciliar.'); }
+    if (need?.id && need.ot === row[1]) needs.set(need.id, need);
+  }
+  return { needs, requests: parseRequests(requests), allocations: allocationIndex(orders, lines) };
+}
+
+function partNeedFor(supplies, id, ot) {
+  const need = supplies.needs.get(id);
+  if (!need || need.ot !== ot) error(404, 'La solicitud no corresponde a esta OT.');
+  return need;
+}
+
+function partNeedBalance(need, history, requests, allocations) {
+  const related = history.filter(row => trim(row[MOVEMENT_PART_NEED]) === need.id && upper(row[8]) === need.ot);
+  const reservations = new Map();
+  let delivered = 0n;
+  for (const row of related) {
+    const amount = decimal(row[4], 3, 'movimiento de solicitud', true);
+    if (row[2] === 'Reserva') {
+      reservations.set(row[0], { id: row[0], warehouse: row[MOVEMENT_WAREHOUSE], amount });
+    } else if (row[2] === 'Salida' || row[2] === 'Liberación') {
+      const reservation = reservations.get(row[MOVEMENT_RESERVATION]);
+      if (!reservation || amount > reservation.amount) error(409, 'Concilia la reserva de esta solicitud.');
+      reservation.amount -= amount;
+      if (row[2] === 'Salida') delivered += amount;
+    } else if (row[2] === 'Devolución') {
+      delivered -= amount;
+    }
+  }
+  const reserved = [...reservations.values()].reduce((sum, item) => sum + item.amount, 0n);
+  let incoming = 0n;
+  for (const purchase of need.purchases) {
+    const row = requests.find(({ record }) => record.pedidoId === purchase.folio && record.ot === need.ot);
+    if (!row) error(409, 'Concilia la partida de compra de esta solicitud.');
+    incoming += decimal(purchase.quantity, 3, 'cantidad del pedido') - requestBalance(row.record, allocations).received;
+  }
+  const wanted = decimal(need.quantity, 3, 'solicitud', true);
+  if (delivered < 0n || incoming < 0n || delivered + reserved > wanted) error(409, 'Concilia el saldo de esta solicitud.');
+  const remaining = wanted - delivered - reserved - incoming;
+  return { delivered, reserved, incoming, forStock: remaining > 0n ? remaining : 0n, reservations, wanted };
+}
+
+function partNeedOrder(orders, session, identifier) {
+  const result = stockOrder(orders, session, upper(field(identifier, 90, 'OT', true)));
+  if (session.role === 'mecanico' && result.order.row[17] !== session.userId) error(403, 'La OT no está asignada a tu cuenta.');
+  return result;
+}
+
+async function readPartNeeds(sheets, session, query, warehouse) {
+  const [supplies, orders, moves] = await Promise.all([
+    partNeedSupply(sheets), sheets.read(WORK_ORDERS), sheets.read(PURCHASE_TABS.inventoryMovements),
+  ]);
+  const selected = query.ot ? partNeedOrder(orders, session, query.ot).ot : '';
+  const scoped = new Map(entries(orders).filter(({ row }) => canUseUnit(session, row[3])
+    && (session.role !== 'mecanico' || row[17] === session.userId))
+    .map(({ row }) => [upper(row[1]), row]));
+  const items = [...supplies.needs.values()].reverse().flatMap(need => {
+    const row = scoped.get(need.ot);
+    if (!row || (selected && need.ot !== selected) || (warehouse && need.state !== 'Autorizada')) return [];
+    const detail = { ...need, folio: trim(row[25]) || need.ot, unit: row[3],
+      closed: ['COMPLETADO', 'CANCELADO', 'CANCELADA'].includes(normalizeCatalogKey(row[9])) };
+    try {
+      const balance = partNeedBalance(need, moves, supplies.requests, supplies.allocations);
+      return [{ ...detail, delivered: quantity(balance.delivered), reserved: quantity(balance.reserved),
+        incoming: quantity(balance.incoming), forStock: quantity(balance.forStock),
+        reservations: [...balance.reservations.values()].filter(item => item.amount > 0n)
+          .map(({ amount, ...item }) => ({ ...item, quantity: quantity(amount) })) }];
+    } catch (cause) {
+      if (!(cause instanceof RequestError)) throw cause;
+      return [{ ...detail, needsReconciliation: true, reservations: [] }];
+    }
+  });
+  return ok({ items });
+}
+
+function partNeedWrites(order, need, session, tx) {
+  return [
+    append(WORKSHOP_HISTORY, [[timestamp().iso, need.ot, PART_NEED_FIELD, '', JSON.stringify(need),
+      session.userName, session.role, session.userId]]),
+    { tab: WORK_ORDERS, row: order.index, col: 18, values: [tx.version] },
+  ];
+}
+
+async function notifyPartNeed(body, session, sheets, tx) {
+  const { order, ot } = partNeedOrder(await sheets.read(WORK_ORDERS), session, body.ot);
+  requireOpenStockOrder(order);
+  const need = {
+    id: tx.version, ot, originActor: session.userId, requestedAt: timestamp().iso, requestedBy: session.userName,
+    partNumber: upper(field(body.partNumber, 120, 'número de parte', true)),
+    description: field(body.description, 500, 'repuesto', true),
+    quantity: quantity(decimal(body.quantity, 3, 'solicitud', true)),
+    reason: field(body.reason, 500, 'motivo', true), state: 'Por revisar en Taller', purchases: [],
+  };
+  return tx.commit(partNeedWrites(order, need, session, tx), { id: need.id, state: need.state }, [orderWriteGuard(order.row)]);
+}
+
+async function reviewPartNeed(body, session, sheets, tx) {
+  const { order, ot, unit } = partNeedOrder(await sheets.read(WORK_ORDERS), session, body.ot);
+  requireOpenStockOrder(order);
+  const [supplies, moves] = await Promise.all([partNeedSupply(sheets), sheets.read(PURCHASE_TABS.inventoryMovements)]);
+  const need = partNeedFor(supplies, field(body.id, 64, 'solicitud', true), ot);
+  const { decision } = body;
+  if (!['approve', 'return', 'shortfall'].includes(decision)) error(400, 'Revisa la decisión de Taller.');
+  if (need.state !== (decision === 'shortfall' ? 'Autorizada' : 'Por revisar en Taller')) {
+    error(409, 'La solicitud ya cambió. Actualiza antes de continuar.');
+  }
+  const reviewed = { ...need, reviewedAt: timestamp().iso, reviewedBy: session.userName };
+  const guard = orderWriteGuard(order.row);
+  if (decision === 'return') {
+    reviewed.state = 'Devuelta';
+    reviewed.reviewReason = field(body.reason, 500, 'motivo de devolución', true);
+    return tx.commit(partNeedWrites(order, reviewed, session, tx), { id: need.id, state: reviewed.state }, [guard]);
+  }
+
+  const stock = await readWorkOrderPart(sheets, session, { ot, partNumber: need.partNumber });
+  if (stock.match !== 'verified' || !stock.items.length || stock.items.some(item => item.available === null)) {
+    error(409, 'Existencia o compatibilidad por conciliar. Verifica el SKU y su almacén.');
+  }
+  if (decision === 'shortfall' && upper(need.partNumber) !== upper(stock.partNumber)) {
+    error(409, 'El SKU de la solicitud cambió en el catálogo. Concilia la referencia.');
+  }
+  const balance = partNeedBalance(need, moves, supplies.requests, supplies.allocations);
+  const available = stock.items.reduce((sum, item) => sum + decimal(item.available, 3, 'saldo libre'), 0n);
+  const shortage = balance.forStock - available;
+  if (decision === 'shortfall' && shortage <= 0n) error(409, 'Almacén puede cubrir el saldo actual.');
+  reviewed.state = 'Autorizada';
+  reviewed.partNumber = stock.partNumber;
+  if (shortage <= 0n) {
+    return tx.commit(partNeedWrites(order, reviewed, session, tx), { id: need.id, state: reviewed.state }, [guard]);
+  }
+  const requested = quantity(shortage);
+  const folio = purchaseRequestFolio(tx);
+  reviewed.purchases = [...need.purchases, { folio, quantity: requested }];
+  return submitRequest({ items: [{ equipment: unit, ot, part_number: stock.partNumber, description: need.description,
+    quantity: requested, source: 'Solicitud de Taller', notes: need.reason }] }, session, sheets, tx, {
+    writes: partNeedWrites(order, reviewed, session, tx), guards: [guard], result: { id: need.id, state: reviewed.state },
+  });
+}
+
+const purchaseRequestFolio = tx => 'PED-' + hash(tx.key).slice(0, 18).toUpperCase();
+
+async function submitRequest(body, session, sheets, tx, additional = {}) {
   if (!Array.isArray(body.items) || body.items.length < 1 || body.items.length > 100) {
     error(400, 'Agrega entre 1 y 100 partidas al pedido.');
   }
   const now = timestamp();
-  const folio = 'PED-' + hash(tx.key).slice(0, 18).toUpperCase();
+  const folio = purchaseRequestFolio(tx);
   const panama = session.project === 'tmf-panama';
   const panamaCatalog = panama && body.items.some(item => item?.isManual !== true);
   const hasWorkOrder = panama && body.items.some(item => item?.ot);
@@ -1035,7 +1208,9 @@ async function submitRequest(body, session, sheets, tx) {
     append(PURCHASE_TABS.requests, rows),
     auditRow(session, tx.operationId, 'Pedido creado', folio, rows.length + ' partidas'),
     ...guarded.map(order => ({ tab: 'ORDENES_TRABAJO', row: order.index, col: 18, values: [tx.version] })),
-  ], { folio, count: rows.length }, guarded.map(order => orderWriteGuard(order.row)));
+    ...(additional.writes ?? []),
+  ], { folio, count: rows.length, ...additional.result },
+  [...guarded.map(order => orderWriteGuard(order.row)), ...(additional.guards ?? [])]);
 }
 
 async function changeRequest(body, session, sheets, tx) {
@@ -2181,8 +2356,8 @@ async function readWorkOrderCost(sheets, session, identifier, laborValuations) {
     })) };
 }
 
-const WRITES = new Set(['ap-invoice', 'ap-payment', 'request-submit', 'request-status', 'order-save', 'order-status', 'order-sign', 'order-receive', 'order-dispatch', 'order-invoice', 'order-payment', 'order-delete', 'inventory-move', 'inventory-reservation', 'expense-save', 'expense-delete', 'expense-review', 'expense-adjustment-propose', 'expense-adjustment-review']);
-const READS = new Set(['ap', 'orders', 'order', 'receiving', 'requests', 'expenses', 'inventory-movements', 'inventory-stock', 'inventory-replenishment', 'ot-part', 'expense-options', 'workorder-cost', 'expense-adjustments']);
+const WRITES = new Set(['ap-invoice', 'ap-payment', 'request-submit', 'request-status', 'order-save', 'order-status', 'order-sign', 'order-receive', 'order-dispatch', 'order-invoice', 'order-payment', 'order-delete', 'inventory-move', 'inventory-reservation', 'ot-part-notify', 'ot-part-review', 'expense-save', 'expense-delete', 'expense-review', 'expense-adjustment-propose', 'expense-adjustment-review']);
+const READS = new Set(['ap', 'orders', 'order', 'receiving', 'requests', 'expenses', 'inventory-movements', 'inventory-stock', 'inventory-replenishment', 'ot-part', 'ot-part-needs', 'expense-options', 'workorder-cost', 'expense-adjustments']);
 
 export async function dispatchPurchasing({ path, method, body = {}, query = {}, session, sheets, evidenceStorage, inventoryValuations, laborValuations }) {
   const action = path.replace(/^api\/purchasing\//, '');
@@ -2200,6 +2375,9 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
       : action === 'order-receive' ? (panama ? warehouseAccess : session.role === 'gerencia')
       : ['inventory-move', 'inventory-reservation', 'order-dispatch'].includes(action) ? warehouseAccess
       : ['inventory-movements', 'inventory-stock', 'ot-part'].includes(action) ? panama && (warehouseAccess || REQUEST_ROLES.has(session.role))
+      : action === 'ot-part-needs' ? panama && (warehouseAccess || ['mecanico', 'jefe_taller'].includes(session.role))
+      : action === 'ot-part-notify' ? panama && session.role === 'mecanico'
+      : action === 'ot-part-review' ? panama && session.role === 'jefe_taller'
       : action === 'inventory-replenishment' ? panama && session.allUnits === true && (warehouseAccess || session.role === 'gerencia')
       : action === 'workorder-cost' ? panama && session.role === 'gerencia'
       : action === 'ap' ? panama && session.role === 'gerencia' && (session.previewDemo !== true || invoiceAccess || paymentAccess)
@@ -2223,6 +2401,7 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
     if (action === 'inventory-stock') return ok(await inventoryByWarehouse(sheets, session));
     if (action === 'inventory-replenishment') return ok(await inventoryByWarehouse(sheets, session, query));
     if (action === 'ot-part') return ok(await readWorkOrderPart(sheets, session, query));
+    if (action === 'ot-part-needs') return await readPartNeeds(sheets, session, query, warehouseAccess && session.role !== 'jefe_taller');
     if (action === 'inventory-movements') {
       const ot = upper(field(query.ot, 90, 'OT'));
       const [movements, workOrders] = await readTables(sheets, PURCHASE_TABS.inventoryMovements, 'ORDENES_TRABAJO');
@@ -2327,6 +2506,8 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
     if (previous !== null) return ok(previous);
     if (action === 'ap-invoice' || action === 'ap-payment') return await changeAp(action, body, session, sheets, tx);
     if (action === 'request-submit') return await submitRequest(body, session, sheets, tx);
+    if (action === 'ot-part-notify') return await notifyPartNeed(body, session, sheets, tx);
+    if (action === 'ot-part-review') return await reviewPartNeed(body, session, sheets, tx);
     if (action === 'request-status') return await changeRequest(body, session, sheets, tx);
     if (action === 'order-save') return await saveOrder(body, session, sheets, tx);
     if (action === 'expense-save') return await saveExpense(body, session, sheets, tx, evidenceStorage);

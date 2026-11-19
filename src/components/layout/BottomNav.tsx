@@ -7,6 +7,8 @@ import { useAuthStore } from '../../stores/auth-store';
 import type { NavItem } from '../../types/roles';
 import { NAV_CONFIG } from '../../types/roles';
 import { fuelTrackingEnabled } from '../../data/project-features.js';
+import { PANAMA_ROLE_HOME, panamaRoleHome } from '../../data/panama-role-homes.js';
+import { panamaHomeActions } from '../../lib/panama-home-actions';
 import MoreTray from './MoreTray';
 
 const commandTabs: NavItem[] = [
@@ -30,6 +32,7 @@ export default function BottomNav({ rescue = false, command = false }: { rescue?
   const project = useAuthStore((s) => s.project);
   const canOpenPayables = useAuthStore(canOpenPanamaPayables);
   const entry = useAuthStore(purchasingEntry);
+  const account = useAuthStore();
 
   if (!role) return null;
 
@@ -42,7 +45,13 @@ export default function BottomNav({ rescue = false, command = false }: { rescue?
   const receiving = entry?.id === 'recepciones';
   const start = receiving && generalHome ? { ...generalHome, path: entry.path } : entry;
   const roleItems = start && entry?.id !== 'pedidos' ? [start, ...otherItems] : visible;
-  const visibleItems = rescue && command ? commandTabs : roleItems;
+  const personalized = rescue && panamaRoleHome(account);
+  const first = personalized ? panamaHomeActions(account)[0] : undefined;
+  const visibleItems = personalized ? [
+    { id: 'inicio', label: 'Inicio', path: PANAMA_ROLE_HOME, icon: 'Home' },
+    ...(first && first.path !== '/perfil' ? [{ ...first, label: first.navLabel ?? first.label }] : []),
+    { id: 'perfil', label: 'Perfil', path: '/perfil', icon: 'UserRound' },
+  ] : rescue && command ? commandTabs : roleItems;
   const previousStart = generalHome && (receiving || (isPanama && generalHome.id === 'dashboard'))
     ? { ...generalHome, label: 'Inicio general' } : generalHome;
   if (receiving) purchasing.push(entry);

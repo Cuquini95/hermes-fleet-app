@@ -25,6 +25,9 @@ const rowStatus: Record<OrderListStatus, { label: string; color?: string }> = {
 const unitKey = (value: string) => value.trim().toUpperCase();
 const displayCut = (value: string) => new Date(value).toLocaleString('es-PA', { timeZone: 'America/Panama', dateStyle: 'short', timeStyle: 'short' });
 const orderFolio = ({ card }: ListedOrder) => visibleWorkOrderFolio(card.folio ?? card.ot_id);
+const needsReturn = ({ native }: ListedOrder) => native?.estado === 'Completado'
+  && native.tipo_averia !== 'PM' && native.operations?.decision !== 'accepted';
+const displayStatus = (row: ListedOrder) => needsReturn(row) ? 'Retorno pendiente' : row.card.estado;
 const orderHref = ({ native, card, detailReference }: ListedOrder) => native
   ? `/workorders/${encodeURIComponent(detailReference ?? native.ot_id)}`
   : masterOrderHref(card.unidad, card.ot_id);
@@ -44,7 +47,7 @@ function OrderPreview({ row }: { row: ListedOrder }) {
     <div className="rescue-order-preview-asset"><Truck size={21} aria-hidden /><div><b>{card.unidad}</b>{equipment?.model && <small>{equipment.model}</small>}</div></div>
     <div className="rescue-order-preview-section"><span>Trabajo</span><p>{card.descripcion}</p></div>
     <div className="rescue-order-preview-meta">
-      <div className="rescue-order-preview-section"><span>Estado</span><p>{card.estado}</p></div>
+      <div className="rescue-order-preview-section"><span>Estado</span><p>{displayStatus(row)}</p></div>
       <div className="rescue-order-preview-section"><span>Asignación</span><p>{card.mecanico_asignado || (native ? 'Sin asignar' : 'Sin dato')}</p></div>
     </div>
     {notice && <p className="rescue-partial">{notice}</p>}
@@ -58,7 +61,8 @@ function OrderRow({ row }: { row: ListedOrder }) {
   const { card, native, notice } = row;
   const folio = orderFolio(row);
   const { label, color } = rowStatus[orderListStatus(card.estado)];
-  const state = card.estado === 'En Espera de Asignación' ? 'Sin asignar' : card.estado === 'Por conciliar' ? 'Por conciliar' : label;
+  const waiting = needsReturn(row);
+  const state = waiting ? 'Retorno pendiente' : card.estado === 'En Espera de Asignación' ? 'Sin asignar' : card.estado === 'Por conciliar' ? 'Por conciliar' : label;
   return <Link className="rescue-order-row" to={orderHref(row)} state={native ? undefined : { fromOrderList: true }}>
     <div className="rescue-order-row-main">
       <div className="rescue-order-row-title"><b>{card.unidad}</b>{folio && <span>{folio}</span>}
@@ -67,7 +71,7 @@ function OrderRow({ row }: { row: ListedOrder }) {
       <span className="rescue-order-row-task">{card.descripcion}</span>
     </div>
     <div className="rescue-order-row-meta">
-      <span className={`rescue-order-badge ${color ?? ''}`}>{state}</span>
+      <span className={`rescue-order-badge ${waiting ? 'media' : color ?? ''}`}>{state}</span>
       {orderListPriority(card.prioridad) && <PriorityBadge value={card.prioridad} />}
     </div>
     <ChevronRight size={16} aria-hidden />
@@ -84,6 +88,7 @@ export default function PanamaWorkOrdersPage() {
   const [master, setMaster] = useState<{ loading: boolean; rows: MasterOrder[] | null; capturedAt: string | null; error: string }>({ loading: true, rows: null, capturedAt: null, error: '' });
   const controller = useRef<AbortController | null>(null);
   const [params, setParams] = useSearchParams();
+  const returning = params.get('bandeja') === 'retornos';
   const search = (params.get('buscar') ?? '').slice(0, 100);
   const priorityParam = params.get('prioridad') ?? '';
   const priority = ['', 'CRITICA', 'ALTA', 'MEDIA', 'BAJA', 'unknown'].includes(priorityParam) ? priorityParam : '';
@@ -128,7 +133,8 @@ export default function PanamaWorkOrdersPage() {
     return () => { controller.current?.abort(); window.removeEventListener('focus', check); window.removeEventListener('online', check); };
   }, [canReadMaster, fetchWorkOrders, loadMaster, refreshMaster]);
 
-  const items = unifiedPanamaOrders(workorders.filter(row => allows(row.unidad)), (master.rows ?? []).filter(row => allows(row.unit)));
+  const scopedOrders = unifiedPanamaOrders(workorders.filter(row => allows(row.unidad)), (master.rows ?? []).filter(row => allows(row.unit)));
+  const items = returning ? scopedOrders.filter(needsReturn) : scopedOrders;
   const filtered = filterPanamaOrders(items, { search, priority, status });
   const byStatus = new Map<string, number>();
   for (const row of filterPanamaOrders(items, { search, priority })) {
@@ -144,7 +150,7 @@ export default function PanamaWorkOrdersPage() {
   return <div ref={scrollRef} className="rescue-orders min-w-0 text-text" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
     <PullIndicator pullDistance={pullDistance} refreshing={refreshing} isReady={isReady} style={pullIndicatorStyle} />
     <header className="rescue-orders-heading">
-      <h1 aria-label="Órdenes de trabajo">Órdenes</h1>
+      <h1 aria-label={returning ? 'Retornos pendientes' : 'Órdenes de trabajo'}>{returning ? 'Retornos pendientes' : 'Órdenes'}</h1>
       <button type="button" className="rescue-icon-button" aria-label="Actualizar órdenes" title="Actualizar"
         onClick={() => void refreshList()} disabled={loading}><RefreshCw size={17} aria-hidden /></button>
     </header>
@@ -191,7 +197,7 @@ export default function PanamaWorkOrdersPage() {
                 <td><button type="button" aria-pressed={selected.key === row.key} aria-label={`Ver ${orderFolio(row) ?? 'orden'} de ${row.card.unidad}`}>
                   {orderFolio(row) ?? 'Ver OT'}</button></td>
                 <td><strong>{row.card.unidad}</strong></td><td><span title={row.card.descripcion}>{row.card.descripcion}</span></td>
-                <td><PriorityBadge value={row.card.prioridad} /></td><td><span title={row.card.estado}>{row.card.estado}</span></td>
+                <td><PriorityBadge value={row.card.prioridad} /></td><td><span title={displayStatus(row)}>{displayStatus(row)}</span></td>
               </tr>)}</tbody>
             </table>
           </div>

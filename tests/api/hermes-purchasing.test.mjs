@@ -216,6 +216,75 @@ function seedWarehouseCatalog(sheets) {
   sheets.seed(TAB.catalog, [header, first, second]);
 }
 
+test('Panamá enlaza solicitud de mecánico, aprobación de Taller, reserva, entrega y faltante sin duplicar', async () => {
+  const { sheets, call } = setup();
+  seedWarehouseCatalog(sheets);
+  const [header, first, second] = sheets.inspect(TAB.catalog);
+  const empty = [...first];
+  empty[0] = 'SKU-SIN-STOCK';
+  empty[5] = '0';
+  sheets.seed(TAB.catalog, [header, first, second, empty]);
+  const [columns, order] = sheets.inspect('ORDENES_TRABAJO');
+  order[17] = 'tecnico-qa';
+  sheets.seed('ORDENES_TRABAJO', [columns, order]);
+  sheets.seed('OT_STATUS_LOG', [['Fecha', 'OT', 'Acción']]);
+
+  const mechanic = { ...manager, project: 'tmf-panama', role: 'mecanico', userId: 'tecnico-qa',
+    allUnits: false, assignedUnits: ['QA-DZ203'], canApprovePurchases: false };
+  const chief = { ...manager, project: 'tmf-panama', role: 'jefe_taller', userId: 'taller-qa', canApprovePurchases: false };
+  const warehouse = { ...warehouseLead, role: 'almacen' };
+  const intruder = { ...mechanic, userId: 'otro-tecnico-qa' };
+  const ot = 'OT-QA-01';
+  const request = partNumber => ({ operationId: randomUUID(), ot, partNumber, quantity: '3',
+    description: 'Filtro de ensayo', reason: 'Reparación asignada' });
+  const withStock = request('SKU-QA');
+  assert.equal((await call('ot-part-notify', withStock, intruder)).status, 403);
+  assert.equal((await call('ot-part-notify', withStock, { ...mechanic, project: 'tcm' })).status, 403);
+  const submitted = await call('ot-part-notify', withStock, mechanic);
+  assert.equal(submitted.status, 200);
+  assert.deepEqual((await call('ot-part-notify', withStock, mechanic)).body, submitted.body);
+  assert.equal((await call('ot-part-needs', null, intruder, { ot })).status, 403);
+  const review = { operationId: randomUUID(), ot, id: submitted.body.id, decision: 'approve' };
+  assert.equal((await call('ot-part-review', review, mechanic)).status, 403);
+  const approved = await call('ot-part-review', review, chief);
+  assert.equal(approved.status, 200);
+  assert.equal(approved.body.folio, undefined);
+
+  const reserve = reference => ({ operationId: randomUUID(), kind: 'Reserva', ot, partNumber: 'SKU-QA',
+    partNeedId: submitted.body.id, warehouse: 'Patio A', reference, quantity: '3' });
+  const competing = [reserve('Boleta A'), reserve('Boleta B')];
+  const attempts = await Promise.all(competing.map(body => call('inventory-reservation', body, warehouse)));
+  assert.deepEqual(attempts.map(r => r.status).sort(), [200, 409]);
+  const index = attempts.findIndex(r => r.status === 200);
+  const reserved = attempts[index].body;
+  assert.deepEqual((await call('inventory-reservation', competing[index], warehouse)).body, reserved);
+  const move = { operationId: randomUUID(), kind: 'Salida', ot, partNumber: 'SKU-QA',
+    partNeedId: submitted.body.id, warehouse: 'Patio A', reservationId: reserved.id, reference: 'Entrega QA', quantity: '3' };
+  const issue = await call('inventory-move', move, warehouse);
+  assert.equal(issue.status, 200);
+  assert.deepEqual((await call('inventory-move', move, warehouse)).body, issue.body);
+  const returned = await call('inventory-move', { ...move, operationId: randomUUID(), kind: 'Devolución',
+    reference: 'Devolución QA', reservationId: undefined, originalIssueId: issue.body.id, quantity: '1' }, warehouse);
+  assert.equal(returned.status, 200);
+  const items = (await call('ot-part-needs', null, mechanic, { ot })).body.items;
+  assert.deepEqual([items[0].delivered, items[0].reserved, items[0].forStock], ['2', '0', '1']);
+  assert.equal(sheets.inspect(TAB.catalog)[1][5], '2');
+
+  const noStock = await call('ot-part-notify', request('SKU-SIN-STOCK'), mechanic);
+  assert.equal(noStock.status, 200);
+  const noStockReview = { ...review, operationId: randomUUID(), id: noStock.body.id };
+  const shortage = await call('ot-part-review', noStockReview, chief);
+  assert.equal(shortage.status, 200);
+  assert.deepEqual((await call('ot-part-review', noStockReview, chief)).body, shortage.body);
+  assert.equal((await call('ot-part-review', { ...noStockReview, operationId: randomUUID() }, chief)).status, 409);
+  const records = sheets.inspect(TAB.requests).slice(1);
+  assert.equal(records.length, 1);
+  assert.deepEqual([records[0][9], records[0][22], records[0][4]], [shortage.body.folio, ot, '3']);
+  const visible = (await call('ot-part-needs', null, mechanic, { ot })).body.items.find(item => item.id === noStock.body.id);
+  assert.deepEqual([visible.unit, visible.incoming, visible.forStock], ['QA-DZ203', '3', '0']);
+  assert.equal(sheets.inspect('OT_STATUS_LOG').length, 5);
+});
+
 test('reservas simultáneas no exceden el stock por almacén y la salida consume solo su reserva', async () => {
   const { sheets, call } = setup();
   seedWarehouseCatalog(sheets);

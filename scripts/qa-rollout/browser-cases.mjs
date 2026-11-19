@@ -9,6 +9,8 @@ import { firstAccount, fixturePassword, loadAccounts, photoPng, roles, tabs } fr
 import { checkMobileRoleHomes } from './mobile-role-home-cases.mjs';
 import { checkShiftRegister } from './shift-register-browser.mjs';
 import { checkConnectedPmPdfs, checkPanamaViewportMatrix } from './panama-viewport-cases.mjs';
+import { checkPartNeedPilot } from './panama-part-need-pilot.mjs';
+import { checkPanamaPositionHomes } from './panama-position-home-cases.mjs';
 
 const roleMenus = {
   operador: ['Reportar', '/falla'], mecanico: ['Órdenes', '/workorders'],
@@ -241,10 +243,17 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
         for (const key of fixture.evidence.keys()) if (!evidenceKeys.has(key)) fixture.evidence.delete(key);
       }
     });
+    if (withGateway && withPurchasing) {
+      await checkPartNeedPilot({ fixture, record, inRole, shot, changeOrderStatus, noHorizontalOverflow });
+    }
     if (focusedPanama) {
+      if (withGateway && withPurchasing) {
+        await checkPanamaPositionHomes({ fixture, record, inRole, shot, noHorizontalOverflow });
+      }
       await checkPanamaViewportMatrix({ fixture, record, inRole, shot, out });
       await checkConnectedPmPdfs({ fixture, record, inRole, out });
       await checkMobileRoleHomes({ fixture, record, inRole, shot });
+      if (withGateway) await checkShiftValuation();
       return [...external];
     }
     await record('MÓVIL-LOGIN-RECUPERA-ARCHIVO', async () => {
@@ -663,125 +672,134 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
     }
     if (!withGateway) return [...external];
 
-    await record('MÓVIL-TURNOS-ENTREGA-ACEPTACIÓN', async () => {
-      const shiftTab = 'HERMES_PA_TURNOS';
-      const folio = await inRole('operador', 360, async page => {
-        await page.goto(`${origin}/panama`, { waitUntil: 'domcontentloaded' });
-        await page.getByRole('link', { name: 'Relevo de turno', exact: true }).click();
-        await visible(page.getByRole('heading', { name: 'Relevo de turno', exact: true }));
-        await page.getByRole('combobox', { name: 'Unidad', exact: true }).selectOption('EX401');
-        await page.getByLabel('Turno', { exact: true }).fill('Día QA');
-        await page.getByLabel('Estado del equipo').fill('Operativo');
-        await page.getByLabel('Horómetro inicial (h)').fill('5520');
-        await page.getByLabel('Horómetro final (h)').fill('5518');
-        await visible(page.getByText(/horómetro final es inferior/i));
-        assert(await page.getByRole('button', { name: 'Entregar a Supervisión' }).isDisabled());
-        await page.getByLabel('Horómetro final (h)').fill('5528');
-        await page.getByLabel('Viajes', { exact: true }).fill('2');
-        await page.getByLabel('Toneladas', { exact: true }).fill('30.5');
-        await page.getByLabel('Cliente', { exact: true }).fill('Cliente sintético TMF');
-        await page.getByLabel('Referencia del soporte').fill('PARTE-QA-TURNO');
-        await page.getByLabel('Paradas o episodio de avería').fill('Sin paradas');
-        await clickByName(page, 'Entregar a Supervisión');
-        await visible(page.getByRole('status').filter({ hasText: 'Pendiente de revisión' }));
-        const row = sheet.read(shiftTab).find(row => row[10] === 'PARTE-QA-TURNO');
-        assert.equal(row[8], 8);
-        assert.equal(row[5], 'Pendiente de revisión');
-        await noHorizontalOverflow(page, 360);
-        await shot(page, 'relevo-parte-360.png');
-        return row[0];
-      });
-      await inRole('supervisor', 390, async page => {
-        await page.goto(`${origin}/panama/turnos`, { waitUntil: 'domcontentloaded' });
-        const part = page.getByRole('article').filter({ hasText: folio });
-        await visible(part.getByText(/8 h del turno/));
-        await part.getByRole('button', { name: 'Aceptar parte', exact: true }).click();
-        await visible(part.getByText(/Aceptado por Supervisión/));
-        await page.reload({ waitUntil: 'domcontentloaded' });
-        await visible(part.getByText('Sin coincidencia en el corte de REGISTRO'));
-        assert.equal(sheet.read(shiftTab).filter(row => row[0] === folio).at(-1)[20], 'accept');
-        await noHorizontalOverflow(page, 390);
-        await shot(page, 'relevo-aceptado-390.png');
-      });
-      return { folio, hours: 8, scopes: ['operador', 'supervisor'], officialReconciliation: 'pendiente' };
-    });
+    await checkShiftValuation();
 
-    await record('MÓVIL-TURNOS-CONCILIACIÓN-REGISTRO', () => checkShiftRegister({ fixture, inRole, noHorizontalOverflow, shot }));
-
-    await record('MÓVIL-VALORIZACIÓN-TMF-A-FACTURA', async () => {
-      const tab = 'HERMES_PA_TURNOS';
-      const prior = sheet.read(tab);
-      const priorOrders = sheet.read(tabs.orders);
-      const pmHistoryTab = '05 Historial PM';
-      const priorPmHistory = sheet.read(pmHistoryTab);
-      const id = 'TPA-C4300000000000000001';
-      const author = firstAccount('operador');
-      const supervisor = firstAccount('supervisor');
-      const shift = [id, 'EX401', '2026-11-15', 'Día de prueba', 1, 'Pendiente de revisión', 100, 108, 8,
-        'Operativo', 'PARTE-QA-43', 1, 20, 'Sin paradas', 'Cliente QA', author.user.id, author.membership.user_name,
-        author.user.id, author.membership.user_name, '2026-11-15T15:00:00Z', 'deliver', ''];
-      const accepted = [...shift];
-      Object.assign(accepted, { 4: 2, 5: 'Aceptado por Supervisión', 17: supervisor.user.id, 18: supervisor.membership.user_name,
-        19: '2026-11-15T17:00:00Z', 20: 'accept' });
-      sheet.seed(tab, [...prior, shift, accepted]);
-      sheet.seed(pmHistoryTab, priorPmHistory.slice(0, 1));
-      const repair = Object.assign(Array(26).fill(''), { 1: 'OT-QA-FICHA-401', 2: '16/11/2026', 3: 'EX401',
-        5: 'Cierre para ficha', 9: 'Completado', 14: new Date().toISOString(), 25: 'OT-0701' });
-      sheet.seed(tabs.orders, [...priorOrders, repair]);
-      try {
-        return await inRole('gerencia', 360, async page => {
-          await page.route('**/hermes-api/api/panama/maintenance', route => route.fulfill({ json: { project: 'tmf-panama', sections: {
-            maintenance: [{ unit: 'EX401', next: 'PM-500', due: '2000', hours: '1924', remaining: '76', status: 'Al día' }],
-          } } }));
-          await page.route('**/hermes-api/api/panama/componentes?*', route => {
-            assert.equal(new URL(route.request().url()).searchParams.get('unit'), 'EX401');
-            return route.fulfill({ json: { unit: 'EX401', changes: [], unavailable: [], life: [
-              { part: 'Dientes', position: 'Frente', calculation: { status: 'verified', elapsed: 956, remaining: 44 } },
-            ] } });
-          });
-          await page.route('**/hermes-api/api/purchasing/requests', route => route.fulfill({ json: { items: [
-            { equipo: 'EX401', ot: 'OT-QA-ABIERTA-401', partNum: 'DIENTE-QA', descripcion: 'Diente de excavadora', cantidad: '2', estado: 'Pendiente' },
-          ] } }));
-          await page.route('**/hermes-api/api/purchasing/ot-part?*', route => {
-            const params = new URL(route.request().url()).searchParams;
-            assert.equal(params.get('ot'), 'OT-QA-ABIERTA-401');
-            assert.equal(params.get('partNumber'), 'DIENTE-QA');
-            return route.fulfill({ json: { unit: 'EX401', ot: 'OT-QA-ABIERTA-401', folio: 'OT-0702', match: 'verified', partNumber: 'DIENTE-QA',
-              items: [{ partNumber: 'DIENTE-QA', warehouse: 'Almacén QA', available: '3', reservedForOt: '2' }] } });
-          });
-          await page.route('**/hermes-api/api/purchasing/workorder-cost?*', route => {
-            assert.equal(new URL(route.request().url()).searchParams.get('ot'), repair[1]);
-            return route.fulfill({ json: { ot: repair[1], unit: 'EX401', folio: repair[25], project: 'tmf-panama',
-              totals: [{ currency: 'USD', amount: '240.50' }], pending: [] } });
-          });
-          await clickByName(page, 'Ver detalle de EX401');
-          const card = page.getByRole('region', { name: 'Ficha operativa de EX401' });
-          await visible(card.getByText('76 h restantes')).catch(async error => {
-            throw new Error(`${error.message}\n${await card.innerText({ timeout: 1500 })}`);
-          });
-          await visible(card.getByText('Dientes · Frente'));
-          await visible(card.getByText('44 h restantes'));
-          await visible(card.getByText(/3 disponibles · 2 reservados/));
-          await visible(card.getByText('OT-0701', { exact: true }));
-          await visible(card.getByText(/240[.,]50/));
+    async function checkShiftValuation() {
+      await record('MÓVIL-TURNOS-ENTREGA-ACEPTACIÓN', async () => {
+        const shiftTab = 'HERMES_PA_TURNOS';
+        const folio = await inRole('operador', 360, async page => {
+          await page.goto(`${origin}/panama`, { waitUntil: 'domcontentloaded' });
+          await page.getByRole('link', { name: 'Relevo de turno', exact: true }).click();
+          await visible(page.getByRole('heading', { name: 'Relevo de turno', exact: true }));
+          await page.getByRole('combobox', { name: 'Unidad', exact: true }).selectOption('EX401');
+          await page.getByLabel('Turno', { exact: true }).fill('Día QA');
+          await page.getByLabel('Estado del equipo').fill('Operativo');
+          await page.getByLabel('Horómetro inicial (h)').fill('5520');
+          await page.getByLabel('Horómetro final (h)').fill('5518');
+          await visible(page.getByText(/horómetro final es inferior/i));
+          assert(await page.getByRole('button', { name: 'Entregar a Supervisión' }).isDisabled());
+          await page.getByLabel('Horómetro final (h)').fill('5528');
+          await page.getByLabel('Viajes', { exact: true }).fill('2');
+          await page.getByLabel('Toneladas', { exact: true }).fill('30.5');
+          await page.getByLabel('Cliente', { exact: true }).fill('Cliente sintético TMF');
+          await page.getByLabel('Referencia del soporte').fill('PARTE-QA-TURNO');
+          await page.getByLabel('Paradas o episodio de avería').fill('Sin paradas');
+          await clickByName(page, 'Entregar a Supervisión');
+          await visible(page.getByRole('status').filter({ hasText: 'Pendiente de revisión' }));
+          const row = sheet.read(shiftTab).find(row => row[10] === 'PARTE-QA-TURNO');
+          assert.equal(row[8], 8);
+          assert.equal(row[5], 'Pendiente de revisión');
           await noHorizontalOverflow(page, 360);
-          await card.getByRole('link', { name: 'Partes aceptados, valorización y factura' }).click();
-          await visible(page.getByRole('heading', { name: 'Partes aceptados · EX401' }));
-          const part = page.getByRole('article').filter({ hasText: id });
-          await visible(part.getByText(/8 h del turno/));
-          await part.getByRole('button', { name: 'Ver valorización y factura' }).click();
-          await visible(part.getByText('Horas a valorizar', { exact: true }));
-          await visible(part.getByText(/FAC-QA/));
-          await visible(part.getByText(/4[,.]?275[,.]00/).first());
-          await visible(part.getByText(/-5 h|−5 h/));
-          await noHorizontalOverflow(page, 360);
-          await part.getByText(/FAC-QA/).scrollIntoViewIfNeeded();
-          await shot(page, 'valorizacion-factura-360.png');
-          return { folio: id, acceptedHours: 8, valuedPeriodHours: 95, adjustmentHours: -5, invoice: 'FAC-QA', currency: 'USD', width: 360,
-            unitCard: { unit: 'EX401', nextPmRemaining: 76, componentRemaining: 44, stockAvailable: 3, reserved: 2, lastRepairCost: '240.50 USD' } };
+          await shot(page, 'relevo-parte-360.png');
+          return row[0];
         });
-      } finally { sheet.seed(tab, prior); sheet.seed(tabs.orders, priorOrders); sheet.seed(pmHistoryTab, priorPmHistory); }
-    });
+        await inRole('supervisor', 390, async page => {
+          await page.goto(`${origin}/panama/turnos?estado=por-revisar`, { waitUntil: 'domcontentloaded' });
+          const part = page.getByRole('article').filter({ hasText: folio });
+          await visible(part.getByText(/8 h del turno/));
+          const [reviewed] = await Promise.all([
+            page.waitForResponse(response => response.url().endsWith('/api/panama/turnos/revisar') && response.request().method() === 'POST'),
+            part.getByRole('button', { name: 'Aceptar parte', exact: true }).click(),
+          ]);
+          assert.equal(reviewed.status(), 200);
+          await page.goto(`${origin}/panama/turnos?estado=aceptados`, { waitUntil: 'domcontentloaded' });
+          await visible(part.getByText(/Aceptado por Supervisión/));
+          await page.reload({ waitUntil: 'domcontentloaded' });
+          await visible(part.getByText('Sin coincidencia en el corte de REGISTRO'));
+          assert.equal(sheet.read(shiftTab).filter(row => row[0] === folio).at(-1)[20], 'accept');
+          await noHorizontalOverflow(page, 390);
+          await shot(page, 'relevo-aceptado-390.png');
+        });
+        return { folio, hours: 8, scopes: ['operador', 'supervisor'], officialReconciliation: 'pendiente' };
+      });
+
+      await record('MÓVIL-TURNOS-CONCILIACIÓN-REGISTRO', () => checkShiftRegister({ fixture, inRole, noHorizontalOverflow, shot }));
+
+      await record('MÓVIL-VALORIZACIÓN-TMF-A-FACTURA', async () => {
+        const tab = 'HERMES_PA_TURNOS';
+        const prior = sheet.read(tab);
+        const priorOrders = sheet.read(tabs.orders);
+        const pmHistoryTab = '05 Historial PM';
+        const priorPmHistory = sheet.read(pmHistoryTab);
+        const id = 'TPA-C4300000000000000001';
+        const author = firstAccount('operador');
+        const supervisor = firstAccount('supervisor');
+        const shift = [id, 'EX401', '2026-11-15', 'Día de prueba', 1, 'Pendiente de revisión', 100, 108, 8,
+          'Operativo', 'PARTE-QA-43', 1, 20, 'Sin paradas', 'Cliente QA', author.user.id, author.membership.user_name,
+          author.user.id, author.membership.user_name, '2026-11-15T15:00:00Z', 'deliver', ''];
+        const accepted = [...shift];
+        Object.assign(accepted, { 4: 2, 5: 'Aceptado por Supervisión', 17: supervisor.user.id, 18: supervisor.membership.user_name,
+          19: '2026-11-15T17:00:00Z', 20: 'accept' });
+        sheet.seed(tab, [...prior, shift, accepted]);
+        sheet.seed(pmHistoryTab, priorPmHistory.slice(0, 1));
+        const repair = Object.assign(Array(26).fill(''), { 1: 'OT-QA-FICHA-401', 2: '16/11/2026', 3: 'EX401',
+          5: 'Cierre para ficha', 9: 'Completado', 14: new Date().toISOString(), 25: 'OT-0701' });
+        sheet.seed(tabs.orders, [...priorOrders, repair]);
+        try {
+          return await inRole('gerencia', 360, async page => {
+            await page.route('**/hermes-api/api/panama/maintenance', route => route.fulfill({ json: { project: 'tmf-panama', sections: {
+              maintenance: [{ unit: 'EX401', next: 'PM-500', due: '2000', hours: '1924', remaining: '76', status: 'Al día' }],
+            } } }));
+            await page.route('**/hermes-api/api/panama/componentes?*', route => {
+              assert.equal(new URL(route.request().url()).searchParams.get('unit'), 'EX401');
+              return route.fulfill({ json: { unit: 'EX401', changes: [], unavailable: [], life: [
+                { part: 'Dientes', position: 'Frente', calculation: { status: 'verified', elapsed: 956, remaining: 44 } },
+              ] } });
+            });
+            await page.route('**/hermes-api/api/purchasing/requests', route => route.fulfill({ json: { items: [
+              { equipo: 'EX401', ot: 'OT-QA-ABIERTA-401', partNum: 'DIENTE-QA', descripcion: 'Diente de excavadora', cantidad: '2', estado: 'Pendiente' },
+            ] } }));
+            await page.route('**/hermes-api/api/purchasing/ot-part?*', route => {
+              const params = new URL(route.request().url()).searchParams;
+              assert.equal(params.get('ot'), 'OT-QA-ABIERTA-401');
+              assert.equal(params.get('partNumber'), 'DIENTE-QA');
+              return route.fulfill({ json: { unit: 'EX401', ot: 'OT-QA-ABIERTA-401', folio: 'OT-0702', match: 'verified', partNumber: 'DIENTE-QA',
+                items: [{ partNumber: 'DIENTE-QA', warehouse: 'Almacén QA', available: '3', reservedForOt: '2' }] } });
+            });
+            await page.route('**/hermes-api/api/purchasing/workorder-cost?*', route => {
+              assert.equal(new URL(route.request().url()).searchParams.get('ot'), repair[1]);
+              return route.fulfill({ json: { ot: repair[1], unit: 'EX401', folio: repair[25], project: 'tmf-panama',
+                totals: [{ currency: 'USD', amount: '240.50' }], pending: [] } });
+            });
+            await clickByName(page, 'Ver detalle de EX401');
+            const card = page.getByRole('region', { name: 'Ficha operativa de EX401' });
+            await visible(card.getByText('76 h restantes')).catch(async error => {
+              throw new Error(`${error.message}\n${await card.innerText({ timeout: 1500 })}`);
+            });
+            await visible(card.getByText('Dientes · Frente'));
+            await visible(card.getByText('44 h restantes'));
+            await visible(card.getByText(/3 disponibles · 2 reservados/));
+            await visible(card.getByText('OT-0701', { exact: true }));
+            await visible(card.getByText(/240[.,]50/));
+            await noHorizontalOverflow(page, 360);
+            await card.getByRole('link', { name: 'Partes aceptados, valorización y factura' }).click();
+            await visible(page.getByRole('heading', { name: 'Partes aceptados · EX401' }));
+            const part = page.getByRole('article').filter({ hasText: id });
+            await visible(part.getByText(/8 h del turno/));
+            await part.getByRole('button', { name: 'Ver valorización y factura' }).click();
+            await visible(part.getByText('Horas a valorizar', { exact: true }));
+            await visible(part.getByText(/FAC-QA/));
+            await visible(part.getByText(/4[,.]?275[,.]00/).first());
+            await visible(part.getByText(/-5 h|−5 h/));
+            await noHorizontalOverflow(page, 360);
+            await part.getByText(/FAC-QA/).scrollIntoViewIfNeeded();
+            await shot(page, 'valorizacion-factura-360.png');
+            return { folio: id, acceptedHours: 8, valuedPeriodHours: 95, adjustmentHours: -5, invoice: 'FAC-QA', currency: 'USD', width: 360,
+              unitCard: { unit: 'EX401', nextPmRemaining: 76, componentRemaining: 44, stockAvailable: 3, reserved: 2, lastRepairCost: '240.50 USD' } };
+          });
+        } finally { sheet.seed(tab, prior); sheet.seed(tabs.orders, priorOrders); sheet.seed(pmHistoryTab, priorPmHistory); }
+      });
+    }
 
     await record('MÓVIL-HORÓMETRO-CAMBIO-CON-CONTINUIDAD', async () => {
       const tab = '04B Registro Horómetros';

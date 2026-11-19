@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { canOpenPanamaPayables, purchasingEntry, sessionHome } from './purchasing-home';
+import { panamaHomeActions } from './panama-home-actions';
 
 const panama = { project: 'tmf-panama', role: 'gerencia' } as const;
 
@@ -42,5 +43,17 @@ describe('inicio por permiso de compras en Panamá', () => {
     expect(sessionHome({ ...panama, project: 'mexico', canApprovePurchases: true })).toBe('/dashboard');
     expect(sessionHome({ ...panama, role: 'mecanico' })).toBe('/mechanic');
     expect(sessionHome({ ...panama, role: null })).toBe('/');
+  });
+
+  it('selecciona el inicio por puesto y conserva la autoridad de cada acción', () => {
+    const direction = { ...panama, positionCode: 'TP-PER-002' };
+    const buyer = { ...panama, positionCode: 'TP-PER-016', canApprovePurchases: false };
+    expect(sessionHome(direction)).toBe('/panama/inicio');
+    expect(panamaHomeActions(direction).some(item => item.id === 'approve')).toBe(false);
+    expect(panamaHomeActions({ ...direction, canApprovePurchases: true })[0]?.id).toBe('approve');
+    expect(panamaHomeActions(buyer)[0]?.id).toBe('requests');
+    expect(sessionHome({ ...direction, project: 'tcm' })).toBe('/dashboard');
+    expect(sessionHome({ ...direction, positionCode: 'TP-PER-024' })).toBe('/dashboard');
+    expect(sessionHome({ ...direction, role: 'operador' })).toBe('/operator');
   });
 });

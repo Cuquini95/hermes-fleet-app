@@ -20,6 +20,7 @@ interface SessionProfile {
   canRecordPurchaseInvoices?: boolean;
   canRecordPurchasePayments?: boolean;
   canReviewPanamaHse?: boolean;
+  positionCode?: string;
   previewDemo?: boolean;
 }
 
@@ -44,7 +45,7 @@ const cleared = {
   allUnits: false, canApprovePurchases: false, canReceivePurchases: false, canReviewPanamaHse: false,
   canRecordPurchaseInvoices: false, canRecordPurchasePayments: false,
   isAuthenticated: false, sessionUnavailable: false, loginFailure: null,
-  previewDemo: false,
+  previewDemo: false, positionCode: undefined,
 };
 
 const SESSION_CHECK_TIMEOUT_MS = 10_000;
@@ -64,12 +65,14 @@ function validProfile(value: unknown): value is SessionProfile {
     && (profile.canReceivePurchases === undefined || typeof profile.canReceivePurchases === 'boolean')
     && (profile.canRecordPurchaseInvoices === undefined || typeof profile.canRecordPurchaseInvoices === 'boolean')
     && (profile.canRecordPurchasePayments === undefined || typeof profile.canRecordPurchasePayments === 'boolean')
+    && (profile.positionCode === undefined || /^TP-PER-0(?:0[1-9]|1[0-9]|2[0-8])$/.test(profile.positionCode))
     && (profile.canReviewPanamaHse === undefined || typeof profile.canReviewPanamaHse === 'boolean');
 }
 
 function authenticatedProfile(profile: SessionProfile) {
   return {
     ...profile,
+    positionCode: profile.positionCode,
     previewDemo: profile.previewDemo === true,
     canReceivePurchases: profile.canReceivePurchases === true,
     canRecordPurchaseInvoices: profile.canRecordPurchaseInvoices === true,

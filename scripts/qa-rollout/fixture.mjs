@@ -327,6 +327,17 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
   const identities = new Map(directory.map(item => [item.user.email, item]));
   const memberships = new Map(directory.map(item => [item.user.id, item.membership]));
   const sessions = new Map();
+  function registerPositionAccounts(positions) {
+    return positions.map(({ position, role, capabilities = {} }) => {
+      const actor = account(100000 + Number(position.slice(-3)), role);
+      Object.assign(actor.membership, {
+        position_code: position, can_approve_purchases: false, ...capabilities,
+      });
+      identities.set(actor.user.email, actor);
+      memberships.set(actor.user.id, actor.membership);
+      return actor;
+    });
+  }
   // Dedicated load accounts keep the web scenarios' login quotas untouched.
   function registerLoadAccounts(count) {
     const templates = count === 100 && capacityMix ? capacityMix.flatMap(group => Array.from({ length: group.count }, () => ({
@@ -618,7 +629,7 @@ export async function startFixture({ repoDirectory, distDirectory, listenPort = 
     }
     return {
       origin, repoDirectory, sheet, operationalSheets, photos, evidence, alerts, errors, outboundBlocked, stop, peakLogins: () => peakLogins,
-      registerLoadAccounts, releaseLoadAccounts,
+      registerLoadAccounts, registerPositionAccounts, releaseLoadAccounts,
       setPrintablePmLevel(level) { printablePmLevel = level; },
       setPrintablePmApproval(approved) { printablePmApproved = approved === true; },
       setOfficialShiftCut(cut) {

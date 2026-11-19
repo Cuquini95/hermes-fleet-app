@@ -17,6 +17,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 const LoginPage           = lazy(() => import('./pages/LoginPage'));
 const PanamaPage          = lazy(() => import('./pages/PanamaPage'));
 const PanamaShiftsPage    = lazy(() => import('./pages/PanamaShiftsPage'));
+const PanamaRoleHomePage  = lazy(() => import('./pages/PanamaRoleHomePage'));
 const PanamaReceivingPage = lazy(() => import('./pages/PanamaReceivingPage'));
 const PrivacyPolicyPage   = lazy(() => import('./pages/PrivacyPolicyPage'));
 const TermsPage           = lazy(() => import('./pages/TermsPage'));
@@ -167,6 +168,7 @@ export default function App() {
         </RequireRole>
       }>
         {/* Role homes */}
+        <Route path="/panama/inicio" element={<S><PanamaRoleHomePage /></S>} />
         <Route path="/operator"    element={<RequireRole roles={['operador']}><PageBoundary role={role}><S><OperatorHomePage /></S></PageBoundary></RequireRole>} />
         <Route path="/mechanic"    element={<RequireRole roles={['mecanico']}><PageBoundary role={role}><S><MechanicPage /></S></PageBoundary></RequireRole>} />
         <Route path="/workshop"    element={<RequireRole roles={['jefe_taller', 'gerencia', 'supervisor']}><PageBoundary role={role}><S><WorkshopHomePage /></S></PageBoundary></RequireRole>} />

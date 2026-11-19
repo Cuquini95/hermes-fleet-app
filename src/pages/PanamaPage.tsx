@@ -4,6 +4,7 @@ import PanamaComponentHistory from '../components/workshop/PanamaComponentHistor
 import PanamaSourceCuts from '../components/workshop/PanamaSourceCuts';
 import { visibleWorkOrderFolio } from '../lib/purchasing-api';
 import { useAuthStore } from '../stores/auth-store';
+import { PANAMA_ROLE_HOME, panamaRoleHome } from '../data/panama-role-homes.js';
 
 const definitions = [
   { key: 'fleet', title: 'Flota', fields: [['equipment', 'Equipo'], ['model', 'Modelo'], ['group', 'Clase'], ['active', 'Activo en el maestro']] },
@@ -22,6 +23,7 @@ type Sections = Record<string, SourceRow[] | null>;
 
 export default function PanamaPage() {
   const name = useAuthStore(state => state.userName);
+  const position = useAuthStore(panamaRoleHome);
   const userId = useAuthStore(state => state.userId);
   const canSeeComponents = useAuthStore(state => state.project === 'tmf-panama' && state.role !== 'operador');
   const canSeeShifts = useAuthStore(state => state.project === 'tmf-panama' && ['operador', 'supervisor', 'coordinador', 'gerencia'].includes(state.role ?? ''));
@@ -62,6 +64,7 @@ export default function PanamaPage() {
             <h1 className="text-xl font-bold">Maestros TMF</h1>
             <p className="text-sm text-slate-200">TMF Minera Panamá · {name}</p>
           </div>
+          {position && <Link to={PANAMA_ROLE_HOME} className="inline-flex min-h-11 items-center rounded-lg border border-slate-400 px-3 text-sm">Inicio</Link>}
           <button className="rounded-lg border border-slate-400 px-3 py-2 text-sm" type="button" onClick={async () => setLogoutFailed(!(await logout()))}>Cerrar sesión</button>
         </header>
         {logoutFailed && <p className="my-2 text-red-700" role="alert">No se pudo cerrar la sesión. Intenta de nuevo.</p>}

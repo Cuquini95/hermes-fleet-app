@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
+import { panamaRoleHome } from '../src/data/panama-role-homes.js';
 import {
   identityConfig, identityRequest, isIdentityUserId, isRole, normalizeRosterProfile, normalizedEmail,
 } from '../api/_lib/hermes-identity.js';
@@ -39,6 +40,12 @@ export function planRosterImport(entries, users, existing, project, now = Date.n
     else if ((item.canRecordPurchaseInvoices === true || item.canRecordPurchasePayments === true)
       && (!panamaOnly || item.role !== 'gerencia')) reason = 'facultad_contable_incompatible';
     else if (item.canApprovePurchases === true && item.role !== 'gerencia') reason = 'permiso_de_compra_incompatible';
+    else if (item.positionCode !== undefined && (!panamaOnly || !panamaRoleHome({
+      role: item.role, project, positionCode: item.positionCode,
+    }))) reason = 'puesto_r06_incompatible';
+    else if (item.positionCode !== undefined && item.canApprovePurchases === true && item.positionCode !== 'TP-PER-002') {
+      reason = 'aprobacion_q25_fuera_de_direccion_de_operaciones';
+    }
     else if (item.canReceivePurchases !== undefined && typeof item.canReceivePurchases !== 'boolean') reason = 'permiso_de_recepción_inválido';
     else if (item.canReceivePurchases === true && !panamaOnly) reason = 'permiso_de_recepción_fuera_de_panamá';
     else if (item.role === 'almacen' && item.canReceivePurchases !== true) reason = 'permiso_de_recepción_requerido';
@@ -52,6 +59,7 @@ export function planRosterImport(entries, users, existing, project, now = Date.n
       user_id: userId, email, user_name: item.userName, role: item.role, projects: item.projects,
       assigned_units: item.assignedUnits ?? [], unit_scope: item.unitScope, active: item.active !== false,
       can_approve_purchases: item.canApprovePurchases === true,
+      ...(item.positionCode !== undefined && { position_code: item.positionCode }),
       ...(project === 'tmf-panama' ? {
         can_receive_purchases: item.canReceivePurchases === true,
         can_record_purchase_invoices: item.canRecordPurchaseInvoices === true,
@@ -79,11 +87,11 @@ async function listProviderUsers(config) {
   }
 }
 
-async function listMembers(config) {
+async function listMembers(config, includePosition = false) {
   const rows = [];
   for (let offset = 0; ; offset += 500) {
     const response = await identityRequest(config, '/rest/v1/hermes_memberships', {
-      query: { select: 'user_id,email', order: 'user_id.asc', limit: 500, offset },
+      query: { select: 'user_id,email' + (includePosition ? ',position_code' : ''), order: 'user_id.asc', limit: 500, offset },
     });
     if (!response.ok) throw new Error('La migración del padrón Hermes no está disponible en el entorno.');
     const page = await response.json();
@@ -100,12 +108,18 @@ async function run() {
   }
   const config = identityConfig();
   const entries = JSON.parse(await readFile(file, 'utf8'));
-  const [users, existing] = await Promise.all([listProviderUsers(config), listMembers(config)]);
+  if (!Array.isArray(entries)) throw new Error('El padrón debe ser un arreglo JSON de asignaciones aprobadas.');
+  const positions = config.project === 'tmf-panama' && entries.some(row => row?.positionCode !== undefined);
+  const [users, existing] = await Promise.all([listProviderUsers(config), listMembers(config, positions)]);
   const { members, pending } = planRosterImport(entries, users, existing, config.project);
   const apply = flags.includes('--apply');
   if (apply && members.length) {
+    const previous = new Map(existing.map(row => [row.user_id, row.position_code]));
+    const payload = positions ? members.map(row => ({ ...row,
+      position_code: row.position_code ?? previous.get(row.user_id) ?? null,
+    })) : members;
     const response = await identityRequest(config, '/rest/v1/hermes_memberships', {
-      method: 'POST', query: { on_conflict: 'user_id' }, body: members, prefer: 'resolution=merge-duplicates,return=representation',
+      method: 'POST', query: { on_conflict: 'user_id' }, body: payload, prefer: 'resolution=merge-duplicates,return=representation',
     });
     if (!response.ok) throw new Error('El proveedor rechazó la carga de membresías. Revisa el padrón y vuelve a validar.');
     const written = await response.json();

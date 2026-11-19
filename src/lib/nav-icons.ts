@@ -12,6 +12,7 @@ import {
   BadgeCheck,
   BarChart3,
   BookOpen,
+  Boxes,
   CalendarCheck,
   CalendarDays,
   Camera,
@@ -32,6 +33,7 @@ import {
   Table2,
   Truck,
   User,
+  UserRound,
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
@@ -41,6 +43,7 @@ export const NAV_ICONS: Readonly<Record<string, LucideIcon>> = {
   BadgeCheck,
   BarChart3,
   BookOpen,
+  Boxes,
   CalendarCheck,
   CalendarDays,
   Camera,
@@ -61,6 +64,7 @@ export const NAV_ICONS: Readonly<Record<string, LucideIcon>> = {
   Table2,
   Truck,
   User,
+  UserRound,
   Wrench,
 };
 

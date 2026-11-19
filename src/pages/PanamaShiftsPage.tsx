@@ -7,6 +7,7 @@ import { downloadBlob } from '../lib/download-blob';
 import { shiftHandoffCsv } from '../lib/finance-handoff';
 import { requestPanamaDispatch, ShiftRequestError, type DispatchAssignment, type DispatchFields, type DispatchOperator } from '../lib/panama-dispatch';
 import { useAuthStore } from '../stores/auth-store';
+import { PANAMA_ROLE_HOME, panamaRoleHome } from '../data/panama-role-homes.js';
 
 type ShiftFields = Record<'unit' | 'date' | 'shift' | 'initialHours' | 'finalHours' | 'equipmentStatus' | 'support' | 'trips' | 'tonnes' | 'stops' | 'client', string>;
 type Actor = { id: string; name: string };
@@ -201,14 +202,16 @@ export default function PanamaShiftsPage() {
   const unit = (search.get('unit') ?? '').trim().toUpperCase();
   const shift = (search.get('shift') ?? '').trim().slice(0, 32);
   const acceptedOnly = search.get('estado') === 'aceptados';
+  const reviewOnly = search.get('estado') === 'por-revisar';
   if (project !== 'tmf-panama') return <Navigate to="/" replace />;
-  return <ShiftQueue key={JSON.stringify([userId, unit, shift, acceptedOnly])} userId={userId}
-    requestedUnit={unit} requestedShift={shift} acceptedOnly={acceptedOnly} />;
+  return <ShiftQueue key={JSON.stringify([userId, unit, shift, acceptedOnly, reviewOnly])} userId={userId}
+    requestedUnit={unit} requestedShift={shift} acceptedOnly={acceptedOnly} reviewOnly={reviewOnly} />;
 }
 
-function ShiftQueue({ userId, requestedUnit, requestedShift, acceptedOnly }: {
-  userId: string; requestedUnit: string; requestedShift: string; acceptedOnly: boolean;
+function ShiftQueue({ userId, requestedUnit, requestedShift, acceptedOnly, reviewOnly }: {
+  userId: string; requestedUnit: string; requestedShift: string; acceptedOnly: boolean; reviewOnly: boolean;
 }) {
+  const position = useAuthStore(panamaRoleHome);
   const role = useAuthStore(state => state.role);
   const mayPrefill = useAuthStore(state => requestedUnit && (
     state.allUnits || state.assignedUnits.some(unit => unit.toUpperCase() === requestedUnit)));
@@ -231,7 +234,8 @@ function ShiftQueue({ userId, requestedUnit, requestedShift, acceptedOnly }: {
   const form = useRef<HTMLFormElement>(null);
   const allowDelivery = role === 'operador' || role === 'supervisor';
   const visibleRecords = records.filter(record => (!requestedUnit || record.unit.toUpperCase() === requestedUnit)
-    && (!acceptedOnly || record.status === 'Aceptado por Supervisión'));
+    && (!acceptedOnly || record.status === 'Aceptado por Supervisión')
+    && (!reviewOnly || (record.status === 'Pendiente de revisión' && record.createdBy.id !== userId)));
   const hours = Number(fields.finalHours) - Number(fields.initialHours);
   const invalidReading = fields.initialHours !== '' && fields.finalHours !== '' && (hours < 0 || hours > 24);
 
@@ -314,19 +318,19 @@ function ShiftQueue({ userId, requestedUnit, requestedShift, acceptedOnly }: {
     <main className="min-h-screen bg-slate-100 px-4 py-6 text-slate-900">
       <div className="mx-auto max-w-3xl space-y-4">
         <header className="rounded-2xl bg-[#162252] p-4 text-white">
-          <Link to="/panama" className="inline-flex min-h-11 items-center text-sm text-slate-200 underline underline-offset-4">Volver a Maestros TMF</Link>
-          <h1 className="text-xl font-bold">Relevo de turno</h1>
+          <Link to={position ? PANAMA_ROLE_HOME : '/panama'} className="inline-flex min-h-11 items-center text-sm text-slate-200 underline underline-offset-4">{position ? 'Inicio' : 'Volver a Maestros TMF'}</Link>
+          <h1 className="text-xl font-bold">{reviewOnly ? 'Partes por revisar' : 'Relevo de turno'}</h1>
           <p className="mt-1 text-sm text-slate-200">TMF Minera Panamá</p>
         </header>
 
-        <DispatchPanel userId={userId} canAssign={role === 'supervisor' || role === 'coordinador'} units={equipment} />
+        {!reviewOnly && <DispatchPanel userId={userId} canAssign={role === 'supervisor' || role === 'coordinador'} units={equipment} />}
         {message && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm font-semibold text-emerald-900">{message}</p>}
         {error && <div className="rounded-xl bg-red-50 p-3 text-sm text-red-900">
           <p role="alert">{error}</p>
           {retry && <button type="button" className={`${buttonClass} mt-2`} disabled={saving} onClick={() => void send(retry)}>Reintentar el mismo envío</button>}
         </div>}
 
-        {allowDelivery && <form ref={form} onSubmit={deliver} className="rounded-xl border border-slate-200 bg-white p-4">
+        {allowDelivery && !reviewOnly && <form ref={form} onSubmit={deliver} className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-lg font-bold">{correction ? `Corregir parte de ${correction.unit}` : 'Entregar parte'}</h2>
           <fieldset disabled={saving || !!retry} className="grid min-w-0 gap-3 sm:grid-cols-2">
             <div className={labelClass}>
@@ -361,7 +365,7 @@ function ShiftQueue({ userId, requestedUnit, requestedShift, acceptedOnly }: {
         <section className="space-y-3" aria-labelledby="turnos-heading">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 id="turnos-heading" className="text-lg font-bold">
-              {acceptedOnly ? 'Partes aceptados' : 'Partes de turno'}{requestedUnit && ` · ${requestedUnit}`}
+              {acceptedOnly ? 'Partes aceptados' : reviewOnly ? 'Pendientes' : 'Partes de turno'}{requestedUnit && ` · ${requestedUnit}`}
             </h2>
             <button type="button" className={buttonClass} onClick={refresh} disabled={loading || saving || !!retry}>Actualizar</button>
           </div>

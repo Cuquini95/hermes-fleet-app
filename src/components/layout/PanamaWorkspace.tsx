@@ -8,6 +8,9 @@ import {
 import { useAuthStore } from '../../stores/auth-store';
 import { useEquipmentList } from '../../hooks/useEquipmentList';
 import { canOpenPanamaPayables, sessionHome } from '../../lib/purchasing-home';
+import { panamaRoleHome } from '../../data/panama-role-homes.js';
+import { panamaHomeActions } from '../../lib/panama-home-actions';
+import { NAV_ICONS } from '../../lib/nav-icons';
 import ApiHealthDot from '../ui/ApiHealthDot';
 import BottomNav from './BottomNav';
 
@@ -79,6 +82,8 @@ export default function PanamaWorkspace({ children }: { children: ReactNode }) {
   const userName = useAuthStore(state => state.userName);
   const demo = useAuthStore(state => state.previewDemo);
   const home = useAuthStore(sessionHome);
+  const account = useAuthStore();
+  const position = panamaRoleHome(account);
   const canReceive = useAuthStore(state => state.canReceivePurchases && !state.canApprovePurchases);
   const canOpenPayables = useAuthStore(canOpenPanamaPayables);
   const logout = useAuthStore(state => state.logout);
@@ -95,6 +100,7 @@ export default function PanamaWorkspace({ children }: { children: ReactNode }) {
   const canSeeInspections = canSeeCommand || role === 'operador';
   const isDashboard = /^\/dashboard\/?$/.test(location.pathname);
   const homePath = home.split(/[?#]/)[0];
+  const brandHome = canSeeCommand && !position ? '/dashboard' : home;
   const work: Entry[] = [
     canSeeCommand ? ['/dashboard', 'Centro de mando', LayoutDashboard] : [home, 'Inicio', LayoutDashboard],
   ];
@@ -132,13 +138,19 @@ export default function PanamaWorkspace({ children }: { children: ReactNode }) {
     ['/admin/proveedores', 'Proveedores', FileText], ['/admin/ordenes-compra', 'Órdenes de compra', ShoppingCart]);
   if (role !== 'almacen') administration.push(['/chat', 'Hermes Chat', Settings]);
 
-  const groups = [
+  const roleItems: Entry[] = position ? [
+    [home, 'Inicio', LayoutDashboard],
+    ...panamaHomeActions(account).filter(item => item.path !== '/perfil')
+      .map((item): Entry => [item.path, item.label, NAV_ICONS[item.icon] ?? FileText]),
+  ] : [];
+  const groups = position ? [{ label: 'Mi trabajo', items: roleItems }] : [
     { label: 'Operación', items: work }, { label: 'Flota', items: fleet },
     { label: 'Abastecimiento', items: buying }, { label: 'Inteligencia', items: reports },
     { label: 'Administración', items: administration }, { label: 'Campo', items: field },
   ].filter(group => group.items.length);
   const allEntries = groups.flatMap(group => group.items);
-  const pageTitle = [...allEntries].sort((a, b) => b[0].length - a[0].length)
+  const pageTitle = (position && location.pathname === homePath ? position.title : undefined)
+    ?? [...allEntries].sort((a, b) => b[0].length - a[0].length)
     .find(([path]) => {
       const prefix = path.split(/[?#]/)[0];
       return location.pathname === prefix || (prefix !== '/panama' && location.pathname.startsWith(prefix + '/'));
@@ -158,7 +170,7 @@ export default function PanamaWorkspace({ children }: { children: ReactNode }) {
 
   return <>
     <aside className="rescue-sidebar">
-      <div className="rescue-side-brand"><Link to={canSeeCommand ? '/dashboard' : home} aria-label="Inicio">
+      <div className="rescue-side-brand"><Link to={brandHome} aria-label="Inicio">
         <img src={logo} alt="TransPlus" width="638" height="426" />
       </Link></div>
       <WorkspaceNavigation groups={groups} />
@@ -173,7 +185,7 @@ export default function PanamaWorkspace({ children }: { children: ReactNode }) {
           <p>GTP · {demo ? 'PRUEBA' : 'OPERACIÓN'}</p>
           <h2>{pageTitle}</h2>
         </div>
-        <Link to={canSeeCommand ? '/dashboard' : home} className="rescue-mobile-brand">
+        <Link to={brandHome} className="rescue-mobile-brand" aria-label="Inicio">
           <span><img src={logo} alt="" width="638" height="426" /></span>
           <span><b>GTP CMMS</b><small>{isDashboard ? 'Inicio de turno' : pageTitle}</small></span>
         </Link>

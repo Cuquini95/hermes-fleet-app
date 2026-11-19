@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Wrench,
   Clock,
@@ -24,6 +24,7 @@ import { requestWorkshop, type WorkshopMechanic } from '../lib/workshop-api';
 import KPICard from '../components/ui/KPICard';
 import EquipmentCard from '../components/ui/EquipmentCard';
 import OTCard from '../components/ui/OTCard';
+import PanamaPartNeeds from '../components/workshop/PanamaPartNeeds';
 
 interface ActionCard {
   label: string;
@@ -45,6 +46,18 @@ const ACTION_CARDS: ActionCard[] = [
 ];
 
 export default function WorkshopHomePage() {
+  const [search] = useSearchParams();
+  const canReview = useAuthStore(state => state.project === 'tmf-panama' && state.role === 'jefe_taller');
+  if (canReview && search.get('bandeja') === 'repuestos') {
+    return <div className="mx-auto max-w-3xl space-y-4 px-3 py-5 sm:px-5">
+      <h1 className="text-xl font-bold">Solicitudes de Taller</h1>
+      <PanamaPartNeeds />
+    </div>;
+  }
+  return <WorkshopSummary />;
+}
+
+function WorkshopSummary() {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
   const equipment = useEquipmentList();

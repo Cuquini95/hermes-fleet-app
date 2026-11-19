@@ -1,4 +1,5 @@
 import { ROLE_HOME, type AppRole, type NavItem } from '../types/roles';
+import { PANAMA_ROLE_HOME, panamaRoleHome } from '../data/panama-role-homes.js';
 
 interface PurchasingProfile {
   project: string;
@@ -8,6 +9,7 @@ interface PurchasingProfile {
   canRecordPurchaseInvoices?: boolean;
   canRecordPurchasePayments?: boolean;
   previewDemo?: boolean;
+  positionCode?: string;
 }
 
 type PurchasingEntry = NavItem & { accessLabel: string };
@@ -45,5 +47,6 @@ export function canOpenPanamaPayables(profile: PurchasingProfile): boolean {
 export function sessionHome(profile: PurchasingProfile, returnTo?: unknown): string {
   // eslint-disable-next-line no-control-regex -- reject control characters in saved destinations
   if (typeof returnTo === 'string' && /^\/(?![/\\])[^\\\x00-\x20]*$/.test(returnTo)) return returnTo;
+  if (panamaRoleHome(profile)) return PANAMA_ROLE_HOME;
   return purchasingEntry(profile)?.path ?? (profile.role ? ROLE_HOME[profile.role] : '/');
 }

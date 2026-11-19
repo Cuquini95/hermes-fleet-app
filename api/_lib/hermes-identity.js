@@ -1,11 +1,17 @@
+import { panamaRoleHome } from '../../src/data/panama-role-homes.js';
+
 const ROLES = new Set(['operador', 'mecanico', 'jefe_taller', 'coordinador', 'supervisor', 'gerencia', 'almacen']);
 const PROJECT = /^[a-z0-9][a-z0-9_-]{0,79}$/;
 const UUID = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i;
 const UNIT = /^[a-z\d][a-z\d ._/-]{0,39}$/i;
 const PREVIEW_EMAIL = /^hermes-pa-demo-(?:p(?:0[1-9]|1\d|2[0-8])|verify-[a-f0-9]{12})@example\.com$/;
+const DEMO_POSITIONS = [
+  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 14, 18,
+];
 const PROFILE_FIELDS = 'user_id,email,user_name,role,projects,assigned_units,unit_scope,active,can_approve_purchases';
 const PANAMA_PROFILE_FIELDS = PROFILE_FIELDS + ',can_receive_purchases,can_review_panama_hse';
 const FINANCE_FIELDS = ',can_record_purchase_invoices,can_record_purchase_payments';
+const POSITION_FIELD = ',position_code';
 
 function envValue(env, ...names) {
   return names.map((name) => String(env[name] || '').trim()).find(Boolean) || '';
@@ -58,16 +64,24 @@ export function normalizeRosterProfile(row, project) {
   const demoWarehouse = demo && row.can_receive_purchases === true && row.can_approve_purchases !== true;
   const canInvoice = demo ? row.email === 'hermes-pa-demo-p21@example.com' : row.can_record_purchase_invoices;
   const canPay = demo ? row.email === 'hermes-pa-demo-p20@example.com' : row.can_record_purchase_payments;
+  const role = demoWarehouse ? 'almacen' : row.role;
+  const demoNumber = demo && DEMO_POSITIONS[Number(/^hermes-pa-demo-p(\d{2})@example\.com$/.exec(row.email)?.[1])];
+  const reportedPosition = row.position_code ?? (demoNumber ? 'TP-PER-' + String(demoNumber).padStart(3, '0') : undefined);
+  const positionCode = panamaOnly && typeof reportedPosition === 'string'
+    && (row.can_approve_purchases !== true || reportedPosition === 'TP-PER-002')
+    && panamaRoleHome({ role, project, positionCode: reportedPosition }) ? reportedPosition : undefined;
+  const canApprove = row.role === 'gerencia' && row.can_approve_purchases === true
+    && (!panamaOnly || row.position_code == null || positionCode === 'TP-PER-002');
   return {
     userId: row.user_id.toLowerCase(),
     userName: row.user_name.trim(),
-    role: demoWarehouse ? 'almacen' : row.role,
+    role,
     project,
     projects: [...new Set(row.projects)],
     assignedUnits: [...new Set(row.assigned_units.map((unit) => unit.toUpperCase()))],
     unitScope: row.unit_scope,
     allUnits: row.unit_scope === 'all',
-    canApprovePurchases: row.role === 'gerencia' && row.can_approve_purchases === true,
+    canApprovePurchases: canApprove,
     canReceivePurchases: panamaOnly && row.can_receive_purchases === true && row.can_approve_purchases !== true,
     canRecordPurchaseInvoices: panamaOnly && row.role === 'gerencia' && canInvoice === true
       && !row.can_approve_purchases && !row.can_receive_purchases && !canPay,
@@ -75,6 +89,7 @@ export function normalizeRosterProfile(row, project) {
       && !row.can_approve_purchases && !row.can_receive_purchases && !canInvoice,
     canReviewPanamaHse: panamaOnly && ['supervisor', 'gerencia'].includes(row.role)
       && row.can_review_panama_hse === true,
+    ...(positionCode && { positionCode }),
     ...(demo ? { previewDemo: true } : {}),
   };
 }
@@ -106,13 +121,18 @@ async function requestRoster(config, path, query, select = fields => fields) {
   const fields = config.project === 'tmf-panama' ? PANAMA_PROFILE_FIELDS : PROFILE_FIELDS;
   const request = (profileFields) => identityRequest(config, path, { query: { ...query, select: select(profileFields) } });
   if (config.project !== 'tmf-panama') return request(fields);
-  const response = await request(fields + FINANCE_FIELDS);
-  if (response.status !== 400) return response;
-  const problem = await response.clone().json().catch(() => null);
-  if (problem?.code === '42703' && /\bcan_record_purchase_(invoices|payments)\b/.test(problem.message ?? '')) {
-    return request(fields);
+  let finance = FINANCE_FIELDS;
+  let position = POSITION_FIELD;
+  for (;;) {
+    const response = await request(fields + finance + position);
+    if (response.status !== 400) return response;
+    const problem = await response.clone().json().catch(() => null);
+    if (problem?.code !== '42703') return response;
+    const unavailable = problem.message ?? '';
+    if (finance && /\bcan_record_purchase_(invoices|payments)\b/.test(unavailable)) finance = '';
+    else if (position && /\bposition_code\b/.test(unavailable)) position = '';
+    else return response;
   }
-  return response;
 }
 
 export async function authenticateHermesEmployee(email, password, config = identityConfig()) {

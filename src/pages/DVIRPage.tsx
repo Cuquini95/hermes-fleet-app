@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { z } from 'zod';
 import type { DVIRCheck, CheckStatus } from '../types/dvir';
@@ -54,6 +54,7 @@ export default function DVIRPage() {
   const [saving, setSaving] = useState(false);
   const [pending, setPending] = useState('');
   const [saved, setSaved] = useState(false);
+  const [receipt, setReceipt] = useState<{ inspectionId?: string; otId?: string }>();
   const [fecha, setFecha] = useState(mexicoDateInput());
   const [hora, setHora] = useState(mexicoTimeInput());
   const [unit_id, setUnitId] = usePanamaCaptureUnit(units);
@@ -134,7 +135,7 @@ export default function DVIRPage() {
     setShowConfirm(false);
     mutationId.current ||= crypto.randomUUID();
     try {
-      const response = await saveWorkshopCapture<{ otId?: string }>({
+      const response = await saveWorkshopCapture<{ inspectionId?: string; otId?: string }>({
         endpoint: 'dvir',
         mutationId: mutationId.current,
         input: {
@@ -149,6 +150,7 @@ export default function DVIRPage() {
       }
       setPending('');
       setSaved(true);
+      if (isPanama) setReceipt(response.result);
       showToast(response.result.otId ? 'Inspección registrada. OT creada.' : 'Inspección registrada.');
     } catch (error) {
       if (error instanceof WorkshopApiError && [400, 413, 415].includes(error.status)) {
@@ -164,7 +166,7 @@ export default function DVIRPage() {
 
   function handleToastDismiss() {
     setToastVisible(false);
-    if (toastType === 'success') navigate(-1);
+    if (toastType === 'success' && !isPanama) navigate(-1);
   }
 
   return (
@@ -195,6 +197,15 @@ export default function DVIRPage() {
         </button>
         <h1 className="text-xl font-bold text-text">Inspección</h1>
       </div>
+      {receipt && <section aria-label="Comprobante de inspección" className="mb-3 min-w-0 space-y-1 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+        <p className="text-sm font-semibold">{receipt.otId ? 'Inspección guardada y vinculada a Taller' : 'Inspección guardada'}</p>
+        <Link to="/my-reports" className="inline-flex min-h-11 items-center text-sm font-semibold underline">Ver mis reportes</Link>
+        {receipt.inspectionId && <details className="min-w-0 text-sm">
+          <summary className="min-h-11 cursor-pointer py-2">Referencia</summary>
+          <p className="break-words">{receipt.inspectionId}</p>
+          {receipt.otId && <p className="break-words">{receipt.otId}</p>}
+        </details>}
+      </section>}
 
       <fieldset disabled={saving || !!pending || saved} className="min-w-0">
       {/* Unit & type card */}

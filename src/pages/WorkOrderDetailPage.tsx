@@ -1,5 +1,6 @@
 import PanamaPartsMovements from '../components/workshop/PanamaPartsMovements';
 import PanamaWorkOrderPartRequest from '../components/workshop/PanamaWorkOrderPartRequest';
+import PanamaPartNeeds from '../components/workshop/PanamaPartNeeds';
 /**
  * @fileoverview Monolithic by design (> 400 LOC).
  * Work-order detail: tasks, parts, signatures, photos in one timeline view.
@@ -318,6 +319,8 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
       {panamaWorkflow && <PanamaWorkOrderPdf key={`pdf:${wo.ot_id}`} order={wo} equipment={equipment} />}
       <OrderDetailStatus>
         <StatusPillRow current={wo.estado} compact={panamaWorkflow} />
+        {panamaWorkflow && wo.estado === 'Completado' && wo.technical && wo.operations?.decision !== 'accepted' &&
+          <p className="text-sm font-semibold text-amber-800">Revisión técnica completada · Retorno pendiente</p>}
         {panamaWorkflow && !folio && <details className="text-xs text-text-secondary">
           <summary className="min-h-11 cursor-pointer py-3 font-medium">Referencia de la OT</summary>
           <p className="break-words">{wo.folio ?? wo.ot_id}</p>
@@ -332,6 +335,15 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
             to={`/workorders/${encodeURIComponent(previous.folio ?? previous.ot_id)}`}>Reincidencia de {previous.folio ?? previous.ot_id}</Link>
             : <p className="mt-2 text-sm text-text-secondary">OT anterior disponible para Taller y Coordinación.</p>)}>
 
+        {panamaWorkflow && wo.tipo_averia === 'DVIR' && <details className="text-sm text-text-secondary">
+          <summary className="min-h-11 cursor-pointer py-2 font-semibold">Inspección de origen</summary>
+          <p className="break-words">{otLog.find(entry => String(entry.field) === 'inspeccion_origen')?.new_value
+            || (/^INS-[A-Z0-9_-]+$/.test(wo.observaciones) ? wo.observaciones : 'Por conciliar')}</p>
+        </details>}
+        {panamaWorkflow && (role === 'mecanico' || role === 'jefe_taller') &&
+          <PanamaPartNeeds ot={wo.ot_id} unit={wo.unidad} folio={folio}
+            mayRequest={role === 'mecanico' && wo.mecanico_usuario_id === actorId && wo.estado !== 'Completado'}
+            onChanged={fetchWorkOrders} />}
         {panamaWorkflow && wo.estado !== 'Completado' && <PanamaWorkOrderPartRequest ot={wo.ot_id} />}
         <PanamaPartsMovements ot={wo.ot_id} onMoved={() => setCostRevision(revision => revision + 1)} />
         {panamaWorkflow && <Link to={`/manuals?unit=${encodeURIComponent(wo.unidad)}`}

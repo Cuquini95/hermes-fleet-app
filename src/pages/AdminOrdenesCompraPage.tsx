@@ -74,6 +74,8 @@ export default function AdminOrdenesCompraPage() {
   const previewDemo = useAuthStore((state) => state.previewDemo);
   const requiresDocumentTax = isPanama && !previewDemo;
   const [params, setParams] = useSearchParams();
+  const canApprove = useAuthStore((state) => state.canApprovePurchases);
+  const approving = isPanama && canApprove && params.get('bandeja') === 'aprobar';
   const initialLine = params.get('partida') ?? '';
   const location = useLocation();
   const quoteState: unknown = location.state?.quoteOrder;
@@ -155,6 +157,7 @@ export default function AdminOrdenesCompraPage() {
     : requiresDocumentTax ? null : Math.round(netSubtotal * (issuer?.taxBps || 0) / 10000);
   const total = tax === null || netSubtotal < 0 ? null : netSubtotal + tax + cents(draft.shipping) + cents(draft.other);
   const openOrder = data?.orders.find((order) => order.folio === receiving);
+  const listedOrders = data?.orders.filter(order => !approving || order.status === 'Borrador') ?? [];
   const candidateLines = requests.filter((line) =>
     canAwardRequest(line) &&
     (line.equipo || 'FLOTA').toUpperCase() === draft.unit.trim().toUpperCase() &&
@@ -279,10 +282,12 @@ export default function AdminOrdenesCompraPage() {
   return (
     <div className="mx-auto max-w-5xl p-3 pb-24 sm:p-4">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <h1 className="text-xl font-bold">Órdenes de Compra</h1>
+        <h1 className="text-xl font-bold">{approving ? 'OC por aprobar' : 'Órdenes de Compra'}</h1>
         <div className="flex flex-wrap gap-2">
-          {isPanama && !previewDemo && <Link to="/panama/cuentas-por-pagar" className={button + ' inline-flex min-h-11 items-center'}>Cuentas por pagar</Link>}
-          <Link to="/admin/proveedores" className={button}>Proveedores</Link>
+          {approving ? <Link to="/admin/ordenes-compra" className={button}>Todas las OC</Link> : <>
+            {isPanama && !previewDemo && <Link to="/panama/cuentas-por-pagar" className={button + ' inline-flex min-h-11 items-center'}>Cuentas por pagar</Link>}
+            <Link to="/admin/proveedores" className={button}>Proveedores</Link>
+          </>}
         </div>
       </div>
       {error && <p role="alert" className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
@@ -294,7 +299,7 @@ export default function AdminOrdenesCompraPage() {
       )}
       {loading && !data && <p role="status" className="text-sm text-gray-600">Cargando órdenes…</p>}
       {!data && !loading && <button type="button" onClick={() => void load()} className={button}>Reintentar</button>}
-      {data && (
+      {data && (!approving || draft.folio) && (
         <form ref={form} onSubmit={save} className="mb-6 space-y-4 rounded-xl border border-gray-200 bg-white p-3 sm:p-4">
           <h2 className="text-lg font-semibold">{draft.folio ? 'Editar ' + (draft.number || draft.folio) : 'Nueva orden de compra'}</h2>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -418,10 +423,10 @@ export default function AdminOrdenesCompraPage() {
         </form>
       )}
 
-      <h2 className="mb-3 text-lg font-semibold">Órdenes guardadas</h2>
-      {data && !data.orders.length && <p className="text-sm text-gray-600">Sin órdenes guardadas.</p>}
+      {!approving && <h2 className="mb-3 text-lg font-semibold">Órdenes guardadas</h2>}
+      {data && !listedOrders.length && <p className="text-sm text-gray-600">{approving ? 'Sin OC pendientes.' : 'Sin órdenes guardadas.'}</p>}
       <div className="space-y-3">
-        {data?.orders.map((order) => (
+        {data && listedOrders.map((order) => (
           <article key={order.folio} className="space-y-2 rounded-xl border border-gray-200 bg-white p-3">
             <div className="flex flex-wrap justify-between gap-2">
               <h3 className="break-words font-semibold">{order.number || order.folio}</h3>

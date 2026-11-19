@@ -33,6 +33,8 @@ const WAREHOUSE_PATHS = new Set([
   'api/purchasing/inventory-replenishment',
   'api/purchasing/inventory-move',
   'api/purchasing/inventory-reservation',
+  'api/purchasing/ot-part',
+  'api/purchasing/ot-part-needs',
 ]);
 
 const READ = new Map([
@@ -79,7 +81,8 @@ const PANAMA_OPERATION_GROUPS = new Map([
   ['pm', ['api/workshop/pm', 'api/workshop/schedule', 'api/workshop/pmbatchcheck', 'api/workshop/pmbatch']],
   ['turnos', ['api/panama/turnos/entregar', 'api/panama/turnos/revisar']],
   ['despacho', ['api/panama/turnos/despacho']],
-  ['compras', ['api/purchasing/request-submit', 'api/purchasing/request-status', 'api/purchasing/order-save',
+  ['compras', ['api/purchasing/request-submit', 'api/purchasing/request-status', 'api/purchasing/ot-part-notify',
+    'api/purchasing/ot-part-review', 'api/purchasing/order-save',
     'api/purchasing/order-status', 'api/purchasing/order-sign', 'api/purchasing/order-delete']],
   ['recepcion', ['api/purchasing/order-receive', 'api/purchasing/order-dispatch', 'api/purchasing/inventory-move', 'api/purchasing/inventory-reservation']],
   ['finanzas', ['api/purchasing/order-invoice', 'api/purchasing/order-payment', 'api/purchasing/ap-invoice', 'api/purchasing/ap-payment']],
@@ -102,6 +105,7 @@ const relatedPause = new Map([
   ['api/purchasing/ap-payment', 'api/purchasing/order-payment'],
   ['api/purchasing/order-sign', 'api/purchasing/order-status'],
   ['api/purchasing/inventory-reservation', 'api/purchasing/inventory-move'],
+  ['api/purchasing/ot-part-review', 'api/purchasing/request-submit'],
   ['api/purchasing/order-dispatch', 'api/purchasing/order-receive'],
   ['api/purchasing/expense-adjustment-propose', 'api/purchasing/expense-save'],
   ['api/purchasing/expense-adjustment-review', 'api/purchasing/expense-review'],
