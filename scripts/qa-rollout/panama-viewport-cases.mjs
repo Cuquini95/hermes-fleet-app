@@ -19,6 +19,8 @@ async function dimensions(page, width) {
 export async function checkPanamaViewportMatrix({ fixture, record, inRole, shot, out }) {
   const cohort = fixture.registerLoadAccounts(28);
   const managers = cohort.filter(actor => actor.membership.role === 'gerencia' && actor.membership.can_approve_purchases);
+  // Exercise the general menu here. The R06 cases cover the personalized approver.
+  for (const manager of managers) manager.membership.can_approve_purchases = false;
   const warehouse = cohort.find(actor => actor.membership.can_receive_purchases);
   try { for (const [index, width] of [320, 360, 390, 412].entries()) {
     await record('MÓVIL-PANTALLAS-' + width, () => inRole('gerencia', width, async page => {
