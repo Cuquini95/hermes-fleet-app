@@ -25,7 +25,7 @@ const cases = [
   [22, 'gerencia', '/panama/cuentas-por-pagar?bandeja=pagar#facturas', 'Cuentas por pagar', { can_record_purchase_payments: true }],
   [23, 'gerencia', '/panama/cuentas-por-pagar?bandeja=conciliar#facturas', 'Cuentas por pagar', { can_record_purchase_invoices: true }],
   [25, 'coordinador', '/panama/turnos?estado=aceptados', 'Relevo de turno'],
-  [26, 'coordinador', '/perfil', 'Mi Perfil'],
+  [26, 'operador', '/perfil', 'Mi Perfil'],
   [27, 'operador', '/dvir', 'Inspección'],
   [28, 'operador', '/flete', 'Registro de Flete'],
 ].map(([number, role, path, destination, capabilities]) => ({

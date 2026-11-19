@@ -2380,7 +2380,8 @@ export async function dispatchPurchasing({ path, method, body = {}, query = {}, 
       : action === 'ot-part-review' ? panama && session.role === 'jefe_taller'
       : action === 'inventory-replenishment' ? panama && session.allUnits === true && (warehouseAccess || session.role === 'gerencia')
       : action === 'workorder-cost' ? panama && session.role === 'gerencia'
-      : action === 'ap' ? panama && session.role === 'gerencia' && (session.previewDemo !== true || invoiceAccess || paymentAccess)
+      : action === 'ap' ? panama && session.role === 'gerencia'
+        && (session.previewDemo !== true || session.positionCode === 'TP-PER-021' || invoiceAccess || paymentAccess)
       : action === 'ap-invoice' ? invoiceAccess
       : action === 'ap-payment' ? paymentAccess
       : action === 'order-invoice' ? invoiceAccess

@@ -36,7 +36,7 @@ export const PANAMA_ROLE_HOMES = Object.freeze({
   'TP-PER-023': { title: 'Contabilidad', roles: officials, actions: ['invoices', 'payables', 'expenses'] },
   'TP-PER-025': { title: 'Contratos y valorizaciones', roles: ['gerencia', 'coordinador'], actions: ['accepted', 'masters'],
     pending: 'Observaciones y retenciones del contrato' },
-  'TP-PER-026': { title: 'Sistemas de Flota', roles: ['gerencia', 'coordinador'], actions: ['profile'] },
+  'TP-PER-026': { title: 'Sistemas de Flota', roles: ['operador', 'coordinador', 'gerencia'], actions: ['profile'] },
   'TP-PER-027': { title: 'Mi turno', roles: ['operador'], actions: ['inspection', 'meter', 'failure', 'shifts', 'reports'] },
   'TP-PER-028': { title: 'Conductor de acarreo', roles: ['operador'], actions: ['haulage', 'inspection', 'shifts', 'reports'] },
 });

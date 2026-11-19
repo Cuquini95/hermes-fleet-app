@@ -35,7 +35,7 @@ La evidencia móvil por fila se registra con el código del puesto en `MÓVIL-IN
 | 023 | Contabilidad · Gerencia + facturas | Abre bandeja de facturas | Concilia OC, recepción, factura e impuesto por partida. Tesorería recibe la factura conciliada. |
 | 024 | Recursos Humanos y Nómina · proceso autorizado | Fuera de la candidata de Panamá | Definir con RR. HH. quién consulta folio, versión y horas de partes aceptados. |
 | 025 | Contratos y valorizaciones · Coordinación | Abre partes aceptados | Descarga el parte para VALORIZACION. Factura y cobro se cruzan en DOCUMENTOS COBRO y MOVIMIENTOS. Retenciones y observaciones por conciliar. |
-| 026 | Sistemas de Flota · Coordinación | Consulta estado técnico y perfil | La vista muestra las fuentes disponibles y la versión cuando el entorno la informa. Gestión de identidades, recuperación y despliegue requieren sus permisos de plataforma. |
+| 026 | Sistemas de Flota · Operador | Consulta estado técnico y perfil | La vista muestra las fuentes disponibles y la versión cuando el entorno la informa. Gestión de identidades, recuperación y despliegue requieren sus permisos de plataforma. |
 | 027 | Mi turno · Operador | Abre inspección | Inspección con foto a Taller cuando genera OT; parte a Supervisión. Barra inferior con Inspecciones en una línea. |
 | 028 | Conductor de acarreo · Operador | Abre Registro de Flete | Preuso y parte desde el mismo inicio. Despacho concilia la unidad y boleta del proyecto Panamá. |
 
@@ -56,6 +56,8 @@ Taller registra `Completado` tras la revisión técnica. La lista de OT muestra 
 ## Pase a producción
 
 Administración y TI deben conciliar el F01 vigente con el R06, correo confirmado, proyecto, unidades y facultades separadas de aprobación OC, recepción, HSE, factura y pago. El padrón consultado tiene titulares y alcances por confirmar. Tras la revisión autorizada, TI puede aplicar la migración de `position_code`, validar el importador del padrón en modo de revisión y ensayar el acceso con cada titular habilitado.
+
+En la versión de prueba, la cuenta personal de Gerencia ya autorizada para aprobar OC abre Dirección de Operaciones mientras se registra el código R06. La consulta de cuentas por pagar de Finanzas de prueba usa datos simulados.
 
 Las pruebas de la candidata usan el gateway y la aplicación de Hermes con datos aislados. Las transacciones oficiales, los permisos reales y la habilitación del dominio de producción requieren su propio pase autorizado.
 

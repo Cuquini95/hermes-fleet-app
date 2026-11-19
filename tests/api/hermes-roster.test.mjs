@@ -48,6 +48,27 @@ test('F01 position selects the home and keeps Q25 approval with Operations', () 
   }
 });
 
+test('preview entry for the authorized approver only fills a missing Panama position', () => {
+  const previous = process.env.VERCEL_ENV;
+  const row = { user_id: employee.id, email: employee.email, user_name: 'Dirección de Operaciones QA',
+    role: 'gerencia', projects: ['tmf-panama'], unit_scope: 'all', assigned_units: [],
+    active: true, can_approve_purchases: true };
+  try {
+    process.env.VERCEL_ENV = 'preview';
+    assert.equal(normalizeRosterProfile(row, 'tmf-panama').positionCode, 'TP-PER-002');
+    assert.equal(normalizeRosterProfile({ ...row, can_approve_purchases: false }, 'tmf-panama').positionCode, undefined);
+    assert.equal(normalizeRosterProfile({ ...row, position_code: 'TP-PER-016' }, 'tmf-panama').canApprovePurchases, false);
+    assert.equal(normalizeRosterProfile({ ...row, projects: ['tmf-panama', 'tcm'] }, 'tmf-panama').positionCode, undefined);
+    process.env.VERCEL_ENV = 'production';
+    const existing = normalizeRosterProfile(row, 'tmf-panama');
+    assert.equal(existing.positionCode, undefined);
+    assert.equal(existing.canApprovePurchases, true);
+  } finally {
+    if (previous === undefined) delete process.env.VERCEL_ENV;
+    else process.env.VERCEL_ENV = previous;
+  }
+});
+
 test('links only the approved role and unit scope to the confirmed provider identity', () => {
   const { members, pending } = planRosterImport([rosterEntry], [employee], [], 'tcm');
   assert.deepEqual(pending, []);

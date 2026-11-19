@@ -41,7 +41,7 @@ export function canOpenPanamaPayables(profile: PurchasingProfile): boolean {
   if (profile.project !== 'tmf-panama' || profile.role !== 'gerencia') return false;
   if (!profile.previewDemo) return true;
   const entry = purchasingEntry(profile);
-  return entry === invoices || entry === payments;
+  return profile.positionCode === 'TP-PER-021' || entry === invoices || entry === payments;
 }
 
 export function sessionHome(profile: PurchasingProfile, returnTo?: unknown): string {

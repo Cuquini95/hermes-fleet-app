@@ -66,7 +66,12 @@ export function normalizeRosterProfile(row, project) {
   const canPay = demo ? row.email === 'hermes-pa-demo-p20@example.com' : row.can_record_purchase_payments;
   const role = demoWarehouse ? 'almacen' : row.role;
   const demoNumber = demo && DEMO_POSITIONS[Number(/^hermes-pa-demo-p(\d{2})@example\.com$/.exec(row.email)?.[1])];
-  const reportedPosition = row.position_code ?? (demoNumber ? 'TP-PER-' + String(demoNumber).padStart(3, '0') : undefined);
+  // Preview the entry for the already authorized approver while F01 is being applied.
+  const previewApprover = process.env.VERCEL_ENV === 'preview' && panamaOnly && !demo
+    && role === 'gerencia' && row.can_approve_purchases === true;
+  const previewPosition = demoNumber ? 'TP-PER-' + String(demoNumber).padStart(3, '0')
+    : previewApprover ? 'TP-PER-002' : undefined;
+  const reportedPosition = row.position_code ?? previewPosition;
   const positionCode = panamaOnly && typeof reportedPosition === 'string'
     && (row.can_approve_purchases !== true || reportedPosition === 'TP-PER-002')
     && panamaRoleHome({ role, project, positionCode: reportedPosition }) ? reportedPosition : undefined;

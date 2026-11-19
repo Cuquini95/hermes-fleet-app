@@ -28,6 +28,7 @@ test('preview finance mocks reconcile partial deliveries without granting access
     process.env.VERCEL_ENV = 'preview';
     const treasury = normalizeRosterProfile(roster(20), project);
     const accounting = normalizeRosterProfile(roster(21), project);
+    const finance = normalizeRosterProfile(roster(19), project);
     const buyer = normalizeRosterProfile(roster(2, { can_approve_purchases: true }), project);
     const warehouse = normalizeRosterProfile(roster(16, { can_receive_purchases: true, role: 'jefe_taller' }), project);
     assert.deepEqual([accounting.canRecordPurchaseInvoices, accounting.canRecordPurchasePayments], [true, false]);
@@ -46,6 +47,12 @@ test('preview finance mocks reconcile partial deliveries without granting access
       session, sheets,
     });
     assert.equal((await call(buyer, 'ap')).status, 403);
+    const financeView = await call(finance, 'ap');
+    assert.equal(financeView.status, 200);
+    assert.equal(financeView.body.canRecordInvoice, false);
+    assert.equal(financeView.body.canRecordPayment, false);
+    assert.equal((await call(finance, 'ap-invoice', {})).status, 403);
+    assert.equal((await call(finance, 'ap-payment', {})).status, 403);
     assert.equal((await call(treasury, 'ap-invoice', {})).status, 403);
     assert.equal((await call(accounting, 'ap-payment', {})).status, 403);
     const initial = (await call(accounting, 'ap')).body.orders[0];
