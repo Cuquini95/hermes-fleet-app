@@ -43,7 +43,7 @@ La evidencia móvil por fila se registra con el código del puesto en `MÓVIL-IN
 
 | Evidencia | Qué comprueba |
 | --- | --- |
-| `MÓVIL-PILOTO-INSPECCIÓN-OT-REPUESTO` | Foto privada y folio de inspección vinculados a la OT de prueba DZ203. Solicitud con stock y faltante de dos piezas. Reserva, salida y devolución en la misma OT. Reinspección conforme y retorno por otra cuenta. |
+| `MÓVIL-PILOTO-INSPECCIÓN-OT-REPUESTO` | Foto privada y folio de inspección vinculados a la OT de prueba DZ203. Solicitud con stock y faltante de dos piezas. Reserva, salida y devolución en la misma OT. Retorno rechazado ante DVIR fallido y sticker rojo. HSE aprueba el reemplazo y Operaciones recibe el equipo. |
 | `MÓVIL-DVIR-FOTOS` y `MÓVIL-REINICIO-SIN-SEÑAL` | Inspección y fotos en historial privado. Persistencia y reintento desde el dispositivo en el entorno aislado. |
 | `hermes-purchasing.test.mjs` | Dos reservas simultáneas sobre el mismo stock, reintento y devolución vinculada a la salida original. |
 | `API-COMPRAS-RECIBIR-PARCIAL` | Aprobación, recepción parcial, factura y pago con cuatro cuentas. Diferencias de moneda, impuesto, cantidad y precio quedan rechazadas. |

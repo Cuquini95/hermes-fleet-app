@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { getStickerTemplate } from '../../src/data/sticker-inspection-templates.js';
 import { photoPng, tabs } from './fixture.mjs';
 
 export async function checkPartNeedPilot({ fixture, record, inRole, shot, changeOrderStatus, noHorizontalOverflow }) {
@@ -11,6 +12,8 @@ export async function checkPartNeedPilot({ fixture, record, inRole, shot, change
     const chief = actors.find(a => a.membership.role === 'jefe_taller' && !a.membership.can_receive_purchases);
     const warehouse = actors.find(a => a.membership.can_receive_purchases);
     const operations = actors.find(a => a.membership.role === 'supervisor');
+    const [hse] = fixture.registerPositionAccounts([{ position: 'TP-PER-020', role: 'supervisor',
+      capabilities: { can_review_panama_hse: true } }]);
     const baseline = sheet.checkpoint();
     const evidence = new Set(fixture.evidence.keys());
     const photoKeys = new Set(fixture.photos.keys());
@@ -147,7 +150,7 @@ export async function checkPartNeedPilot({ fixture, record, inRole, shot, change
         await changeOrderStatus(page, 'Completado', inspection.ot);
         await notice(page, 'Revisión técnica completada · Retorno pendiente');
       }, chief, otRoute);
-      async function attemptReturn(expected) {
+      async function attemptReturn(expected, blocker = /Retorno bloqueado/) {
         return inRole('supervisor', width, async page => {
           await page.getByLabel('Observación de Operaciones').fill('Equipo recibido en la prueba');
           const [receipt] = await Promise.all([
@@ -159,7 +162,7 @@ export async function checkPartNeedPilot({ fixture, record, inRole, shot, change
             await page.getByText(/Equipo recibido por/).waitFor({ state: 'visible' });
             await shot(page, 'piloto-retorno-390.png');
           } else {
-            assert.match((await receipt.json()).error, /Retorno bloqueado/);
+            assert.match((await receipt.json()).error, blocker);
           }
         }, operations, otRoute);
       }
@@ -176,6 +179,42 @@ export async function checkPartNeedPilot({ fixture, record, inRole, shot, change
         await notice(page.getByRole('region', { name: 'Comprobante de inspección' }), 'Inspección guardada');
         assert.equal(sheet.read(tabs.orders).length, 2);
       }, operator, '/dvir');
+
+      const template = getStickerTemplate('camion_articulado');
+      const hardStop = template.items.find(item => item.hardStop);
+      const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Panama' }).format(new Date());
+      const sticker = async (finalColor, time) => inRole('operador', width, async page => {
+        const mutationId = randomUUID();
+        let photos = [];
+        if (finalColor === 'red') {
+          const upload = await page.request.post(fixture.origin + '/hermes-api/api/evidence', { data: {
+            kind: 'sticker', operationId: mutationId, expectedUserId: operator.user.id, units: ['DZ203'],
+            slot: 0, mimeType: 'image/png', data: photoPng.toString('base64'),
+          } });
+          assert.equal(upload.ok(), true, await upload.text());
+          photos = [(await upload.json()).url];
+        }
+        const checks = template.items.map(item => item.id === hardStop.id && finalColor === 'red'
+          ? { itemId: item.id, status: 'no_cumple', canOperate: false, comment: 'Bloqueo ficticio HSE', photos }
+          : { itemId: item.id, status: 'cumple', canOperate: true });
+        const reply = await page.request.post(fixture.origin + '/hermes-api/api/workshop/sticker', { data: {
+          mutationId, unit: 'DZ203', templateId: template.id, company: 'Hermes QA', date, time, checks,
+          finalColor, approve: false, photos,
+        } });
+        assert.equal(reply.status(), 201, await reply.text());
+        return reply.json();
+      }, operator, '/sticker-inspection');
+      const blocked = await sticker('red', '09:00');
+      await attemptReturn(409, /Retorno bloqueado.*sticker/i);
+      assert(!sheet.read(tabs.history).some(entry => entry[1] === inspection.ot && entry[2] === 'retorno_operativo'));
+      const cleared = await sticker('green', '10:00');
+      await inRole('supervisor', width, async page => {
+        const reply = await page.request.post(fixture.origin + '/hermes-api/api/workshop/stickerreview', {
+          data: { mutationId: randomUUID(), folio: cleared.folio },
+        });
+        assert.equal(reply.status(), 200, await reply.text());
+        assert.equal((await reply.json()).canDispatch, true);
+      }, hse, '/sticker-inspection');
       await attemptReturn(200);
 
       const row = sheet.read(tabs.orders).find(item => item[1] === inspection.ot);
@@ -184,10 +223,11 @@ export async function checkPartNeedPilot({ fixture, record, inRole, shot, change
       assert.equal(new Set(moves.map(item => item[19])).size, 1);
       assert.equal(JSON.parse(row[22]).decision, 'accepted');
       return { inspection: inspection.id, ot: inspection.ot, stockMovements: moves.length, shortage: '2',
-        returnBlockedBeforeReinspection: true, returnedToOperations: true, width, isolated: true };
+        returnBlockedBeforeReinspection: true, hseBlockedReturn: blocked.folio,
+        hseClearance: cleared.folio, returnedToOperations: true, width, isolated: true };
     } finally {
       sheet.restoreCheckpoint(baseline);
-      fixture.releaseLoadAccounts(actors);
+      fixture.releaseLoadAccounts([...actors, hse]);
       for (const key of fixture.evidence.keys()) if (!evidence.has(key)) fixture.evidence.delete(key);
       for (const key of fixture.photos.keys()) if (!photoKeys.has(key)) fixture.photos.delete(key);
     }

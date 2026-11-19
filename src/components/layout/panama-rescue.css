@@ -587,3 +587,7 @@
   .rescue-header-actions { gap: 4px; }
   .rescue-topbar { padding-inline: 10px; }
 }
+@media (max-width: 340px) {
+  .rescue-mobile-brand { gap: 8px; }
+  .rescue-mobile-brand > span:first-child { flex-basis: 58px; }
+}

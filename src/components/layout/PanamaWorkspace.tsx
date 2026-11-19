@@ -187,7 +187,7 @@ export default function PanamaWorkspace({ children }: { children: ReactNode }) {
         </div>
         <Link to={brandHome} className="rescue-mobile-brand" aria-label="Inicio">
           <span><img src={logo} alt="" width="638" height="426" /></span>
-          <span><b>GTP CMMS</b><small>{isDashboard ? 'Inicio de turno' : pageTitle}</small></span>
+          <span><b>GTP CMMS</b><small>{position && location.pathname === homePath ? 'Hermes Panamá' : isDashboard ? 'Inicio de turno' : pageTitle}</small></span>
         </Link>
         <div className="rescue-header-actions">
           {(canSeeFleet || canSeeOrders || canSeeStock) &&

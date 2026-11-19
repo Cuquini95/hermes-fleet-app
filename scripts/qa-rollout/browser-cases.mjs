@@ -771,6 +771,7 @@ export async function checkBrowser(fixture, record, out, { withGateway, withPurc
               return route.fulfill({ json: { ot: repair[1], unit: 'EX401', folio: repair[25], project: 'tmf-panama',
                 totals: [{ currency: 'USD', amount: '240.50' }], pending: [] } });
             });
+            await page.goto(origin + '/fleet', { waitUntil: 'domcontentloaded' });
             await clickByName(page, 'Ver detalle de EX401');
             const card = page.getByRole('region', { name: 'Ficha operativa de EX401' });
             await visible(card.getByText('76 h restantes')).catch(async error => {

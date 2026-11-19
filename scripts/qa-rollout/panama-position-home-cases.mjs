@@ -48,6 +48,8 @@ export async function checkPanamaPositionHomes({ fixture, record, inRole, shot, 
             await page.waitForURL(fixture.origin + PANAMA_ROLE_HOME);
             await page.getByRole('heading', { level: 1, name: title, exact: true }).waitFor();
             await page.getByText(/^TMF · Panamá/).waitFor();
+            const brand = page.locator('.rescue-mobile-brand b');
+            assert(await brand.evaluate(node => node.scrollWidth <= node.clientWidth + 1), 'GTP CMMS debe leerse completo.');
             assert.equal(await controls.getByRole('button', { name: 'Inicio', exact: true }).getAttribute('aria-current'), 'page');
             if (PANAMA_ROLE_HOMES[test.position].pending) {
               await page.getByText('Por conciliar', { exact: true }).waitFor();
