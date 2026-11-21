@@ -18,6 +18,8 @@ interface PayableOrder {
   unit: string;
   vendorName: string;
   issuer: Pick<PurchaseIssuer, 'id' | 'name' | 'currency' | 'taxLabel'>;
+  total: string;
+  unreceivedSubtotal?: string | null;
   unbilledTotal?: string;
   legacy?: boolean;
   lines: {
@@ -219,13 +221,6 @@ function PayablesQueue({ userId }: { userId: string }) {
   const orders = data?.orders.filter(order => !order.legacy && order.lines.some(line => Number(line.available) > 0)
     && (order.unbilledTotal === undefined || Number(order.unbilledTotal) > 0)) ?? [];
   const billableFolios = new Set(orders.map(order => order.folio));
-  const pendingOrders = (data?.orders ?? []).filter(order => !order.legacy).flatMap(order => {
-    const awaitingReceipt = order.lines.some(line => Number(line.received) < Number(line.ordered));
-    const hasReceipt = order.lines.some(line => Number(line.received) > 0);
-    const canInvoice = billableFolios.has(order.folio);
-    return (reconciliationQueue ? canInvoice : awaitingReceipt || canInvoice)
-      ? [{ order, awaitingReceipt, hasReceipt, canInvoice }] : [];
-  });
   const invoices = data?.invoices ?? [];
   const balances = supplierBalances(invoices, today);
   const query = search.trim().toLocaleLowerCase('es-PA');
@@ -240,6 +235,16 @@ function PayablesQueue({ userId }: { userId: string }) {
     Number(left.status === 'Pagada') - Number(right.status === 'Pagada')
     || (left.dueDate || '9999').localeCompare(right.dueDate || '9999')
     || left.reference.localeCompare(right.reference, 'es-PA'));
+  const displayedInvoiceOrders = new Set(visible.filter(invoice => invoice.status !== 'Pagada').map(invoice => invoice.folio));
+  const pendingOrders = (data?.orders ?? []).filter(order => !order.legacy).flatMap(order => {
+    const awaitingReceipt = order.lines.some(line => Number(line.received) < Number(line.ordered));
+    const hasReceipt = order.lines.some(line => Number(line.received) > 0);
+    const canInvoice = billableFolios.has(order.folio);
+    const showOrder = paymentQueue ? displayedInvoiceOrders.has(order.folio)
+      : reconciliationQueue ? canInvoice : awaitingReceipt || canInvoice || displayedInvoiceOrders.has(order.folio);
+    return showOrder
+      ? [{ order, awaitingReceipt, hasReceipt, canInvoice }] : [];
+  });
   const busy = loading || saving || Boolean(pending);
   const mayRetry = pending && (pending.action === 'ap-invoice' ? data?.canRecordInvoice : data?.canRecordPayment);
   const invoiceForm = active?.type === 'invoice' && data?.canRecordInvoice
@@ -276,8 +281,8 @@ function PayablesQueue({ userId }: { userId: string }) {
       {data && !data.canRecordInvoice && !data.canRecordPayment && <p className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
         <strong>Solo consulta.</strong>
       </p>}
-      {!showBalances && !paymentQueue && (reconciliationQueue || pendingOrders.length > 0) && <section className={card + ' space-y-2'} aria-labelledby="titulo-ordenes-pendientes">
-        <h2 id="titulo-ordenes-pendientes" className="text-lg font-bold">{reconciliationQueue ? 'Por conciliar' : 'Órdenes por procesar'}</h2>
+      {!showBalances && (reconciliationQueue || pendingOrders.length > 0) && <section className={card + ' space-y-2'} aria-labelledby="titulo-ordenes-pendientes">
+        <h2 id="titulo-ordenes-pendientes" className="text-lg font-bold">{reconciliationQueue ? 'Por conciliar' : paymentQueue ? 'Órdenes vinculadas' : 'Órdenes por procesar'}</h2>
         {reconciliationQueue && invoiceForm}
         {reconciliationQueue && pendingOrders.length === 0
           && <p className="text-sm text-slate-600">No hay partidas recibidas pendientes de facturar.</p>}
@@ -297,6 +302,11 @@ function PayablesQueue({ userId }: { userId: string }) {
               </span>}
               {canInvoice && <span className="rounded-md bg-emerald-100 px-2 py-1 font-medium text-emerald-950">Lista para facturar</span>}
             </div>
+            <dl className="grid w-full grid-cols-2 gap-2 text-sm">
+              <div><dt className="text-slate-600">Total OC</dt><dd>{displayMoney(order.total, order.issuer.currency)}</dd></div>
+              <div><dt className="text-slate-600" title="Al precio de las partidas, antes de impuestos, descuentos y cargos de la OC.">Pendiente de recibir</dt>
+                <dd className="font-semibold">{order.unreceivedSubtotal == null ? 'Por verificar' : displayMoney(order.unreceivedSubtotal, order.issuer.currency)}</dd></div>
+            </dl>
             {reconciliationQueue && !invoiceForm && <button type="button" className={button} disabled={busy}
               aria-label={'Registrar factura para OC ' + (order.number || order.folio)}
               onClick={() => startInvoice(order.folio)}>Registrar factura</button>}
@@ -347,9 +357,9 @@ function PayablesQueue({ userId }: { userId: string }) {
                 <div><dt className="text-slate-600">Vence</dt><dd>{dateLabel(invoice.dueDate)}</dd></div>
               </dl>
               <dl className="grid grid-cols-3 gap-2 rounded-lg bg-slate-50 p-2 text-sm">
-                <div><dt className="text-slate-600">Total</dt><dd className="wrap-anywhere">{displayMoney(invoice.total, invoice.currency)}</dd></div>
+                <div><dt className="text-slate-600">Facturado</dt><dd className="wrap-anywhere">{displayMoney(invoice.total, invoice.currency)}</dd></div>
                 <div><dt className="text-slate-600">Pagado</dt><dd className="wrap-anywhere">{displayMoney(invoice.paid, invoice.currency)}</dd></div>
-                <div><dt className="text-slate-600">Saldo</dt><dd className="wrap-anywhere font-bold">{displayMoney(invoice.balance, invoice.currency)}</dd></div>
+                <div><dt className="text-slate-600">Saldo por pagar</dt><dd className="wrap-anywhere font-bold">{displayMoney(invoice.balance, invoice.currency)}</dd></div>
               </dl>
               {invoice.payments.length > 0 && <details>
                 <summary className="cursor-pointer text-sm font-semibold text-[#162252]">Pagos registrados ({invoice.payments.length})</summary>

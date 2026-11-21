@@ -66,15 +66,16 @@ export default function PanamaWorkOrdersPage() {
   const status = statusOptions.some(([value]) => value === statusParam) ? statusParam : '';
   const [selectedKey, setSelectedKey] = useState('');
 
+  // BrowserRouter updates history before the next render. Merge rapid edits into that latest URL.
   function setFilter(name: 'buscar' | 'prioridad' | 'estado', value: string) {
-    const next = new URLSearchParams(params);
+    const next = new URLSearchParams(window.location.search);
     if (value) next.set(name, value);
     else next.delete(name);
     setParams(next, { replace: true });
   }
 
   function clearFilters() {
-    const next = new URLSearchParams(params);
+    const next = new URLSearchParams(window.location.search);
     for (const key of ['buscar', 'prioridad', 'estado']) next.delete(key);
     setParams(next, { replace: true });
   }

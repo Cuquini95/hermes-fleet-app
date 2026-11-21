@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
-  AlertTriangle, Bell, CalendarClock, CalendarDays, ChartNoAxesColumn, ClipboardCheck,
+  Activity, AlertTriangle, Bell, CalendarClock, CalendarDays, ChartNoAxesColumn, ClipboardCheck,
   Database, Disc3, Ellipsis, FileText, Gauge, LayoutDashboard, LogOut, Package, Search, Settings,
   ShoppingCart, Truck, UserRound, Wrench, X, type LucideIcon,
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/auth-store';
 import { useEquipmentList } from '../../hooks/useEquipmentList';
 import { canOpenPanamaPayables, sessionHome } from '../../lib/purchasing-home';
+import { usePanamaOrderMenuPath } from '../../hooks/usePanamaOrderMenuPath';
 import ApiHealthDot from '../ui/ApiHealthDot';
 import BottomNav from './BottomNav';
 
@@ -83,6 +84,7 @@ export default function PanamaWorkspace({ children }: { children: ReactNode }) {
   const canOpenPayables = useAuthStore(canOpenPanamaPayables);
   const logout = useAuthStore(state => state.logout);
   const location = useLocation();
+  const orderMenuPath = usePanamaOrderMenuPath();
   const menu = useRef<HTMLDialogElement>(null);
   const [logoutError, setLogoutError] = useState(false);
   const [leaving, setLeaving] = useState(false);
@@ -100,7 +102,7 @@ export default function PanamaWorkspace({ children }: { children: ReactNode }) {
   ];
   if (role === 'supervisor') work.push(['/supervisor', 'Supervisión', UserRound]);
   if (canSeeShifts) work.push(['/panama/turnos', 'Mi turno', UserRound]);
-  if (canSeeOrders) work.push(['/workorders', 'Órdenes de trabajo', Wrench]);
+  if (canSeeOrders) work.push([orderMenuPath, 'Órdenes de trabajo', Wrench]);
   if (canManage) work.push(['/calendar', 'Planificador', CalendarDays]);
   if (role !== 'almacen') {
     work.push(['/falla', 'Fallas', AlertTriangle]);
@@ -108,6 +110,7 @@ export default function PanamaWorkspace({ children }: { children: ReactNode }) {
   }
   const fleet: Entry[] = [];
   if (canSeeFleet) fleet.push(['/fleet', 'Equipos', Truck]);
+  if (canSeeCommand) fleet.push(['/panama/disponibilidad', 'Disponibilidad', Activity]);
   if (canManage) fleet.push(['/neumaticos', 'Llantas y componentes', Disc3], ['/pm', 'Mantenimiento PM', CalendarClock]);
 
   const buying: Entry[] = [];
@@ -196,7 +199,7 @@ export default function PanamaWorkspace({ children }: { children: ReactNode }) {
         {children}
       </main>
     </div>
-    <BottomNav rescue command={canSeeCommand} />
+    <BottomNav rescue command={canSeeCommand} orderMenuPath={orderMenuPath} />
     <dialog ref={menu} className="rescue-module-dialog" aria-labelledby="panama-menu-title">
       <div className="rescue-module-dialog-head">
         <h2 id="panama-menu-title">Menú</h2>
