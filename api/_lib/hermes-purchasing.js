@@ -1311,6 +1311,27 @@ function apOrderLines(order, invoices) {
   });
 }
 
+// Merchandise at the approved line prices, before document-level tax, discount and charges.
+function unreceivedSubtotal(lines) {
+  if (!lines.length) return null;
+  let cents = 0n;
+  try {
+    for (const line of lines) {
+      const ordered = decimalCell(line.quantity, 3, 'ordenado', true);
+      const received = decimalCell(line.received, 3, 'recibido');
+      if (received > ordered) return null;
+      if (received === ordered) continue;
+      const price = decimal(trim(line.unitPrice).replace(/[$,\s]/g, ''), 2, 'precio de partida');
+      // Keep the rounded line value equal to the received and outstanding portions together.
+      cents += lineCost(ordered, price) - lineCost(received, price);
+    }
+  } catch (cause) {
+    if (cause instanceof RequestError) return null;
+    throw cause;
+  }
+  return money(cents);
+}
+
 function apRead(data, session, capabilities) {
   const orders = [];
   const invoices = [];
@@ -1328,6 +1349,7 @@ function apRead(data, session, capabilities) {
     const matched = data.invoices.filter(invoice => invoice.parent === order.folio);
     const { folio, number, version, status, unit, vendorName, issuer, total } = order;
     orders.push({ folio, number, version, status, unit, vendorName, issuer, total, legacy: Boolean(order.invoice),
+      unreceivedSubtotal: unreceivedSubtotal(order.lines),
       unbilledTotal: money(centsFor(order, 'total') - (order.invoice ? centsFor(order.invoice, 'amount') : sumCents(matched, 'total'))),
       lines: apOrderLines(order, matched).map(({ id, number, description, partNumber, ordered, received, invoiced, available, unitPrice }) =>
         ({ id, number, description, partNumber, ordered, received, invoiced, available, unitPrice })) });

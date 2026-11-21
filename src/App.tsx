@@ -171,6 +171,7 @@ export default function App() {
         <Route path="/mechanic"    element={<RequireRole roles={['mecanico']}><PageBoundary role={role}><S><MechanicPage /></S></PageBoundary></RequireRole>} />
         <Route path="/workshop"    element={<RequireRole roles={['jefe_taller', 'gerencia', 'supervisor']}><PageBoundary role={role}><S><WorkshopHomePage /></S></PageBoundary></RequireRole>} />
         <Route path="/coordinator" element={<RequireRole roles={['coordinador', 'gerencia']}><PageBoundary role={role}><S><CoordinatorHomePage /></S></PageBoundary></RequireRole>} />
+        <Route path="/panama/disponibilidad" element={<RequireRole roles={['supervisor', 'gerencia']}><PageBoundary role={role}><S><SupervisorHomePage availabilityView /></S></PageBoundary></RequireRole>} />
         <Route path="/supervisor"  element={<RequireRole roles={['supervisor', 'gerencia']}><PageBoundary role={role}><S><SupervisorHomePage /></S></PageBoundary></RequireRole>} />
         <Route path="/dashboard"   element={<RequireRole roles={['gerencia', 'supervisor']}><PageBoundary role={role}><S><DashboardPage /></S></PageBoundary></RequireRole>} />
 

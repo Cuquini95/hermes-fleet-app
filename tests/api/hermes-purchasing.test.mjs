@@ -1068,6 +1068,7 @@ test('AP concilia seis de diez unidades recibidas, conserva pagos parciales y ev
   assert.equal((await readOrder(folio, buyer)).status, 'Recibida parcial');
   assert.equal((await write('ap-invoice', { ...detail, version: await version(), reference: 'FAC-DUPLICADA' }, accounting)).status, 409);
   assert.equal((await ap()).orders[0].lines[0].available, '0');
+  assert.equal((await ap()).orders[0].unreceivedSubtotal, '400.00');
   assert.equal((await ap()).invoices[0].dueDate, '2026-12-14');
   assert.equal((await ap()).invoices.length, 1);
   assert.deepEqual((await ap({ ...accounting, allUnits: false, assignedUnits: ['OTHER'] })).invoices, []);
@@ -1084,7 +1085,9 @@ test('AP concilia seis de diez unidades recibidas, conserva pagos parciales y ev
   assert.equal((await write('ap-payment', { ...motion, version: await version(), reference: 'BANCO-AP-2', amount: '442.00', operationId: randomUUID() }, treasury)).status, 200);
   assert.equal((await readOrder(folio, buyer)).status, 'Recibida parcial');
 
+  assert.equal((await ap(treasury)).orders[0].unreceivedSubtotal, '400.00');
   assert.equal((await receipt('4', 'REM-AP-4')).status, 200);
+  assert.equal((await ap(treasury)).orders[0].unreceivedSubtotal, '0.00');
   const remaining = { ...detail, version: await version(), reference: 'FAC-AP-4', amount: '428.00', tax: '28.00',
     lines: [{ lineId, quantity: '4', unitPrice: '100.00' }] };
   assert.equal((await write('order-invoice', { ...remaining, currency: 'USD' }, accounting)).status, 409);
@@ -1096,6 +1099,30 @@ test('AP concilia seis de diez unidades recibidas, conserva pagos parciales y ev
   const ledger = (await ap()).invoices;
   assert.equal(ledger.length, 2);
   assert.ok(ledger.every(invoice => invoice.status === 'Pagada' && invoice.balance === '0.00'));
+});
+
+test('el pendiente de recibir conserva el centavo de la partida y distingue precio faltante de cero', async () => {
+  const { sheets, call } = setup();
+  const reader = { ...manager, project: 'tmf-panama' };
+  const folio = 'OC-AP-FRACCION';
+  const header = Array(28).fill('');
+  Object.assign(header, { 0: folio, 5: 'QA-DZ203', 6: '25.01', 10: '25.01', 11: 'Recibida parcial',
+    13: reader.userName, 15: 'v1', 16: JSON.stringify({ id: 'TP_PA', template: 'transplus', name: 'TRANSPLUS', currency: 'USD' }),
+    17: reader.userId, 18: '2026-11-14T14:00:00Z' });
+  sheets.seed(TAB.orders, [['OC_ID'], header]);
+  const remaining = async (secondPrice) => {
+    sheets.seed(TAB.lines, [['OC_ID'],
+      [folio, '1', 'Fraccionado', '1', '0.01', '0.01', folio + '-1', '', '', '', '0.5'],
+      [folio, '2', 'Otra partida', '2', secondPrice, '25.00', folio + '-2', '', '', '', '0']]);
+    const response = await call('ap', null, reader);
+    assert.equal(response.status, 200);
+    return response.body.orders[0].unreceivedSubtotal;
+  };
+  assert.equal(await remaining('12.50'), '25.00');
+  assert.equal(await remaining('0.00'), '0.00');
+  assert.equal(await remaining(''), null);
+  assert.equal(await remaining('pendiente'), null);
+  assert.equal(await remaining('$'), null);
 });
 
 test('una firma registrada se archiva al aprobar y solo el aprobador puede aplicarla a una OC anterior', async () => {

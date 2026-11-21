@@ -22,7 +22,7 @@ function LucideIcon({ name, ...props }: { name: string } & LucideProps) {
   return Icon ? <Icon {...props} /> : null;
 }
 
-export default function BottomNav({ rescue = false, command = false }: { rescue?: boolean; command?: boolean }) {
+export default function BottomNav({ rescue = false, command = false, orderMenuPath = '/workorders' }: { rescue?: boolean; command?: boolean; orderMenuPath?: string }) {
   const [showMoreTray, setShowMoreTray] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -86,7 +86,7 @@ export default function BottomNav({ rescue = false, command = false }: { rescue?
     if (item.id === 'mas') {
       setShowMoreTray(true);
     } else {
-      navigate(item.path);
+      navigate(item.path === '/workorders' ? orderMenuPath : item.path);
     }
   };
 
@@ -137,7 +137,7 @@ export default function BottomNav({ rescue = false, command = false }: { rescue?
         items={[
           ...shortcuts, ...purchasing, ...(visibleItems !== visible && previousStart ? [previousStart] : []), ...overflow,
           { id: 'tmf', label: 'Maestros TMF', icon: 'Table2', path: '/panama' },
-        ]}
+        ].map(item => item.path === '/workorders' ? { ...item, path: orderMenuPath } : item)}
       />
     </>
   );

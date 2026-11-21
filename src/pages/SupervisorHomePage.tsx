@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import {
   Truck,
   AlertTriangle,
@@ -27,7 +27,7 @@ const ACTION_CARDS: ActionCard[] = [
   { label: 'Sticker 15 días', icon: <BadgeCheck size={32} className="text-amber" />, path: '/sticker-inspection' },
 ];
 
-export default function SupervisorHomePage() {
+export default function SupervisorHomePage({ availabilityView = false }: { availabilityView?: boolean }) {
   const navigate = useNavigate();
   const userName = useAuthStore((s) => s.userName);
   const isPanama = useAuthStore((s) => s.project === 'tmf-panama');
@@ -53,11 +53,14 @@ export default function SupervisorHomePage() {
         ? 'Buenas tardes'
         : 'Buenas noches';
 
+  if (availabilityView && !isPanama) return <Navigate to="/supervisor" replace />;
+  const heading = availabilityView ? 'Disponibilidad' : isPanama ? 'Supervisión' : `${greeting}, ${userName}`;
+
   return (
     <div className="flex flex-col py-4 animate-fade-up">
       {/* Greeting */}
       <div className="mb-4">
-        <h1 className="text-2xl font-bold text-text">{isPanama ? 'Supervisión' : `${greeting}, ${userName}`}</h1>
+        <h1 className="text-2xl font-bold text-text">{heading}</h1>
         {!isPanama && <p className="text-text-secondary text-sm mt-0.5">Supervisor de Producción</p>}
       </div>
 
@@ -94,7 +97,7 @@ export default function SupervisorHomePage() {
       <button type="button" disabled={loading} onClick={() => void refresh()} className="self-start mb-3 text-sm font-medium text-amber">{isPanama ? 'Actualizar flota' : 'Actualizar bloqueos'}</button>
 
       {/* Quick actions 2-column grid */}
-      <div className="grid grid-cols-2 gap-3 mb-6">
+      {!availabilityView && <div className="grid grid-cols-2 gap-3 mb-6">
         {ACTION_CARDS.map(({ label, icon, path }) => (
           <button
             key={path}
@@ -106,7 +109,7 @@ export default function SupervisorHomePage() {
             <span className="text-sm font-medium text-center text-text">{label}</span>
           </button>
         ))}
-      </div>
+      </div>}
 
       {/* Equipos en Taller */}
       <h2 className="font-semibold text-text mt-2 mb-3">Equipos en Taller</h2>
