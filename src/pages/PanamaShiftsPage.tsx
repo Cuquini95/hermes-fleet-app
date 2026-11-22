@@ -162,7 +162,7 @@ function DispatchPanel({ userId, canAssign, units }: { userId: string; canAssign
     {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
     {message && <p role="status" className="text-sm text-emerald-900">{message}</p>}
     <p className="text-xs text-slate-600">Fuente: asignaciones registradas en Hermes para la cuenta actual. Esta bandeja no equivale al REGISTRO TMF ni confirma ausencia de partes de turno.</p>
-    {captureAvailable === false && <p className="text-sm text-amber-800">Despacho pendiente de validar con HSE.</p>
+    {captureAvailable === false && <p className="text-sm text-amber-800">Despacho pendiente de validar con HSE.</p>}
     {canAssign && captureAvailable && <form className="space-y-3" onSubmit={assign}>
       <fieldset disabled={loading || saving || !!retry} className="grid min-w-0 gap-3 sm:grid-cols-2">
         <label className={labelClass}>Equipo<select className={inputClass} required {...bind('unit')}>
