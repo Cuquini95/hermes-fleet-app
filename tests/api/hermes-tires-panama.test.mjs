@@ -113,17 +113,18 @@ test('el destino respeta el equipo y un remontaje no vuelve a sumar lecturas ya 
 test('tablero por unidad muestra sólo llantas montadas, posición y última inspección local', async () => {
   const { byUnit, post } = fixture();
   const mounted = await post({ action: 'mount', unit: 'CA20', position: 'I1', meter: '1000', basis: 'h' });
-  await post({ action: 'inspect', expected: mounted.body.id, meter: '1030', pressure: '108', depth: '12.5' });
+  const inspected = await post({ action: 'inspect', expected: mounted.body.id, meter: '1030', pressure: '108', depth: '12.5' });
   const first = await byUnit('CA20', assigned);
   assert.equal(first.status, 200);
   assert.equal(first.body.mounted.length, 1);
   assert.deepEqual([first.body.mounted[0].serial, first.body.mounted[0].position], ['F-01', 'I1']);
   assert.deepEqual([first.body.mounted[0].inspection.pressure, first.body.mounted[0].inspection.depth], [108, 12.5]);
-  const moved = await post({ action: 'move', expected: (await post({
-    action: 'inspect', expected: mounted.body.id, meter: '1030', pressure: '108', depth: '12.5',
-  })).body.id, meter: '1100', unit: 'CA21', position: 'D2', arrivalMeter: '600', arrivalBasis: 'h' });
-  // A duplicated inspection mutation above is rejected rather than creating a false movement.
-  assert.equal(moved.status, 409);
+  const moved = await post({ action: 'move', expected: inspected.body.id, meter: '1100',
+    unit: 'CA21', position: 'D2', arrivalMeter: '600', arrivalBasis: 'h' });
+  assert.equal(moved.status, 201);
+  assert.equal((await byUnit('CA20', assigned)).body.mounted.length, 0);
+  assert.equal((await byUnit('CA21')).body.mounted[0].position, 'D2');
+  assert.equal((await byUnit('CA21')).body.mounted[0].inspection, undefined);
   assert.equal((await byUnit('CA21', assigned)).status, 403);
   assert.equal((await byUnit('CA20', { ...assigned, role: 'operador' })).status, 403);
 });
