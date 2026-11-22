@@ -316,7 +316,7 @@ function WorkshopHistory({ label, records, unit, cut, linkedFailures }: {
             )}
             {label === 'Órdenes de trabajo' && record.id && <Link
               className="mt-2 inline-flex min-h-11 items-center text-sm font-semibold text-blue-800 underline"
-              to={masterOrderHref(unit, record.id)}>Abrir OT y comprobar cierre</Link>}
+              to={record.source === 'master' ? masterOrderHref(unit, record.id) : `/workorders/${encodeURIComponent(record.order || record.id)}`}>Abrir OT y comprobar cierre</Link>}
             {record.needsReview && <p className="text-amber-800">
               Por conciliar{record.operationalStatus !== undefined ? ` · Hermes: ${record.operationalStatus || 'Estado sin verificar'}` : ''}
             </p>}
