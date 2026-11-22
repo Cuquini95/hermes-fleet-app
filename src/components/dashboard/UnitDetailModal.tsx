@@ -16,6 +16,7 @@ import { firstPhotoUrl, isOpenAveria, parseAveriaRow, type AveriaEntry } from '.
 import { applyDispatchReadiness, normalizeUnitId, type UnitDispatchReadiness } from '../../lib/dispatch-readiness'
 import { useAuthStore } from '../../stores/auth-store'
 import PanamaUnitOperations from './PanamaUnitOperations'
+import { masterOrderHref } from '../../lib/panama-order-list'
 
 interface UnitDetailModalProps {
   unit: Equipment
@@ -163,10 +164,25 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
 
         {/* Body */}
         <div className="p-5">
-          {isPanama && <Link to={`/falla?unit=${encodeURIComponent(unit.unit_id)}`}
-            className="mb-4 inline-flex min-h-11 items-center rounded-lg border border-gray-200 px-3 text-sm font-semibold text-gray-900">
-            Reportar falla
-          </Link>}
+          {isPanama && <nav aria-label="Acciones relacionadas del equipo" className="mb-4 flex flex-wrap gap-2">
+            <Link to={`/falla?unit=${encodeURIComponent(unit.unit_id)}`}
+              className="inline-flex min-h-11 items-center rounded-lg border border-gray-200 px-3 text-sm font-semibold text-gray-900">
+              Reportar falla
+            </Link>
+            <Link to={`/sticker-inspection?unit=${encodeURIComponent(unit.unit_id)}`}
+              className="inline-flex min-h-11 items-center rounded-lg border border-gray-200 px-3 text-sm font-semibold text-gray-900">
+              Inspección HSE
+            </Link>
+            {canSeeOperations && <Link to={`/neumaticos?unit=${encodeURIComponent(unit.unit_id)}`}
+              className="inline-flex min-h-11 items-center rounded-lg border border-gray-200 px-3 text-sm font-semibold text-gray-900">
+              Llantas por posición
+            </Link>}
+            {['supervisor', 'coordinador', 'gerencia'].includes(role ?? '') &&
+              <Link to={`/panama/turnos?${new URLSearchParams({ unit: unit.unit_id, estado: 'aceptados' })}`}
+                className="inline-flex min-h-11 items-center rounded-lg border border-gray-200 px-3 text-sm font-semibold text-gray-900">
+                Partes aceptados
+              </Link>}
+          </nav>}
           {error && (
             <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 mb-4">
               {isPanama ? (
@@ -214,8 +230,8 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
             <p className="mb-4 text-sm text-amber-800">{isPanama ? 'Historial de Taller incompleto.' : 'Historial de Taller incompleto. Parte de la información no está disponible.'}</p>
           )}
           <WorkshopHistory label="Averías en Taller" records={workshopFailures.filter(row => row.id || !averias?.length)}
-            cut={workshop?.failures.capturedAt} linkedFailures={linkedFailures} />
-          <WorkshopHistory label="Órdenes de trabajo" records={workshopOrders} cut={workshop?.orders.capturedAt} />
+            unit={unit.unit_id} cut={workshop?.failures.capturedAt} linkedFailures={linkedFailures} />
+          <WorkshopHistory label="Órdenes de trabajo" records={workshopOrders} unit={unit.unit_id} cut={workshop?.orders.capturedAt} />
 
           {!error && averias !== null && open.length === 0 && closed.length === 0
             && !workshopIncomplete && !workshopFailures.length && !workshopOrders.length && (
@@ -270,9 +286,10 @@ export default function UnitDetailModal({ unit, dispatchReadiness, verified = tr
   )
 }
 
-function WorkshopHistory({ label, records, cut, linkedFailures }: {
+function WorkshopHistory({ label, records, unit, cut, linkedFailures }: {
   label: string
   records: WorkshopRecord[]
+  unit: string
   cut?: string | null
   linkedFailures?: ReadonlyMap<string, AveriaEntry>
 }) {
@@ -294,6 +311,12 @@ function WorkshopHistory({ label, records, cut, linkedFailures }: {
             {record.date && <p className="text-gray-600">{record.date}</p>}
             {record.order && record.order !== record.id && <p className="text-gray-600">OT vinculada: {record.order}</p>}
             {record.description && <p className="text-gray-700">{record.description}</p>}
+            {label === 'Órdenes de trabajo' && record.source === 'master' && /cerrad/i.test(record.status ?? '') && (
+              <p className="text-xs text-amber-800">Estado cerrado según Maestro; la fecha de cierre debe verificarse en el expediente.</p>
+            )}
+            {label === 'Órdenes de trabajo' && record.id && <Link
+              className="mt-2 inline-flex min-h-11 items-center text-sm font-semibold text-blue-800 underline"
+              to={masterOrderHref(unit, record.id)}>Abrir OT y comprobar cierre</Link>}
             {record.needsReview && <p className="text-amber-800">
               Por conciliar{record.operationalStatus !== undefined ? ` · Hermes: ${record.operationalStatus || 'Estado sin verificar'}` : ''}
             </p>}
