@@ -157,6 +157,8 @@ function ReceivingQueue({ userId }: { userId: string }) {
               <div className="min-w-0">
                 <h2 className="break-words font-bold text-[#162252]">{order.number || order.folio}</h2>
                 <p className="break-words text-sm text-slate-700">{order.unit} · {order.vendorName}</p>
+                <p className="text-xs text-slate-600">Expediente OC: {order.folio} · Cada partida conserva movimientos de recepción independientes.</p>
+                <p className="text-xs text-slate-700">{order.lines.filter(line => pendingQuantity(line) === 0).length}/{order.lines.length} partidas recibidas por completo.</p>
                 {order.deliveryDate && <p className="text-sm text-slate-700">Entrega prevista {order.deliveryDate}</p>}
               </div>
               <span className="rounded-full bg-slate-100 px-2.5 py-1 text-sm font-medium text-slate-800">{order.receiptStatus}</span>
@@ -177,9 +179,16 @@ function ReceivingQueue({ userId }: { userId: string }) {
                   <li className="space-y-2 py-3 last:pb-0" key={line.id}>
                     <h3 className="break-words font-semibold">{line.number}. {line.description}</h3>
                     {line.partNumber && <p className="break-words text-sm text-slate-600">{line.partNumber}</p>}
+                    <p className="break-words text-xs text-slate-600">
+                      {line.requestId || line.ot ? <>
+                        {line.requestId && `Solicitud: ${line.requestId}`}
+                        {line.requestId && line.ot ? ' · ' : ''}
+                        {line.ot && `OT: ${line.ot}`}
+                      </> : 'Solicitud/OT de origen sin vínculo: conciliar expediente heredado.'}
+                    </p>}
                     {line.warehouse && <p className="text-sm text-slate-700">Almacén {line.warehouse}</p>}
                     <p className="flex flex-wrap gap-x-3 gap-y-1 text-sm text-slate-700">
-                      <span>Ordenadas {line.quantity}</span><span>Recibidas {line.received}</span><strong>Pendientes {pending}</strong>
+                      <span>Ordenadas {line.quantity}</span><span>Recibidas {line.received}</span><strong className={pending > 0 ? 'text-amber-900' : 'text-emerald-800'}>Pendientes {pending}</strong>
                     </p>
                     {line.receipts.length > 0 && <ul className="space-y-1 rounded-lg bg-slate-50 p-2 text-sm text-slate-700">
                       {line.receipts.map((receipt) => <li key={receipt.id} className="break-words">
