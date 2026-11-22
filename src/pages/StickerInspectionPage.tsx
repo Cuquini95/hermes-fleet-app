@@ -31,6 +31,7 @@ import { useEquipmentList } from '../hooks/useEquipmentList';
 import { useAuthStore } from '../stores/auth-store';
 import PhotoCapture from '../components/ui/PhotoCapture';
 import SuccessToast, { type ToastType } from '../components/ui/SuccessToast';
+import PanamaHseActions from '../components/workshop/PanamaHseActions';
 
 interface PhotoItem {
   file: File;
@@ -387,6 +388,9 @@ export default function StickerInspectionPage() {
           ))}
         </section>
       )}
+
+      {project === 'tmf-panama' && canSupervisorApprove &&
+        <div className="mb-4"><PanamaHseActions unit={requestedUnit || undefined} /></div>}
 
       <fieldset disabled={submitting || !!pending || !!lastSticker} className="min-w-0">
       <div className="grid grid-cols-3 gap-2 mb-4">
