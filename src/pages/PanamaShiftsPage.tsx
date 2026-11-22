@@ -161,7 +161,8 @@ function DispatchPanel({ userId, canAssign, units }: { userId: string; canAssign
     </div>
     {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
     {message && <p role="status" className="text-sm text-emerald-900">{message}</p>}
-    {captureAvailable === false && <p className="text-sm text-amber-800">Despacho pendiente de validar con HSE.</p>}
+    <p className="text-xs text-slate-600">Fuente: asignaciones registradas en Hermes para la cuenta actual. Esta bandeja no equivale al REGISTRO TMF ni confirma ausencia de partes de turno.</p>
+    {captureAvailable === false && <p className="text-sm text-amber-800">Despacho pendiente de validar con HSE.</p>
     {canAssign && captureAvailable && <form className="space-y-3" onSubmit={assign}>
       <fieldset disabled={loading || saving || !!retry} className="grid min-w-0 gap-3 sm:grid-cols-2">
         <label className={labelClass}>Equipo<select className={inputClass} required {...bind('unit')}>
@@ -181,10 +182,14 @@ function DispatchPanel({ userId, canAssign, units }: { userId: string; canAssign
       </button>
     </form>}
     {loading ? <p role="status" className="text-sm text-slate-600">Consultando asignaciones…</p>
-      : !assignments.length && !error && <p className="text-sm text-slate-600">Sin asignaciones para tu puesto.</p>}
+      : !assignments.length && !error && <p className="text-sm text-slate-600">Sin asignaciones creadas en Hermes para este puesto. Pueden existir partes TMF sin asignación en Hermes.</p>}
     {assignments.map(item => <article key={item.id} className="space-y-1 rounded-lg border border-slate-200 p-3 text-sm">
       <h3 className="font-semibold">{item.unit} · {item.date} · {item.shift}</h3>
       <p className="break-words">{item.operator.name} · {item.site}</p>
+      <div className="flex flex-wrap gap-3">
+        <Link to={`/panama/turnos?${new URLSearchParams({ unit: item.unit, estado: 'aceptados' })}`} className="inline-flex min-h-11 items-center font-semibold text-blue-800 underline">Ver partes aceptados</Link>
+        {canAssign && <Link to={`/fleet?unit=${encodeURIComponent(item.unit)}`} className="inline-flex min-h-11 items-center font-semibold text-blue-800 underline">Estado y restricciones</Link>}
+      </div>
       {item.readiness.level !== 'ok' && <p className="font-semibold text-red-800">No despachar. {item.readiness.reason}</p>}
       <details className="text-slate-700">
         <summary className="min-h-11 cursor-pointer py-3">Detalles</summary>
