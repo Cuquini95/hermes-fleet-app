@@ -29,6 +29,7 @@ import OrderComponentInterventions from '../components/workshop/ComponentInterve
 import PanamaPmNextService from '../components/workshop/PanamaPmNextService';
 import { parsePanamaPmNextService } from '../lib/panama-pm-next-service.js';
 import { visibleWorkOrderFolio } from '../lib/purchasing-api';
+import { nextWorkOrderAction } from '../lib/panama-case-status';
 import { OrderDetailHeader, OrderDetailInformation, OrderDetailLayout, OrderDetailStatus } from '../components/workshop/OrderDetailLayout';
 
 const FIELD_LABELS: Record<StatusLogEntry['field'], string> = {
@@ -326,6 +327,16 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
           <p className="break-words">{wo.folio ?? wo.ot_id}</p>
         </details>}
       </OrderDetailStatus>
+      {panamaWorkflow && <section className="space-y-1 rounded-xl border border-slate-200 bg-white p-3 text-sm" aria-label="Siguiente acción verificable">
+        <h2 className="font-bold">Siguiente acción y responsable</h2>
+        <p>{nextWorkOrderAction(wo).action}</p>
+        <p className="text-slate-700">Responsable del siguiente paso: <strong>{nextWorkOrderAction(wo).responsible}</strong></p>
+        {wo.estado === 'Completado' && !wo.fecha_cierre.trim() && <p className="font-semibold text-amber-800">Cerrada sin fecha de cierre registrada: requiere conciliación documental.</p>}
+        {wo.estado === 'Completado' && wo.tipo_averia !== 'PM' && wo.operations?.decision !== 'accepted' &&
+          <p className="text-amber-800">El cierre de OT no constituye liberación para despacho.</p>}
+        {['supervisor', 'coordinador', 'gerencia'].includes(role ?? '') &&
+          <Link to={`/fleet?unit=${encodeURIComponent(wo.unidad)}`} className="inline-flex min-h-11 items-center font-semibold text-blue-800 underline">Revisar restricciones del equipo</Link>}
+      </section>
 
       <OrderDetailInformation data={{ unit: wo.unidad, model: equipment?.model, type: wo.tipo_averia,
         serial: equipment?.serial, priority: wo.prioridad,
