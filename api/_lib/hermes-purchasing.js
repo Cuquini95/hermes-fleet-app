@@ -293,6 +293,8 @@ function receivingRecord({ folio, number, unit, vendorName, deliveryDate, receip
   return { folio, number, unit, vendorName, deliveryDate, receiptStatus, version, lines: lines.map((line) => ({
     id: line.id, number: line.number, description: line.description, partNumber: line.partNumber,
     quantity: line.quantity, received: line.received,
+    ...(line.requestId && { requestId: line.requestId }),
+    ...(line.ot && { ot: line.ot }),
     ...(line.warehouse && { warehouse: line.warehouse }),
     warehouses: [...new Set(stock.filter(part => part.warehouse && upper(part.row[0]) === upper(line.partNumber)).map(part => part.warehouse))],
     ...receivingDispatches(line),
