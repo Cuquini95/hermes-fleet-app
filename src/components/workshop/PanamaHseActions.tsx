@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { uploadEvidence } from '../../lib/evidence-upload';
-import { requestWorkshop } from '../../lib/workshop-api';
+import { requestWorkshop, WorkshopApiError } from '../../lib/workshop-api';
 import { useAuthStore } from '../../stores/auth-store';
 
 type HseStatus = 'sin_asignar' | 'asignada' | 'evidencia' | 'devuelta' | 'verificada';
@@ -11,7 +11,7 @@ type Finding = {
   status: string; comment: string; dueDate: string; canOperate: boolean; severity: string;
   approvalState: string; inspectorId: string; photos: string[];
   corrective: { state: HseStatus; responsible: string; assignedBy: string; submittedBy: string;
-    verifiedBy: string; at: string; note: string; evidence: string[]; history: HseEvent[] };
+    verifiedBy: string; linkedOt: string; at: string; note: string; evidence: string[]; history: HseEvent[] };
 };
 type ReadModel = { findings: Finding[]; more: boolean; source: string; dispatchClearance: false };
 type Action = 'assign' | 'submit' | 'verify' | 'return';
@@ -28,6 +28,7 @@ function CaseActions({ finding, onSaved }: { finding: Finding; onSaved: () => vo
   const [responsible, setResponsible] = useState(finding.corrective.responsible || '');
   const [dueDate, setDueDate] = useState(finding.dueDate && /^\d{4}-\d{2}-\d{2}$/.test(finding.dueDate) ? finding.dueDate : '');
   const [note, setNote] = useState('');
+  const [linkedOt, setLinkedOt] = useState(finding.corrective.linkedOt || '');
   const [file, setFile] = useState<File>();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -49,7 +50,7 @@ function CaseActions({ finding, onSaved }: { finding: Finding; onSaved: () => vo
     event.preventDefault();
     if (busy.current || !active) return;
     const body = { unit: finding.unit, folio: finding.folio, itemId: finding.itemId,
-      action: active, note: note.trim(), ...(active === 'assign' ? { responsible: responsible.trim(), dueDate } : {}) };
+      action: active, note: note.trim(), ...(active === 'assign' ? { responsible: responsible.trim(), dueDate, linkedOt: linkedOt.trim() } : {}) };
     if (active === 'submit' && !file) { setError('Adjunta la fotografía que respalda la corrección.'); return; }
     const saved: Attempt = attempt.current ?? { operationId: crypto.randomUUID(), body, ...(active === 'submit' && file ? { file } : {}) };
     attempt.current = saved;
@@ -74,7 +75,11 @@ function CaseActions({ finding, onSaved }: { finding: Finding; onSaved: () => vo
       onSaved();
     } catch (cause) {
       const errorMessage = cause instanceof Error ? cause.message : 'No se pudo confirmar la acción.';
-      setError(errorMessage + ' Reintenta sin cambiar los datos para evitar duplicados.');
+      if (cause instanceof WorkshopApiError && [400, 403, 404, 409].includes(cause.status)) {
+        attempt.current = undefined;
+        if (cause.status === 409) { setActive(''); onSaved(); }
+        setError(errorMessage + ' Corrige los datos y vuelve a consultar.');
+      } else setError(errorMessage + ' Reintenta sin cambiar los datos para evitar duplicados.');
     } finally {
       busy.current = false;
       setSaving(false);
@@ -100,7 +105,12 @@ function CaseActions({ finding, onSaved }: { finding: Finding; onSaved: () => vo
           <input className={control} type="date" required value={dueDate} disabled={saving || !!attempt.current}
             onChange={event => setDueDate(event.target.value)} />
         </label>
-        <p className="text-xs text-amber-800">El nombre indicado no certifica que exista una cuenta asignada.</p>
+        <label className="block text-sm font-medium">OT de corrección (opcional, solo orden nativa de la misma unidad)
+          <input className={control} maxLength={90} value={linkedOt}
+            disabled={saving || !!attempt.current} placeholder="OT-0100"
+            onChange={event => setLinkedOt(event.target.value)} />
+        </label>
+        <p className="text-xs text-amber-800">El nombre indicado no certifica que exista una cuenta asignada. La OT se valida contra el Taller de este equipo.</p>
       </>}
       {active === 'submit' && <label className="block text-sm font-medium">Foto comprobatoria
         <input className={control} type="file" accept="image/png,image/jpeg,image/webp" required={!file} disabled={saving || !!attempt.current}
@@ -164,6 +174,8 @@ export default function PanamaHseActions({ unit }: { unit?: string }) {
           <p>{finding.comment}</p>
           <p>Estado HSE de origen: {finding.approvalState} · {finding.canOperate ? 'Punto condicionado' : 'Punto restrictivo'}</p>
           <p>Compromiso: {finding.dueDate || 'Sin fecha verificada'} · Responsable: {finding.corrective.responsible || 'Sin asignar'}</p>
+          {finding.corrective.linkedOt && <Link className="inline-flex min-h-11 items-center font-semibold text-blue-800 underline"
+            to={`/workorders/${encodeURIComponent(finding.corrective.linkedOt)}`}>Abrir OT de corrección: {finding.corrective.linkedOt}</Link>}
           {finding.corrective.verifiedBy && <p>Verificó: {finding.corrective.verifiedBy} · {date(finding.corrective.at)}</p>}
           {finding.photos.length > 0 && <div className="flex flex-wrap gap-2">{finding.photos.map(photo =>
             <a key={photo} href={photo} target="_blank" rel="noreferrer" className="text-blue-800 underline">Evidencia de inspección</a>)}</div>}
