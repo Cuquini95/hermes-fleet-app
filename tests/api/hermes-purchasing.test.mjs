@@ -1225,3 +1225,47 @@ test('una firma registrada se archiva al aprobar y solo el aprobador puede aplic
   assert.equal(noProfile.status, 200);
   assert.equal((await call('order', null, other, { folio: '3004' })).body.approvalSignature, undefined);
 });
+
+
+test('recepción por partida 2 de 5 y después 3 de 5 conserva saldo e idempotencia', async () => {
+  const { call, readOrder } = setup();
+  const buyer = { ...manager, project: 'tmf-panama', previewDemo: true };
+  const created = await call('order-save', newOrder({
+    entity: 'TP_PA_DEMO', unit: 'QA-DZ203',
+    lines: [{ partNumber: 'SKU-QA', description: 'Filtro de prueba', quantity: '5', unitPrice: '10' }],
+  }), buyer);
+  assert.equal(created.status, 200);
+  const { folio } = created.body;
+  let order = await readOrder(folio, buyer);
+  const approved = await call('order-status', {
+    operationId: randomUUID(), folio, version: order.version, status: 'Aprobada', reason: 'QA de recepción parcial',
+  }, buyer);
+  assert.equal(approved.status, 200);
+  order = await readOrder(folio, buyer);
+  const lineId = order.lines[0].id;
+  const first = { operationId: randomUUID(), folio, version: order.version, lineId, quantity: '2', reference: 'REM-01' };
+  const one = await call('order-receive', first, warehouseLead);
+  assert.equal(one.status, 200);
+  order = await readOrder(folio, buyer);
+  assert.equal(order.receiptStatus, 'Recibida parcial');
+  assert.equal(order.lines[0].quantity, '5');
+  assert.equal(order.lines[0].received, '2');
+  assert.equal(Number(order.lines[0].quantity) - Number(order.lines[0].received), 3);
+  assert.equal((await call('order-receive', first, warehouseLead)).status, 200);
+
+  const second = { operationId: randomUUID(), folio, version: order.version, lineId, quantity: '3', reference: 'REM-02' };
+  assert.equal((await call('order-receive', second, warehouseLead)).status, 200);
+  order = await readOrder(folio, buyer);
+  assert.equal(order.receiptStatus, 'Recibida');
+  assert.equal(order.lines[0].received, '5');
+  assert.equal(Number(order.lines[0].quantity) - Number(order.lines[0].received), 0);
+  assert.equal(order.lines[0].receipts.length, 2);
+  assert.deepEqual(order.lines[0].receipts.map(row => [row.quantity, row.reference]), [['2', 'REM-01'], ['3', 'REM-02']]);
+
+  const receiving = await call('receiving', null, warehouseLead);
+  assert.equal(receiving.status, 200);
+  const stored = receiving.body.orders.find(row => row.folio === folio);
+  assert.ok(stored);
+  assert.equal(stored.lines[0].received, '5');
+  assert.equal(stored.lines[0].receipts.length, 2);
+});
