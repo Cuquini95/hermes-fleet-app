@@ -1076,6 +1076,7 @@ function hseFindingRecord(row, sticker) {
       state: state.status, responsible: state.responsible ?? '', assignedBy: state.assignedBy ?? '',
       submittedBy: state.submittedBy ?? '', verifiedBy: state.verifiedBy ?? '',
       at: state.at ?? '', note: state.note ?? '', evidence: state.evidence ?? [],
+      linkedOt: state.linkedOt ?? '',
       history: state.history ?? [],
     },
   };
@@ -1126,11 +1127,18 @@ async function hseAction(context) {
     assert(['sin_asignar','asignada','devuelta'].includes(state.status), 409,
       'La acción ya tiene evidencia o verificación; revisa el historial.');
     next.responsible = text(body.responsible, 'Responsable indicado', 120, true);
+    const reference = text(body.linkedOt, 'OT vinculada', 90);
+    if (reference) {
+      const { row: linked, otId } = await getOrder(context, reference);
+      assert(linked[3]?.trim().toUpperCase() === unit, 400, 'La OT corresponde a otra unidad.');
+      next.linkedOt = otId;
+    }
     next.dueDate = isoDate(body.dueDate);
     assert(next.dueDate >= todayInPanama(context), 400, 'Indica un compromiso vigente.');
     next.assignedBy = session.userName;
     next.status = 'asignada';
     event.responsible = next.responsible;
+    if (next.linkedOt) event.linkedOt = next.linkedOt;
     event.dueDate = next.dueDate;
   } else if (action === 'submit') {
     assert(['asignada', 'devuelta'].includes(state.status), 409, 'Primero asigna la corrección.');
