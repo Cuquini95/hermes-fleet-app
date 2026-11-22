@@ -77,7 +77,7 @@ const APPEND = new Map([
 
 const PANAMA_OPERATION_GROUPS = new Map([
   ['taller', ['api/workshop/report', 'api/workshop/transition', 'api/workshop/returns', 'api/workshop/componentinterventions', 'api/workshop/warranties']],
-  ['inspecciones', ['api/workshop/dvir', 'api/workshop/sticker', 'api/workshop/stickerreview']],
+  ['inspecciones', ['api/workshop/dvir', 'api/workshop/sticker', 'api/workshop/stickerreview', 'api/workshop/hseaction']],
   ['pm', ['api/workshop/pm', 'api/workshop/schedule', 'api/workshop/pmbatchcheck', 'api/workshop/pmbatch']],
   ['turnos', ['api/panama/turnos/entregar', 'api/panama/turnos/revisar']],
   ['despacho', ['api/panama/turnos/despacho']],
