@@ -191,6 +191,20 @@ export default function PanamaUnitOperations({ unit, showFinancials }: { unit: s
         <Link to={`/workorders/${encodeURIComponent(part.stock.ot)}`} className={linkClass}>
           {visibleWorkOrderFolio(part.stock.folio) ?? 'Ver OT'} y pedido
         </Link>
+        {(part.request.allocations?.length ?? 0) > 0 ? <ul className="mt-2 space-y-2 border-t border-slate-200 pt-2">
+          {part.request.allocations?.map(allocation => {
+            const pending = Math.max(0, Math.round((Number(allocation.quantity) - Number(allocation.received)) * 1000) / 1000);
+            return <li key={allocation.folio} className="text-xs text-slate-700">
+              <p className="font-semibold">OC {allocation.number || allocation.folio} · {allocation.vendor}</p>
+              <p>Pedido {allocation.quantity} · Recibido {allocation.received} · Pendiente {Number.isFinite(pending) ? number.format(pending) : 'por conciliar'}</p>
+              <p>Estado de partida: {allocation.status}</p>
+              {showFinancials && <Link className={linkClass}
+                to={`/admin/ordenes-compra/${encodeURIComponent(allocation.folio)}`}>Abrir expediente de OC</Link>}
+            </li>;
+          })}
+        </ul> : part.request.ocFolio ? <p className="text-xs text-amber-800">
+          OC registrada: {part.request.ocFolio}. Relación con partida/recepción por conciliar.
+        </p> : <p className="text-xs text-slate-600">Sin OC vinculada confirmada en la solicitud.</p>}
       </> : <p>{part === undefined ? 'Consultando…' : partUnavailable ? 'Repuestos por consultar.' : 'Sin pedido abierto vinculado a una OT.'}</p>}
     </section>
     <PendingOrderActions unit={unit} />
