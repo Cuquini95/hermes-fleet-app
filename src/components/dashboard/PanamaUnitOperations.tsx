@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { fetchPanamaMaintenance, type MaintenanceEntry } from '../../lib/panama-maintenance';
 import { fetchPanamaComponents, type ComponentHistory } from '../../lib/panama-components';
 import { displayMoney, purchaseRead, visibleWorkOrderFolio, type PurchaseRequestLine, type WorkOrderPartContext } from '../../lib/purchasing-api';
-import { orderHistoryTime, useWorkOrderStore } from '../../stores/workorder-store';
+import { useWorkOrderStore } from '../../stores/workorder-store';
 import type { OrderCosts } from '../workshop/PanamaWorkOrderCost';
 import { nextWorkOrderAction, unitClosedWorkOrders } from '../../lib/panama-case-status';
 
