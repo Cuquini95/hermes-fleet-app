@@ -5,7 +5,7 @@ import { requestWorkshop } from '../../lib/workshop-api';
 import { useAuthStore } from '../../stores/auth-store';
 
 type HseStatus = 'sin_asignar' | 'asignada' | 'evidencia' | 'devuelta' | 'verificada';
-type HseEvent = { action: string; actorId: string; by: string; at: string; note: string; evidence?: string[] };
+type HseEvent = { operationId: string; action: string; actorId: string; by: string; at: string; note: string; evidence?: string[] };
 type Finding = {
   folio: string; unit: string; inspectedAt: string; itemId: string; item: string; section: string;
   status: string; comment: string; dueDate: string; canOperate: boolean; severity: string;
