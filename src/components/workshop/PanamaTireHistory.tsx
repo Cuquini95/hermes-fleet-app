@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useEquipmentList } from '../../hooks/useEquipmentList';
 import { requestWorkshop, WorkshopApiError } from '../../lib/workshop-api';
 import { useAuthStore } from '../../stores/auth-store';
@@ -21,6 +22,11 @@ type Report = { serial: string; current: Place | null; retired: boolean; latest:
   totals: { basis: Basis; usage: number; amount: number | null; currency: string | null; rate: number | null; reference: string | null } | null;
   history: TireEvent[]; legacy: { unit: string; position: string; meter: string; pressure: string; depth: string; date: string; note: string; status: string }[] };
 type Pending = { serial: string; payload: Record<string, string> };
+type UnitTireReport = {
+  unit: string; source: string; legacyRecords: number;
+  mounted: { serial: string; position: string; basis: Basis;
+    inspection?: { at: string; meter: number; pressure: number; depth: number } }[];
+};
 
 function readPending(key: string): Pending | null {
   try { return JSON.parse(sessionStorage.getItem(key) ?? 'null'); } catch { return null; }
@@ -34,6 +40,12 @@ function writePending(key: string, value: Pending | null) {
 }
 
 export default function PanamaTireHistory() {
+  const equipment = useEquipmentList();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedUnit = (searchParams.get('unit') ?? '').trim().toUpperCase();
+  const unit = equipment.find(item => item.unit_id.toUpperCase() === requestedUnit && panamaTireLayout(item.type));
+  const [unitBoard, setUnitBoard] = useState<UnitTireReport>();
+  const [unitBoardError, setUnitBoardError] = useState('');
   const actor = useAuthStore(state => state.userId);
   const key = `hermes:neumaticos:${actor}`;
   const [pending, setPending] = useState(() => readPending(key));
@@ -46,6 +58,16 @@ export default function PanamaTireHistory() {
   const [action, setAction] = useState<Action | ''>('');
   const [saving, setSaving] = useState(false);
   const sending = useRef(false);
+
+  useEffect(() => {
+    if (!unit) { setUnitBoard(undefined); setUnitBoardError(''); return; }
+    let active = true;
+    setUnitBoardError('');
+    requestWorkshop<UnitTireReport>(`tires?${new URLSearchParams({ unit: unit.unit_id })}`)
+      .then(result => { if (active) { setUnitBoard(result); setUnitBoardError(''); } })
+      .catch(error => { if (active) { setUnitBoard(undefined); setUnitBoardError(error instanceof Error ? error.message : 'Sin consulta de llantas.'); } });
+    return () => { active = false; };
+  }, [unit?.unit_id, revision]);
 
   useEffect(() => {
     if (!lookup) return;
@@ -107,7 +129,55 @@ export default function PanamaTireHistory() {
   if (totals && totals.amount === null) available.push('cost');
   return (
     <main className="min-w-0 space-y-4 py-4">
-      <h1 className="text-xl font-bold text-text">Neumáticos por número de fuego</h1>
+      <h1 className="text-xl font-bold text-text">Neumáticos · Unidad, posición y número de fuego</h1>
+      <section aria-label="Llantas montadas por unidad" className="space-y-2 rounded-xl border border-border bg-white p-3">
+        <h2 className="font-semibold">Posiciones del equipo</h2>
+        <label className="block text-sm font-medium">Seleccionar unidad
+          <select className={input} value={unit?.unit_id ?? ''}
+            onChange={event => {
+              const next = new URLSearchParams(searchParams);
+              if (event.target.value) next.set('unit', event.target.value);
+              else next.delete('unit');
+              setUnitBoard(undefined);
+              setSearchParams(next);
+            }}>
+            <option value="">Seleccionar</option>
+            {equipment.filter(item => panamaTireLayout(item.type)).map(item =>
+              <option key={item.unit_id} value={item.unit_id}>{item.unit_id} · {item.model}</option>)}
+          </select>
+        </label>
+        {requestedUnit && !unit && <p className="text-sm text-amber-800">Unidad no disponible para este usuario o sin layout de neumáticos.</p>}
+        {unitBoardError && <p role="alert" className="text-sm text-red-700">{unitBoardError}</p>}
+        {unit && !unitBoardError && unitBoard?.unit !== unit.unit_id && <p role="status" className="text-sm">Consultando posiciones…</p>}
+        {unit && unitBoard?.unit === unit.unit_id && <>
+          <p className="text-xs text-slate-600">Fuente: {unitBoard.source}. Posiciones ocupadas según eventos registrados; no sustituye verificación física.</p>
+          {unitBoard.legacyRecords > 0 && <p className="text-xs text-amber-800">
+            {unitBoard.legacyRecords} registro(s) de inspección histórica sin conciliar como montaje actual.
+          </p>}
+          <ul className="grid gap-2 sm:grid-cols-2">
+            {panamaTireLayout(unit.type)?.positions.map(position => {
+              const mounted = unitBoard.mounted.find(tire => tire.position === position);
+              return <li key={position} className="min-w-0 rounded-lg border border-slate-200 p-2 text-sm">
+                <p className="font-semibold">Posición {position}</p>
+                {mounted ? <>
+                  <button type="button" className="min-h-11 text-left font-semibold text-blue-800 underline"
+                    onClick={() => {
+                      setSerial(mounted.serial);
+                      setLookup(mounted.serial);
+                      setAction('');
+                      setReport(undefined);
+                      setRevision(value => value + 1);
+                    }}>{mounted.serial} · Abrir historial</button>
+                  {mounted.inspection ? <>
+                    <p>Última inspección en esta posición: {date(mounted.inspection.at)}</p>
+                    <p>Presión {number(mounted.inspection.pressure)} PSI · Profundidad {number(mounted.inspection.depth)} mm</p>
+                  </> : <p className="text-amber-800">Sin inspección posterior al montaje o traslado registrado.</p>}
+                </> : <p className="text-slate-600">Sin montaje verificado en el historial de Hermes.</p>}
+              </li>;
+            })}
+          </ul>
+        </>}
+      </section>
       <form onSubmit={lookupTire} className="flex flex-wrap items-end gap-2 rounded-xl border border-border bg-white p-3">
         <label className="min-w-0 flex-1 text-sm font-medium">Serie o número de fuego
           <input value={serial} required maxLength={80} disabled={!!pending} onChange={e => setSerial(e.target.value)} className={input} />
