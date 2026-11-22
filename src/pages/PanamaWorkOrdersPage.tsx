@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/auth-store';
 import { useWorkOrderStore } from '../stores/workorder-store';
 import { filterPanamaOrders, readPanamaOrderMaster, unifiedPanamaOrders, masterOrderHref, orderListPriority, orderListStatus, type ListedOrder, type MasterOrder, type OrderListStatus } from '../lib/panama-order-list';
 import { visibleWorkOrderFolio } from '../lib/purchasing-api';
+import { nextWorkOrderAction } from '../lib/panama-case-status';
 import { useEquipmentById } from '../hooks/useEquipmentList';
 import { PRIORITY_CONFIG, type OTPriority } from '../types/workorder';
 import { SkeletonList } from '../components/ui/Skeleton';
@@ -50,6 +51,16 @@ function OrderPreview({ row }: { row: ListedOrder }) {
       <div className="rescue-order-preview-section"><span>Estado</span><p>{displayStatus(row)}</p></div>
       <div className="rescue-order-preview-section"><span>Asignación</span><p>{card.mecanico_asignado || (native ? 'Sin asignar' : 'Sin dato')}</p></div>
     </div>
+    {native ? <div className="rescue-order-preview-section">
+      <span>Siguiente acción</span>
+      <p>{nextWorkOrderAction(native).action}</p>
+      <small>Responsable: {nextWorkOrderAction(native).responsible}</small>
+      {native.estado === 'Completado' && !native.fecha_cierre.trim() &&
+        <p className="text-amber-800">OT cerrada sin fecha verificable; conciliar cierre.</p>}
+    </div> : <div className="rescue-order-preview-section">
+      <span>Origen de la información</span>
+      <p>Maestro de Taller · consulta. Validar responsable y cierre en expediente.</p>
+    </div>}
     {notice && <p className="rescue-partial">{notice}</p>}
     <Link className="rescue-primary" to={orderHref(row)} state={native ? undefined : { fromOrderList: true }}>
       {native ? 'Abrir orden' : 'Consultar orden'} <ArrowRight size={15} aria-hidden />
