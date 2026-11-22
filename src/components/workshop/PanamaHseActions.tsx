@@ -31,7 +31,7 @@ function CaseActions({ finding, onSaved }: { finding: Finding; onSaved: () => vo
   const [file, setFile] = useState<File>();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const attempt = useRef<Attempt>();
+  const attempt = useRef<Attempt | undefined>(undefined);
   const busy = useRef(false);
   const state = finding.corrective.state;
 
