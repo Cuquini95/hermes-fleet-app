@@ -166,6 +166,8 @@ export interface PurchaseOverview {
 }
 
 export type PurchaseReceivingLine = Pick<PurchaseLine, 'id' | 'number' | 'description' | 'partNumber' | 'quantity' | 'received'> & {
+  requestId?: string;
+  ot?: string;
   receipts: Omit<PurchaseReceipt, 'actorId'>[];
   warehouse?: string;
   warehouses?: string[];

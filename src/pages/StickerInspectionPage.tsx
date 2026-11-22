@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
   BadgeCheck,
@@ -31,6 +31,7 @@ import { useEquipmentList } from '../hooks/useEquipmentList';
 import { useAuthStore } from '../stores/auth-store';
 import PhotoCapture from '../components/ui/PhotoCapture';
 import SuccessToast, { type ToastType } from '../components/ui/SuccessToast';
+import PanamaHseActions from '../components/workshop/PanamaHseActions';
 
 interface PhotoItem {
   file: File;
@@ -111,6 +112,9 @@ function hasEvidenceGap(items: StickerInspectionItem[], responses: Record<string
 
 export default function StickerInspectionPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const requestedUnit = (searchParams.get('unit') ?? '').trim().toUpperCase();
+  const appliedRequest = useRef('');
   const equipment = useEquipmentList();
   const isOnline = useOnlineStatus();
   const role = useAuthStore((s) => s.role);
@@ -123,6 +127,15 @@ export default function StickerInspectionPage() {
   const [hora, setHora] = useState(mexicoTimeInput());
   const [company, setCompany] = useState(COMPANY_DEFAULT);
   const [unitId, setUnitId] = useState('');
+  useEffect(() => {
+    if (!requestedUnit || appliedRequest.current === requestedUnit) return;
+    const unit = equipment.find(item => item.unit_id.toUpperCase() === requestedUnit);
+    if (!unit) return; // Do not prefill a unit outside this user's equipment scope.
+    setUnitId(unit.unit_id);
+    const matchingTemplate = project === 'tmf-panama' ? stickerTemplateForEquipment(unit.type, unit.model) : '';
+    if (matchingTemplate) setTemplateId(matchingTemplate);
+    appliedRequest.current = requestedUnit;
+  }, [requestedUnit, equipment, project]);
   const [templateId, setTemplateId] = useState<EquipmentInspectionClass>('camion_articulado');
   const selectedUnit = equipment.find(item => item.unit_id === unitId);
   const suggestedTemplate = project === 'tmf-panama' && selectedUnit
@@ -346,10 +359,17 @@ export default function StickerInspectionPage() {
           {reviewList.map((item) => (
             <details key={item.folio} className="mb-2 rounded-lg border border-border p-3">
               <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold text-text">{item.unitId} · {item.inspectionDate} · {colorLabel(item.color)}</summary>
-              <p className="my-2 break-words text-xs text-text-secondary">{item.inspector} · Folio {item.folio}</p>
+              <p className="my-2 break-words text-xs text-text-secondary">Inspector: {item.inspector} · Folio {item.folio}</p>
+              <p className="text-xs text-text-secondary">Revisión HSE: {item.supervisor || 'Por asignar'} · Habilitación: {item.canDispatch ? 'Apta según inspección, sujeta a otras restricciones' : 'No autorizada por esta inspección'}</p>
+              <Link to={`/fleet?unit=${encodeURIComponent(item.unitId)}`}
+                className="inline-flex min-h-11 items-center text-xs font-semibold text-blue-800 underline">Abrir equipo y restricciones</Link>
               {item.findings.map((finding) => (
                 <div key={finding.itemId} className="mb-2 text-sm text-text">
-                  <p>{finding.label} {finding.comment}</p>
+                  <p><strong>{finding.label}</strong> · {finding.comment}</p>
+                   <p className={finding.hardStop || !finding.canOperate ? 'font-semibold text-red-800' : 'text-amber-800'}>
+                     {finding.hardStop || !finding.canOperate ? 'Hallazgo con restricción operativa' : 'Hallazgo por corregir'}
+                     {' · '}{finding.status === 'no_cumple' ? 'No cumple' : finding.status === 'condicionado' ? 'Condicionado' : finding.status}
+                   </p>
                   {finding.dueDate && <p className="text-xs text-text-secondary">Compromiso {finding.dueDate}</p>}
                   <div className="flex flex-wrap gap-2">
                     {finding.photos.map((url) => <a key={url} href={url} target="_blank" rel="noreferrer" className="text-xs font-semibold text-amber">Ver evidencia</a>)}
@@ -368,6 +388,9 @@ export default function StickerInspectionPage() {
           ))}
         </section>
       )}
+
+      {project === 'tmf-panama' && canSupervisorApprove &&
+        <div className="mb-4"><PanamaHseActions unit={requestedUnit || undefined} /></div>}
 
       <fieldset disabled={submitting || !!pending || !!lastSticker} className="min-w-0">
       <div className="grid grid-cols-3 gap-2 mb-4">

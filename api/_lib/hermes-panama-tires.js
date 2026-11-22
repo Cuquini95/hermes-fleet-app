@@ -228,11 +228,41 @@ function report(book, serial, session) {
     history: history.map(({ units: _units, cost, ...event }) => ({ ...event, ...(complete && cost && { cost: { ...cost, amount: cost.amount / 100 } }) })) };
 }
 
+function reportByUnit(book, unit, session) {
+  ensure(/^[A-Z0-9][A-Z0-9-]{0,23}$/.test(unit), 400, 'Unidad inválida.');
+  ensure(authorized(session, unit), 403, 'Unidad fuera de tu alcance.');
+  const mounted = [...book.tires.entries()]
+    .filter(([, tire]) => tire.current?.unit === unit)
+    .map(([serial, tire]) => {
+      const arrival = tire.history.findLastIndex(event => ['mount', 'move'].includes(event.action) && event.location?.unit === unit);
+      const lastInspection = tire.history.slice(Math.max(0, arrival + 1))
+        .filter(event => event.action === 'inspect' && event.location?.unit === unit).at(-1);
+      return {
+        serial,
+        position: tire.current.position,
+        basis: tire.basis,
+        ...(lastInspection && { inspection: {
+          at: lastInspection.at, meter: lastInspection.meter, pressure: lastInspection.pressure, depth: lastInspection.depth,
+        } }),
+      };
+    })
+    .sort((a, b) => a.position.localeCompare(b.position, 'es', { numeric: true }));
+  const legacyRecords = book.legacy.filter(row => folded(row[1]) === unit && row[7]).length;
+  return { unit, mounted, legacyRecords, source: 'Hermes: eventos de neumáticos' };
+}
+
 export async function dispatchPanamaTires({ method, query, body, session, sheets }) {
   try {
     ensure(session?.project === 'tmf-panama' && session.userId && session.userName && ROLES.has(session.role), 403,
       'Consulta reservada a Taller y Operaciones de Panamá.');
     ensure(method === 'GET' || method === 'POST', 405, 'Método no permitido.');
+    if (method === 'GET' && query?.unit && !query?.serial) {
+      const unit = folded(query.unit);
+      ensure(/^[A-Z0-9][A-Z0-9-]{0,23}$/.test(unit), 400, 'Unidad inválida.');
+      ensure(authorized(session, unit), 403, 'Unidad fuera de tu alcance.');
+      const book = journal(await sheets.read(TIRE_TAB, { requireExisting: true }));
+      return { status: 200, body: reportByUnit(book, unit, session) };
+    }
     const serial = serialOf(method === 'GET' ? query?.serial : body?.serial);
     const book = journal(await sheets.read(TIRE_TAB, { requireExisting: true }));
     if (method === 'GET') return { status: 200, body: report(book, serial, session) };

@@ -3,10 +3,12 @@ import { Link } from 'react-router-dom';
 import { fetchPanamaMaintenance, type MaintenanceEntry } from '../../lib/panama-maintenance';
 import { fetchPanamaComponents, type ComponentHistory } from '../../lib/panama-components';
 import { displayMoney, purchaseRead, visibleWorkOrderFolio, type PurchaseRequestLine, type WorkOrderPartContext } from '../../lib/purchasing-api';
-import { orderHistoryTime, useWorkOrderStore } from '../../stores/workorder-store';
+import { useWorkOrderStore } from '../../stores/workorder-store';
 import type { OrderCosts } from '../workshop/PanamaWorkOrderCost';
+import { nextWorkOrderAction, unitClosedWorkOrders } from '../../lib/panama-case-status';
 
 const number = new Intl.NumberFormat('es-PA', { maximumFractionDigits: 3 });
+const panamaCut = new Intl.DateTimeFormat('es-PA', { timeZone: 'America/Panama', dateStyle: 'short', timeStyle: 'short' });
 const sectionClass = 'min-w-0 space-y-1 rounded-lg border border-slate-200 p-3 text-sm';
 const linkClass = 'inline-flex min-h-11 items-center text-sm font-semibold text-primary underline';
 
@@ -45,9 +47,8 @@ function LastRepairCost({ unit }: { unit: string }) {
     if (!useWorkOrderStore.getState().fetched && !useWorkOrderStore.getState().loading) void fetchOrders();
   }, [fetchOrders]);
 
-  const last = orders.filter(order => order.unidad.toUpperCase() === unit && order.estado === 'Completado'
-    && orderHistoryTime(order.fecha_cierre) > 0)
-    .sort((a, b) => orderHistoryTime(b.fecha_cierre) - orderHistoryTime(a.fecha_cierre))[0];
+  const closures = unitClosedWorkOrders(orders, unit);
+  const last = closures.lastDated;
   const ot = last?.ot_id;
   const results = cost?.ot === ot ? cost : undefined;
 
@@ -63,7 +64,7 @@ function LastRepairCost({ unit }: { unit: string }) {
   return <section className={sectionClass} aria-label="Última OT cerrada">
     <h3 className="font-semibold">Última OT cerrada</h3>
     {error ? <p>Historial por consultar.</p>
-      : !last ? <p>{loading || !fetched ? 'Consultando…' : 'Sin cierre fechado para este equipo.'}</p>
+      : !last ? <p>{loading || !fetched ? 'Consultando…' : closures.missingClosingDate.length ? 'Último cierre por conciliar: existen OT cerradas sin fecha.' : 'Sin OT cerradas registradas en Hermes.'}</p>
         : <>
           {last.folio && <p className="font-semibold">{last.folio}</p>}
           {!results ? <p>Consultando costo…</p>
@@ -72,12 +73,60 @@ function LastRepairCost({ unit }: { unit: string }) {
                 {results.data?.pending.length ? 'Subtotal conciliado' : 'Total documentado'} · {displayMoney(total.amount, total.currency)}
               </p>)}
           <Link to={`/workorders/${encodeURIComponent(last.ot_id)}`} className={linkClass}>Ver OT y soportes</Link>
+          {last.tipo_averia !== 'PM' && <p className={last.operations?.decision === 'accepted' ? 'text-emerald-800' : 'text-amber-800'}>
+            {last.operations?.decision === 'accepted' ? 'Retorno recibido por Operaciones; aún requiere verificar restricciones de despacho.'
+              : 'Cierre documental distinto de retorno operativo: pendiente de confirmación de Operaciones.'}
+          </p>}
         </>}
+    {closures.missingClosingDate.length > 0 && <div className="mt-2 space-y-1 border-t border-slate-200 pt-2">
+      <p className="font-semibold text-amber-800">Cierres sin fecha: {closures.missingClosingDate.length} · Conciliación pendiente</p>
+      {closures.missingClosingDate.slice(0, 4).map(row => <div key={row.ot_id}>
+        <Link to={`/workorders/${encodeURIComponent(row.ot_id)}`} className={linkClass}>
+          {visibleWorkOrderFolio(row.folio ?? '') ?? row.ot_id} · Documento cerrado, fecha desconocida
+        </Link>
+        {row.tipo_averia !== 'PM' && <p className="text-xs text-slate-700">{nextWorkOrderAction(row).action}</p>}
+      </div>)}
+    </div>}
+  </section>;
+}
+
+function PendingOrderActions({ unit }: { unit: string }) {
+  const orders = useWorkOrderStore(state => state.workorders);
+  const error = useWorkOrderStore(state => state.error);
+  const fetched = useWorkOrderStore(state => state.fetched);
+  const loading = useWorkOrderStore(state => state.loading);
+  const fetchOrders = useWorkOrderStore(state => state.fetchWorkOrders);
+
+  useEffect(() => {
+    if (!useWorkOrderStore.getState().fetched && !useWorkOrderStore.getState().loading) void fetchOrders();
+  }, [fetchOrders]);
+
+  const pending = orders.filter(order => order.unidad.trim().toUpperCase() === unit
+    && (order.estado !== 'Completado' || (order.tipo_averia !== 'PM' && order.operations?.decision !== 'accepted')));
+  return <section className={sectionClass} aria-label="Próximas acciones de órdenes">
+    <h3 className="font-semibold">OT y próxima acción</h3>
+    {error ? <p>Órdenes nativas no disponibles; revisar Maestro de Taller.</p>
+      : !fetched || loading ? <p>Consultando órdenes…</p>
+        : !pending.length ? <p>Sin OT nativas pendientes en esta consulta. Verificar también el Maestro de Taller.</p> : <>
+          <p className="text-xs text-slate-600">{pending.length} OT nativa(s) por atender o con retorno sin verificar.</p>
+          {pending.slice(0, 5).map(order => {
+            const next = nextWorkOrderAction(order);
+            return <div key={order.ot_id} className="space-y-1 border-t border-slate-100 pt-2">
+              <Link to={`/workorders/${encodeURIComponent(order.ot_id)}`} className={linkClass}>
+                {visibleWorkOrderFolio(order.folio ?? '') ?? order.ot_id} · {order.estado}
+              </Link>
+              <p><strong>Siguiente:</strong> {next.action}</p>
+              <p className="text-xs text-slate-600">Responsable del paso: {next.responsible}</p>
+            </div>;
+          })}
+        </>}
+    <Link to="/workorders" className={linkClass}>Consultar todas las OT y Maestro de Taller</Link>
   </section>;
 }
 
 export default function PanamaUnitOperations({ unit, showFinancials }: { unit: string; showFinancials: boolean }) {
   const [pm, setPm] = useState<MaintenanceEntry | null>();
+  const [pmSourceDate, setPmSourceDate] = useState<string>();
   const [components, setComponents] = useState<ComponentHistory | null>();
   const [part, setPart] = useState<Awaited<ReturnType<typeof relevantPart>>>();
   const [partUnavailable, setPartUnavailable] = useState(false);
@@ -86,7 +135,10 @@ export default function PanamaUnitOperations({ unit, showFinancials }: { unit: s
     const controller = new AbortController();
     const { signal } = controller;
     void fetchPanamaMaintenance(signal).then(data => {
-      if (!signal.aborted) setPm(data.entries?.find(entry => entry.unit === unit) ?? null);
+      if (!signal.aborted) {
+        setPm(data.entries?.find(entry => entry.unit === unit) ?? null);
+        setPmSourceDate(data.sourceDate);
+      }
     }).catch(() => { if (!signal.aborted) setPm(null); });
     void fetchPanamaComponents(unit, signal).then(data => {
       if (!signal.aborted) setComponents(data);
@@ -108,6 +160,15 @@ export default function PanamaUnitOperations({ unit, showFinancials }: { unit: s
           {pm === undefined ? 'Consultando…' : pm?.reconciliationPending ? 'Cierre por conciliar'
             : pm && pm.state !== 'unknown' && pm.remaining !== null ? hoursRemaining(pm.remaining) : 'Por verificar'}
         </p>
+        {pm && <div className="space-y-1 text-xs text-slate-700">
+          <p>Horómetro del maestro: {pm.currentHours === null ? 'por verificar' : `${number.format(pm.currentHours)} h`}</p>
+          <p>Próximo vencimiento: {pm.dueAt === null ? 'por verificar' : `${number.format(pm.dueAt)} h`}</p>
+          <p>Último PM registrado: {pm.lastOfficial || 'sin respaldo visible'}</p>
+          <p>Validación de lectura: {pm.reading || 'sin estado de lectura'}</p>
+          {pmSourceDate && Number.isFinite(Date.parse(pmSourceDate)) && <p>Corte de consulta del maestro: {panamaCut.format(new Date(pmSourceDate))}</p>}
+          {pm.batchBlock && <p className="text-amber-800">{pm.batchBlock}</p>}
+        </div>}
+        <Link to="/pm" className={linkClass}>Ver plan y órdenes PM</Link>
       </section>
       <section className={sectionClass} aria-label="Vida de componentes">
         <h3 className="font-semibold">Vida de componentes</h3>
@@ -130,8 +191,23 @@ export default function PanamaUnitOperations({ unit, showFinancials }: { unit: s
         <Link to={`/workorders/${encodeURIComponent(part.stock.ot)}`} className={linkClass}>
           {visibleWorkOrderFolio(part.stock.folio) ?? 'Ver OT'} y pedido
         </Link>
+        {(part.request.allocations?.length ?? 0) > 0 ? <ul className="mt-2 space-y-2 border-t border-slate-200 pt-2">
+          {part.request.allocations?.map(allocation => {
+            const pending = Math.max(0, Math.round((Number(allocation.quantity) - Number(allocation.received)) * 1000) / 1000);
+            return <li key={allocation.folio} className="text-xs text-slate-700">
+              <p className="font-semibold">OC {allocation.number || allocation.folio} · {allocation.vendor}</p>
+              <p>Pedido {allocation.quantity} · Recibido {allocation.received} · Pendiente {Number.isFinite(pending) ? number.format(pending) : 'por conciliar'}</p>
+              <p>Estado de partida: {allocation.status}</p>
+              {showFinancials && <Link className={linkClass}
+                to={`/admin/ordenes-compra/${encodeURIComponent(allocation.folio)}`}>Abrir expediente de OC</Link>}
+            </li>;
+          })}
+        </ul> : part.request.ocFolio ? <p className="text-xs text-amber-800">
+          OC registrada: {part.request.ocFolio}. Relación con partida/recepción por conciliar.
+        </p> : <p className="text-xs text-slate-600">Sin OC vinculada confirmada en la solicitud.</p>}
       </> : <p>{part === undefined ? 'Consultando…' : partUnavailable ? 'Repuestos por consultar.' : 'Sin pedido abierto vinculado a una OT.'}</p>}
     </section>
+    <PendingOrderActions unit={unit} />
     {showFinancials && <>
       <LastRepairCost unit={unit} />
       <Link to={`/panama/turnos?${new URLSearchParams({ unit, estado: 'aceptados' })}`} className={linkClass}>

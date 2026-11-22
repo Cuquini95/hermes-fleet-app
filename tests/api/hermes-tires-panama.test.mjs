@@ -30,8 +30,9 @@ function fixture() {
     },
   };
   const get = (serial, session = manager) => dispatchPanamaTires({ method: 'GET', query: { serial }, session, sheets });
+  const byUnit = (unit, session = manager) => dispatchPanamaTires({ method: 'GET', query: { unit }, session, sheets });
   const post = (body, session = manager) => dispatchPanamaTires({ method: 'POST', body: { mutationId: randomUUID(), serial: 'F-01', ...body }, session, sheets });
-  return { rows, get, post, interrupt: callback => { beforeCommit = callback; } };
+  return { rows, get, byUnit, post, interrupt: callback => { beforeCommit = callback; } };
 }
 
 test('el mismo número de fuego conserva origen, destino, medidas y costo por uso entre dos equipos', async () => {
@@ -107,4 +108,23 @@ test('el destino respeta el equipo y un remontaje no vuelve a sumar lecturas ya 
   assert.equal(second.status, 201);
   assert.equal((await post({ action: 'inspect', expected: second.body.id, meter: '1150', pressure: '90', depth: '9' })).status, 201);
   assert.equal((await get('F-01')).body.totals.usage, 130);
+});
+
+test('tablero por unidad muestra sólo llantas montadas, posición y última inspección local', async () => {
+  const { byUnit, post } = fixture();
+  const mounted = await post({ action: 'mount', unit: 'CA20', position: 'I1', meter: '1000', basis: 'h' });
+  const inspected = await post({ action: 'inspect', expected: mounted.body.id, meter: '1030', pressure: '108', depth: '12.5' });
+  const first = await byUnit('CA20', assigned);
+  assert.equal(first.status, 200);
+  assert.equal(first.body.mounted.length, 1);
+  assert.deepEqual([first.body.mounted[0].serial, first.body.mounted[0].position], ['F-01', 'I1']);
+  assert.deepEqual([first.body.mounted[0].inspection.pressure, first.body.mounted[0].inspection.depth], [108, 12.5]);
+  const moved = await post({ action: 'move', expected: inspected.body.id, meter: '1100',
+    unit: 'CA21', position: 'D2', arrivalMeter: '600', arrivalBasis: 'h' });
+  assert.equal(moved.status, 201);
+  assert.equal((await byUnit('CA20', assigned)).body.mounted.length, 0);
+  assert.equal((await byUnit('CA21')).body.mounted[0].position, 'D2');
+  assert.equal((await byUnit('CA21')).body.mounted[0].inspection, undefined);
+  assert.equal((await byUnit('CA21', assigned)).status, 403);
+  assert.equal((await byUnit('CA20', { ...assigned, role: 'operador' })).status, 403);
 });

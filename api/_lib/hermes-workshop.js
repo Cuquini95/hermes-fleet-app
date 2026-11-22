@@ -1049,6 +1049,136 @@ async function stickerReview(context) {
   return commit(context, writes, stickerPayload(resolved), `workshop-sticker:${folio}:${PENDING_STICKER}`, readiness);
 }
 
+
+/**
+ * HSE action history is stored in column R (index 17) of Inspeccion_Hallazgos.
+ * Columns A–Q keep their original source fields unchanged. A verified action is
+ * NOT a dispatch release: the original inspection/sticker remains authoritative
+ * until a new approved inspection changes readiness.
+ */
+function hseActionState(row) {
+  const raw = row[17];
+  if (!raw) return { version: 1, status: 'sin_asignar', history: [] };
+  const parsed = storedObject(raw);
+  if (!parsed || !Array.isArray(parsed.history) || !['sin_asignar','asignada','evidencia','devuelta','verificada'].includes(parsed.status)) {
+    return { version: 1, status: 'por_conciliar', history: [], invalid: true };
+  }
+  return parsed;
+}
+
+function hseFindingRecord(row, sticker) {
+  const state = hseActionState(row);
+  const originalPhotos = sticker ? stickerPayload(sticker).findings
+    .find(entry => entry.itemId === row[7])?.photos ?? [] : [];
+  return {
+    folio: row[1], unit: row[3], inspectedAt: row[2], itemId: row[7], item: row[8],
+    section: row[6], status: row[9], comment: row[10], dueDate: state.dueDate || row[11] || '',
+    canOperate: row[12] === 'yes', severity: row[13], approvalState: row[14], inspectionExpires: row[15],
+    inspectorId: row[16], photos: originalPhotos, corrective: {
+      state: state.status, responsible: state.responsible ?? '', assignedBy: state.assignedBy ?? '',
+      submittedBy: state.submittedBy ?? '', verifiedBy: state.verifiedBy ?? '',
+      at: state.at ?? '', note: state.note ?? '', evidence: state.evidence ?? [],
+      linkedOt: state.linkedOt ?? '',
+      history: state.history ?? [],
+    },
+  };
+}
+
+async function hseFindings(context) {
+  const { query, session, sheets } = context;
+  assert(isPanama(context) && canReviewHse(session), 403, 'Consulta reservada a HSE Panamá.');
+  const requested = query?.unit ? requireUnit(session, query.unit) : '';
+  const [rows, stickerRows] = await Promise.all([
+    sheets.read(TAB.findings, { requireExisting: true }),
+    sheets.read(TAB.stickers, { requireExisting: true }),
+  ]);
+  const stickers = new Map();
+  for (const row of stickerRows) {
+    if (!row[1] || !row[5]) continue;
+    const key = row[5].trim().toUpperCase() + ':' + row[1];
+    stickers.set(key, stickers.has(key) ? null : row);
+  }
+  const scoped = rows.filter(row => row[1] && row[7] && row[3] && scopeAllows(session, row[3].trim().toUpperCase())
+    && (!requested || row[3].trim().toUpperCase() === requested));
+  const findings = scoped.map(row => hseFindingRecord(row, stickers.get(row[3].trim().toUpperCase() + ':' + row[1])));
+  findings.sort((a, b) => String(b.inspectedAt).localeCompare(String(a.inspectedAt)) || a.folio.localeCompare(b.folio));
+  return { status: 200, body: { findings: findings.slice(0, 200), more: findings.length > 200,
+    source: 'Inspeccion_Hallazgos', dispatchClearance: false } };
+}
+
+async function hseAction(context) {
+  const { body, session, sheets } = context;
+  assert(isPanama(context) && canReviewHse(session), 403, 'Esta acción requiere autorización HSE.');
+  const unit = requireUnit(session, body.unit);
+  const folio = text(body.folio, 'Folio de inspección', 100, true);
+  const itemId = text(body.itemId, 'Punto de inspección', 100, true);
+  const action = text(body.action, 'Acción correctiva', 20, true);
+  assert(['assign','submit','verify','return'].includes(action), 400, 'Acción correctiva inválida.');
+  const rows = await sheets.read(TAB.findings, { requireExisting: true });
+  const matches = rows.map((row, index) => ({ row, index }))
+    .filter(({ row }) => row[1] === folio && row[3]?.trim().toUpperCase() === unit && row[7] === itemId);
+  assert(matches.length === 1, matches.length ? 409 : 404, 'Hallazgo no disponible o duplicado.');
+  const { row, index } = matches[0];
+  const state = hseActionState(row);
+  assert(!state.invalid, 409, 'La acción correctiva heredada requiere conciliación.');
+  assert(state.history.length < 120, 409, 'Historial de acciones requiere cierre de archivo.');
+  const next = { ...state, history: [...state.history] };
+  const note = text(body.note, 'Observación', 1000, action === 'submit' || action === 'verify' || action === 'return');
+  const event = { action, by: session.userName, actorId: session.userId, at: context.now, note,
+    operationId: context.mutationId };
+  if (action === 'assign') {
+    assert(['sin_asignar','asignada','devuelta'].includes(state.status), 409,
+      'La acción ya tiene evidencia o verificación; revisa el historial.');
+    next.responsible = text(body.responsible, 'Responsable indicado', 120, true);
+    const reference = text(body.linkedOt, 'OT vinculada', 90);
+    if (reference) {
+      const { row: linked, otId } = await getOrder(context, reference);
+      assert(linked[3]?.trim().toUpperCase() === unit, 400, 'La OT corresponde a otra unidad.');
+      next.linkedOt = otId;
+    }
+    next.dueDate = isoDate(body.dueDate);
+    assert(next.dueDate >= todayInPanama(context), 400, 'Indica un compromiso vigente.');
+    next.assignedBy = session.userName;
+    next.status = 'asignada';
+    event.responsible = next.responsible;
+    if (next.linkedOt) event.linkedOt = next.linkedOt;
+    event.dueDate = next.dueDate;
+  } else if (action === 'submit') {
+    assert(['asignada', 'devuelta'].includes(state.status), 409, 'Primero asigna la corrección.');
+    const evidence = await attachmentUrls(context, body.photos, 'hseaction', unit, '');
+    assert(evidence.length > 0 && evidence.length <= 8, 400, 'Adjunta evidencia fotográfica verificable.');
+    next.status = 'evidencia';
+    next.submittedBy = session.userName;
+    next.submittedById = session.userId;
+    next.evidence = evidence;
+    next.note = note;
+    event.evidence = evidence;
+  } else {
+    assert(state.status === 'evidencia', 409, 'No hay evidencia nueva pendiente de revisión.');
+    assert(session.userId !== state.submittedById && session.userId !== row[16], 403,
+      'La verificación requiere otra persona distinta de quien envió evidencia y capturó la inspección.');
+    if (action === 'verify') {
+      next.status = 'verificada';
+      next.verifiedBy = session.userName;
+      next.verifiedById = session.userId;
+      next.verifiedAt = context.now;
+    } else {
+      next.status = 'devuelta';
+      next.verifiedBy = '';
+      next.verifiedById = '';
+      next.verifiedAt = '';
+    }
+  }
+  next.at = context.now;
+  next.history.push(event);
+  const encoded = JSON.stringify(next);
+  assert(encoded.length <= 46000, 409, 'El historial requiere archivo y conciliación.');
+  const guard = `hse-action:${unit}:${folio}:${itemId}:${digest(row[17] || 'initial')}`;
+  const saved = await commit(context, [{ tab: TAB.findings, row: index, col: 17, values: [encoded] }],
+    { folio, unit, itemId, state: next.status, updatedAt: context.now }, guard);
+  return saved;
+}
+
 const READINESS_SOURCES = [
   ['failures', TAB.failures, 2, [0, 2, 9]],
   ['stickers', TAB.stickers, 5, [1, 2, 3, 4, 5, 10, 12, 13, 14, 17]],
@@ -1355,6 +1485,7 @@ const MUTATIONS = {
   pm: [pm, ASSIGN, true], pmbatch: [pmBatch, ASSIGN, false], schedule: [schedule, ASSIGN, false],
   sticker: [sticker, ROLES, true], stickerreview: [stickerReview, SUPERVISE, false],
   warranties: [registerWarranty, warrantyWriters, false],
+  hseaction: [hseAction, SUPERVISE, false],
   returns: [operationalReturn, OPERATIONS, false], componentinterventions: [registerComponentIntervention, CLOSE, false],
 };
 
@@ -1406,7 +1537,7 @@ export async function dispatchWorkshop(input) {
         return { status: 503, body: { error: 'No se pudo cargar la lista de equipos.' } };
       }
     }
-    if (['returns', 'pmchecklist', 'pmtemplate', 'pmtriggers', 'schedulecheck', 'pmbatch', 'pmbatchcheck', 'downtime', 'componentinterventions', 'warranties', 'exceptions'].includes(endpoint)) {
+    if (['returns', 'hseaction', 'hsefindings', 'pmchecklist', 'pmtemplate', 'pmtriggers', 'schedulecheck', 'pmbatch', 'pmbatchcheck', 'downtime', 'componentinterventions', 'warranties', 'exceptions'].includes(endpoint)) {
       assert(isPanama(input), 404, 'Acción de taller no disponible');
     }
     if (method === 'POST' && endpoint === 'pmbatchcheck') {
@@ -1449,6 +1580,9 @@ export async function dispatchWorkshop(input) {
     }
     if (method === 'GET' && endpoint === 'componentinterventions') {
       return { status: 200, body: await listComponentInterventions(input) };
+    }
+    if (method === 'GET' && endpoint === 'hsefindings') {
+      return await hseFindings(input);
     }
     if (method === 'GET' && endpoint === 'returns') {
       assert(OPERATIONS.has(session.role), 403, 'Tu rol no puede revisar la recepción de Operaciones');
@@ -1505,7 +1639,7 @@ export async function dispatchWorkshop(input) {
     const [handler, roles, create] = MUTATIONS[endpoint];
     assert(roles.has(session.role), 403, 'Tu rol no puede ejecutar esta acción');
     assert(body && typeof body === 'object' && !Array.isArray(body), 400, 'Solicitud inválida');
-    if (endpoint === 'stickerreview' || (endpoint === 'sticker' && body.approve === true)) {
+    if (endpoint === 'stickerreview' || endpoint === 'hseaction' || (endpoint === 'sticker' && body.approve === true)) {
       assert(canReviewHse(session), 403, 'La revisión requiere autorización HSE');
     }
     const mutationId = text(body.mutationId, 'Identificador de operación', 36, true).toLowerCase();

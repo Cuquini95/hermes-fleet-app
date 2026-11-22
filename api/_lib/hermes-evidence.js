@@ -19,6 +19,7 @@ const ACTIONS = new Map([
   ['report', { path: 'api/workshop/report', roles: ALL }],
   ['dvir', { path: 'api/workshop/dvir', roles: ['operador', 'supervisor', 'gerencia'] }],
   ['sticker', { path: 'api/workshop/sticker', roles: ALL }],
+  ['hseaction', { path: 'api/workshop/hseaction', roles: ['supervisor', 'gerencia'] }],
   ['order', { path: 'api/workshop/transition', roles: WORKSHOP }],
   ['warranty', { path: 'api/workshop/warranties', roles: [...warrantyWriters] }],
   ['receipt', { path: 'api/purchasing/expense-save', roles: ['jefe_taller', 'coordinador', 'gerencia'] }],
@@ -169,6 +170,7 @@ async function upload(req, session, sheets, canUpload, storage) {
   const action = ACTIONS.get(kind);
   requireThat(action, 400, 'Tipo de evidencia inválido.');
   requireThat(body.expectedUserId === session.userId && action.roles.includes(session.role), 403, 'Acción no autorizada para esta sesión.');
+  if (kind === 'hseaction') requireThat(session.canReviewPanamaHse === true, 403, 'Evidencia reservada a HSE.');
   requireThat(canUpload(action.path), 503, 'Los adjuntos de este flujo están en consulta.');
   requireThat(isIdentityUserId(body.operationId) && Number.isInteger(body.slot) && body.slot >= 0
     && body.slot < (kind === 'receipt' ? 1 : kind === 'warranty' ? 4 : MAX_PHOTOS), 400, 'La referencia del adjunto es inválida.');
@@ -237,6 +239,18 @@ async function canReadLinked(sheets, session, row, url) {
       const stickers = await sheets.read('Inspeccion_Stickers');
       const matches = stickers.filter(item => item[0] === row.operation_id && item[18] === row.actor_id && item[1]);
       return matches.length === 1 && unitCode(matches[0][5]) === unit && linked(matches[0][16], url);
+    }
+    case 'hseaction': {
+      if (session.canReviewPanamaHse !== true || !['supervisor', 'gerencia'].includes(session.role)) return false;
+      const rows = await sheets.read('Inspeccion_Hallazgos');
+      return rows.some(finding => {
+        if (unitCode(finding[3]) !== unit || !finding[17]) return false;
+        let state;
+        try { state = JSON.parse(finding[17]); } catch { return false; }
+        return Array.isArray(state?.history) && state.history.some(entry =>
+          entry.action === 'submit' && entry.operationId === row.operation_id
+          && entry.actorId === row.actor_id && Array.isArray(entry.evidence) && entry.evidence.includes(url));
+      });
     }
     case 'receipt': {
       const rows = await sheets.read('02 Gastos');

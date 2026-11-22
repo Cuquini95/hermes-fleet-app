@@ -6,7 +6,7 @@ const MAX_BYTES = 3 * 1024 * 1024;
 export const EVIDENCE_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
 export interface EvidenceUpload {
-  kind: 'report' | 'dvir' | 'sticker' | 'order' | 'receipt' | 'warranty';
+  kind: 'report' | 'dvir' | 'sticker' | 'hseaction' | 'order' | 'receipt' | 'warranty';
   units: string[];
   operationId: string;
   expectedUserId: string;

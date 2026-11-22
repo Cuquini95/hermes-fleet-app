@@ -1074,3 +1074,56 @@ test('no se duplican las coberturas si dos sesiones registran la misma OT al mis
   assert.equal(cases.length, 1);
   assert.equal(cases[0].applicability, 'unknown-date');
 });
+
+
+test('HSE conserva hallazgo, responsable, evidencia y cierre por segundo revisor sin habilitar despacho', async () => {
+  const { request, sheets, attach } = fixture();
+  const source = Object.assign(Array(17).fill(''), {
+    1: 'HSE-QA-01', 2: '2026-11-22T11:00:00.000Z', 3: 'CA20',
+    6: 'Frenos', 7: 'freno_izquierdo', 8: 'Freno izquierdo',
+    9: 'no_cumple', 10: 'Prueba funcional fallida', 11: '', 12: 'no',
+    13: 'critical', 14: 'aprobado_supervisor', 16: operator.userId,
+  });
+  sheets.seed('Inspeccion_Hallazgos', [source]);
+  const otherHse = { ...account('hse-revisor-qa', 'supervisor'), canReviewPanamaHse: true };
+  const withoutHseGrant = account('hse-sin-permiso', 'supervisor');
+  const get = (actor = supervisor) => request('hsefindings', actor, undefined, { unit: 'CA20' });
+  const send = (actor, action, details = {}) => request('hseaction', actor, {
+    mutationId: randomUUID(), unit: 'CA20', folio: 'HSE-QA-01', itemId: 'freno_izquierdo', action, ...details,
+  });
+
+  assert.equal((await get(operator)).status, 403);
+  assert.equal((await get(withoutHseGrant)).status, 403);
+  assert.equal((await request('hsefindings', otherHse, undefined, { unit: 'CA99' })).status, 403);
+  const initial = await get();
+  assert.equal(initial.status, 200);
+  assert.equal(initial.body.findings[0].corrective.state, 'sin_asignar');
+  assert.equal(initial.body.findings[0].approvalState, 'aprobado_supervisor');
+  const repair = await request('report', operator, report({ description: 'Corrección originada en HSE' }));
+  assert.equal(repair.status, 201);
+  const beforeReadiness = (await request('readiness', operator)).body;
+  const assigned = await send(supervisor, 'assign', { responsible: 'Jefatura de Taller', dueDate: '2099-02-01',
+    linkedOt: repair.body.otId });
+  assert.equal(assigned.status, 200);
+  assert.equal((await get()).body.findings[0].corrective.responsible, 'Jefatura de Taller');
+  assert.equal((await get()).body.findings[0].corrective.linkedOt, repair.body.otId);
+  assert.equal((await send(withoutHseGrant, 'assign', { responsible: 'HSE', dueDate: '2099-02-01' })).status, 403);
+
+  const operationId = randomUUID();
+  const photo = attach('hseaction', operationId, supervisor);
+  const submitPayload = { mutationId: operationId, unit: 'CA20', folio: 'HSE-QA-01', itemId: 'freno_izquierdo',
+    action: 'submit', note: 'Prueba de freno realizada, evidencia adjunta', photos: [photo] };
+  assert.equal((await request('hseaction', supervisor, { ...submitPayload, photos: [] })).status, 400);
+  assert.equal((await request('hseaction', supervisor, submitPayload)).status, 200);
+  assert.equal((await request('hseaction', supervisor, submitPayload)).body.replayed, true);
+  assert.equal((await send(supervisor, 'verify', { note: 'Mismo actor' })).status, 403);
+  const verify = await send(otherHse, 'verify', { note: 'Inspección visual de evidencia y prueba validada' });
+  assert.equal(verify.status, 200);
+  const final = (await get()).body.findings[0];
+  assert.equal(final.corrective.state, 'verificada');
+  assert.equal(final.corrective.evidence[0], photo);
+  assert.equal(final.corrective.history.length, 3);
+  assert.equal(final.corrective.verifiedBy, otherHse.userName);
+  assert.deepEqual((await request('readiness', operator)).body, beforeReadiness);
+  assert.equal((await send(otherHse, 'verify', { note: 'Cierre repetido' })).status, 409);
+});

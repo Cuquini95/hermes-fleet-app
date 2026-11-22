@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { mexicoDate, mexicoDateInput, mexicoTime } from '../../lib/date-utils';
 import { requestWorkshop, WorkshopApiError } from '../../lib/workshop-api';
 import type { WorkOrder } from '../../types/workorder';
+import { nextWorkOrderAction } from '../../lib/panama-case-status';
 
 export default function OperationalReturnCard({ order, mayReview, onSave }: {
   order: WorkOrder;
@@ -49,6 +50,8 @@ export default function OperationalReturnCard({ order, mayReview, onSave }: {
   return (
     <section className="flex flex-col gap-3 rounded-xl border border-border bg-white p-4 shadow-sm" aria-label="Retorno de Operaciones">
       <h2 className="text-sm font-semibold text-text">Retorno de Operaciones</h2>
+      <p className="text-sm text-text">Siguiente: {nextWorkOrderAction(order).action}</p>
+      <p className="text-xs text-text-secondary">Responsable: {nextWorkOrderAction(order).responsible}</p>
       {needsReturn && <p className="text-sm text-text-secondary">Pendiente de recepción por Operaciones.</p>}
       {order.technical && <p className="text-sm text-text-secondary">Verificación técnica de {order.technical.userName}.</p>}
       {receipt?.decision === 'accepted' && returnedAt && <p className="text-sm text-text">Equipo recibido por {receipt.userName} el {mexicoDate(returnedAt)} a las {mexicoTime(returnedAt)}. {receipt.notes}</p>}
