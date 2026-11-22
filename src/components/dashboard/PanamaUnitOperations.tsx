@@ -8,6 +8,7 @@ import type { OrderCosts } from '../workshop/PanamaWorkOrderCost';
 import { nextWorkOrderAction, unitClosedWorkOrders } from '../../lib/panama-case-status';
 
 const number = new Intl.NumberFormat('es-PA', { maximumFractionDigits: 3 });
+const panamaCut = new Intl.DateTimeFormat('es-PA', { timeZone: 'America/Panama', dateStyle: 'short', timeStyle: 'short' });
 const sectionClass = 'min-w-0 space-y-1 rounded-lg border border-slate-200 p-3 text-sm';
 const linkClass = 'inline-flex min-h-11 items-center text-sm font-semibold text-primary underline';
 
