@@ -1099,10 +1099,14 @@ test('HSE conserva hallazgo, responsable, evidencia y cierre por segundo revisor
   assert.equal(initial.status, 200);
   assert.equal(initial.body.findings[0].corrective.state, 'sin_asignar');
   assert.equal(initial.body.findings[0].approvalState, 'aprobado_supervisor');
+  const repair = await request('report', operator, report({ description: 'Corrección originada en HSE' }));
+  assert.equal(repair.status, 201);
   const beforeReadiness = (await request('readiness', operator)).body;
-  const assigned = await send(supervisor, 'assign', { responsible: 'Jefatura de Taller', dueDate: '2099-02-01' });
+  const assigned = await send(supervisor, 'assign', { responsible: 'Jefatura de Taller', dueDate: '2099-02-01',
+    linkedOt: repair.body.otId });
   assert.equal(assigned.status, 200);
   assert.equal((await get()).body.findings[0].corrective.responsible, 'Jefatura de Taller');
+  assert.equal((await get()).body.findings[0].corrective.linkedOt, repair.body.otId);
   assert.equal((await send(withoutHseGrant, 'assign', { responsible: 'HSE', dueDate: '2099-02-01' })).status, 403);
 
   const operationId = randomUUID();
