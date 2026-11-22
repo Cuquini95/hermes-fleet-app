@@ -4,7 +4,7 @@ import { uploadEvidence } from '../../lib/evidence-upload';
 import { requestWorkshop, WorkshopApiError } from '../../lib/workshop-api';
 import { useAuthStore } from '../../stores/auth-store';
 
-type HseStatus = 'sin_asignar' | 'asignada' | 'evidencia' | 'devuelta' | 'verificada';
+type HseStatus = 'sin_asignar' | 'asignada' | 'evidencia' | 'devuelta' | 'verificada' | 'por_conciliar';
 type HseEvent = { operationId: string; action: string; actorId: string; by: string; at: string; note: string; evidence?: string[] };
 type Finding = {
   folio: string; unit: string; inspectedAt: string; itemId: string; item: string; section: string;
@@ -167,7 +167,7 @@ export default function PanamaHseActions({ unit }: { unit?: string }) {
       const state = finding.corrective.state;
       return <details key={finding.folio + ':' + finding.itemId} className="rounded-lg border border-slate-200 p-3">
         <summary className="cursor-pointer font-semibold text-sm">
-          {finding.unit} · {finding.item} · {state === 'verificada' ? 'Verificada (sin liberación)' : state === 'evidencia' ? 'Evidencia por verificar' : state === 'sin_asignar' ? 'Sin responsable' : state === 'devuelta' ? 'Devuelta' : 'En seguimiento'}
+          {finding.unit} · {finding.item} · {state === 'verificada' ? 'Verificada (sin liberación)' : state === 'evidencia' ? 'Evidencia por verificar' : state === 'sin_asignar' ? 'Sin responsable' : state === 'devuelta' ? 'Devuelta' : state === 'por_conciliar' ? 'Por conciliar' : 'En seguimiento'}
         </summary>
         <div className="mt-3 space-y-2 text-sm">
           <p>Inspección <strong>{finding.folio}</strong> · {finding.section} · {finding.status} · gravedad {finding.severity}</p>
