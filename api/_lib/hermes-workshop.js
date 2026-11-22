@@ -1058,10 +1058,12 @@ async function stickerReview(context) {
  */
 function hseActionState(row) {
   const raw = row[17];
-  if (raw && (!storedObject(raw) || !Array.isArray(storedObject(raw).history))) {
-    throw new WorkshopError(409, 'La acción correctiva heredada requiere conciliación.');
+  if (!raw) return { version: 1, status: 'sin_asignar', history: [] };
+  const parsed = storedObject(raw);
+  if (!parsed || !Array.isArray(parsed.history) || !['sin_asignar','asignada','evidencia','devuelta','verificada'].includes(parsed.status)) {
+    return { version: 1, status: 'por_conciliar', history: [], invalid: true };
   }
-  return storedObject(raw) ?? { version: 1, status: 'sin_asignar', history: [] };
+  return parsed;
 }
 
 function hseFindingRecord(row, sticker) {
@@ -1118,6 +1120,7 @@ async function hseAction(context) {
   assert(matches.length === 1, matches.length ? 409 : 404, 'Hallazgo no disponible o duplicado.');
   const { row, index } = matches[0];
   const state = hseActionState(row);
+  assert(!state.invalid, 409, 'La acción correctiva heredada requiere conciliación.');
   assert(state.history.length < 120, 409, 'Historial de acciones requiere cierre de archivo.');
   const next = { ...state, history: [...state.history] };
   const note = text(body.note, 'Observación', 1000, action === 'submit' || action === 'verify' || action === 'return');
