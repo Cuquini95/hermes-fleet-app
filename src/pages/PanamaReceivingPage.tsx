@@ -185,7 +185,7 @@ function ReceivingQueue({ userId }: { userId: string }) {
                         {line.requestId && line.ot ? ' · ' : ''}
                         {line.ot && `OT: ${line.ot}`}
                       </> : 'Solicitud/OT de origen sin vínculo: conciliar expediente heredado.'}
-                    </p>}
+                    </p>
                     {line.warehouse && <p className="text-sm text-slate-700">Almacén {line.warehouse}</p>}
                     <p className="flex flex-wrap gap-x-3 gap-y-1 text-sm text-slate-700">
                       <span>Ordenadas {line.quantity}</span><span>Recibidas {line.received}</span><strong className={pending > 0 ? 'text-amber-900' : 'text-emerald-800'}>Pendientes {pending}</strong>
