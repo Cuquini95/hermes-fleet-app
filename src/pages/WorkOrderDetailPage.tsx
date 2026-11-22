@@ -336,7 +336,7 @@ function WorkOrderDetail({ requestedFolio }: { requestedFolio?: string }) {
           <p className="text-amber-800">El cierre de OT no constituye liberación para despacho.</p>}
         {['supervisor', 'coordinador', 'gerencia'].includes(role ?? '') &&
           <Link to={`/fleet?unit=${encodeURIComponent(wo.unidad)}`} className="inline-flex min-h-11 items-center font-semibold text-blue-800 underline">Revisar restricciones del equipo</Link>}
-      </section>
+      </section>}
 
       <OrderDetailInformation data={{ unit: wo.unidad, model: equipment?.model, type: wo.tipo_averia,
         serial: equipment?.serial, priority: wo.prioridad,
