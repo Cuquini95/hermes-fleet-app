@@ -51,7 +51,7 @@ function CaseActions({ finding, onSaved }: { finding: Finding; onSaved: () => vo
     const body = { unit: finding.unit, folio: finding.folio, itemId: finding.itemId,
       action: active, note: note.trim(), ...(active === 'assign' ? { responsible: responsible.trim(), dueDate } : {}) };
     if (active === 'submit' && !file) { setError('Adjunta la fotografía que respalda la corrección.'); return; }
-    const saved = attempt.current ?? { operationId: crypto.randomUUID(), body, ...(active === 'submit' && file ? { file } : {}) };
+    const saved: Attempt = attempt.current ?? { operationId: crypto.randomUUID(), body, ...(active === 'submit' && file ? { file } : {}) };
     attempt.current = saved;
     busy.current = true;
     setSaving(true);
